@@ -5,7 +5,7 @@
 
 ## Estado
 
-**2026-08-07:** Proyecto iniciado. Fase 0 (research) completa, ADR-001 aceptado. **Spike S1 VALIDADO** el mismo día: JMAP-sobre-Dovecot funciona contra nuestro Mailcow real (ver `docs/spikes/S1-jmap-sobre-dovecot.md` — hallazgos H1-H6 son insumos de diseño). Contenedor `moov-jmap-spike` (jmap-proxy) quedó corriendo en el VPS mail como referencia viva, con buzón de prueba `moov-test@atmosfera.cloud` (credenciales en `credentials/` de VPS_Mail, git-ignored). Pendiente de S1: conectar cliente JMAP de terceros (Twake/Bulwark). Próximos: spikes S2-S4. No hay código de producto todavía.
+**2026-08-08:** Proyecto iniciado 2026-08-07. Fase 0 (research) completa, ADR-001 aceptado. **Spike S1 VALIDADO AL 100%**: JMAP-sobre-Dovecot funciona contra nuestro Mailcow real, incluyendo **Bulwark (cliente de terceros) operativo en navegador** — ver `docs/spikes/S1-jmap-sobre-dovecot.md` (hallazgos H1-H7 son insumos de diseño). Stack de referencia corriendo en el VPS mail (VPN-only): Caddy origen único (:8090) → Bulwark + jmap-proxy → Dovecot, con buzón de prueba `moov-test@atmosfera.cloud` (credenciales en `credentials/` de VPS_Mail, git-ignored). Próximos: spikes S2 (go-imap QRESYNC/NOTIFY), S3 (benchmark 5M), S4 (corpus MIME). No hay código de producto todavía.
 
 ## Reglas rectoras del proyecto (fijadas por Diego — no negociables)
 
@@ -48,7 +48,7 @@
 
 | # | Spike | Valida |
 |---|---|---|
-| S1 ✅ | jmap-perl en Docker contra nuestro Mailcow (falta: cliente Twake/Bulwark) | JMAP-sobre-Dovecot funciona en nuestro entorno — **VALIDADO 2026-08-07** |
+| S1 ✅ | jmap-perl + Bulwark contra nuestro Mailcow | JMAP-sobre-Dovecot funciona, cliente de terceros incluido — **VALIDADO 100% 2026-08-08** |
 | S2 | go-imap/v2 beta.8 contra nuestro Dovecot: QRESYNC, CONDSTORE, NOTIFY multi-mailbox | Base técnica del sync engine; NOTIFY colapsa el fan-out de conexiones |
 | S3 | Benchmark tsvector+GIN con corpus sintético de 5M mensajes | Si Meilisearch entra al MVP o a fase 2 |
 | S4 | Corpus de MIME patológico | Robustez del parser |

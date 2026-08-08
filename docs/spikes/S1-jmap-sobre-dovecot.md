@@ -1,6 +1,6 @@
 # Spike S1 — JMAP sobre Dovecot/Mailcow con jmap-proxy
 
-> **Fecha:** 2026-08-07 · **Resultado: ✅ VALIDADO (lado servidor)**
+> **Fecha:** 2026-08-07/08 · **Resultado: ✅ VALIDADO AL 100% — incluye cliente de terceros**
 > Objetivo: confirmar empíricamente que un proxy JMAP-sobre-IMAP funciona contra un Mailcow Dockerized real antes de escribir código propio.
 
 ## Setup
@@ -28,9 +28,11 @@
 | H6 | El proxy quedó como **referencia viva**: sirve para conectar clientes JMAP de terceros (Twake/Bulwark) y como oráculo de comportamiento del mapeo IMAP↔JMAP | Mantenerlo corriendo durante el desarrollo |
 | H7 | **jmap-proxy no implementa CORS** (OPTIONS → 501, cero headers Access-Control) y Bulwark llama al servidor JMAP desde el browser → imposible en orígenes distintos. Solución: front same-origin (Caddy) ruteando `/session*`, `/jmap*`, `/.well-known/jmap*`, `/raw/*`, `/upload/*`, `/eventsource*` al proxy y el resto al webmail. Ojo: `.well-known/jmap` redirige a `/session` (ruta no obvia) | El servidor JMAP de Moov DEBE implementar CORS configurable (origins permitidos) desde el día 1 — es requisito real de los clientes web. Y documentar todas las rutas que expone la sesión |
 
-## Pendiente para cerrar S1 del todo
+## Cierre — cliente de terceros funcionando (2026-08-08)
 
-- Conectar un cliente JMAP de terceros real (Twake Mail móvil vía VPN, o Bulwark web) contra el proxy — valida la UX de referencia y el comportamiento de un cliente que no escribimos nosotros.
+**Bulwark v1.8.1** (webmail JMAP que no escribimos nosotros) desplegado detrás de un front same-origin (Caddy, ver H7) quedó **operativo contra nuestro Dovecot**: login, inbox con los 4 mails de prueba, carpetas con contadores, labels, búsqueda y shortcuts — todo viajando por JMAP estándar. Verificado por Diego en navegador (2026-08-08). Es la prueba definitiva de la tesis del proyecto: un cliente JMAP moderno arbitrario funciona sobre Mailcow cuando alguien pone el puente en el medio. Ese puente, hecho en serio, es Moov.
+
+Stack de referencia que queda corriendo (VPN-only): Caddy (origen único) → Bulwark + jmap-proxy → Dovecot.
 
 ## Próximos spikes
 
