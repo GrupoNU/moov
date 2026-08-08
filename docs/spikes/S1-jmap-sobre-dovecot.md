@@ -26,6 +26,7 @@
 | H4 | El management UI (8080) bindea a loopback del contenedor — publicar el puerto no alcanza; hay que operarlo desde dentro | En Moov: bind configurable (`MGMT_BIND`) desde el día 1 |
 | H5 | La API de Mailcow rechaza requests por IPv6 interna si la allowlist es solo IPv4 → forzar IPv4 (`curl -4`) desde contenedores | Documentar en la guía de instalación de Moov |
 | H6 | El proxy quedó como **referencia viva**: sirve para conectar clientes JMAP de terceros (Twake/Bulwark) y como oráculo de comportamiento del mapeo IMAP↔JMAP | Mantenerlo corriendo durante el desarrollo |
+| H7 | **jmap-proxy no implementa CORS** (OPTIONS → 501, cero headers Access-Control) y Bulwark llama al servidor JMAP desde el browser → imposible en orígenes distintos. Solución: front same-origin (Caddy) ruteando `/session*`, `/jmap*`, `/.well-known/jmap*`, `/raw/*`, `/upload/*`, `/eventsource*` al proxy y el resto al webmail. Ojo: `.well-known/jmap` redirige a `/session` (ruta no obvia) | El servidor JMAP de Moov DEBE implementar CORS configurable (origins permitidos) desde el día 1 — es requisito real de los clientes web. Y documentar todas las rutas que expone la sesión |
 
 ## Pendiente para cerrar S1 del todo
 
