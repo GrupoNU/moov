@@ -1,0 +1,4 @@
+# Third-party checkout used by the PR #757 probe (see pr757/README.md).
+# Not vendored here: it is upstream go-imap plus an unmerged patch.
+pr757/goimap/
+pr757/go.sum
