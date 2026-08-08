@@ -1,0 +1,53 @@
+# Moov Mail
+
+> Webmail open source Gmail-class para Mailcow/Dovecot — primer producto open source de NU Desarrollos Conscientes
+> Repo público: `github.com/GrupoNU/moov` · Licencia: AGPL-3.0
+
+## Estado
+
+**2026-08-07:** Proyecto iniciado. Fase 0 (research) completa, ADR-001 aceptado. Próximo paso: spikes de validación (S1-S4) antes de escribir el producto. No hay código todavía.
+
+## Reglas rectoras del proyecto (fijadas por Diego — no negociables)
+
+1. **Vara Gmail-class en diseño Y performance.** El benchmark es Gmail/Fastmail/Superhuman, nunca otros webmails open source. Los criterios son medibles (ADR-001 §6): búsqueda y acciones <100 ms percibidos, push real, teclado completo, undo send, PWA offline.
+2. **Arbitrajes: siempre lo más potente del mercado actual, con los estándares más altos y las mejores prácticas.** La opción conservadora solo se acepta como fase intermedia explícita, nunca como destino.
+3. **Es la cara open source de NU** — calidad de código, docs, tests y gobernanza son parte del producto.
+
+## Arquitectura (resumen — el detalle manda en `docs/adr/ADR-001-arquitectura.md`)
+
+- **Opción B:** sync engine (Go) que sincroniza Dovecot vía IMAP (CONDSTORE/QRESYNC/IDLE) a store propio (PostgreSQL 17 + blobs content-addressed sha256 + índice FTS) y expone **JMAP estándar** (RFC 8620/8621, subset por fases) a una **PWA React/TypeScript**. Push por SSE.
+- **Mailcow no se toca jamás.** Stack Docker propio unido a `mailcowdockerized_mailcow-network`. Todo por IMAP/SMTP/Sieve/API. **NUNCA montar ni tocar el filesystem de vmail** (corrupción garantizada con `maildir_very_dirty_syncs`).
+- **Dovecot es la fuente de verdad**; Moov es cache reconstruible.
+- Auth: IMAP LOGIN de validación → app password vía API Mailcow (scope imap+smtp+sieve), cifrada AES-256-GCM, password del usuario descartada.
+- Seguridad HTML: 3 capas (bluemonday + DOMPurify + iframe sandbox sin allow-scripts + CSP). Proxy de imágenes con HMAC + anti-SSRF.
+- `go-imap/v2` SIEMPRE vendorizado y encapsulado tras `internal/imap` — nunca usar `imapclient` fuera de ese paquete.
+- JMAP TestSuite en CI desde el día 1. `jmap-perl` (github.com/jmapio/jmap-perl) es el plano de referencia del mapeo IMAP↔JMAP.
+
+## Convenciones
+
+- Código, comentarios, commits e issues públicos: **inglés**. Comunicación con Diego: español.
+- Commits: `tipo(scope): descripción` (feat/fix/docs/refactor/chore/test).
+- Testing obligatorio (política de ingeniería del grupo): bug fix = test primero; feature = tests por AC.
+- NUNCA push sin confirmación de Diego.
+- El corpus de MIME patológico (`docs/research/04` §4.2) debe existir ANTES que el parser.
+
+## Entorno de validación
+
+- Mailcow real de referencia: VPS mail de Grupo NU (repo `D:\git\VPS_Mail`, IP-A 217.216.83.79, Tailscale `100.123.119.124`). `SKIP_FTS=n` (Flatcurve activo). Red: `mailcowdockerized_mailcow-network`.
+- Cuentas de prueba para spikes: crear buzones dedicados (NUNCA usar buzones productivos de clientes para pruebas de escritura).
+- Caso de estrés de referencia: buzones Crash (89 cuentas, 584 GB backup-only en Mailcow).
+
+## Spikes pendientes (bloqueantes antes de codear el producto)
+
+| # | Spike | Valida |
+|---|---|---|
+| S1 | jmap-perl en Docker contra nuestro Mailcow + cliente Twake/Bulwark | JMAP-sobre-Dovecot funciona en nuestro entorno |
+| S2 | go-imap/v2 beta.8 contra nuestro Dovecot: QRESYNC, CONDSTORE, NOTIFY multi-mailbox | Base técnica del sync engine; NOTIFY colapsa el fan-out de conexiones |
+| S3 | Benchmark tsvector+GIN con corpus sintético de 5M mensajes | Si Meilisearch entra al MVP o a fase 2 |
+| S4 | Corpus de MIME patológico | Robustez del parser |
+
+## Para retomar rápido
+
+1. `docs/adr/ADR-001-arquitectura.md` — la decisión completa (2 páginas)
+2. `docs/research/00-sintesis-fase0.md` — síntesis auditada + arbitrajes + riesgos
+3. Los informes 01-04 de `docs/research/` solo si necesitás el detalle de un área

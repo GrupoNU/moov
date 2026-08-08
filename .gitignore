@@ -1,0 +1,27 @@
+# Secrets & local config
+.env
+.env.*
+*.local
+credentials/
+
+# Go
+bin/
+dist/
+*.exe
+coverage.out
+
+# Node / frontend
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Data from spikes / local runs
+data/
+*.eml
+*.mbox
