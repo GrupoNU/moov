@@ -13,6 +13,13 @@
 2. **Arbitrajes: siempre lo más potente del mercado actual, con los estándares más altos y las mejores prácticas.** La opción conservadora solo se acepta como fase intermedia explícita, nunca como destino.
 3. **Es la cara open source de NU** — calidad de código, docs, tests y gobernanza son parte del producto.
 
+## Jerarquía de trabajo (modelo de sesión)
+
+- **Director/auditor: el modelo principal de la sesión** (preferencia de Diego: Fable 5, `/model claude-fable-5[1m]`). Dirige, arbitra entre agentes, audita todo lo que producen, sintetiza y firma decisiones. No delega la auditoría.
+- **Subagentes: modelos más económicos según complejidad de la tarea** — `opus` (Opus 5) por defecto para research/implementación estándar; `sonnet`/`haiku` solo para tareas triviales/mecánicas. Nunca comprometer calidad en tareas críticas por ahorrar.
+- Ante recomendaciones en conflicto entre agentes, el director arbitra con la regla 2 (lo más potente del mercado, estándares más altos) y documenta el arbitraje (como los A1-A3 de `docs/research/00-sintesis-fase0.md`).
+- Trabajo paralelo: lanzar agentes independientes en simultáneo (como los 4 de la Fase 0); el director consolida al final.
+
 ## Arquitectura (resumen — el detalle manda en `docs/adr/ADR-001-arquitectura.md`)
 
 - **Opción B:** sync engine (Go) que sincroniza Dovecot vía IMAP (CONDSTORE/QRESYNC/IDLE) a store propio (PostgreSQL 17 + blobs content-addressed sha256 + índice FTS) y expone **JMAP estándar** (RFC 8620/8621, subset por fases) a una **PWA React/TypeScript**. Push por SSE.
