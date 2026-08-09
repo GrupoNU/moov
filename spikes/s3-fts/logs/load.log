@@ -1,0 +1,44 @@
+=== [19:51:29] Spike S3 load: N=5000000 seed=20260808 ===
+[19:51:29] free space: 140 GB
+=== [19:51:29] schema ===
+CREATE EXTENSION
+CREATE EXTENSION
+CREATE FUNCTION
+psql:/work/schema.sql:22: NOTICE:  table "messages" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+=== [19:51:30] COPY (streaming from generator, never lands on disk) ===
+COPY 5000000
+COPY elapsed: 2423 s
+generated 5000000 messages across 89 accounts
+needle_token=zanzibarita count=37
+needle_phrase="quetzal ferroviario nocturno" count=5
+needle_unique=INV-2024-0857 count=1
+[20:31:53] free space: 118 GB
+=== [20:31:53] row count ===
+  count  
+---------
+ 5000000
+(1 row)
+
+=== [20:32:45] index build (timed individually) ===
+Timing is on.
+CREATE INDEX
+Time: 2226642.813 ms (37:06.643)
+CREATE INDEX
+Time: 24841.236 ms (00:24.841)
+CREATE INDEX
+Time: 6157.953 ms (00:06.158)
+[21:10:24] free space: 111 GB
+=== [21:10:24] ANALYZE ===
+Timing is on.
+VACUUM
+Time: 88140.984 ms (01:28.141)
+=== [21:11:52] sizes ===
+  heap   |   gin   | total 
+---------+---------+-------
+ 5379 MB | 2507 MB | 20 GB
+(1 row)
+
+[21:11:52] free space: 111 GB
+=== [21:11:52] DONE ===
