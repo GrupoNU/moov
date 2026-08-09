@@ -1,0 +1,114 @@
+name: Bug report
+description: Something behaves incorrectly
+title: "bug: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report.
+
+        **Security issues do not belong here.** If this is a vulnerability,
+        report it privately through
+        [GitHub Security Advisories](https://github.com/GrupoNU/moov/security/advisories)
+        instead — see [SECURITY.md](https://github.com/GrupoNU/moov/blob/main/SECURITY.md).
+
+        Note that Moov is **pre-alpha**: the sync engine is under construction
+        and there is no usable release yet.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before reporting
+      options:
+        - label: This is not a security vulnerability (those go through a private advisory)
+          required: true
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe? Be specific about the actual behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The smallest sequence that reproduces it. If the trigger is a particular
+        message, a sanitized `.eml` is worth a thousand words — remove real
+        addresses and content first.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - sync engine (internal/sync)
+        - IMAP client (internal/imap)
+        - MIME parser (internal/parser)
+        - store / migrations (internal/store)
+        - blob store (internal/blob)
+        - search index (internal/index)
+        - credentials / crypto (internal/crypto)
+        - daemon / configuration (cmd/moovd)
+        - build, CI or tooling
+        - documentation
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Moov version
+      description: Output of `moovd -version`, or the commit you built from.
+      placeholder: "dev (commit a1b2c3d4)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >
+        Operating system, Go version, Docker version, PostgreSQL version,
+        Dovecot / Mailcow version if the issue involves a server.
+      placeholder: |
+        OS:         Debian 12
+        Go:         1.24.2
+        PostgreSQL: 17.4
+        Mailcow:    2026-03
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Relevant log output. **Redact addresses, message content and
+        credentials before pasting.**
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Context, hypotheses, related issues.

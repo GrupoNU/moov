@@ -1,0 +1,94 @@
+name: Feature request
+description: Propose a capability or a change in behavior
+title: "feat: "
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before proposing something substantial, it is worth reading
+        [ADR-001](https://github.com/GrupoNU/moov/blob/main/docs/adr/ADR-001-arquitectura.md)
+        (the accepted architecture) and the
+        [current phase specification](https://github.com/GrupoNU/moov/blob/main/docs/specs/L2-sync-engine.md).
+        Both are currently in Spanish; the English summary of each package's
+        contract lives in its `doc.go`.
+
+        Two invariants are not negotiable, and a proposal that requires breaking
+        either will be declined:
+
+        1. **Mailcow is never modified and its mail store on disk is never
+           touched.** Everything goes through IMAP, SMTP, Sieve and the API.
+        2. **Dovecot is the source of truth; Moov's store is a reconstructible
+           cache.**
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What is difficult, impossible or unpleasant today? Describe the
+        situation, not the solution — a well-described problem often has a
+        better solution than the one that prompted the issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The behavior you would like. Be concrete.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: >
+        Including doing nothing. What made them worse than the proposal?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component most affected
+      options:
+        - sync engine (internal/sync)
+        - IMAP client (internal/imap)
+        - MIME parser (internal/parser)
+        - store / migrations (internal/store)
+        - blob store (internal/blob)
+        - search index (internal/index)
+        - credentials / crypto (internal/crypto)
+        - JMAP layer (future)
+        - PWA frontend (future)
+        - deployment and operations
+        - build, CI or tooling
+        - documentation
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Who benefits, and how much
+      description: >
+        Whose life is better with this — mailbox owners, operators of a Mailcow
+        installation, contributors? An honest "mostly mine" is a perfectly good
+        answer.
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Compatibility with the project's invariants
+      options:
+        - label: This does not require modifying Mailcow or touching its mail store directly
+        - label: This keeps Moov's store reconstructible from Dovecot
+        - label: I am not sure, and would like to discuss it
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - label: I would like to work on this myself

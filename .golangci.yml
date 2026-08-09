@@ -1,0 +1,182 @@
+# Moov Mail — golangci-lint configuration (schema v2).
+#
+# The linter set is deliberately strict. This is a public, AGPL-3.0 repository
+# and code quality is part of the product; a rule that is annoying today is
+# cheaper than a class of bug in a mail sync engine, where the failure mode is
+# somebody's mailbox.
+#
+# The single most important rule here is the depguard one below: it is the
+# mechanical enforcement of the ADR-001 architecture invariant.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # --- Correctness
+    - govet          # the standard suite of suspicious constructs
+    - staticcheck    # in v2 this subsumes gosimple and stylecheck
+    - errcheck       # unchecked errors: the classic Go bug
+    - ineffassign    # assignments that are never used
+    - unused         # dead code
+    - bodyclose      # unclosed HTTP response bodies
+    - rowserrcheck   # unchecked sql.Rows.Err — relevant the moment E3 lands
+    - sqlclosecheck  # unclosed sql.Rows / sql.Stmt
+    - nilerr         # returning nil when err is non-nil
+    - errorlint      # error comparisons that break on wrapped errors
+    - noctx          # HTTP/SQL calls without a context
+    - durationcheck  # multiplying two durations
+    - makezero       # make([]T, n) followed by append
+    - exhaustive     # non-exhaustive switches over enum-like types
+
+    # --- Security
+    - gosec
+
+    # --- Style and maintainability
+    - revive         # the maintained replacement for golint
+    - misspell
+    - unconvert      # unnecessary conversions
+    - wastedassign
+    - predeclared    # shadowing len, new, cap, ...
+    - nakedret
+    - copyloopvar    # copies made unnecessary by Go 1.22 loop semantics
+    - usestdlibvars
+
+    # --- Architecture
+    - depguard       # THE architecture rule; see settings below
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+    gosec:
+      excludes:
+        # G404 (weak RNG) is not a finding for backoff jitter, which is what
+        # this engine uses math/rand/v2 for. Cryptographic randomness lives in
+        # internal/crypto and uses crypto/rand exclusively; that package's own
+        # review is where this matters.
+        - G404
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # struct field ordering for padding: readability wins
+        # `if err := f(); err != nil` shadows an outer err by construction and
+        # is the idiomatic form the standard library uses everywhere. Enabling
+        # this check would push the codebase away from idiomatic Go for no
+        # correctness gain; errcheck and nilerr cover the bugs that matter.
+        - shadow
+
+    misspell:
+      locale: US
+
+    nakedret:
+      max-func-lines: 0 # no naked returns at all
+
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+        - name: indent-error-flow
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: unreachable-code
+        - name: var-naming
+        - name: range-val-address
+        - name: unnecessary-stmt
+
+    staticcheck:
+      checks:
+        - all
+
+    # -----------------------------------------------------------------------
+    # THE ARCHITECTURE RULE
+    # -----------------------------------------------------------------------
+    # ADR-001 and docs/specs/L2-sync-engine.md §2.1: internal/imap is the ONLY
+    # package that may import go-imap.
+    #
+    # Rationale: go-imap/v2 is beta, vendored, and carried with a local patch
+    # set (L2 §2.2). Its API can and will move under us on a version bump.
+    # Confining it to one package means such a bump costs one package to fix
+    # instead of the whole engine, and it is what makes the Client interface of
+    # L2 §4.1 an actual boundary rather than a suggestion.
+    #
+    # The rule is enforced twice, on purpose:
+    #   1. here, for fast feedback in the editor and in CI lint;
+    #   2. by TestGoIMAPIsConfinedToInternalIMAP in internal/imap, which runs
+    #      under plain `go test ./...` and therefore survives this config being
+    #      loosened, a linter regression, or golangci-lint being unavailable.
+    # TestGoIMAPRuleFires in the same file proves the check actually detects a
+    # violation, rather than passing vacuously while no code imports go-imap.
+    depguard:
+      rules:
+        go-imap-confinement:
+          list-mode: lax
+          # Applies everywhere EXCEPT internal/imap, which is the one package
+          # allowed to import it.
+          files:
+            - "!**/internal/imap/*.go"
+          deny:
+            - pkg: github.com/emersion/go-imap
+              desc: >-
+                go-imap may only be imported from internal/imap (ADR-001,
+                L2 §2.1). Everything else talks to Dovecot through the Client
+                interface in that package. If you need a capability the
+                interface does not expose, extend the interface — do not reach
+                past it.
+
+        # Standard-library packages with no place in this codebase.
+        hygiene:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: math/rand
+              desc: >-
+                Use math/rand/v2 for jitter and shuffling, or crypto/rand for
+                anything security-relevant (keys, nonces, tokens — see
+                internal/crypto).
+            - pkg: io/ioutil
+              desc: Deprecated since Go 1.16; use os and io.
+
+  exclusions:
+    generated: lax
+    paths:
+      # The spikes are separate Go modules with their own lifecycle
+      # (docs/spikes/). They are exploratory code kept for the record, and
+      # holding them to the product's standards would be meaningless.
+      - spikes
+      - vendor
+    rules:
+      # Test files may use a looser standard for a few checks whose value is
+      # about production robustness rather than test clarity.
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/GrupoNU/moov
+  exclusions:
+    paths:
+      - spikes
+      - vendor

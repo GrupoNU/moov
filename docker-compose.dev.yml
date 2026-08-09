@@ -1,0 +1,121 @@
+# Moov Mail — development dependencies.
+#
+# This file is for LOCAL DEVELOPMENT ONLY. It is not a deployment artifact: the
+# credentials below are hardcoded and weak on purpose, so that a fresh clone
+# works with no setup and nobody is ever tempted to reuse a real secret here.
+# The production stack is a separate concern and joins Mailcow's Docker network
+# (ADR-001); nothing in this file is meant to run next to a real mailbox.
+#
+# Usage:
+#   make db-up       start PostgreSQL and wait for it to be healthy
+#   make migrate     apply the migrations
+#   make test        run the suite (MOOV_TEST_DATABASE_URL below)
+#   make db-down     stop it, keeping the data
+#   make db-reset    stop it and delete the volume
+#
+# Connection string for both the daemon and the tests:
+#   postgres://moov:moov@localhost:5433/moov?sslmode=disable
+#
+# Port 5433, not 5432: developers commonly already run a PostgreSQL on the
+# default port, and a silent connection to the wrong database is a bad afternoon.
+
+name: moov-dev
+
+services:
+  postgres:
+    # PostgreSQL 17 is the version validated in spike S3 and required by
+    # docs/specs/L2-sync-engine.md §2.3. Pinned to a minor version so a rebuild
+    # does not silently change what the benchmarks were measured against.
+    image: postgres:17.4-bookworm
+    container_name: moov-dev-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: moov
+      POSTGRES_PASSWORD: moov
+      POSTGRES_DB: moov
+      # Deterministic collation, so index behavior and sort order do not depend
+      # on the host locale. C.UTF-8 is what the S3 benchmark ran under.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+
+    ports:
+      # Bound to loopback only: a development database must never be reachable
+      # from the network.
+      - "127.0.0.1:5433:5432"
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    # ------------------------------------------------------------------
+    # Server-level tuning.
+    #
+    # WHAT LIVES HERE vs. WHAT LIVES IN A MIGRATION:
+    #
+    #   Here (server level): memory and planner settings that are properties of
+    #   the SERVER, cannot be set per database from SQL in any useful way, and
+    #   must be sized to the machine. These are DEV-SIZED — modest, so the
+    #   container is a good neighbour on a laptop. Production sizing is an
+    #   operations decision and belongs to the deployment repository, not here.
+    #
+    #   In migration 0001 (database level): plan_cache_mode = force_custom_plan
+    #   and the extensions btree_gin and unaccent. Those are correctness
+    #   requirements from S3, not tuning — every environment must have them, so
+    #   they travel with the schema in internal/store/migrations and are
+    #   verified by a test. Putting them here instead would mean CI, dev and
+    #   production could each be configured differently, which is exactly how a
+    #   benchmark stops predicting production.
+    #
+    #   In E3's schema migration: STATISTICS 4000 on messages.tsv, which cannot
+    #   exist before the column does.
+    # ------------------------------------------------------------------
+    command:
+      - postgres
+      # Memory: dev-sized. S3 ran with far more; these values are chosen so the
+      # container behaves on a developer machine, not to reproduce benchmark
+      # numbers.
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB           # per sort/hash node; FTS ranking wants headroom
+      - -c
+      - maintenance_work_mem=128MB  # GIN index builds
+      - -c
+      - effective_cache_size=1GB    # planner hint only, allocates nothing
+
+      # GIN pending-list size. fastupdate stays ON (the default, per L2 §2.3);
+      # this bounds how large the pending list grows before it is merged, which
+      # is what keeps a search from paying for a huge unmerged list.
+      - -c
+      - gin_pending_list_limit=8MB
+
+      # SSD-shaped cost model: the planner otherwise assumes a random read costs
+      # four times a sequential one, which is a 1990s spinning-disk assumption
+      # and pushes it away from the index scans S3 depends on.
+      - -c
+      - random_page_cost=1.1
+
+      # Observability while developing: log anything slower than 200 ms, and log
+      # what actually ran. Far too chatty for production, exactly right for
+      # noticing a query that fell off the index.
+      - -c
+      - log_min_duration_statement=200
+      - -c
+      - log_line_prefix=%m [%p] %q%u@%d
+      # Timing detail for EXPLAIN ANALYZE work during E3.
+      - -c
+      - track_io_timing=on
+
+    healthcheck:
+      # `make db-up --wait` and the CI service container both rely on this being
+      # accurate: pg_isready against the actual user and database, not just a
+      # port check, because the server accepts connections briefly before initdb
+      # has finished.
+      test: ["CMD-SHELL", "pg_isready -U moov -d moov"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  pgdata:
+    name: moov-dev-pgdata

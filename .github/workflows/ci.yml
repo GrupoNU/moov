@@ -1,0 +1,139 @@
+# Moov Mail — continuous integration.
+#
+# Three jobs, deliberately separate so a failure names its own cause:
+#   build    formatting, vet, lint, build, unit tests
+#   corpus   the MIME corpus matches its manifest and git is not rewriting it
+#   store    migrations apply and the mandated PostgreSQL settings are ACTIVE
+#
+# Every action is pinned to a released major/minor tag, and nothing here needs a
+# paid plan or a self-hosted runner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+  GOLANGCI_VERSION: "v2.1.6" # keep in step with the Makefile
+
+jobs:
+  build:
+    name: Build, vet, lint, test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      # gofmt before anything else: it is the cheapest check and the most
+      # common reason a pull request needs a second push.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^spikes/' | grep -v '^vendor/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            echo
+            echo "Run: make fmt"
+            exit 1
+          fi
+          echo "gofmt: clean"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: ${{ env.GOLANGCI_VERSION }}
+          args: --timeout=5m
+
+      - name: go build
+        run: go build ./...
+
+      # The store tests need PostgreSQL and are covered by the `store` job. Here
+      # they skip cleanly because MOOV_TEST_DATABASE_URL is unset.
+      - name: go test
+        run: go test -race -count=1 ./...
+
+  corpus:
+    name: MIME corpus integrity
+    runs-on: ubuntu-24.04
+    steps:
+      # fetch-depth: 0 is not needed, but the checkout MUST leave a real git
+      # work tree: corpuscheck asks git itself whether it considers the .eml
+      # files text, and that question has no answer outside a repository.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Guards two silent failure modes at once:
+      #   1. corpus and manifest drifting apart (a case with no entry, an entry
+      #      with no case);
+      #   2. git normalizing end-of-lines in byte-exact vectors, which would
+      #      quietly invalidate every line-ending test case.
+      # See tools/corpuscheck and testdata/mime-corpus/README.md.
+      - name: Validate corpus against manifest
+        run: go run ./tools/corpuscheck
+
+      - name: corpuscheck self-tests
+        run: go test -count=1 ./tools/corpuscheck/...
+
+  store:
+    name: Store migrations against PostgreSQL 17
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        # Same pinned image as docker-compose.dev.yml, so CI and a developer's
+        # machine are testing the same server.
+        image: postgres:17.4-bookworm
+        env:
+          POSTGRES_USER: moov
+          POSTGRES_PASSWORD: moov
+          POSTGRES_DB: moov
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U moov -d moov"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # A real database rather than a skip: the acceptance criterion for E1 is
+      # that the S3-mandated settings are ACTIVE, and a skipped test proves
+      # nothing about that.
+      - name: Migrations and mandatory PostgreSQL settings
+        env:
+          MOOV_TEST_DATABASE_URL: postgres://moov:moov@localhost:5432/moov?sslmode=disable
+        run: go test -race -count=1 -v ./internal/store/...
