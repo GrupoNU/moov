@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Two disagreeing Content-Type headers
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <hdr-dupct@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Type: text/html; charset=utf-8
+
+<b>Is this HTML or plain text?</b>

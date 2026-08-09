@@ -1,0 +1,329 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Alternating alternative/related x40
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <alt-related-40@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_alt001_="
+
+--=_alt001_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 1
+--=_alt001_=
+Content-Type: multipart/related; boundary="=_alt002_="
+
+--=_alt002_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 2
+--=_alt002_=
+Content-Type: multipart/alternative; boundary="=_alt003_="
+
+--=_alt003_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 3
+--=_alt003_=
+Content-Type: multipart/related; boundary="=_alt004_="
+
+--=_alt004_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 4
+--=_alt004_=
+Content-Type: multipart/alternative; boundary="=_alt005_="
+
+--=_alt005_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 5
+--=_alt005_=
+Content-Type: multipart/related; boundary="=_alt006_="
+
+--=_alt006_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 6
+--=_alt006_=
+Content-Type: multipart/alternative; boundary="=_alt007_="
+
+--=_alt007_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 7
+--=_alt007_=
+Content-Type: multipart/related; boundary="=_alt008_="
+
+--=_alt008_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 8
+--=_alt008_=
+Content-Type: multipart/alternative; boundary="=_alt009_="
+
+--=_alt009_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 9
+--=_alt009_=
+Content-Type: multipart/related; boundary="=_alt010_="
+
+--=_alt010_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 10
+--=_alt010_=
+Content-Type: multipart/alternative; boundary="=_alt011_="
+
+--=_alt011_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 11
+--=_alt011_=
+Content-Type: multipart/related; boundary="=_alt012_="
+
+--=_alt012_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 12
+--=_alt012_=
+Content-Type: multipart/alternative; boundary="=_alt013_="
+
+--=_alt013_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 13
+--=_alt013_=
+Content-Type: multipart/related; boundary="=_alt014_="
+
+--=_alt014_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 14
+--=_alt014_=
+Content-Type: multipart/alternative; boundary="=_alt015_="
+
+--=_alt015_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 15
+--=_alt015_=
+Content-Type: multipart/related; boundary="=_alt016_="
+
+--=_alt016_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 16
+--=_alt016_=
+Content-Type: multipart/alternative; boundary="=_alt017_="
+
+--=_alt017_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 17
+--=_alt017_=
+Content-Type: multipart/related; boundary="=_alt018_="
+
+--=_alt018_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 18
+--=_alt018_=
+Content-Type: multipart/alternative; boundary="=_alt019_="
+
+--=_alt019_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 19
+--=_alt019_=
+Content-Type: multipart/related; boundary="=_alt020_="
+
+--=_alt020_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 20
+--=_alt020_=
+Content-Type: multipart/alternative; boundary="=_alt021_="
+
+--=_alt021_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 21
+--=_alt021_=
+Content-Type: multipart/related; boundary="=_alt022_="
+
+--=_alt022_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 22
+--=_alt022_=
+Content-Type: multipart/alternative; boundary="=_alt023_="
+
+--=_alt023_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 23
+--=_alt023_=
+Content-Type: multipart/related; boundary="=_alt024_="
+
+--=_alt024_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 24
+--=_alt024_=
+Content-Type: multipart/alternative; boundary="=_alt025_="
+
+--=_alt025_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 25
+--=_alt025_=
+Content-Type: multipart/related; boundary="=_alt026_="
+
+--=_alt026_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 26
+--=_alt026_=
+Content-Type: multipart/alternative; boundary="=_alt027_="
+
+--=_alt027_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 27
+--=_alt027_=
+Content-Type: multipart/related; boundary="=_alt028_="
+
+--=_alt028_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 28
+--=_alt028_=
+Content-Type: multipart/alternative; boundary="=_alt029_="
+
+--=_alt029_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 29
+--=_alt029_=
+Content-Type: multipart/related; boundary="=_alt030_="
+
+--=_alt030_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 30
+--=_alt030_=
+Content-Type: multipart/alternative; boundary="=_alt031_="
+
+--=_alt031_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 31
+--=_alt031_=
+Content-Type: multipart/related; boundary="=_alt032_="
+
+--=_alt032_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 32
+--=_alt032_=
+Content-Type: multipart/alternative; boundary="=_alt033_="
+
+--=_alt033_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 33
+--=_alt033_=
+Content-Type: multipart/related; boundary="=_alt034_="
+
+--=_alt034_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 34
+--=_alt034_=
+Content-Type: multipart/alternative; boundary="=_alt035_="
+
+--=_alt035_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 35
+--=_alt035_=
+Content-Type: multipart/related; boundary="=_alt036_="
+
+--=_alt036_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 36
+--=_alt036_=
+Content-Type: multipart/alternative; boundary="=_alt037_="
+
+--=_alt037_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 37
+--=_alt037_=
+Content-Type: multipart/related; boundary="=_alt038_="
+
+--=_alt038_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 38
+--=_alt038_=
+Content-Type: multipart/alternative; boundary="=_alt039_="
+
+--=_alt039_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 39
+--=_alt039_=
+Content-Type: multipart/related; boundary="=_alt040_="
+
+--=_alt040_=
+Content-Type: text/plain; charset=us-ascii
+
+filler text at level 40
+--=_alt040_=
+Content-Type: text/plain; charset=us-ascii
+
+leaf
+--=_alt040_=--
+--=_alt039_=--
+--=_alt038_=--
+--=_alt037_=--
+--=_alt036_=--
+--=_alt035_=--
+--=_alt034_=--
+--=_alt033_=--
+--=_alt032_=--
+--=_alt031_=--
+--=_alt030_=--
+--=_alt029_=--
+--=_alt028_=--
+--=_alt027_=--
+--=_alt026_=--
+--=_alt025_=--
+--=_alt024_=--
+--=_alt023_=--
+--=_alt022_=--
+--=_alt021_=--
+--=_alt020_=--
+--=_alt019_=--
+--=_alt018_=--
+--=_alt017_=--
+--=_alt016_=--
+--=_alt015_=--
+--=_alt014_=--
+--=_alt013_=--
+--=_alt012_=--
+--=_alt011_=--
+--=_alt010_=--
+--=_alt009_=--
+--=_alt008_=--
+--=_alt007_=--
+--=_alt006_=--
+--=_alt005_=--
+--=_alt004_=--
+--=_alt003_=--
+--=_alt002_=--
+--=_alt001_=--

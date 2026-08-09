@@ -1,0 +1,13 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: RFC 2231 continuation with a gap
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-2231-gap@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/pdf
+Content-Disposition: attachment;
+ filename*2="-final.pdf";
+ filename*0="primero"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZQ==

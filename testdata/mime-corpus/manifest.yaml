@@ -1,0 +1,2765 @@
+# Moov Mail — pathological MIME corpus manifest
+#
+# This file is the machine-readable index of testdata/mime-corpus/. It exists
+# so the corpus is a SPECIFICATION, not just a pile of broken mail: every case
+# records what is wrong with it and what a correct parser is expected to do.
+#
+# Origin: Spike S4. Rationale in docs/research/04-sync-engine-prior-art.md
+# §4.2 and risk R4 — "a message that fails to parse must never break a folder's
+# sync". This corpus is how that rule gets tested, and it becomes the permanent
+# regression suite of the sync engine's MIME parser.
+#
+# ---------------------------------------------------------------------------
+# IMPORTANT: expectations here were written BEFORE the parsers were ever run.
+# ---------------------------------------------------------------------------
+# They encode what a correct parser SHOULD do, derived from the RFCs and from
+# what the sync engine needs — NOT a prediction of what go-message or enmime
+# actually do. Where observed behavior disagrees with an expectation, the
+# disagreement is a FINDING to be examined and documented in
+# spikes/s4-mime/RESULTS.md, not a reason to quietly edit the expectation.
+# If an expectation is ever changed, the reason belongs in the commit message.
+#
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+#   id           Stable identifier. Never reused, never renumbered.
+#   file         Path relative to testdata/mime-corpus/.
+#   category     Pathology family (matches the directory name, minus the
+#                numeric prefix).
+#   pathology    What is broken/extreme, and why it is a realistic hazard.
+#   provenance   handcrafted | generated | external
+#                  generated   — emitted by spikes/s4-mime/gen (see `generator`)
+#                  handcrafted — authored byte by byte
+#                  external    — third-party material; see `source` + `license`
+#   generator    Path of the generator, for provenance: generated.
+#   license      License of the FILE. Project-authored cases are
+#                AGPL-3.0-or-later, matching the repository.
+#   external     Present and true only for files NOT committed here, which
+#                fetch-external.sh downloads at test time.
+#   source       Upstream URL, for external cases.
+#   expect       ok | partial | failed  (definitions below)
+#   expect_notes Prose: what correct output looks like, and — importantly —
+#                where more than one behavior is legitimately defensible.
+#                Several cases are genuinely ambiguous; the notes say so
+#                rather than pretending to a certainty the RFCs do not give.
+#   subject      Expected subject AFTER RFC 2047 decoding. Omitted where the
+#                header block is malformed enough that extraction is itself
+#                the open question.
+#   parts        Expected count of LEAF parts (see convention below).
+#   attachments  Expected count of user-facing attachments (see convention).
+#
+# `expect` values:
+#   ok       A correct, robust parser extracts everything meaningful. No data
+#            loss. Note this includes most MALFORMED input: recovering content
+#            from broken mail is correct behavior, not leniency.
+#   partial  A correct parser recovers usable content but necessarily loses or
+#            guesses something — a truncated message, an undetectable charset
+#            lie, an ambiguous structure with two defensible readings.
+#   failed   No reasonable parser can extract meaningful structure. The engine
+#            marks parse_status='failed', keeps the raw blob, and moves on.
+#            Deliberately rare: exactly one case in this corpus qualifies.
+#
+# ---------------------------------------------------------------------------
+# Conventions settled for the whole corpus (arbitrated, not per-case)
+# ---------------------------------------------------------------------------
+# C1. LEAF PARTS. `parts` counts parts with no children. A message/rfc822 part
+#     counts as ONE leaf; the parts of the message it contains are NOT added to
+#     the enclosing message's total. Rationale: the embedded message is a
+#     distinct entity with its own structure, and flattening its parts into the
+#     parent makes the number depend on how deep the parser chose to descend —
+#     which is exactly the variable being measured. Two nesting cases
+#     (nest-005, nest-006) omit `parts` because their whole point is recursive
+#     message/rfc822 descent.
+#
+# C2. PARSE LAYER, NOT PRESENTATION LAYER. `attachments` counts parts a parser
+#     would reasonably report as attachments from the message bytes alone. Where
+#     a presentation rule would change the number — e.g. a Content-ID actually
+#     referenced by a cid: URL in sibling HTML should be rendered inline rather
+#     than listed as an attachment — the entry's expect_notes states both the
+#     parse-layer count and the presentation-layer count. Do not treat a
+#     mismatch on such a case as a parser defect; treat it as a reminder that
+#     the two layers are separate and the policy belongs to the engine.
+#
+# C3. CONFORMING-BUT-WRONG IS NOT A PARSER BUG. Several charset cases (cs-002,
+#     cs-008, cs-003) decode without any error into text that is definitely not
+#     what the sender meant, because the declared charset maps every byte. The
+#     expectation records that this output is CONFORMING. Improving on it
+#     requires heuristic detection, which is an engine decision (research 04
+#     §4.2 cascade), not a parser obligation. These cases are flagged in
+#     RESULTS.md as the silent-wrong-data class because they are the ones no
+#     amount of error handling will catch.
+#
+# C4. RESOURCE LIMITS ARE A FEATURE. The nesting bombs and the wide/large cases
+#     are structurally well formed, so `expect: ok` at the MIME level. An engine
+#     that rejects them via a depth cap, a part cap, or a size cap is behaving
+#     CORRECTLY — a bounded refusal is a legitimate outcome and the expect_notes
+#     say so. What is not acceptable is an unbounded parse: a panic, a hang, or
+#     memory growth that takes the process down.
+#
+# ---------------------------------------------------------------------------
+# Safety
+# ---------------------------------------------------------------------------
+# No real personal data. Every address is under example.com / example.org
+# (reserved by RFC 2606) and every name is invented. Binary payloads are
+# synthetic stubs with correct magic bytes, never real documents. Nothing here
+# is a secret, and nothing here should ever be replaced with a real message
+# without sanitizing it first.
+#
+# Byte fidelity: .eml files are byte-exact vectors. .gitattributes marks *.eml
+# as -text so git performs NO end-of-line conversion; .gitignore carries an
+# explicit negation for this directory because the repository otherwise ignores
+# *.eml. Both are load-bearing — without either one the corpus silently rots.
+#
+# Regenerate with:  cd spikes/s4-mime/gen && go run . -out ../../../testdata/mime-corpus
+
+cases:
+  - id: nest-001
+    file: 01-nesting/001-nested-multipart-10.eml
+    category: nesting
+    pathology: >
+      A legal but pathologically deep multipart/mixed tree, ten levels of
+      nesting wrapping a single text/plain leaf, which is a realistic hazard
+      because a sync engine that recurses without a depth budget turns a
+      structurally valid message into unbounded stack and allocation growth.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Structurally this message is entirely well formed, so a correct parser
+      descends all ten levels and yields exactly one text/plain leaf whose body
+      is "bottom of the well". Ten is shallow enough that no defensible depth
+      cap should trigger here; a parser that refuses this input is too strict.
+      The engine should record the nesting depth so that deeper siblings in this
+      category can be compared against the same limit.
+    subject: "Nested multipart x10"
+    parts: 1
+    attachments: 0
+
+  - id: nest-002
+    file: 01-nesting/002-nested-multipart-50.eml
+    category: nesting
+    pathology: >
+      The same pure-depth multipart/mixed nest taken to fifty levels, which is
+      past anything a legitimate MUA emits and is therefore the first point at
+      which a sync engine must decide between recursing and refusing.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      At the MIME level this is valid and a correct parser extracts the single
+      text/plain leaf with no data loss. It is equally acceptable engine
+      behavior to apply a configured depth cap and mark the message
+      parse_status='failed' (or 'partial', surfacing the raw blob) rather than
+      recurse: a depth cap is a feature, not a parser defect. What is NOT
+      acceptable is unbounded recursion, a stack overflow, or a silent hang.
+    subject: "Nested multipart x50"
+    parts: 1
+    attachments: 0
+
+  - id: nest-003
+    file: 01-nesting/003-nested-multipart-100.eml
+    category: nesting
+    pathology: >
+      One hundred levels of nested multipart/mixed around a single leaf, a
+      shape that only appears in deliberately hostile mail and that exists to
+      exhaust a recursive descent parser's stack.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      MIME-correct, so a parser with an iterative or generously bounded
+      recursive walker returns the one text/plain leaf intact. A depth limit
+      that rejects at this level is legitimate and arguably desirable for a
+      production sync engine; if the limit fires, the engine must keep the raw
+      blob and mark the message rather than store a truncated tree silently.
+      Both outcomes are defensible — what must be measured is that the parse
+      terminates in bounded time and memory.
+    subject: "Nested multipart x100"
+    parts: 1
+    attachments: 0
+
+  - id: nest-004
+    file: 01-nesting/004-nested-multipart-500.eml
+    category: nesting
+    pathology: >
+      Five hundred levels of nested multipart/mixed, the extreme end of the
+      depth bomb, which is the case most likely to crash a naive recursive
+      parser outright and therefore the one that proves a depth cap exists.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Still structurally valid MIME with exactly one meaningful leaf, so a
+      resource-unconstrained correct parser produces that leaf. In practice a
+      production sync engine SHOULD reject this at a depth cap; treating the
+      depth-cap rejection as the expected outcome for this file is acceptable
+      and probably preferable. The failure mode this case must rule out is a
+      process crash, an OOM, or an unbounded parse time.
+    subject: "Nested multipart x500"
+    parts: 1
+    attachments: 0
+
+  - id: nest-005
+    file: 01-nesting/005-rfc822-recursive-5.eml
+    category: nesting
+    pathology: >
+      Five levels of message/rfc822 attachments, each a complete message
+      wrapping the next, which is a realistic hazard because forwarded-chain
+      mail genuinely takes this shape and a parser that eagerly descends into
+      embedded messages multiplies its work and its header extraction at every
+      level.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser walks five nested message/rfc822 parts and finds one
+      innermost text/plain leaf with the body "the innermost payload"; the
+      outermost message's own headers (Subject "Wrapper level 1") are the ones
+      that belong to the stored message. Two behaviors are defensible for the
+      embedded messages, and both are correct as long as the choice is
+      consistent: treating each message/rfc822 as an attachment to be listed
+      (five attachments) without indexing its interior, or descending fully and
+      indexing the innermost text for search. Depth of five is normal enough
+      that neither a rejection nor a truncated tree is acceptable here.
+    subject: "Wrapper level 1"
+
+  - id: nest-006
+    file: 01-nesting/006-rfc822-recursive-20.eml
+    category: nesting
+    pathology: >
+      Twenty levels of recursively wrapped message/rfc822 attachments, past any
+      plausible real forward chain, which stresses the multiplicative cost of
+      eager descent into embedded messages rather than raw structural depth.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      MIME-valid, so a correct parser can reach the innermost text/plain leaf.
+      A separate, lower cap on message/rfc822 descent depth (independent of the
+      multipart depth cap) is a legitimate design: stop descending after N
+      levels, list the remaining wrapper as an opaque attachment, and mark the
+      message partial. The outermost Subject must always be extracted correctly
+      regardless of how deep the engine chooses to go.
+    subject: "Wrapper level 1"
+
+  - id: nest-007
+    file: 01-nesting/007-thousand-sibling-parts.eml
+    category: nesting
+    pathology: >
+      A flat multipart/mixed with one thousand sibling text/plain parts, wide
+      rather than deep, which is a realistic hazard for per-part allocation,
+      per-part database rows, and any O(n^2) sibling handling in the sync
+      engine.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Perfectly legal MIME. A correct parser enumerates exactly 1000 leaf parts,
+      each text/plain with an inline Content-Disposition and filename
+      part-0000.txt through part-0999.txt, and body "part number N". A
+      per-message part-count cap that truncates the list and marks the message
+      partial is acceptable engine policy; if applied, the cap must be recorded
+      and the raw blob retained. Storing 1000 rows per message is the real cost
+      this case is meant to expose.
+    subject: "One thousand sibling parts"
+    parts: 1000
+    attachments: 0
+
+  - id: nest-008
+    file: 01-nesting/008-alternating-alt-related-40.eml
+    category: nesting
+    pathology: >
+      Forty levels alternating multipart/alternative and multipart/related,
+      each level carrying its own real text/plain filler part, which is closer
+      to the shape of genuinely broken real-world mail than a pure depth bomb
+      because meaningful work is done at every level rather than only at the
+      leaf.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Structurally valid. A correct parser yields 41 text/plain leaves: one
+      filler leaf per level ("filler text at level N", N from 1 to 40) plus the
+      innermost "leaf". The interesting question this case really poses is body
+      selection, not enumeration - alternative-selection logic must not loop or
+      blow up choosing among 40 nested alternatives, and a defensible engine
+      picks the outermost alternative's chosen branch and descends from there.
+      A depth cap firing at this level is acceptable engine behavior.
+    subject: "Alternating alternative/related x40"
+    parts: 41
+    attachments: 0
+
+  - id: bnd-001
+    file: 02-boundaries/001-unterminated-boundary.eml
+    category: boundaries
+    pathology: >
+      A multipart whose opening delimiter is present but whose closing
+      "--boundary--" never arrives before EOF, which is extremely common in
+      real mail truncated by an MTA, a disk-full condition, or a partial IMAP
+      fetch.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A robust parser must treat EOF as an implicit close delimiter and recover
+      the single text/plain part with body "this part never gets a closing
+      delimiter". Content is fully recovered here, but the message is marked
+      partial rather than ok because the parser is guessing at a terminator the
+      sender never sent, and because a truncated message may be missing parts
+      the engine can never know about. Returning zero parts, or surfacing the
+      whole raw body as text, is incorrect.
+    subject: "Unterminated boundary"
+    parts: 1
+    attachments: 0
+
+  - id: bnd-002
+    file: 02-boundaries/002-duplicate-close-delimiter.eml
+    category: boundaries
+    pathology: >
+      The closing delimiter appears twice, with text after the second one,
+      which is a realistic artifact of message rewriting by gateways and tests
+      whether the parser correctly treats everything after the first terminator
+      as epilogue.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Per RFC 2046 the first close delimiter ends the multipart; everything
+      after it, including the second "--=_d_=--" line and the "trailing
+      epilogue after a second terminator" text, is epilogue and MUST be
+      discarded. A correct parser produces exactly one text/plain part with
+      body "first and only real part". Surfacing the epilogue text as a second
+      part or appending it to the body is a defect - it leaks non-content into
+      the reading pane and into the search index.
+    subject: "Duplicated close delimiter"
+    parts: 1
+    attachments: 0
+
+  - id: bnd-003
+    file: 02-boundaries/003-child-reuses-parent-boundary.eml
+    category: boundaries
+    pathology: >
+      A nested multipart/alternative declares the same boundary string as its
+      multipart/mixed parent, which RFC 2046 forbids and which makes the tree
+      genuinely ambiguous because the parent's delimiter also terminates the
+      child; real parsers disagree wildly on the resulting structure.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      There is no single correct tree here, so any parser necessarily guesses.
+      The mandatory outcome is that the text "inner plain" is recovered and
+      reachable as body content, and that the parse terminates without looping.
+      Two defensible readings: (a) the innermost delimiter closes the child, so
+      the child is a multipart/alternative containing one text/plain and the
+      parent contains that child; (b) the shared delimiter is consumed by the
+      parent, so the child multipart/alternative appears empty and the
+      text/plain becomes a sibling of it under the parent. Either is acceptable;
+      marking the message partial and preserving the raw blob is required
+      because the structure the sender intended cannot be known. Losing "inner
+      plain" entirely is a defect.
+    subject: "Child reuses parent boundary"
+
+  - id: bnd-004
+    file: 02-boundaries/004-boundary-trailing-garbage.eml
+    category: boundaries
+    pathology: >
+      The opening delimiter line carries trailing non-whitespace bytes
+      ("--=_g_= XXXX"), which RFC 2046 says disqualifies it as a delimiter,
+      meaning a strict reading turns the entire intended part into preamble and
+      silently drops the user's message text.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Strict RFC 2046 conformance yields a multipart with zero parts and the
+      text "is this a part or is it preamble?" living in the preamble, which is
+      discarded - a silent data loss that no user would accept. The preferred
+      robust behavior is to accept the line as a delimiter after stripping the
+      trailing garbage and recover one text/plain part. Both readings are
+      defensible on standards grounds, but an engine that produces zero
+      recoverable body text MUST mark the message partial and retain the raw
+      blob so nothing is lost; it must never present an apparently-empty
+      message as a clean parse.
+    subject: "Boundary with trailing garbage"
+
+  - id: bnd-005
+    file: 02-boundaries/005-boundary-never-appears.eml
+    category: boundaries
+    pathology: >
+      A Content-Type declares multipart/mixed with a boundary that appears
+      nowhere in the body, so a strict reading yields a multipart with zero
+      parts and no displayable content at all - a realistic result of a
+      header-rewriting gateway or a truncated body.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Strictly the whole body is preamble and the message has zero parts. A
+      robust parser should not render an empty message: the defensible recovery
+      is to treat the undelimited body as a single implicit text/plain part so
+      the two lines of text are readable and indexable. Either behavior is
+      acceptable provided the message is marked partial and the raw blob is
+      retained; presenting an empty body with parse_status='ok' is the one
+      outcome that is wrong.
+    subject: "Boundary declared but absent"
+
+  - id: bnd-006
+    file: 02-boundaries/006-preamble-and-epilogue.eml
+    category: boundaries
+    pathology: >
+      A well-formed multipart carrying both a preamble before the first
+      delimiter and an epilogue after the last, which is entirely legal and
+      ubiquitous, and which catches parsers that leak "This is a multi-part
+      message in MIME format." into the user's reading pane and the search
+      index.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser produces exactly one text/plain part with body "the
+      actual body". Both PREAMBLE-MARKER-SHOULD-NOT-APPEAR-AS-BODY and
+      EPILOGUE-MARKER-SHOULD-NOT-APPEAR-AS-BODY must be absent from the
+      extracted body, from the list-view snippet, and from the full-text index.
+      Those two marker strings make this case directly assertable: their
+      presence anywhere in the parsed output is a failure.
+    subject: "Preamble and epilogue"
+    parts: 1
+    attachments: 0
+
+  - id: bnd-007
+    file: 02-boundaries/007-unquoted-boundary-with-space.eml
+    category: boundaries
+    pathology: >
+      The boundary parameter contains a space but is written unquoted
+      (boundary==_a b_=), so a conformant RFC 2045 parameter parser stops at
+      the space and derives the boundary "=_a" - which then matches nothing,
+      silently emptying the message.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Strict parsing gives boundary "=_a", no delimiter matches, and the body
+      becomes preamble: zero parts and no readable content. The pragmatic
+      recovery, which several real MUAs implement, is to take the rest of the
+      parameter value up to end-of-line as the boundary, yielding one
+      text/plain part with body "part under an unquoted boundary with a space".
+      The lenient reading is preferable because it recovers the user's text;
+      the strict reading is defensible but must then mark the message partial
+      and keep the raw blob. Note the value also begins with "=" immediately
+      after "boundary=", so the parameter parser must not choke on the double
+      equals.
+    subject: "Unquoted boundary containing a space"
+
+  - id: bnd-008
+    file: 02-boundaries/008-boundary-prefix-collision.eml
+    category: boundaries
+    pathology: >
+      The outer boundary "=_x_=" is a strict prefix of the inner boundary
+      "=_x_=inner", so a splitter that matches delimiters by prefix rather than
+      by whole line mis-slices the message and shreds the inner multipart.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      This message is legal MIME: RFC 2046 requires a delimiter line to consist
+      of the boundary followed only by optional linear whitespace (or "--" for
+      the close), so "--=_x_=inner" is NOT an occurrence of the outer boundary.
+      A correct parser produces an outer multipart/mixed containing one inner
+      multipart/mixed containing one text/plain leaf with body "inner part".
+      The characteristic defect this case detects is a prefix-matching splitter
+      that treats "--=_x_=inner" as an outer delimiter and loses the inner
+      part's headers or body.
+    subject: "Boundary is a prefix of the inner boundary"
+    parts: 1
+    attachments: 0
+
+  - id: bnd-009
+    file: 02-boundaries/009-close-delimiter-missing-hyphens.eml
+    category: boundaries
+    pathology: >
+      The close delimiter is written "=_h_=--" without its mandatory leading
+      two hyphens, so no valid terminator exists and the multipart runs to EOF
+      - the same recovery path as a truncated message but triggered by a
+      generator bug rather than truncation.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      "=_h_=--" is not a delimiter line, so a correct parser treats it as
+      ordinary body text of the open part and closes that part at EOF. Expected
+      output is one text/plain part whose body is "body" followed by the
+      literal line "=_h_=--". A parser that leniently accepts the hyphen-less
+      line as a terminator and drops it is also defensible and arguably nicer
+      for the user; either way exactly one part must be recovered and no text
+      silently vanish. Partial rather than ok because the terminator is
+      inferred.
+    subject: "Close delimiter without leading hyphens"
+    parts: 1
+    attachments: 0
+
+  - id: bnd-010
+    file: 02-boundaries/010-empty-boundary-parameter.eml
+    category: boundaries
+    pathology: >
+      The boundary parameter is the empty string, so the delimiter degenerates
+      to the two-character line "--" and the terminator to "----", meaning any
+      signature separator or ASCII rule in the body becomes a structural
+      delimiter - a realistic false-positive engine for real mail.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      RFC 2046 requires a boundary of 1 to 70 characters, so an empty boundary
+      is illegal and two readings are defensible. Lenient: accept it, treat "--"
+      as the delimiter and "----" as the terminator, and recover one text/plain
+      part with body "body under an empty boundary". Strict: reject the
+      boundary parameter as invalid, treat the whole body as an undelimited
+      single part, and surface the raw text. The lenient reading recovers more
+      and is preferred; the strict one must mark the message partial. What the
+      engine must not do is accept an empty boundary and then apply the same
+      lenient "--" matching to unrelated messages.
+    subject: "Empty boundary parameter"
+
+  - id: hdr-001
+    file: 03-headers/001-single-20kb-header.eml
+    category: headers
+    pathology: >
+      A single unfolded 20 KB header line, twenty times the RFC 5322 998-octet
+      line limit, which real mail produces constantly through long References
+      chains, DKIM signatures, and spam-scanner verdicts, and which truncates
+      or errors out any parser with a fixed line buffer.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser reads the full X-Huge-Header value (20480 'A'
+      characters) without truncation, and correctly parses every header after
+      it, including the Content-Type, plus the body "body after a 20KB header".
+      A per-header size cap that truncates the oversized value while keeping
+      all other headers and the body intact is acceptable engine policy and
+      should be recorded; silently dropping the header, corrupting the headers
+      that follow it, or failing the whole message are all defects.
+    subject: "Single 20KB header line"
+    parts: 1
+    attachments: 0
+
+  - id: hdr-002
+    file: 03-headers/002-ten-thousand-headers.eml
+    category: headers
+    pathology: >
+      Ten thousand short X-Trace headers ahead of the Content-Type, which
+      exposes memory pressure and any O(n^2) header lookup or insertion in the
+      parser, a realistic shape for mail that has traversed long scanning
+      chains.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Every header is individually well formed, so a correct parser reads all
+      10000 X-Trace-NNNNN headers plus the six standard headers, honours the
+      trailing Content-Type, and returns the body "body after 10000 headers".
+      A header-count cap that stops storing beyond N headers while still
+      parsing the message body correctly is acceptable engine behavior, as is
+      persisting only a whitelist of headers - the sync engine has no reason to
+      store 10000 trace hops. The parse must complete in time linear in the
+      header count.
+    subject: "Ten thousand headers"
+    parts: 1
+    attachments: 0
+
+  - id: hdr-003
+    file: 03-headers/003-raw-8bit-header-bytes.eml
+    category: headers
+    pathology: >
+      Raw 8-bit bytes in header values with no RFC 2047 encoding - the Subject
+      holds UTF-8 "Anoranza senor" and X-Latin1-Subject the same text in
+      ISO-8859-1 - which is illegal but ubiquitous because many MUAs simply
+      emit the local charset, and which forces the parser to guess an encoding
+      it was never told.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser must not reject the message and must not mangle the
+      header into replacement characters wholesale. The expected behavior is to
+      try UTF-8 first and fall back to a Latin-1-family charset when the bytes
+      are not valid UTF-8: the Subject bytes are valid UTF-8 and MUST decode to
+      the Spanish text with n-tilde intact, while X-Latin1-Subject is invalid
+      UTF-8 and should fall back to ISO-8859-1 (or CP1252) to produce the same
+      text. Using the body part's charset as the fallback hint is also
+      defensible. The subject key is omitted here deliberately: the decoded
+      string contains non-ASCII that must be compared byte-exactly by the test
+      harness rather than transcribed into this manifest.
+    parts: 1
+    attachments: 0
+
+  - id: hdr-004
+    file: 03-headers/004-folded-mixed-tabs-spaces.eml
+    category: headers
+    pathology: >
+      Headers folded across multiple lines with inconsistent leading
+      whitespace - tabs, multiple spaces, and mixed tab-space-tab runs - which
+      is legal RFC 5322 folding but which trips parsers that only recognise a
+      single leading space, causing address lists and subjects to be silently
+      truncated at the first fold.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      All folds here are valid: any line beginning with SP or HTAB continues
+      the previous header. A correct parser unfolds the To header into four
+      recipients (Grace Hopper, Alan Turing, Katherine Johnson, plus the name
+      on the first line) and unfolds the Subject across its four lines. Per RFC
+      5322 unfolding removes the CRLF and keeps the whitespace, so the
+      canonical Subject is "folded\tsubject   across\t\tfour lines"; collapsing
+      each whitespace run to a single space when displaying is a defensible
+      normalization. The subject key is omitted because the exact whitespace
+      the harness should assert depends on that normalization choice. A parser
+      that reads Subject as just "folded" has the defect this case targets.
+    parts: 1
+    attachments: 0
+
+  - id: hdr-005
+    file: 03-headers/005-header-missing-colon.eml
+    category: headers
+    pathology: >
+      A line with no colon ("ThisLineHasNoColonAtAll") sits in the middle of an
+      otherwise valid header block, which is neither a header nor a fold
+      continuation, and which can make a strict parser abandon the header block
+      at that point and lose the Content-Type that follows.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The robust and preferred behavior is to skip the malformed line and
+      continue parsing headers, so Content-Type is honoured and the body is
+      "does the parser drop the bad line, or abandon the header block?". A
+      defensible stricter reading treats the colon-less line as the start of
+      the body, which makes the remaining Content-Type line body text and gives
+      the message a default text/plain type - still readable, but with the
+      Content-Type lost. Marked partial because the bad line itself is
+      discarded or reinterpreted either way. Losing the Subject or the From, or
+      failing the message outright, is not acceptable.
+    subject: "Header line without a colon"
+
+  - id: hdr-006
+    file: 03-headers/006-duplicate-contenttype-disagree.eml
+    category: headers
+    pathology: >
+      Two Content-Type headers that disagree, text/plain then text/html, where
+      RFC 5322 permits at most one; the choice is a genuine security question
+      because rendering HTML that the sender labelled text/plain (or vice
+      versa) is a content-sniffing confusion vector.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The message is ambiguous by construction, so a correct parser must pick
+      deterministically and document the choice. The safer and recommended rule
+      is first-header-wins, yielding text/plain and displaying
+      "<b>Is this HTML or plain text?</b>" as literal escaped text rather than
+      as markup. Last-header-wins is what several MUAs do and is defensible,
+      but then the body MUST go through the full HTML sanitization pipeline.
+      The unacceptable outcomes are choosing non-deterministically, or choosing
+      text/plain for the type record while still rendering the body as HTML.
+    subject: "Two disagreeing Content-Type headers"
+    parts: 1
+    attachments: 0
+
+  - id: hdr-007
+    file: 03-headers/007-eof-in-headers.eml
+    category: headers
+    pathology: >
+      The file ends mid-header, in the middle of the token "Content-Type:
+      text/pla", with no blank line and no body, which is exactly what a
+      connection drop or a disk-full write during message delivery produces.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct parser treats EOF as terminating the header block and recovers
+      the four complete headers - From, To, Subject, Date - plus a final
+      truncated Content-Type whose value is the fragment "text/pla". The body
+      is empty. Two defensible treatments of the truncated header: keep it with
+      its partial value, or discard it as unparseable; discarding is safer
+      because "text/pla" is not a valid media type and must not be used for
+      dispatch, so the part should fall back to text/plain. The message must be
+      marked partial and the raw blob retained, since the real message
+      continues past this byte. Returning zero headers is a defect - Subject
+      and From are fully present and must be indexed.
+    subject: "truncated in the header block"
+    parts: 0
+    attachments: 0
+
+  - id: hdr-008
+    file: 03-headers/008-whitespace-only-separator.eml
+    category: headers
+    pathology: >
+      The header block is terminated by a line containing a single space rather
+      than a truly empty line, which strictly is a fold continuation meaning
+      the headers never end, but which many MUAs emit and treat as the
+      separator - so the body text either becomes part of the Content-Type
+      value or becomes the body, with no way to tell which the sender meant.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Two defensible readings, both of which must recover the text. Strict RFC
+      5322: the " " line folds into Content-Type, and so does the following
+      line, giving a mangled Content-Type value and a message with no body at
+      all - a bad user outcome. Lenient and preferred: treat a whitespace-only
+      line as the header/body separator, giving Content-Type
+      "text/plain; charset=us-ascii" and body "is this line body, or a
+      continuation of Content-Type?". The lenient reading is recommended
+      because the strict one loses the user's only text. Either way the message
+      is partial, since the parser is resolving an ambiguity the sender created.
+    subject: "Whitespace-only line as separator"
+
+  - id: hdr-009
+    file: 03-headers/009-leading-continuation-line.eml
+    category: headers
+    pathology: >
+      The very first line of the message is a fold continuation with no
+      preceding header to continue, a classic artifact of naive header
+      stripping or of a prepended banner, which can make a parser treat the
+      entire message as bodiless or misattribute the orphan text to the From
+      header.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct parser discards the orphaned continuation line (there is no
+      header for it to belong to) and parses the remaining block normally,
+      yielding From, To, Subject "Leading continuation line", the Content-Type,
+      and body "body". Storing the orphan line as a synthetic header, or
+      ignoring it entirely, are both acceptable; attaching its text to the
+      following From header is a defect, as is bailing out of header parsing on
+      the first line and treating the whole message as body. Partial because
+      one line of input is necessarily discarded or guessed at.
+    subject: "Leading continuation line"
+    parts: 1
+    attachments: 0
+
+  - id: hdr-010
+    file: 03-headers/010-malformed-header-names.eml
+    category: headers
+    pathology: >
+      Three malformed header names in one block - "Subject : x" with a space
+      before the colon (illegal, since RFC 5322 field names may not contain
+      whitespace), ": empty header name" with no name at all, and
+      "X-Empty-Value:" with an empty value - which together decide whether the
+      message's Subject is extractable at all.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      "X-Empty-Value:" is legal and must parse to an empty string, not be
+      dropped. The other two are illegal and a correct parser has two
+      defensible options for each: skip the line, or repair it by trimming
+      whitespace before the colon. The preferred behavior is to trim and accept
+      "Subject : space before colon" as Subject "space before colon", because
+      dropping it loses the only Subject the message has, and to discard the
+      nameless ": empty header name" line since there is no key to file it
+      under. Under the strict reading the message has no Subject at all. The
+      subject key is omitted here precisely because extractability is the thing
+      under arbitration. From, Date, Message-ID, MIME-Version, Content-Type and
+      the body "body" must all survive regardless of which reading is chosen.
+
+  - id: hdr-011
+    file: 03-headers/011-no-headers-at-all.eml
+    category: headers
+    pathology: >
+      A message that begins with the blank line and has no headers whatsoever -
+      no From, no Date, no Message-ID - which occurs with locally injected mail
+      and with badly reconstructed messages, and which breaks any code path
+      that assumes a Message-ID or a sender exists.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      This parses cleanly under RFC 5322's grammar for a message with an empty
+      header section: zero headers, and body "just a body, no headers, not even
+      From". A correct parser returns an empty header set and the body intact,
+      with the media type defaulting to text/plain; charset=us-ascii per RFC
+      2045. The real requirement this case enforces is downstream: the sync
+      engine must synthesize a stable identity (Message-ID, sender, date) or
+      tolerate their absence without crashing or writing NULLs into NOT NULL
+      columns. Rejecting the message is not acceptable - it is structurally
+      valid.
+    parts: 1
+    attachments: 0
+
+  - id: le-001
+    file: 08-line-endings/001-lf-only.eml
+    category: line-endings
+    pathology: >
+      The entire message uses bare LF line endings rather than CRLF, which is
+      the normal on-disk form of virtually every Unix mailbox and Maildir file,
+      so a parser that keys strictly on CRLF sees one enormous line and finds
+      no headers and no boundaries at all.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      This MUST parse. LF-only is not an edge case for a Dovecot-backed sync
+      engine, it is the common case on disk, and a CRLF-strict parser is simply
+      broken for this input. A correct parser normalizes bare LF to a line
+      break and yields a multipart/mixed with exactly two text/plain leaves,
+      bodies "first part body" and "second part body". Note the file has no
+      trailing newline after the final "--=_le_=--" delimiter, which must not
+      prevent recognition of the terminator. Anything other than a clean
+      two-part parse here is a defect, not a defensible strictness choice.
+    subject: "Line ending variants"
+    parts: 2
+    attachments: 0
+
+  - id: le-002
+    file: 08-line-endings/002-cr-only.eml
+    category: line-endings
+    pathology: >
+      The entire message uses bare CR line endings (classic Mac OS), so to any
+      CRLF- or LF-oriented parser the file is a single 401-byte line with no
+      header/body separator and no delimiter lines anywhere - genuinely hostile
+      input rather than a common encoding accident.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Unlike LF-only, CR-only is not something a mail parser is obliged to
+      support, and treating the message as one unparseable line is defensible.
+      Two acceptable outcomes: (a) recognize that the buffer contains CR but no
+      LF and normalize CR to line breaks, producing the same clean two-part
+      parse as le-001 - the most user-friendly result; (b) fail to find a
+      header block, mark the message partial or failed, and retain the raw blob
+      so nothing is lost. What is NOT acceptable is producing a message whose
+      single "Subject" or "body" is the entire 401-byte blob presented as
+      though it parsed cleanly, or feeding that blob into the search index as
+      body text. A CR-only heuristic must be narrowly scoped - applied only
+      when the buffer contains CR and no LF at all - so it never corrupts the
+      bare-CR-in-body case (le-010).
+    parts: 2
+    attachments: 0
+
+  - id: le-003
+    file: 08-line-endings/003-mixed-crlf-lf.eml
+    category: line-endings
+    pathology: >
+      Line endings alternate between CRLF and bare LF from one line to the
+      next, including within the header block and on delimiter lines, which
+      real mail produces when different agents rewrite different parts of a
+      message and which defeats any parser that decides the message's line
+      ending once and applies it globally.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser treats CRLF and bare LF interchangeably as line
+      terminators on a per-line basis rather than sniffing a single convention
+      for the whole message. Expected output is a multipart/mixed with two
+      text/plain leaves, bodies "first part body" and "second part body", and
+      all six standard headers intact. Note that the header/body separator here
+      is an LF-terminated empty line following a CRLF-terminated line, so the
+      separator detection must accept the mixed sequence; a parser looking
+      strictly for CRLFCRLF finds no header block at all.
+    subject: "Line ending variants"
+    parts: 2
+    attachments: 0
+
+  - id: le-004
+    file: 08-line-endings/004-crlf-headers-lf-body.eml
+    category: line-endings
+    pathology: >
+      Headers are CRLF-terminated while the entire body uses bare LF, which is
+      the single most common real-world line-ending mix because an MTA
+      normalizes the headers it rewrites while the original body passes through
+      untouched.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      This MUST parse cleanly - it is ordinary production mail, not a
+      pathology. The header block ends at a proper CRLFCRLF, and the body's
+      LF-terminated delimiter lines must still be recognized as delimiters.
+      Expected output is two text/plain leaves with bodies "first part body"
+      and "second part body". A parser that matches delimiters only when
+      preceded and followed by CRLF finds zero parts here and loses the entire
+      message body; that is the defect this case exists to catch. The file also
+      ends without a trailing newline after the final delimiter.
+    subject: "Line ending variants"
+    parts: 2
+    attachments: 0
+
+  - id: le-005
+    file: 08-line-endings/005-lf-delimiters-crlf-body.eml
+    category: line-endings
+    pathology: >
+      The boundary delimiter lines alone are LF-terminated while every other
+      line, including the part headers and part bodies, uses CRLF - the
+      inverse mix, which isolates delimiter matching from body handling and
+      catches a parser whose boundary regex hardcodes CRLF.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser recognizes a delimiter line regardless of whether it
+      ends in CRLF or LF, producing two text/plain leaves with bodies "first
+      part body" and "second part body". A CRLF-strict delimiter matcher finds
+      no parts and yields an empty multipart - full body loss on a message
+      whose text is otherwise perfectly well formed. Note that the CRLF
+      preceding each LF-terminated delimiter belongs to the previous part's
+      body and must be stripped as part of the delimiter, not retained as
+      trailing content.
+    subject: "Line ending variants"
+    parts: 2
+    attachments: 0
+
+  - id: le-006
+    file: 08-line-endings/006-b64-misaligned-crlf.eml
+    category: line-endings
+    pathology: >
+      A base64 stream with CRLF inserted every seven characters, deliberately
+      not aligned to base64's four-character groups, which RFC 2045 explicitly
+      permits since all whitespace in the encoded stream is ignored, but which
+      breaks naive chunked decoders that assume each line is independently
+      decodable.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Fully legal input. A correct decoder strips all whitespace from the
+      encoded stream before decoding, recovering the plaintext exactly - the
+      string "misaligned base64 stream. " repeated twenty times, 520 bytes. The
+      characteristic defect is a decoder that calls base64 decode per line and
+      either errors on non-multiple-of-four input or silently drops the
+      remainder of each line, corrupting the output. Because the plaintext is a
+      known repeating string, the harness can assert byte equality rather than
+      merely "did not error".
+    subject: "base64 with CRLF at misaligned positions"
+    parts: 1
+    attachments: 0
+
+  - id: le-007
+    file: 08-line-endings/007-nul-bytes-in-headers.eml
+    category: line-endings
+    pathology: >
+      NUL bytes appear both inside a header value (the Subject) and inside a
+      header name ("X-Nul-Header\0:"), which is illegal in RFC 5322 and which
+      is a realistic hazard because NUL cannot be stored in a PostgreSQL text
+      column and because a C-string-based downstream consumer will silently
+      truncate at the first NUL.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct parser must not truncate at the NUL and must not reject the
+      message. The Subject value should be read as the full byte sequence
+      "NUL\0byte\0in\0subject", with the NULs then stripped or replaced (with
+      U+FFFD) before the value reaches PostgreSQL - stripping yields
+      "NULbyteinsubject". The malformed field name X-Nul-Header\0 may be
+      dropped or sanitized; either is acceptable. Marked partial because bytes
+      are necessarily removed or substituted somewhere in the pipeline. The
+      subject key is omitted because the stored value depends on whether the
+      engine strips or substitutes. The remaining headers and the body "body"
+      must be unaffected.
+
+  - id: le-008
+    file: 08-line-endings/008-nul-bytes-in-body.eml
+    category: line-endings
+    pathology: >
+      NUL bytes inside a text/plain UTF-8 body ("before\0after\0\0end"), which
+      is as much a storage test as a parser test: PostgreSQL text columns
+      cannot hold U+0000, so the sync engine must strip or substitute them
+      before insert or the write fails at runtime on real mail.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The MIME structure is trivially valid and a correct parser returns one
+      text/plain part whose raw bytes include the three NULs. The required
+      behavior is at the storage boundary: NULs must be removed or replaced
+      before the body text is written to a Postgres text column or fed to the
+      FTS indexer, giving "beforeafterend" (strip) or a U+FFFD-substituted
+      equivalent. Either is acceptable if consistent. Marked partial because
+      the stored text necessarily differs from the wire bytes; the raw blob,
+      which is stored as bytea, must retain the NULs so the original message
+      can always be reproduced byte-exactly.
+    subject: "NUL bytes in a text body"
+    parts: 1
+    attachments: 0
+
+  - id: le-009
+    file: 08-line-endings/009-no-trailing-newline.eml
+    category: line-endings
+    pathology: >
+      An otherwise perfectly well-formed CRLF message whose final close
+      delimiter "--=_le_=--" is not followed by any line ending, hitting EOF
+      mid-line, which is common in files produced by naive concatenation and
+      which breaks parsers that only recognize a delimiter when it is
+      terminated by a line break.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      EOF is a valid line terminator for the purposes of delimiter recognition,
+      so a correct parser recognizes the final close delimiter and produces two
+      text/plain leaves with bodies "first part body" and "second part body" -
+      identical output to the CRLF baseline. A parser that misses the
+      terminator still recovers both parts by closing the last one at EOF, so
+      the observable result should be the same; the defect to watch for is the
+      literal text "--=_le_=--" leaking into the second part's body.
+    subject: "Line ending variants"
+    parts: 2
+    attachments: 0
+
+  - id: le-010
+    file: 08-line-endings/010-bare-cr-in-body.eml
+    category: line-endings
+    pathology: >
+      A lone CR sits in the middle of a body line, not followed by LF, inside
+      an otherwise CRLF-clean message, which is realistic in text pasted from
+      mixed-platform sources and which is dangerous because a parser that
+      normalizes all CR to line breaks silently splits one logical line into
+      two and shifts every downstream offset.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The message is structurally valid: one text/plain part whose body is
+      "line with a bare\rcarriage return in the middle" followed by "normal
+      line". The correct behavior is to treat only CRLF (and, leniently, bare
+      LF) as line terminators and to preserve the interior bare CR as a literal
+      body byte. Converting it to a line break is a defensible display-layer
+      choice but must not happen during structural parsing. This case is the
+      guard rail on any CR-only normalization heuristic added for le-002: that
+      heuristic must be scoped to buffers containing no LF at all, or it will
+      corrupt this message.
+    subject: "Bare CR inside the body"
+    parts: 1
+    attachments: 0
+
+  - id: le-011
+    file: 08-line-endings/011-megabyte-single-line.eml
+    category: line-endings
+    pathology: >
+      A one-megabyte body consisting of a single line with no internal line
+      break, far past the RFC 5322 998-octet limit, which is realistic for
+      machine-generated mail and single-line HTML and which exhausts any parser
+      holding a fixed-size line buffer or scanning quadratically for a
+      terminator.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser returns one text/plain part whose body is exactly
+      1048576 'x' characters, with no truncation and no quadratic blowup. A
+      body-size or line-length cap that truncates the stored text while
+      retaining the full raw blob is acceptable engine policy provided the
+      truncation is recorded and the message is then marked partial; silently
+      truncating with parse_status='ok' is a defect. The parse must be linear
+      in input size - this file is the one in this category where a slow
+      implementation shows up as a timing regression rather than a wrong answer.
+    subject: "One megabyte body line with no break"
+    parts: 1
+    attachments: 0
+  - id: ew-001
+    file: 04-encoded-words/001-split-multibyte-b64.eml
+    category: encoded-words
+    pathology: >
+      A single UTF-8 character has its two bytes split across two adjacent
+      base64 encoded-words. RFC 2047 forbids this explicitly, and MUAs that fold
+      headers at a fixed byte count produce it constantly.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A robust decoder concatenates the decoded BYTES of adjacent encoded-words
+      that share a charset, and only then converts to text — which recovers the
+      subject exactly. A decoder that converts each encoded-word to text
+      independently sees a truncated sequence in word 1 and an orphan
+      continuation byte in word 2, and yields two U+FFFD replacement characters
+      around the accent. Both are seen in the wild; only the first is correct.
+      This is the single most valuable case in the category.
+    subject: "Presupuesto acción ñandú"
+    parts: 1
+    attachments: 0
+
+  - id: ew-002
+    file: 04-encoded-words/002-split-multibyte-q.eml
+    category: encoded-words
+    pathology: >
+      Same split-multibyte pathology as ew-001 but in Q-encoding, with =C3 in
+      one encoded-word and =B3 in the next.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Identical reasoning to ew-001: correct output requires byte-level
+      concatenation before charset conversion. Note the underscore in
+      "Presupuesto_acci" must decode to a space, not an underscore.
+    subject: "Presupuesto acción"
+    parts: 1
+    attachments: 0
+
+  - id: ew-003
+    file: 04-encoded-words/003-wrong-charset-declared.eml
+    category: encoded-words
+    pathology: >
+      The encoded-word's payload bytes are UTF-8 but the word declares
+      ISO-8859-1. The declaration is a lie and nothing in the message reveals it.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The strictly conforming result is mojibake ("AcciÃ³n requerida") and NO
+      error: ISO-8859-1 decodes every byte, so there is nothing to detect at the
+      charset layer. Producing that mojibake is CONFORMING, not a bug. Moov's
+      documented cascade (research 04 §4.2) may additionally notice that the raw
+      bytes are valid UTF-8 and prefer that reading, marking the field
+      charset_guessed; that is the better product behavior. Either output is
+      acceptable here, but a parser must not report success WITHOUT signalling
+      that the charset was untrustworthy — silent mojibake with no flag is the
+      failure mode this case exists to catch.
+    parts: 1
+    attachments: 0
+
+  - id: ew-004
+    file: 04-encoded-words/004-b64-bad-padding.eml
+    category: encoded-words
+    pathology: >
+      Base64 encoded-word with its '=' padding stripped, so the payload length
+      is not a multiple of 4.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Unpadded base64 is unambiguously decodable (raw-encoding semantics), so a
+      robust decoder recovers "Reunión mensual" in full. A decoder that insists
+      on padding errors out and should then fall back to showing the raw
+      encoded-word text rather than an empty subject. An empty subject is the
+      unacceptable outcome.
+    subject: "Reunión mensual"
+    parts: 1
+    attachments: 0
+
+  - id: ew-005
+    file: 04-encoded-words/005-oversized-encoded-word.eml
+    category: encoded-words
+    pathology: >
+      One encoded-word of roughly 6,500 characters on a single unfolded line,
+      against RFC 2047's 75-character limit and RFC 5322's 998-octet line limit.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Nothing is ambiguous here; the only hazard is a fixed-size line or token
+      buffer. Correct output is the fully decoded 4,800-character subject. A
+      parser that truncates at a buffer boundary is silently losing data and
+      must at minimum flag it. Note the engine will separately want to cap
+      stored subject length — that is a storage decision, not a parse failure.
+    parts: 1
+    attachments: 0
+
+  - id: ew-006
+    file: 04-encoded-words/006-adjacent-words-whitespace.eml
+    category: encoded-words
+    pathology: >
+      Tests the RFC 2047 whitespace rule: linear whitespace BETWEEN two adjacent
+      encoded-words is deleted, whitespace between an encoded-word and ordinary
+      text is preserved.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Correct output is exactly "unodos tres cuatro": the space between the
+      adjacent =?UTF-8?Q?uno?= and =?UTF-8?Q?dos?= is dropped, while the spaces
+      around the literal word "tres" survive. Getting this backwards produces
+      "uno dos tres cuatro" and is the most common encoded-word bug in the
+      wild. This case discriminates a correct decoder from a naive one with no
+      ambiguity whatsoever, which makes it a good CI canary.
+    subject: "unodos tres cuatro"
+    parts: 1
+    attachments: 0
+
+  - id: ew-007
+    file: 04-encoded-words/007-glued-to-plain-text.eml
+    category: encoded-words
+    pathology: >
+      Encoded-words glued directly to surrounding plain text with no whitespace
+      delimiter, and two encoded-words concatenated with no separator at all.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Strictly, an encoded-word must be delimited by whitespace from ordinary
+      text, so "prefix=?UTF-8?Q?medio?=sufijo" contains NO valid encoded-word
+      and must be emitted literally. Most real decoders decode it anyway,
+      yielding "prefixmediosufijo". Both readings are defensible and this case
+      exists to record which one the parser chose, not to fail it. The second
+      half, "=?UTF-8?Q?a?==?UTF-8?Q?b?=", is genuinely nasty: the "==" is both
+      the terminator of word 1 and the start of word 2. Expected concatenation
+      is "ab".
+    parts: 1
+    attachments: 0
+
+  - id: ew-008
+    file: 04-encoded-words/008-encoded-word-in-address.eml
+    category: encoded-words
+    pathology: >
+      Encoded-words in address fields: legally in a display-name, legally inside
+      a quoted-string display-name, and illegally inside the addr-spec itself
+      (Cc: =?UTF-8?Q?ilegal?=@example.org).
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      From must decode to display-name "María José Peña" with address
+      maria@example.com. The To display-name is an encoded-word inside a
+      quoted-string, where RFC 2047 says decoding is NOT permitted — a strict
+      parser leaves it literal, a lenient one decodes it to
+      "Grace Hopper (dirección)"; record which. The Cc addr-spec must NOT be
+      decoded under any reading: the local part is literally the ASCII text
+      "=?UTF-8?Q?ilegal?=". A parser that decodes inside the addr-spec is
+      rewriting an email address, which is a correctness and anti-spoofing
+      problem, and that outcome should be flagged prominently if observed.
+    subject: "Encoded-words in address fields"
+    parts: 1
+    attachments: 0
+
+  - id: ew-009
+    file: 04-encoded-words/009-unknown-charset-and-encoding.eml
+    category: encoded-words
+    pathology: >
+      One encoded-word names a charset that does not exist; a second uses an
+      encoding letter that is neither B nor Q.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Neither word can be decoded. RFC 2047 §6.2 is explicit that an
+      undecodable encoded-word must be left as literal text rather than
+      discarded, so the correct subject retains both raw tokens verbatim. The
+      failure mode to catch is a parser that returns an EMPTY subject or drops
+      the undecodable token: losing the text entirely is worse than showing the
+      user the raw encoded-word. A hard error on the whole message is
+      disproportionate and would be a finding.
+    parts: 1
+    attachments: 0
+
+  - id: ew-010
+    file: 04-encoded-words/010-unterminated-encoded-word.eml
+    category: encoded-words
+    pathology: >
+      An encoded-word opens with "=?UTF-8?Q?" and never closes with "?=".
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      There is no encoded-word here at all — the token is ordinary text and must
+      be emitted literally as "=?UTF-8?Q?nunca_se_cierra". Note the underscore
+      must NOT become a space, precisely because this is not an encoded-word.
+      Watch for a decoder that scans forward past the header boundary looking
+      for a terminator; that class of bug turns an unterminated word into a
+      swallowed Date or Content-Type header.
+    subject: "=?UTF-8?Q?nunca_se_cierra"
+    parts: 1
+    attachments: 0
+
+  - id: ew-011
+    file: 04-encoded-words/011-q-encoding-edges.eml
+    category: encoded-words
+    pathology: >
+      Q-encoding corner cases in one word: '_' meaning space, an escaped '='
+      (=3D), a bare '=' followed by a non-hex character (=g), and lowercase hex
+      digits (=c3=b1).
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Expected decoding of "a_b=3Dc=g=c3=b1": '_' becomes a space, '=3D' becomes
+      '=', '=c3=b1' becomes 'ñ' (lowercase hex is valid). The only genuinely
+      ambiguous token is '=g', which is not a valid escape; the robust choice is
+      to emit it literally and continue, giving "a b=c=gñ". A parser that
+      aborts the whole word on '=g' loses the 'ñ' that follows and should be
+      recorded as less robust rather than wrong.
+    parts: 1
+    attachments: 0
+
+  - id: ew-012
+    file: 04-encoded-words/012-encoded-word-folded-midword.eml
+    category: encoded-words
+    pathology: >
+      A single encoded-word is folded across two physical lines in the middle of
+      its payload, so neither line contains a complete encoded-word.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Unfolding happens BEFORE encoded-word recognition, so after unfolding the
+      header value is "=?UTF-8?Q?primera_parte _segunda_parte?=" — note the
+      space introduced by the fold sits INSIDE the encoded-word, where Q-encoding
+      does not permit a literal space. A strict decoder rejects the word and
+      emits it literally; a lenient one tolerates the space and yields
+      "primera parte  segunda parte". Record which. The unacceptable outcome is
+      treating the two lines as separate headers or losing the second line.
+    parts: 1
+    attachments: 0
+
+  - id: cs-001
+    file: 05-charsets/001-declared-utf8-actually-cp1252.eml
+    category: charsets
+    pathology: >
+      Body declares charset=utf-8 but the bytes are windows-1252: 0x93/0x94
+      curly quotes, 0x97 em-dash and 0xE1 are all invalid UTF-8 sequences.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      This is the detectable direction of the lie: UTF-8 decoding FAILS on these
+      bytes, so the parser has a signal. Per Moov's cascade (research 04 §4.2)
+      the correct response is to fall back to windows-1252 — which decodes every
+      byte and recovers the intended text with curly quotes — and mark the part
+      charset_guessed. Acceptable lesser behavior is U+FFFD replacement
+      characters at the four offending positions, provided the failure is
+      flagged. Unacceptable: returning an empty body, or truncating the text at
+      the first invalid byte, which loses everything after "dijo".
+    subject: "Declared UTF-8, actually cp1252"
+    parts: 1
+    attachments: 0
+
+  - id: cs-002
+    file: 05-charsets/002-declared-cp1252-actually-utf8.eml
+    category: charsets
+    pathology: >
+      The inverse lie: bytes are UTF-8, the header says windows-1252. Decoding
+      as declared succeeds on every byte and produces mojibake.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      This is the UNDETECTABLE direction at the charset layer — windows-1252 has
+      no invalid bytes, so decoding as declared raises no error and yields
+      "El seÃ±or dijo â€œholaâ€ y se fue." That output is strictly conforming.
+      The only way to do better is the heuristic in the cascade: notice the raw
+      bytes are valid UTF-8 and that the 1252 reading contains the classic
+      Ã/â€ mojibake digraphs, then prefer UTF-8 and mark charset_guessed.
+      This case belongs to the silent-wrong-data class: a parser reporting clean
+      success with mojibake output is behaving correctly per spec and badly per
+      product, and the engine — not the parser — must own that decision.
+    subject: "Declared cp1252, actually UTF-8"
+    parts: 1
+    attachments: 0
+
+  - id: cs-003
+    file: 05-charsets/003-double-encoded-mojibake.eml
+    category: charsets
+    pathology: >
+      Text was UTF-8, mis-decoded as latin-1 somewhere upstream, re-encoded as
+      UTF-8, and finally declared ISO-8859-1 — two stacked layers of damage.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Decoding as declared (ISO-8859-1) gives "El seÃƒÂ±or con doble
+      codificaciÃƒÂ³n." — every byte decodes, no error is raised, and that IS
+      the conforming result. Full repair requires recognizing the doubled
+      mojibake signature and applying the inverse transform twice, which is a
+      heuristic Moov may or may not adopt. Expected here is only that the
+      parser does not error and does not lose bytes. Recorded primarily as a
+      reference point for how far a repair heuristic would have to go; do NOT
+      treat un-repaired output as a parser defect.
+    subject: "Double-encoded mojibake"
+    parts: 1
+    attachments: 0
+
+  - id: cs-004
+    file: 05-charsets/004-iso2022jp-truncated-escape.eml
+    category: charsets
+    pathology: >
+      ISO-2022-JP body that shifts into JIS X 0208 with ESC $ B and never shifts
+      back, and ends with a truncated escape sequence (a bare ESC $) at EOF.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A stateful decoder must not hang or panic on an escape sequence cut at
+      end of input. Expected: the leading "Hello " decodes as ASCII, the
+      Japanese run decodes as far as the byte pairs allow, and the trailing
+      partial escape is dropped or replaced. Because the decoder never returns
+      to ASCII, the subsequent English lines are interpreted as double-byte JIS
+      and will be garbage — that is the correct consequence of the input, not a
+      bug. Unacceptable: a panic, an unbounded loop, or silently emitting the
+      raw ESC bytes into stored text where they would corrupt downstream
+      rendering.
+    subject: "ISO-2022-JP escape cut mid-stream"
+    parts: 1
+    attachments: 0
+
+  - id: cs-005
+    file: 05-charsets/005-gb18030-correct.eml
+    category: charsets
+    pathology: >
+      Control case, not a pathology: a GB18030 body correctly declared as
+      GB18030. Establishes that the non-UTF-8 decoder table is actually wired up.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Must decode cleanly to "中文测试 - Chinese test text." with no defects.
+      If this case fails, the parser has no GB18030 support at all and every
+      Chinese-language message in a real mailbox is at risk — a far larger
+      finding than any individual malformed case. go-message requires the
+      charset subpackage to be imported for its side effects to register these
+      decoders; a failure here may indicate a missing import rather than a
+      library limitation.
+    subject: "GB18030 declared correctly"
+    parts: 1
+    attachments: 0
+
+  - id: cs-006
+    file: 05-charsets/006-gb18030-declared-utf8.eml
+    category: charsets
+    pathology: >
+      The same GB18030 bytes as cs-005, declared as UTF-8. Paired with cs-005 so
+      the only variable is the declaration.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      UTF-8 decoding fails on these bytes, so the failure is detectable.
+      Correct behavior is to flag the charset as untrustworthy and fall back;
+      note that the documented windows-1252 fallback recovers no meaning here
+      (it produces Latin garbage), which is precisely why the fallback must set
+      charset_guessed rather than pretend success. Heuristic detection
+      (saintfish/chardet) is what would actually recover this, and this case is
+      the argument for including it. Unacceptable: empty body or truncation at
+      the first invalid byte.
+    subject: "GB18030 bytes declared as UTF-8"
+    parts: 1
+    attachments: 0
+
+  - id: cs-007
+    file: 05-charsets/007-koi8r-correct.eml
+    category: charsets
+    pathology: >
+      Control case: a KOI8-R Cyrillic body correctly declared. Verifies the
+      legacy Cyrillic decoder is present.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Must decode cleanly to "Привет - Russian greeting in KOI8-R." with no
+      defects. Paired with cs-008, which uses identical bytes under a false
+      declaration.
+    subject: "KOI8-R declared correctly"
+    parts: 1
+    attachments: 0
+
+  - id: cs-008
+    file: 05-charsets/008-koi8r-declared-latin1.eml
+    category: charsets
+    pathology: >
+      KOI8-R Cyrillic bytes declared as ISO-8859-1. Like cs-002 this decodes
+      without any error and yields confident nonsense.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      ISO-8859-1 maps every byte, so the parser CANNOT detect this at the
+      charset layer and will report a clean parse containing Latin gibberish
+      ("ðÒÉ×ÅÔ") instead of "Привет". This is the purest silent-wrong-data case
+      in the corpus: no error, no defect flag, wrong text. Only statistical
+      detection recovers it. The expectation is therefore not that the parser
+      gets it right, but that the ENGINE knows this class exists and does not
+      treat "no error" as "correct text". Compare directly against cs-007,
+      which has the same bytes and the true declaration.
+    subject: "KOI8-R bytes declared ISO-8859-1"
+    parts: 1
+    attachments: 0
+
+  - id: cs-009
+    file: 05-charsets/009-windows1256-correct.eml
+    category: charsets
+    pathology: >
+      Control case: an Arabic windows-1256 body correctly declared. Verifies
+      coverage of a legacy codepage outside the Latin and CJK families.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Must decode cleanly to "مرحبا - Arabic greeting in windows-1256."
+      Failure here indicates the charset table omits windows-1256, which is a
+      real gap in some Go charset packages and worth knowing before the parser
+      is written rather than after an Arabic-speaking user reports it.
+    subject: "windows-1256 declared correctly"
+    parts: 1
+    attachments: 0
+
+  - id: cs-010
+    file: 05-charsets/010-charset-x-user-defined.eml
+    category: charsets
+    pathology: >
+      charset=x-user-defined, a browser-era pseudo-charset that is not a
+      character set at all, with raw high bytes 0x80 0x81 0xFE 0xFF in the body.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      No charset table can be looked up. Correct behavior is to treat the label
+      as unknown and fall back to windows-1252 (which maps all four bytes),
+      marking charset_guessed, so the ASCII portion of the text survives
+      intact. Unacceptable: a hard error that discards a body whose ASCII
+      content is perfectly readable. The bytes 0xFE/0xFF are also a
+      UTF-16 BOM fragment, so watch for a parser that guesses UTF-16 and emits
+      CJK garbage.
+    subject: "charset=x-user-defined"
+    parts: 1
+    attachments: 0
+
+  - id: cs-011
+    file: 05-charsets/011-charset-unknown-8bit.eml
+    category: charsets
+    pathology: >
+      charset=unknown-8bit, the RFC 1428 token meaning "8-bit data of unknown
+      encoding", carrying ISO-8859-1 bytes.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      unknown-8bit is a real registered token, not a typo, and it is an explicit
+      declaration of ignorance by the sender — the one case where heuristic
+      detection is unambiguously licensed rather than merely tolerated. Expected
+      output is "El señor" via a windows-1252 or latin-1 fallback with
+      charset_guessed set. A hard error is disproportionate.
+    subject: "charset=unknown-8bit"
+    parts: 1
+    attachments: 0
+
+  - id: cs-012
+    file: 05-charsets/012-charset-empty-string.eml
+    category: charsets
+    pathology: >
+      charset="" — the parameter is present but its value is the empty string,
+      which is not a valid charset token.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Must be treated as "no charset specified" rather than as a lookup for a
+      zero-length charset name. Correct output is "El señor" via the default
+      (us-ascii per RFC 2045, in practice windows-1252 fallback for the high
+      byte), with charset_guessed set. The failure mode to watch for is an
+      empty-string lookup that panics or returns a nil decoder which is then
+      dereferenced.
+    parts: 1
+    attachments: 0
+
+  - id: cs-013
+    file: 05-charsets/013-charset-parameter-junk.eml
+    category: charsets
+    pathology: >
+      A Content-Type whose charset parameter is surrounded by junk: extra
+      whitespace around '=', a quoted value padded with spaces (" utf-8 "), a
+      second contradictory charset parameter, and a trailing semicolon.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Parameter parsing must tolerate whitespace around '=' and strip the quotes
+      AND the interior padding to recover the token "utf-8". Since the body
+      bytes are genuinely UTF-8, taking the FIRST charset parameter yields the
+      correct text "El señor"; taking the LAST (iso-8859-1) yields mojibake with
+      no error. Either is defensible on duplicate parameters, so record which —
+      but a parser that fails to strip the spaces inside the quotes will look up
+      the literal charset " utf-8 ", find nothing, and fall through to the
+      unknown-charset path, which is the specific bug this case hunts.
+    subject: "Charset parameter with junk"
+    parts: 1
+    attachments: 0
+
+  - id: cs-014
+    file: 05-charsets/014-utf8-bom-and-invalid-sequences.eml
+    category: charsets
+    pathology: >
+      A correctly declared UTF-8 body containing a leading BOM plus four kinds
+      of invalid UTF-8: a lone surrogate (ED A0 80), an overlong encoding
+      (C0 AF), and a truncated sequence at end of line.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The BOM must be stripped, not stored as a zero-width no-break space at the
+      start of the body text. Each invalid sequence must become U+FFFD; in
+      particular the overlong C0 AF must NOT be decoded to '/' — overlong forms
+      are a classic path-traversal and filter-bypass vector and decoding them is
+      a security bug, not leniency. The surrounding ASCII must survive intact.
+      Unacceptable: truncating the body at the first invalid sequence, or
+      passing the raw invalid bytes through into storage, where PostgreSQL will
+      reject them on insert.
+    subject: "UTF-8 BOM and invalid sequences"
+    parts: 1
+    attachments: 0
+
+  - id: cs-015
+    file: 05-charsets/015-per-part-charsets.eml
+    category: charsets
+    pathology: >
+      A four-part multipart where each part declares a different charset
+      (utf-8, ISO-8859-1, KOI8-R, windows-1252), all correctly.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Decoding must be per-part, never per-message. All four parts must decode
+      to their intended text simultaneously: "parte uno: señor",
+      "parte dos: señor", "parte tres: Привет", and "parte cuatro: “comillas”".
+      A parser that latches the first charset it sees and applies it to the rest
+      produces three garbled parts out of four with no error raised — silent
+      wrong data across most of the message. This is the case that proves the
+      engine's decode step is correctly scoped to the part.
+    subject: "Different charset per part"
+    parts: 4
+    attachments: 0
+  - id: cte-001
+    file: 06-cte/001-declared-b64-actual-text.eml
+    category: cte
+    pathology: >
+      The part declares Content-Transfer-Encoding: base64 but the body is ordinary
+      English prose containing spaces, punctuation and '!', so base64 decoding
+      fails outright; senders that mislabel CTE are common enough that a sync
+      engine which trusts the declaration will index and store an empty body.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The ROBUST and correct behavior is to attempt the base64 decode, detect the
+      failure (invalid alphabet characters / no meaningful output), and FALL BACK
+      to treating the raw body bytes as text — yielding both prose lines intact.
+      Returning an empty body because the declared decoder failed is silent data
+      loss and is the single worst possible outcome here: the message looks blank
+      to the user forever and nothing surfaces an error. A parser that instead
+      skips non-alphabet characters and decodes the survivors produces garbage,
+      which is also unacceptable; the heuristic must be "if the decode yields
+      non-text garbage or errors, keep the original bytes". Accepted range: full
+      raw text recovered, optionally with a decode-failure flag recorded.
+    subject: "Declared base64, actually plain text"
+    parts: 1
+    attachments: 0
+
+  - id: cte-002
+    file: 06-cte/002-declared-qp-actual-b64.eml
+    category: cte
+    pathology: >
+      The part declares quoted-printable but the body is a base64 stream; QP
+      decoding "succeeds" without error and passes the base64 through nearly
+      verbatim, so the user sees a wall of base64 instead of the sentence, a
+      failure mode that never raises an alarm anywhere in the pipeline.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct QP decode of this body is essentially the identity transform, so
+      the conforming result is the literal base64 text
+      "VGhlIHJlYWwgcGF5bG9hZCB3YXMgYmFzZTY0IGFsbCBhbG9uZy4=" as the body. That IS
+      the RFC-conforming answer and it must never be empty. Marked partial because
+      the human-meaningful content ("The real payload was base64 all along.") is
+      only recoverable by a second heuristic pass that notices the decoded body is
+      itself a well-formed base64 blob. Both behaviors are defensible: conforming
+      (show the base64 text) and heuristic (double-decode and show the sentence).
+      Unacceptable: an empty body, or an error that drops the part.
+    subject: "Declared quoted-printable, actually base64"
+    parts: 1
+    attachments: 0
+
+  - id: cte-003
+    file: 06-cte/003-b64-interleaved-garbage.eml
+    category: cte
+    pathology: >
+      A valid base64 payload with a space, a '!' and a '@' injected mid-stream:
+      RFC 2045 requires whitespace to be ignored but says nothing usable about
+      stray non-alphabet bytes, so strict decoders abort on the first '!' and
+      lose the entire attachment or body.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct parser MUST skip the embedded whitespace (legal per RFC 2045) and
+      should skip the '!' and '@' rather than abort, decoding the remaining
+      alphabet characters. Because two non-alphabet bytes were inserted rather
+      than substituted, the surviving stream is no longer 4-character aligned at
+      the injection points, so the tail typically decodes with a byte-level shift:
+      the leading portion ("payload with interle...") is recoverable, some of the
+      remainder is corrupt. Partial is the honest expectation — usable content is
+      recovered but some bytes are unrecoverable by any parser. Aborting with an
+      empty body is wrong; so is silently reporting success on corrupt bytes
+      without any indication.
+    subject: "base64 with interleaved invalid characters"
+    parts: 1
+    attachments: 0
+
+  - id: cte-004
+    file: 06-cte/004-b64-missing-padding.eml
+    category: cte
+    pathology: >
+      Base64 body with the trailing '=' padding stripped, the single most common
+      base64 defect in the wild (many mobile MUAs and web forms emit it); a
+      decoder using strict RFC 4648 padding rules rejects the whole part.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      No information is lost when padding is stripped — the length of the final
+      quantum is unambiguous — so a correct parser uses a raw/unpadded-tolerant
+      decoder and recovers "padding matters" in full. There is no defensible
+      reading in which this is a decode failure; rejecting it would be pure
+      self-inflicted data loss.
+    subject: "base64 with padding stripped"
+    parts: 1
+    attachments: 0
+
+  - id: cte-005
+    file: 06-cte/005-b64-excess-padding.eml
+    category: cte
+    pathology: >
+      Base64 body with four extra '=' characters appended after the legitimate
+      padding; strict decoders treat trailing data after the padding as a
+      protocol violation and discard the part.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser stops consuming at the end of the valid base64 stream and
+      ignores the surplus padding, recovering "padding matters" byte-for-byte. The
+      excess '=' carries no data, so full recovery is the only acceptable outcome.
+      Emitting a warning is fine; emitting an empty body is not.
+    subject: "base64 with excess padding"
+    parts: 1
+    attachments: 0
+
+  - id: cte-006
+    file: 06-cte/006-qp-bare-equals-eof.eml
+    category: cte
+    pathology: >
+      Quoted-printable body ending in a bare '=' with nothing after it — a soft
+      line break truncated at EOF, exactly what happens when an MTA or a storage
+      layer clips the last bytes of a message.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Both lines of text must be recovered. The first '=' at end-of-line is a
+      legitimate soft break and MUST be removed, joining the two lines into one
+      logical line. The final dangling '=' at EOF is undecodable; a correct parser
+      either drops it silently or preserves it literally — both are defensible and
+      neither loses meaningful content. What must not happen is aborting the QP
+      decode and returning nothing.
+    subject: "QP with a bare = at EOF"
+    parts: 1
+    attachments: 0
+
+  - id: cte-007
+    file: 06-cte/007-qp-lowercase-hex.eml
+    category: cte
+    pathology: >
+      Quoted-printable escapes written with lowercase hex digits (=c3=b1)
+      alongside the canonical uppercase form; RFC 2045 says encoders MUST use
+      uppercase, and a decoder that enforces that requirement mangles every
+      accented character produced by a large family of real MUAs.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Decoders are required to accept both cases. A correct parser produces
+      "señor with lowercase hex, señor with uppercase." — the two halves of the
+      line must decode identically. Any output where the lowercase escapes survive
+      as literal "=c3=b1" text is a defect.
+    subject: "QP with lowercase hex digits"
+    parts: 1
+    attachments: 0
+
+  - id: cte-008
+    file: 06-cte/008-qp-invalid-escapes.eml
+    category: cte
+    pathology: >
+      Quoted-printable body with several illegal escapes (=ZZ, =G1, '=' followed
+      by a space) plus trailing whitespace before a soft line break; strict
+      decoders error out on the first bad escape and lose the following lines.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct parser recovers all three lines. Per RFC 2045 §6.7 note 3, a
+      malformed escape SHOULD be left in place as literal text rather than
+      aborting, so "=ZZ", "=G1" and "= " appear verbatim in the output — that
+      literal passthrough is the conforming result. The trailing whitespace before
+      the soft break MUST be stripped and the soft break MUST join its line to
+      "final line.". Marked partial because the decoder necessarily guesses at the
+      author's intent for the invalid escapes (literal passthrough vs. dropping
+      them); both are defensible, but dropping the rest of the body is not.
+    subject: "QP with invalid escape sequences"
+    parts: 1
+    attachments: 0
+
+  - id: cte-009
+    file: 06-cte/009-binary-declared-7bit.eml
+    category: cte
+    pathology: >
+      An application/octet-stream attachment containing all 256 byte values —
+      NULs, control characters and high bytes — while declaring
+      Content-Transfer-Encoding: 7bit; the NUL bytes in particular cannot be
+      stored in a PostgreSQL text column, so this is a storage-layer hazard as
+      much as a parsing one.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      7bit is an identity transform, so the correct parser passes the body through
+      untouched and delivers all 256 bytes as the attachment payload, with
+      filename "blob.bin". Because the content is a binary attachment (not text),
+      the bytes must be stored as a blob, never coerced into a text column — NUL
+      stripping would corrupt the attachment. Truncating the body at the first NUL
+      is the failure to watch for. Note the embedded CR/LF bytes (0x0D/0x0A) are
+      part of the payload, so a line-oriented reader may mis-split the body; a
+      correct implementation reads the part as bytes.
+    subject: "Binary content declared 7bit"
+    parts: 1
+    attachments: 1
+
+  - id: cte-010
+    file: 06-cte/010-unknown-cte-value.eml
+    category: cte
+    pathology: >
+      Content-Transfer-Encoding: x-uuencode — an unregistered encoding token —
+      wrapping a uuencoded blob; RFC 2045 §6.4 requires unrecognized encodings to
+      be treated as opaque application/octet-stream rather than silently assumed
+      to be 8bit.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      No data is lost either way: the correct parser does not attempt to decode an
+      unknown token and hands the raw body through. Two defensible behaviors —
+      (a) strict RFC 2045: demote the part to application/octet-stream and offer
+      it as a download rather than rendering it as text/plain; (b) pragmatic:
+      render the raw bytes as the declared text/plain, which shows the user the
+      literal "begin 644 file.txt ... end" block. Either is acceptable; both must
+      preserve every byte. Decoding uuencode is a bonus, not a requirement.
+    subject: "Unknown Content-Transfer-Encoding"
+    parts: 1
+    attachments: 0
+
+  - id: cte-011
+    file: 06-cte/011-cte-base64-on-multipart.eml
+    category: cte
+    pathology: >
+      Content-Transfer-Encoding: base64 on a multipart/mixed container, which RFC
+      2045 §6.4 forbids outright (composite types may only carry 7bit/8bit/binary);
+      a parser that honours the header base64-decodes the boundary structure
+      itself and loses every child part.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The correct parser IGNORES the illegal CTE on the composite part, walks the
+      boundary structure normally, and yields the single text/plain child with
+      body "the container claims to be base64 encoded". Attempting the base64
+      decode of the container body destroys the message and must not happen —
+      the RFC's prohibition means the header is meaningless, not authoritative.
+    subject: "base64 CTE on a multipart container"
+    parts: 1
+    attachments: 0
+
+  - id: cte-012
+    file: 06-cte/012-duplicate-cte-disagree.eml
+    category: cte
+    pathology: >
+      Two Content-Transfer-Encoding headers on the same part declaring base64 and
+      7bit respectively; RFC 5322 permits at most one, so the parser must pick,
+      and the two choices produce completely different bodies from identical bytes.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The body is valid base64 for "which encoding header wins?". Two defensible
+      behaviors: take the FIRST occurrence (the near-universal convention for
+      duplicated headers, and the one that recovers the plaintext here), or take
+      the last / treat the duplication as unreliable and fall back to 7bit
+      (yielding the literal base64 string). First-wins is preferred because it
+      recovers the meaningful content; the fallback is acceptable because no bytes
+      are lost, only left encoded. Marked partial because the parser is forced to
+      guess. An empty body, or dropping the part on the conflict, is wrong.
+    subject: "Two disagreeing CTE headers"
+    parts: 1
+    attachments: 0
+
+  - id: cte-013
+    file: 06-cte/013-b64-unfolded-long-line.eml
+    category: cte
+    pathology: >
+      A ~11 KB base64 payload emitted as a single unfolded line, violating the
+      76-character limit of RFC 2045 §6.8; parsers or line readers with a fixed
+      line-buffer cap truncate the body mid-stream, and the same shape at
+      megabyte scale is what real MUAs produce for large attachments.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Line length is a wire-format recommendation, not a decoding constraint. A
+      correct parser decodes the full stream and recovers the payload
+      ("Moov corpus payload. " repeated 400 times, 8400 bytes) intact. Any
+      truncation caused by a scanner line limit is a defect; the reader must be
+      buffer-limit-free or chunked.
+    subject: "base64 as one very long line"
+    parts: 1
+    attachments: 0
+
+  - id: cte-014
+    file: 06-cte/014-b64-one-char-per-line.eml
+    category: cte
+    pathology: >
+      Base64 folded to exactly one character per line, so every 4-character
+      quantum spans four physical lines; decoders that assume line boundaries
+      align with quantum boundaries, or that decode line-by-line, produce garbage
+      or fail on every line.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      RFC 2045 requires all whitespace, including line breaks, to be discarded
+      before decoding. A correct parser strips the CRLFs and recovers
+      "one character per line" exactly. Per-line decoding is the bug this case
+      exists to catch.
+    subject: "base64 folded to one character per line"
+    parts: 1
+    attachments: 0
+
+  - id: structural-001
+    file: 07-structural/001-headers-only-no-body.eml
+    category: structural
+    pathology: >
+      A complete, well-formed header block with no terminating blank line and no
+      body at all; IMAP FETCH of a message stored this way is common after
+      truncation, and a parser expecting a header/body separator may treat the
+      last header line as body or fail to terminate.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      End-of-input is a valid terminator for a header block. A correct parser
+      reads all seven headers — including Content-Type: text/plain — and yields a
+      single leaf part with an empty body. The empty body here is correct and is
+      NOT data loss; the failure to watch for is losing the final Content-Type
+      header because it lacks a trailing blank line, or rejecting the message.
+    subject: "Headers only, no body"
+    parts: 1
+    attachments: 0
+
+  - id: structural-002
+    file: 07-structural/002-empty-file.eml
+    category: structural
+    pathology: >
+      A zero-byte file where a message should be — the shape produced by an
+      interrupted APPEND, a failed download, or a truncated store; there is
+      nothing at all to parse.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: failed
+    expect_notes: >
+      No parser can extract meaningful structure from zero bytes; this is the one
+      genuinely hopeless case in the category. The requirement is that the parser
+      fail CLEANLY — return an explicit error or an empty-message sentinel — and
+      never panic, hang, or return a partially-initialized message struct that
+      downstream code mistakes for a real message. The sync engine should treat
+      this as a fetch failure and retry, not as a successfully synced empty
+      message.
+    attachments: 0
+
+  - id: structural-003
+    file: 07-structural/003-blank-line-only-body.eml
+    category: structural
+    pathology: >
+      Header block correctly terminated, followed by a body consisting of exactly
+      one empty line; the ambiguity is whether the second CRLF is the separator or
+      body content, and an off-by-one here shifts every subsequent byte.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The first CRLF after the last header terminates the header block; everything
+      after it is the body, so the correct body is a single CRLF (or, equivalently
+      after line normalization, one empty line). A parser that reports a
+      zero-length body is also defensible in practice since the content is
+      semantically empty, but it must not consume the separator into the header
+      block or emit a parse error. Snippet generation must handle the empty result
+      without crashing.
+    subject: "Body is a single blank line"
+    parts: 1
+    attachments: 0
+
+  - id: structural-004
+    file: 07-structural/004-multipart-no-boundary-param.eml
+    category: structural
+    pathology: >
+      Content-Type: multipart/mixed with no boundary parameter, so there is no
+      delimiter to split on; a parser that dispatches on the top-level type and
+      then looks for a boundary can loop, return zero parts, or discard the entire
+      body as unparseable preamble.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The declared multipart is uninterpretable, so a correct parser degrades
+      gracefully: treat the part as a leaf and expose the whole body as text
+      (effectively text/plain), preserving "There is no boundary parameter, so
+      there is nothing to split on." Returning a multipart with zero children and
+      an unreachable body is the failure mode — the user would see a blank
+      message. Whether the part is reported as text/plain or as
+      application/octet-stream is a defensible choice; losing the bytes is not.
+    subject: "multipart without a boundary parameter"
+    parts: 1
+    attachments: 0
+
+  - id: structural-005
+    file: 07-structural/005-text-plain-with-boundary.eml
+    category: structural
+    pathology: >
+      A text/plain part carrying a meaningless boundary= parameter, with lines in
+      the body that look exactly like delimiters; a parser that keys off the
+      presence of "boundary=" instead of the top-level type will try to split a
+      leaf and fabricate phantom parts.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Only a top-level type of "multipart" makes a part composite. The correct
+      result is one leaf text/plain part whose body is the three literal lines
+      including "--=_t_=" and "--=_t_=--" as ordinary text. Any output containing
+      child parts is wrong.
+    subject: "text/plain with a boundary parameter"
+    parts: 1
+    attachments: 0
+
+  - id: structural-006
+    file: 07-structural/006-attachment-only-no-text.eml
+    category: structural
+    pathology: >
+      A message whose entire body is a single base64 PDF attachment with no text
+      part anywhere; the list view still needs a preview snippet and the search
+      index still needs something to index, so "no text body" must be a supported
+      state rather than an error.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The correct parse is one leaf part, application/pdf, disposition attachment,
+      filename "informe.pdf", base64-decoded to the payload bytes. Text body and
+      HTML body are both legitimately absent — the snippet must fall back to
+      something derived (subject, filename, or empty), not to a parse error. The
+      top-level Content-Type being a non-multipart attachment is legal and must
+      not be mistaken for a malformed multipart.
+    subject: "Attachment only, no text part"
+    parts: 1
+    attachments: 1
+
+  - id: structural-007
+    file: 07-structural/007-disposition-contradictions.eml
+    category: structural
+    pathology: >
+      A multipart/related where an image/png marked "attachment" carries a
+      Content-ID referenced by the sibling HTML (so it is really inline), and an
+      application/zip is marked "inline" with a filename (so it is really an
+      attachment); trusting Content-Disposition alone shows the logo twice or
+      hides the zip from the attachment list.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Three leaf parts must be recovered intact: text/html, image/png (with
+      Content-ID logo@example.com), application/zip (filename archivo.zip). The
+      correct policy is that a Content-ID actually referenced by a cid: URL in a
+      sibling body overrides disposition=attachment — the PNG is rendered inline
+      and SHOULD NOT be listed as a user-facing attachment. Conversely,
+      disposition=inline on a non-renderable type (application/zip) with a
+      filename must be surfaced as an attachment regardless of the label. The
+      attachments count below reflects that policy (zip only); a parser that
+      reports 2 attachments by literal disposition is defensible at the parse
+      layer as long as the presentation layer applies the cid: rule.
+    subject: "Contradictory dispositions"
+    parts: 3
+    attachments: 1
+
+  - id: structural-008
+    file: 07-structural/008-filename-name-vs-filename.eml
+    category: structural
+    pathology: >
+      Content-Type name= says "factura.pdf" while Content-Disposition filename=
+      says "factura.pdf.exe" — the two sources disagree on the EXTENSION, which is
+      precisely the shape of a real-world attachment-spoofing attack.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Per RFC 2183, Content-Disposition filename= is the authoritative source for
+      the presented filename and MUST win over the deprecated Content-Type name=;
+      the correct filename is therefore "factura.pdf.exe". SECURITY: because the
+      two sources disagree on the extension, this is a spoofing indicator, not a
+      cosmetic conflict — a client that displays name= ("factura.pdf") while
+      saving filename= (".exe") lets the user execute a binary they believe is a
+      document. A correct implementation shows the same string it saves, uses the
+      filename= form, and should flag the disagreement. Both strings must be
+      retained in the parse result so the discrepancy is detectable downstream.
+    subject: "name= and filename= disagree"
+    parts: 1
+    attachments: 1
+
+  - id: structural-009
+    file: 07-structural/009-rfc2231-continuation-correct.eml
+    category: structural
+    pathology: >
+      A correctly formed RFC 2231 parameter: filename split across three
+      continuation segments (filename*0*, filename*1*, filename*2) with UTF-8
+      percent-encoding and a charset prefix — the well-formed control case that
+      parsers relying on plain filename= silently render as a truncated or empty
+      name.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The three segments must be concatenated in index order and the percent-
+      escapes decoded against the declared UTF-8 charset, producing exactly
+      "Informe de gestión año 2025.pdf". Note the third segment is filename*2
+      (no trailing asterisk) and therefore is NOT percent-decoded — it contributes
+      the literal ".pdf"; mixing encoded and unencoded segments is legal and a
+      parser that percent-decodes all segments uniformly happens to get the same
+      answer here only because ".pdf" contains no '%'. Any result showing raw
+      "%C3%B3" or only the first segment is a defect.
+    subject: "RFC 2231 continuation, correct"
+    parts: 1
+    attachments: 1
+
+  - id: structural-010
+    file: 07-structural/010-rfc2231-wrong-charset.eml
+    category: structural
+    pathology: >
+      An RFC 2231 filename* whose percent-escaped bytes are UTF-8 while the
+      parameter's charset prefix declares ISO-8859-1; decoding as declared yields
+      mojibake in the filename the user sees and saves.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Strictly conforming decoding honours the declared charset and produces
+      "Informe gestiÃ³n.pdf" — mojibake, and that IS the conforming result for
+      this input. A robust implementation may additionally notice that the
+      percent-decoded byte sequence is valid UTF-8 and prefer the UTF-8 reading
+      ("Informe gestión.pdf"); this heuristic is defensible and is what most
+      modern clients do. Marked partial because the parser must guess between a
+      correct-but-wrong-looking name and a heuristically-repaired one. Either
+      outcome is acceptable; an empty or dropped filename is not.
+    subject: "RFC 2231 with wrong charset label"
+    parts: 1
+    attachments: 1
+
+  - id: structural-011
+    file: 07-structural/011-rfc2231-gap-and-disorder.eml
+    category: structural
+    pathology: >
+      RFC 2231 continuation segments present as filename*2 and filename*0 with
+      index 1 missing and the segments written out of order; naive concatenation
+      in header order yields "-final.pdfprimero" and a missing-index parser may
+      abandon the filename entirely.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      A correct parser sorts segments by index rather than by header order, so the
+      order defect is fully recoverable. The GAP is not: index 1 is genuinely
+      absent and no parser can reconstruct it. The best achievable result is
+      "primero-final.pdf" — concatenating the present segments in index order and
+      accepting the hole. Also defensible: stopping at the gap and yielding
+      "primero" (RFC 2231 arguably makes a continuation invalid once broken). Both
+      lose information, hence partial. Concatenating in header order
+      ("-final.pdfprimero") is wrong, and dropping the filename entirely — leaving
+      an unnamed attachment — is the worst outcome.
+    subject: "RFC 2231 continuation with a gap"
+    parts: 1
+    attachments: 1
+
+  - id: structural-012
+    file: 07-structural/012-rfc2231-and-plain-disagree.eml
+    category: structural
+    pathology: >
+      The same Content-Disposition carries both filename="inocuo.txt" and
+      filename*=UTF-8''peligroso.exe; the two forms disagree on the EXTENSION, so
+      which one the client honours decides whether the user believes they are
+      opening a text file or an executable.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      RFC 2231 §4 is explicit: when both an encoded (filename*) and an unencoded
+      (filename=) form of the same parameter are present, the ENCODED form wins.
+      The correct filename is therefore "peligroso.exe". SECURITY: this is the
+      canonical extension-spoofing construction — a sender who knows the target
+      client prefers the plain form can display "inocuo.txt" while a
+      2231-conforming client saves ".exe", or vice versa. The implementation must
+      display and save the same string (the filename* form) and should flag the
+      disagreement; both values must be preserved in the parse result so the
+      mismatch is detectable. Any behavior where the shown name and the saved name
+      differ is a security defect, not a cosmetic one.
+    subject: "filename* and filename= disagree"
+    parts: 1
+    attachments: 1
+
+  - id: structural-013
+    file: 07-structural/013-filename-traversal-and-controls.eml
+    category: structural
+    pathology: >
+      Attachment filename is "../../../etc/passwd" — a path-traversal payload
+      delivered through a header field that naive code passes straight to
+      filepath.Join or a Content-Disposition download header.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The parser's job is faithful extraction: report the filename exactly as sent,
+      "../../../etc/passwd", without normalizing or rejecting it — silently
+      rewriting it at parse time would hide the attack from auditing. SECURITY:
+      sanitization belongs at every USE site — take only the base name for display,
+      never use the value as a filesystem path or as a blob key, and escape it when
+      emitting a Content-Disposition response header. A blob store addressed by
+      sha256 (as in ADR-001) sidesteps the filesystem risk entirely; the remaining
+      exposure is the download header and the UI. Expect ok because nothing is lost
+      or guessed — this case tests downstream handling, not parsing.
+    subject: "Filename with traversal and control chars"
+    parts: 1
+    attachments: 1
+
+  - id: structural-014
+    file: 07-structural/014-alternative-inverted-order.eml
+    category: structural
+    pathology: >
+      A multipart/alternative with the text/html part first and text/plain last,
+      inverting the RFC 2046 convention that parts appear in increasing order of
+      faithfulness; a "take the last part" selector picks the plain text and
+      throws away the rich version the sender intended.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Both leaf parts must be parsed and RETAINED — the correct behavior for a
+      sync engine is to store every alternative and choose at render time, so
+      nothing is lost regardless of the ordering. For selection, the robust rule is
+      to pick by capability (prefer text/html when the client can render it, keep
+      text/plain as the fallback and for indexing) rather than by position, which
+      makes this message render as HTML. A strict RFC 2046 "last part wins" reading
+      is defensible and yields the plain text; it is not data loss because the HTML
+      is still stored. Discarding either alternative at parse time is the defect.
+    subject: "multipart/alternative in inverted order"
+    parts: 2
+    attachments: 0
+
+  - id: structural-015
+    file: 07-structural/015-empty-parts.eml
+    category: structural
+    pathology: >
+      A multipart/mixed containing a completely empty part (two consecutive
+      delimiters, no headers at all) and a part with headers but a zero-length
+      body, before the one part with real content; iterators that assume every
+      delimiter is followed by a header block can desynchronize and drop the
+      remaining parts.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The correct parse yields three children in order: an empty part (no headers,
+      no body, defaulting to text/plain us-ascii per RFC 2046), a text/plain part
+      with an empty body, and a text/plain part with body "the only part with
+      actual content". The load-bearing requirement is that iteration survives the
+      empty parts and reaches the third — losing the real content is the failure
+      this case exists to catch. Whether empty parts are emitted as children or
+      silently skipped is a defensible implementation choice; the parts count below
+      assumes they are emitted.
+    subject: "Empty parts inside a multipart"
+    parts: 3
+    attachments: 0
+
+  - id: structural-016
+    file: 07-structural/016-rfc822-part-not-a-message.eml
+    category: structural
+    pathology: >
+      A part declared message/rfc822 whose payload is binary garbage with NUL
+      bytes rather than an RFC 5322 message; a parser that recurses into
+      message/rfc822 unconditionally can error out, recurse on nonsense, or lose
+      the enclosing multipart.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The correct behavior is to attempt the nested parse, detect that the payload
+      has no valid header block, and fall back to treating the part as an opaque
+      leaf whose raw bytes are preserved — the enclosing multipart/mixed and its
+      single child must survive intact. A nested-parse failure must never
+      invalidate the parent message. Note the payload begins with NUL bytes, so
+      the bytes must be handled as binary (blob), not coerced into a text column.
+      A defensible alternative is to synthesize an empty nested message with the
+      raw bytes attached; unacceptable is an error that drops the whole message.
+    subject: "message/rfc822 containing non-message data"
+    parts: 1
+    attachments: 0
+
+  - id: structural-017
+    file: 07-structural/017-mime-structure-without-mime-version.eml
+    category: structural
+    pathology: >
+      A full multipart/mixed structure with no MIME-Version header; RFC 2045
+      strictly requires the header before Content-Type may be interpreted as MIME,
+      yet a huge volume of real mail omits it and every deployed client honours
+      the structure anyway.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The pragmatic and correct behavior is to honour the Content-Type regardless
+      of MIME-Version and parse the multipart normally, yielding one text/plain
+      leaf with body "body". A strictly conforming parser would treat the whole
+      thing as an unstructured text/plain body containing visible boundary lines —
+      technically defensible per RFC 2045 §4, but it degrades real mail for no
+      benefit and must not be the default. Either way nothing is lost, so expect
+      ok; the parts count below assumes MIME interpretation.
+    subject: "MIME structure with no MIME-Version"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-001
+    file: 09-real-world/001-tnef-winmail-dat.eml
+    category: real-world
+    pathology: >
+      Outlook TNEF: a multipart/mixed whose second part is an application/ms-tnef
+      "winmail.dat" carrying the real formatted body and any real attachments in a
+      proprietary container, here with a valid TNEF signature and a truncated
+      stream — the user sees a useless winmail.dat and loses whatever Outlook put
+      inside it.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      MIME-level parsing must fully succeed: two leaf parts, the text/plain body
+      "This message was sent with Rich Text Format." and the base64 winmail.dat
+      attachment decoded to its raw bytes (signature 0x223E9F78 little-endian
+      followed by the truncated payload). Marked partial because the TNEF container
+      itself is deliberately truncated after the attach key, so its inner content
+      is unrecoverable by any parser — TNEF decoding is out of scope for a correct
+      MIME parser. Acceptable range: expose winmail.dat as an attachment (baseline,
+      what most clients do), or additionally detect the TNEF signature and surface
+      a "this message contains Outlook rich content" hint. Silently hiding the
+      winmail.dat part is wrong — it is the only copy of the content.
+    subject: "TNEF winmail.dat attachment"
+    parts: 2
+    attachments: 1
+
+  - id: real-world-002
+    file: 09-real-world/002-smime-mangled-signature.eml
+    category: real-world
+    pathology: >
+      An S/MIME multipart/signed whose application/pkcs7-signature part is
+      corrupt — neither valid base64 nor valid PKCS#7 — so a parser that validates
+      the signature before rendering, or that aborts on the failed base64 decode,
+      costs the user a perfectly readable message because of a broken signature.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The load-bearing expectation: the signed CONTENT must remain fully readable.
+      The text/plain first part ("This is the signed content and it must remain
+      readable.") must be extracted and rendered exactly as if the message were
+      unsigned. The corrupt signature part must degrade to "signature could not be
+      verified" — never to a parse failure, an empty body, or a dropped message. A
+      broken signature must never cost the user the message body. Presentation
+      rule: per RFC 1847 the application/pkcs7-signature part is protocol
+      machinery, not user content, and MUST NOT be listed as a downloadable
+      attachment (hence attachments: 0), though it must still be retained
+      byte-for-byte in the store for later re-verification. Failing the base64
+      decode of the signature is expected and harmless.
+    subject: "multipart/signed with mangled signature"
+    parts: 2
+    attachments: 0
+
+  - id: real-world-003
+    file: 09-real-world/003-pgpmime-missing-control-part.eml
+    category: real-world
+    pathology: >
+      A PGP/MIME multipart/encrypted that violates RFC 3156 by omitting the
+      mandatory application/pgp-encrypted control part, leaving only the ciphertext
+      part; a parser that indexes by position (control = part 0, ciphertext =
+      part 1) reads the ciphertext as the control part and reports the message as
+      malformed rather than as encrypted.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The single application/octet-stream child must be parsed and its bytes
+      preserved verbatim — the ASCII-armored block from "-----BEGIN PGP MESSAGE-----"
+      through "-----END PGP MESSAGE-----" — because that is the only copy of the
+      user's content and it is still decryptable by an external tool given the
+      right key. Marked partial because the plaintext is inherently unavailable to
+      the parser (the payload here is synthetic and undecryptable in any case) and
+      the missing control part means the protocol declaration cannot be verified.
+      Correct behavior: identify the part by its PGP armor rather than by position,
+      present the message as encrypted, and offer the armored block. A broken
+      crypto envelope must not cost the user the ciphertext — dropping the part or
+      rendering a blank message is the failure to avoid.
+    subject: "multipart/encrypted missing its control part"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-004
+    file: 09-real-world/004-dsn-delivery-status.eml
+    category: real-world
+    pathology: >
+      A bounce shaped as multipart/report; report-type=delivery-status containing a
+      message/delivery-status part and a message/rfc822 part whose returned
+      original was truncated by the MTA mid-body; the nested truncated message is
+      what breaks recursive parsers, and bounces are high-volume traffic that must
+      be classified reliably.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      All three children must be recovered: the human-readable text/plain
+      explanation, the message/delivery-status part whose per-recipient fields
+      (Final-Recipient nosuchuser@example.org, Action failed, Status 5.1.1) should
+      be parsed as header-style key/value groups rather than treated as opaque
+      text, and the message/rfc822 part containing the truncated original. The
+      nested message has a valid header block and a body of "original bo"; its
+      truncation is not an error condition — a correct parser accepts an
+      end-of-input body. Counting: the delivery-status and rfc822 parts are
+      protocol content, not user attachments, so a correct client shows zero
+      attachments and renders the text/plain explanation as the body. The parts
+      count below counts the three top-level children as leaves (the nested
+      message's own single text body is not counted separately).
+    subject: "Undelivered Mail Returned to Sender"
+    parts: 3
+    attachments: 0
+
+  - id: real-world-005
+    file: 09-real-world/005-calendar-broken-folding.eml
+    category: real-world
+    pathology: >
+      A multipart/alternative meeting invite whose text/calendar part violates RFC
+      5545 folding: a SUMMARY continuation line lacks the required leading space
+      (so it parses as an unknown property) and a DESCRIPTION escape is split
+      across a fold; broken invites are endemic and a strict iCalendar parser
+      rejects the whole VEVENT.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      MIME-level parsing must fully succeed — two leaf parts, text/plain
+      ("Reunion de equipo") and text/calendar with method=REQUEST — and the
+      calendar part's raw bytes must be preserved in full. At the iCalendar layer
+      the damage is real: "porque esta linea no empieza con espacio" cannot be
+      reattached to SUMMARY without guessing, so a correct parser either treats it
+      as an unrecognized property and keeps the truncated SUMMARY, or heuristically
+      joins it. Both are defensible; hence partial. The hard requirement is that a
+      malformed VEVENT must not prevent rendering the message: the text/plain
+      alternative and the raw calendar text remain available, and the invite
+      degrades to a plain message rather than disappearing.
+    subject: "Calendar invite with broken folding"
+    parts: 2
+    attachments: 0
+
+  - id: real-world-006
+    file: 09-real-world/006-html-meta-charset-conflict.eml
+    category: real-world
+    pathology: >
+      An HTML-only message whose body bytes are UTF-8, whose MIME Content-Type
+      header declares ISO-8859-1, and whose embedded <meta charset="utf-8">
+      contradicts the header; browsers honour the meta tag while RFC 2046 makes
+      the MIME header authoritative, so the same bytes render differently
+      depending on which layer decodes them.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Per RFC 2046 the MIME header WINS: the transport-level charset declaration is
+      authoritative over any charset declared inside the payload. The bytes are
+      UTF-8 (0xC3 0xB1, 0xC3 0xB3) while the MIME header lies and says ISO-8859-1,
+      so a strictly-conforming decode produces mojibake — "El seÃ±or con acciÃ³n."
+      — and THAT IS THE CONFORMING RESULT, not a bug. A robust implementation may
+      apply the well-known heuristic of validating the bytes as UTF-8 first and, on
+      success, preferring UTF-8 (recovering "El señor con acción."); this is what
+      most modern clients do and is defensible, but it is a deliberate deviation
+      from the RFC and must be a conscious, documented policy rather than an
+      accident. Marked partial because the parser must choose between a conforming
+      wrong-looking render and a heuristically-repaired one. Non-negotiable: never
+      let the in-document <meta> tag override the MIME header silently, and never
+      drop the body because the declared decode looks wrong.
+    subject: "HTML meta charset contradicts MIME header"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-007
+    file: 09-real-world/007-format-flowed-edges.eml
+    category: real-world
+    pathology: >
+      A text/plain part with format=flowed; delsp=yes exercising every RFC 3676
+      edge at once — a soft-wrapped line ending in a space, a space-stuffed line
+      that must lose exactly one leading space, and a quoted block that flows —
+      where mishandling either strips a real space from the text or leaves ragged
+      unwrapped output.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser implements RFC 3676: lines ending in a space are flowed into
+      the next line and, because delsp=yes, the trailing space is DELETED on join
+      (so "flows" and "into" join without a space — a subtle and commonly wrong
+      detail); lines not ending in a space are hard breaks; exactly one leading
+      space is removed from the space-stuffed line; and the quote-depth-1 block
+      flows only into lines of the same quote depth. All content is recoverable, so
+      ok. Ignoring format=flowed entirely and showing the raw lines is a visible
+      quality defect but not data loss; getting delsp backwards silently corrupts
+      the text and is the failure to catch.
+    subject: "format=flowed edge cases"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-008
+    file: 09-real-world/008-lying-content-length.eml
+    category: real-world
+    pathology: >
+      A Content-Length: 5 header on a message whose body is far longer — an mbox
+      and Netscape-era artifact; RFC 5322 defines no such header for mail, but
+      parsers that honour it truncate the body at byte five and lose everything
+      after it, or overrun and read into the next message.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Content-Length has no meaning in RFC 5322/2045 email and MUST be ignored
+      entirely. The correct body is both full lines, from "This body is far
+      longer..." through "...everything after byte five is lost." Truncating to
+      five bytes ("This ") is catastrophic silent data loss and is precisely the
+      behavior this case exists to detect. The header should be retained as an
+      ordinary unrecognized header, not acted upon.
+    subject: "Content-Length header that lies"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-009
+    file: 09-real-world/009-mbox-from-line-leak.eml
+    category: real-world
+    pathology: >
+      An mbox envelope "From " separator line leaked in ahead of the real header
+      block, plus an unescaped body line beginning with "From " (the classic >From
+      mangling in its ambiguous, un-mangled form); a parser that treats the
+      envelope line as the first header can mis-parse or discard the entire header
+      block, and an mbox splitter would tear the message in two at the body line.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      A correct parser recognizes a leading "From " line with no colon as an mbox
+      envelope artifact and SKIPS it, then parses the real header block normally —
+      yielding From: Ada Lovelace, Subject: "mbox From_ line leaked into the
+      message", and a two-line body with the second line beginning "From here on".
+      The body-position "From " line is ordinary body text and must be preserved
+      verbatim; it must never trigger message splitting inside a parser operating
+      on a single message. Also defensible: retaining the envelope line as an
+      X-Envelope-style pseudo-header for provenance. Unacceptable: consuming the
+      envelope line as a malformed header and losing the real From:/Subject:, or
+      truncating the body at the second "From ".
+    subject: "mbox From_ line leaked into the message"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-010
+    file: 09-real-world/010-long-received-and-references.eml
+    category: real-world
+    pathology: >
+      Realistic list mail with 40 Received headers (each folded across three
+      continuation lines) and a References header folded across 200 message-IDs,
+      totalling ~12 KB of headers; parsers or storage layers with a header-count,
+      header-size, or single-header-length cap silently truncate the References
+      chain and break threading.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Nothing here is malformed — this is legal RFC 5322 with aggressive folding —
+      so a correct parser recovers all 40 Received headers with their continuation
+      lines unfolded, and all 200 message-IDs from References in order. The
+      requirement is the absence of arbitrary limits: no header-count cap, no
+      per-header length cap, and unfolding that correctly joins lines beginning
+      with TAB. Threading correctness depends on the complete References list, so a
+      truncated parse degrades a user-visible feature without any error. Body is
+      "Reply in a very long thread."
+    subject: "Re: long thread"
+    parts: 1
+    attachments: 0
+
+  - id: real-world-011
+    file: 09-real-world/011-apple-inline-image-in-alternative.eml
+    category: real-world
+    pathology: >
+      Apple Mail's characteristic shape: a multipart/alternative containing
+      text/plain, an inline image/jpeg, and text/html in that order — an image
+      where RFC 2046 expects only alternative representations of the same content,
+      which breaks naive "iterate alternatives and take the last renderable one"
+      selection and can make the image vanish or become the chosen body.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      All three leaves must be recovered: text/plain "Text before the image.", the
+      inline image/jpeg (filename foto.jpg, base64-decoded), and text/html
+      "<p>Text after the image.</p>". Alternative selection must be type-aware —
+      choose among the TEXT alternatives (preferring text/html) and never select
+      the image as the body — while the image itself must not be discarded just
+      because it sits inside an alternative where it does not belong. Because it is
+      disposition=inline with a filename and no Content-ID referencing it from the
+      HTML, both treatments are defensible: surface it as an attachment (the safer
+      default, reflected below) or render it inline alongside the chosen body.
+      Unacceptable: dropping the image, or rendering the plain and HTML bodies
+      both.
+    subject: "Inline image inside multipart/alternative"
+    parts: 3
+    attachments: 1
+
+  - id: real-world-012
+    file: 09-real-world/012-report-missing-type-empty-status.eml
+    category: real-world
+    pathology: >
+      A bounce declared multipart/report with no report-type parameter (required by
+      RFC 6522) and a message/delivery-status part that is completely empty, so
+      machine classification of the bounce has nothing to key on and a parser
+      expecting DSN fields finds none.
+    provenance: generated
+    generator: spikes/s4-mime/gen
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Structurally the parse must succeed: two children, text/plain "Delivery
+      failed." and an empty message/delivery-status. The human-readable
+      explanation is fully recovered, so nothing the user needs is lost. Marked
+      partial because the machine-readable layer is irrecoverable — with no
+      report-type parameter and an empty status part there is no Final-Recipient,
+      Action, or Status to extract, so automatic bounce classification must fall
+      back to heuristics on the text part or give up. Correct behavior: treat the
+      missing report-type as unknown rather than erroring, present the message as
+      an ordinary two-part message with a readable body, and do not list the empty
+      delivery-status part as an attachment. Rejecting the message for the missing
+      required parameter is wrong.
+    subject: "multipart/report without report-type"
+    parts: 2
+    attachments: 0

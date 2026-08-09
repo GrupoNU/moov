@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Declared base64, actually plain text
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cte-b64-text@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: base64
+
+This is obviously not base64! It has spaces, punctuation, and '!'.
+Second line of very much not base64.

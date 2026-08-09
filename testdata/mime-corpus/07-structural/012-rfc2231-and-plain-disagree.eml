@@ -1,0 +1,13 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: filename* and filename= disagree
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-2231-both@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/octet-stream
+Content-Disposition: attachment;
+ filename="inocuo.txt";
+ filename*=UTF-8''peligroso.exe
+Content-Transfer-Encoding: base64
+
+TVogZmFrZQ==

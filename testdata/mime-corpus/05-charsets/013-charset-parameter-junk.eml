@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Charset parameter with junk
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-junk@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain;  charset = " utf-8 " ; charset=iso-8859-1;
+Content-Transfer-Encoding: 8bit
+
+El señor - which charset parameter wins?

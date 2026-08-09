@@ -1,0 +1,13 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Empty boundary parameter
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <bnd-empty@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=""
+
+--
+Content-Type: text/plain; charset=us-ascii
+
+body under an empty boundary
+----

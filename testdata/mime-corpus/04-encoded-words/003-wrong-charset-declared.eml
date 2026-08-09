@@ -1,0 +1,9 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: =?ISO-8859-1?B?QWNjacOzbiByZXF1ZXJpZGE=?=
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <ew-wrongcs@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Bytes are UTF-8; the encoded-word claims ISO-8859-1.

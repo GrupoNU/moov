@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Filename with traversal and control chars
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-fname-evil@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="../../../etc/passwd"
+Content-Transfer-Encoding: base64
+
+bm90IHJlYWxseSBwYXNzd2Q=

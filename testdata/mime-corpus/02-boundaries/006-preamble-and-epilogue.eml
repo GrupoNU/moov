@@ -1,0 +1,16 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Preamble and epilogue
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <bnd-pre-epi@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_p_="
+
+This is a multi-part message in MIME format.
+PREAMBLE-MARKER-SHOULD-NOT-APPEAR-AS-BODY
+--=_p_=
+Content-Type: text/plain; charset=us-ascii
+
+the actual body
+--=_p_=--
+EPILOGUE-MARKER-SHOULD-NOT-APPEAR-AS-BODY

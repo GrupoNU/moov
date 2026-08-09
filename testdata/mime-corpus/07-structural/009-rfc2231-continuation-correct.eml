@@ -1,0 +1,14 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: RFC 2231 continuation, correct
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-2231-ok@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/pdf
+Content-Disposition: attachment;
+ filename*0*=UTF-8''Informe%20de%20gesti;
+ filename*1*=%C3%B3n%20a%C3%B1o%202025;
+ filename*2*=.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZQ==

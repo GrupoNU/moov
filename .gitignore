@@ -25,3 +25,9 @@ Thumbs.db
 data/
 *.eml
 *.mbox
+
+# ...except the pathological MIME corpus, which is a committed test fixture:
+# these .eml files ARE the parser's regression suite (S4). Without these
+# negations the blanket *.eml rule above silently hides the entire corpus.
+!testdata/mime-corpus/**/*.eml
+!testdata/mime-corpus/**/*.mbox

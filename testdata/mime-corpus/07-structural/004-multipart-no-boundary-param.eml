@@ -1,0 +1,9 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: multipart without a boundary parameter
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-noboundary@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed
+
+There is no boundary parameter, so there is nothing to split on.

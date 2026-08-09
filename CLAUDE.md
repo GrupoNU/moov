@@ -5,7 +5,7 @@
 
 ## Estado
 
-**2026-08-08:** Proyecto iniciado 2026-08-07. Fase 0 (research) completa, ADR-001 aceptado. **Spikes S1 y S2 VALIDADOS.** S1: JMAP-sobre-Dovecot funciona contra nuestro Mailcow real, incluyendo Bulwark (cliente de terceros) en navegador — `docs/spikes/S1-jmap-sobre-dovecot.md` (H1-H7). S2: base técnica del sync engine validada — QRESYNC/CONDSTORE/IDLE/NOTIFY correctos en nuestro Dovecot 2.3.21.1 (NOTIFY colapsa el fan-out: 1 conexión observa N carpetas); go-imap/v2 requiere **rama v2 pinneada + patch set propio** (PR #757 QRESYNC validado end-to-end, fix encoder NOTIFY, exponer MODIFIED) — `docs/spikes/S2-go-imap-dovecot.md` (H1-H9 + arbitraje A4). Stack de referencia S1 corriendo en el VPS mail (VPN-only): Caddy (:8090) → Bulwark + jmap-proxy → Dovecot, con buzón de prueba `moov-test@atmosfera.cloud` (credenciales en `credentials/` de VPS_Mail, git-ignored). Próximos: spikes S3 (benchmark 5M) y S4 (corpus MIME). No hay código de producto todavía.
+**2026-08-08:** Proyecto iniciado 2026-08-07. Fase 0 (research) completa, ADR-001 aceptado. **Spikes S1 y S2 VALIDADOS.** S1: JMAP-sobre-Dovecot funciona contra nuestro Mailcow real, incluyendo Bulwark (cliente de terceros) en navegador — `docs/spikes/S1-jmap-sobre-dovecot.md` (H1-H7). S2: base técnica del sync engine validada — QRESYNC/CONDSTORE/IDLE/NOTIFY correctos en nuestro Dovecot 2.3.21.1 (NOTIFY colapsa el fan-out: 1 conexión observa N carpetas); go-imap/v2 requiere **rama v2 pinneada + patch set propio** (PR #757 QRESYNC validado end-to-end, fix encoder NOTIFY, exponer MODIFIED) — `docs/spikes/S2-go-imap-dovecot.md` (H1-H9 + arbitraje A4). Stack de referencia S1 corriendo en el VPS mail (VPN-only): Caddy (:8090) → Bulwark + jmap-proxy → Dovecot, con buzón de prueba `moov-test@atmosfera.cloud` (credenciales en `credentials/` de VPS_Mail, git-ignored). **S4 VALIDADO (2026-08-09):** corpus de MIME patológico en `testdata/mime-corpus/` (110 casos, manifest-como-spec) + harness dual-parser — cascada go-message → enmime → raw blob confirmada bidireccional, 0 panics/hangs — `docs/spikes/S4-corpus-mime.md` (H1-H9). Pendiente: S3 (benchmark FTS 5M, en ejecución). No hay código de producto todavía.
 
 ## Reglas rectoras del proyecto (fijadas por Diego — no negociables)
 
@@ -51,7 +51,7 @@
 | S1 ✅ | jmap-perl + Bulwark contra nuestro Mailcow | JMAP-sobre-Dovecot funciona, cliente de terceros incluido — **VALIDADO 100% 2026-08-08** |
 | S2 ✅ | go-imap/v2 (rama v2 pinneada) contra nuestro Dovecot: QRESYNC, CONDSTORE, IDLE, NOTIFY multi-mailbox | Base técnica del sync engine; fan-out colapsado confirmado (1 conexión, N carpetas) — **VALIDADO 2026-08-08** |
 | S3 | Benchmark tsvector+GIN con corpus sintético de 5M mensajes | Si Meilisearch entra al MVP o a fase 2 |
-| S4 | Corpus de MIME patológico | Robustez del parser |
+| S4 ✅ | Corpus de MIME patológico (110 casos) + harness dual-parser | Cascada go-message → enmime → raw blob validada; 0 panics/hangs — **VALIDADO 2026-08-09** |
 
 ## Para retomar rápido
 

@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: QP with a bare = at EOF
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cte-qp-bare@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+a line ending in a soft break =
+and then a truncated escape at the very end: =

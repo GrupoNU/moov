@@ -1,0 +1,14 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: base64 CTE on a multipart container
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cte-on-multipart@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_c_="
+Content-Transfer-Encoding: base64
+
+--=_c_=
+Content-Type: text/plain; charset=us-ascii
+
+the container claims to be base64 encoded
+--=_c_=--

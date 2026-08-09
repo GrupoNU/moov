@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Content-Length header that lies
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-clen@corpus.example.com>
+MIME-Version: 1.0
+Content-Length: 5
+Content-Type: text/plain; charset=us-ascii
+
+This body is far longer than the five bytes the Content-Length header claims.
+If a parser trusts Content-Length, everything after byte five is lost.

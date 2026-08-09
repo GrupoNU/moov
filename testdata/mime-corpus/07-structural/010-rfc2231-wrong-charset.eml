@@ -1,0 +1,12 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: RFC 2231 with wrong charset label
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-2231-lie@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/pdf
+Content-Disposition: attachment;
+ filename*=ISO-8859-1''Informe%20gesti%C3%B3n.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZQ==

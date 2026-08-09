@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: windows-1256 declared correctly
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-1256@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=windows-1256
+Content-Transfer-Encoding: 8bit
+
+„—Õ»« - Arabic greeting in windows-1256.

@@ -1,0 +1,209 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Nested multipart x50
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <nest-50@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_lvl0001_="
+
+--=_lvl0001_=
+Content-Type: multipart/mixed; boundary="=_lvl0002_="
+
+--=_lvl0002_=
+Content-Type: multipart/mixed; boundary="=_lvl0003_="
+
+--=_lvl0003_=
+Content-Type: multipart/mixed; boundary="=_lvl0004_="
+
+--=_lvl0004_=
+Content-Type: multipart/mixed; boundary="=_lvl0005_="
+
+--=_lvl0005_=
+Content-Type: multipart/mixed; boundary="=_lvl0006_="
+
+--=_lvl0006_=
+Content-Type: multipart/mixed; boundary="=_lvl0007_="
+
+--=_lvl0007_=
+Content-Type: multipart/mixed; boundary="=_lvl0008_="
+
+--=_lvl0008_=
+Content-Type: multipart/mixed; boundary="=_lvl0009_="
+
+--=_lvl0009_=
+Content-Type: multipart/mixed; boundary="=_lvl0010_="
+
+--=_lvl0010_=
+Content-Type: multipart/mixed; boundary="=_lvl0011_="
+
+--=_lvl0011_=
+Content-Type: multipart/mixed; boundary="=_lvl0012_="
+
+--=_lvl0012_=
+Content-Type: multipart/mixed; boundary="=_lvl0013_="
+
+--=_lvl0013_=
+Content-Type: multipart/mixed; boundary="=_lvl0014_="
+
+--=_lvl0014_=
+Content-Type: multipart/mixed; boundary="=_lvl0015_="
+
+--=_lvl0015_=
+Content-Type: multipart/mixed; boundary="=_lvl0016_="
+
+--=_lvl0016_=
+Content-Type: multipart/mixed; boundary="=_lvl0017_="
+
+--=_lvl0017_=
+Content-Type: multipart/mixed; boundary="=_lvl0018_="
+
+--=_lvl0018_=
+Content-Type: multipart/mixed; boundary="=_lvl0019_="
+
+--=_lvl0019_=
+Content-Type: multipart/mixed; boundary="=_lvl0020_="
+
+--=_lvl0020_=
+Content-Type: multipart/mixed; boundary="=_lvl0021_="
+
+--=_lvl0021_=
+Content-Type: multipart/mixed; boundary="=_lvl0022_="
+
+--=_lvl0022_=
+Content-Type: multipart/mixed; boundary="=_lvl0023_="
+
+--=_lvl0023_=
+Content-Type: multipart/mixed; boundary="=_lvl0024_="
+
+--=_lvl0024_=
+Content-Type: multipart/mixed; boundary="=_lvl0025_="
+
+--=_lvl0025_=
+Content-Type: multipart/mixed; boundary="=_lvl0026_="
+
+--=_lvl0026_=
+Content-Type: multipart/mixed; boundary="=_lvl0027_="
+
+--=_lvl0027_=
+Content-Type: multipart/mixed; boundary="=_lvl0028_="
+
+--=_lvl0028_=
+Content-Type: multipart/mixed; boundary="=_lvl0029_="
+
+--=_lvl0029_=
+Content-Type: multipart/mixed; boundary="=_lvl0030_="
+
+--=_lvl0030_=
+Content-Type: multipart/mixed; boundary="=_lvl0031_="
+
+--=_lvl0031_=
+Content-Type: multipart/mixed; boundary="=_lvl0032_="
+
+--=_lvl0032_=
+Content-Type: multipart/mixed; boundary="=_lvl0033_="
+
+--=_lvl0033_=
+Content-Type: multipart/mixed; boundary="=_lvl0034_="
+
+--=_lvl0034_=
+Content-Type: multipart/mixed; boundary="=_lvl0035_="
+
+--=_lvl0035_=
+Content-Type: multipart/mixed; boundary="=_lvl0036_="
+
+--=_lvl0036_=
+Content-Type: multipart/mixed; boundary="=_lvl0037_="
+
+--=_lvl0037_=
+Content-Type: multipart/mixed; boundary="=_lvl0038_="
+
+--=_lvl0038_=
+Content-Type: multipart/mixed; boundary="=_lvl0039_="
+
+--=_lvl0039_=
+Content-Type: multipart/mixed; boundary="=_lvl0040_="
+
+--=_lvl0040_=
+Content-Type: multipart/mixed; boundary="=_lvl0041_="
+
+--=_lvl0041_=
+Content-Type: multipart/mixed; boundary="=_lvl0042_="
+
+--=_lvl0042_=
+Content-Type: multipart/mixed; boundary="=_lvl0043_="
+
+--=_lvl0043_=
+Content-Type: multipart/mixed; boundary="=_lvl0044_="
+
+--=_lvl0044_=
+Content-Type: multipart/mixed; boundary="=_lvl0045_="
+
+--=_lvl0045_=
+Content-Type: multipart/mixed; boundary="=_lvl0046_="
+
+--=_lvl0046_=
+Content-Type: multipart/mixed; boundary="=_lvl0047_="
+
+--=_lvl0047_=
+Content-Type: multipart/mixed; boundary="=_lvl0048_="
+
+--=_lvl0048_=
+Content-Type: multipart/mixed; boundary="=_lvl0049_="
+
+--=_lvl0049_=
+Content-Type: multipart/mixed; boundary="=_lvl0050_="
+
+--=_lvl0050_=
+Content-Type: text/plain; charset=us-ascii
+
+bottom of the well
+--=_lvl0050_=--
+--=_lvl0049_=--
+--=_lvl0048_=--
+--=_lvl0047_=--
+--=_lvl0046_=--
+--=_lvl0045_=--
+--=_lvl0044_=--
+--=_lvl0043_=--
+--=_lvl0042_=--
+--=_lvl0041_=--
+--=_lvl0040_=--
+--=_lvl0039_=--
+--=_lvl0038_=--
+--=_lvl0037_=--
+--=_lvl0036_=--
+--=_lvl0035_=--
+--=_lvl0034_=--
+--=_lvl0033_=--
+--=_lvl0032_=--
+--=_lvl0031_=--
+--=_lvl0030_=--
+--=_lvl0029_=--
+--=_lvl0028_=--
+--=_lvl0027_=--
+--=_lvl0026_=--
+--=_lvl0025_=--
+--=_lvl0024_=--
+--=_lvl0023_=--
+--=_lvl0022_=--
+--=_lvl0021_=--
+--=_lvl0020_=--
+--=_lvl0019_=--
+--=_lvl0018_=--
+--=_lvl0017_=--
+--=_lvl0016_=--
+--=_lvl0015_=--
+--=_lvl0014_=--
+--=_lvl0013_=--
+--=_lvl0012_=--
+--=_lvl0011_=--
+--=_lvl0010_=--
+--=_lvl0009_=--
+--=_lvl0008_=--
+--=_lvl0007_=--
+--=_lvl0006_=--
+--=_lvl0005_=--
+--=_lvl0004_=--
+--=_lvl0003_=--
+--=_lvl0002_=--
+--=_lvl0001_=--

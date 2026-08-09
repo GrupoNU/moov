@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Attachment only, no text part
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-attachonly@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/pdf; name="informe.pdf"
+Content-Disposition: attachment; filename="informe.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZSBwZGYgYnl0ZXMgZm9yIGNvcnB1cyBwdXJwb3Nlcw==

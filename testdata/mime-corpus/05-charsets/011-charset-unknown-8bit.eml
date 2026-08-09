@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: charset=unknown-8bit
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-unknown8@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=unknown-8bit
+Content-Transfer-Encoding: 8bit
+
+El señor - latin1 bytes labelled unknown-8bit (RFC 1428 token).

@@ -1,0 +1,17 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: multipart/encrypted missing its control part
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-pgp@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted";
+ boundary="=_pgp_="
+
+--=_pgp_=
+Content-Type: application/octet-stream
+
+-----BEGIN PGP MESSAGE-----
+
+hQEMA0000000000000synthetic
+-----END PGP MESSAGE-----
+--=_pgp_=--

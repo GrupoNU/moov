@@ -1,0 +1,12 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: QP with invalid escape sequences
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cte-qp-bad@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: quoted-printable
+
+not hex: =ZZ and =G1 and = (space after equals).
+trailing whitespace before soft break:   =
+final line.

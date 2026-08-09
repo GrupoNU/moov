@@ -1,0 +1,10 @@
+   orphaned continuation with no preceding header
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Leading continuation line
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <hdr-orphan@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+body

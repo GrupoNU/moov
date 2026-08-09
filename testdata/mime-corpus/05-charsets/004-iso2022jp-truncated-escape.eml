@@ -1,0 +1,12 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: ISO-2022-JP escape cut mid-stream
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-2022jp@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=ISO-2022-JP
+Content-Transfer-Encoding: 7bit
+
+Hello $B$3$s$K$A$O
+more ascii text after an unterminated JIS shift
+and a truncated escape at the very end: $

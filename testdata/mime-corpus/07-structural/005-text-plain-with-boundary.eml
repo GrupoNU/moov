@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: text/plain with a boundary parameter
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-textboundary@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii; boundary="=_t_="
+
+--=_t_=
+this looks like a delimiter but the type is not multipart
+--=_t_=--

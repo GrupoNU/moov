@@ -1,0 +1,9 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: =?UTF-8?Q?a_b=3Dc=g=c3=b1?=
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <ew-qedge@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+Underscore-as-space, bare '=g', and lowercase hex '=c3=b1'.

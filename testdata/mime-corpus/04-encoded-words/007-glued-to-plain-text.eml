@@ -1,0 +1,9 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: prefix=?UTF-8?Q?medio?=sufijo =?UTF-8?Q?a?==?UTF-8?Q?b?=
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <ew-glued@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+Encoded-words glued to plain text without whitespace delimiters.

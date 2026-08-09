@@ -1,0 +1,16 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: multipart/report without report-type
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-report@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/report; boundary="=_rp_="
+
+--=_rp_=
+Content-Type: text/plain; charset=us-ascii
+
+Delivery failed.
+--=_rp_=
+Content-Type: message/delivery-status
+
+--=_rp_=--

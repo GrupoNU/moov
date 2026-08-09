@@ -1,0 +1,330 @@
+From: Ada Lovelace <ada@example.com>
+To: Lista <lista@example.org>
+Subject: Re: long thread
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-longrefs@corpus.example.com>
+MIME-Version: 1.0
+Received: from hop0.example.org (hop0.example.org [192.0.2.1])
+	by mx.example.org with ESMTPS id 0
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop1.example.org (hop1.example.org [192.0.2.2])
+	by mx.example.org with ESMTPS id 1
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop2.example.org (hop2.example.org [192.0.2.3])
+	by mx.example.org with ESMTPS id 2
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop3.example.org (hop3.example.org [192.0.2.4])
+	by mx.example.org with ESMTPS id 3
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop4.example.org (hop4.example.org [192.0.2.5])
+	by mx.example.org with ESMTPS id 4
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop5.example.org (hop5.example.org [192.0.2.6])
+	by mx.example.org with ESMTPS id 5
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop6.example.org (hop6.example.org [192.0.2.7])
+	by mx.example.org with ESMTPS id 6
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop7.example.org (hop7.example.org [192.0.2.8])
+	by mx.example.org with ESMTPS id 7
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop8.example.org (hop8.example.org [192.0.2.9])
+	by mx.example.org with ESMTPS id 8
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop9.example.org (hop9.example.org [192.0.2.10])
+	by mx.example.org with ESMTPS id 9
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop10.example.org (hop10.example.org [192.0.2.11])
+	by mx.example.org with ESMTPS id 10
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop11.example.org (hop11.example.org [192.0.2.12])
+	by mx.example.org with ESMTPS id 11
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop12.example.org (hop12.example.org [192.0.2.13])
+	by mx.example.org with ESMTPS id 12
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop13.example.org (hop13.example.org [192.0.2.14])
+	by mx.example.org with ESMTPS id 13
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop14.example.org (hop14.example.org [192.0.2.15])
+	by mx.example.org with ESMTPS id 14
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop15.example.org (hop15.example.org [192.0.2.16])
+	by mx.example.org with ESMTPS id 15
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop16.example.org (hop16.example.org [192.0.2.17])
+	by mx.example.org with ESMTPS id 16
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop17.example.org (hop17.example.org [192.0.2.18])
+	by mx.example.org with ESMTPS id 17
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop18.example.org (hop18.example.org [192.0.2.19])
+	by mx.example.org with ESMTPS id 18
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop19.example.org (hop19.example.org [192.0.2.20])
+	by mx.example.org with ESMTPS id 19
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop20.example.org (hop20.example.org [192.0.2.21])
+	by mx.example.org with ESMTPS id 20
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop21.example.org (hop21.example.org [192.0.2.22])
+	by mx.example.org with ESMTPS id 21
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop22.example.org (hop22.example.org [192.0.2.23])
+	by mx.example.org with ESMTPS id 22
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop23.example.org (hop23.example.org [192.0.2.24])
+	by mx.example.org with ESMTPS id 23
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop24.example.org (hop24.example.org [192.0.2.25])
+	by mx.example.org with ESMTPS id 24
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop25.example.org (hop25.example.org [192.0.2.26])
+	by mx.example.org with ESMTPS id 25
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop26.example.org (hop26.example.org [192.0.2.27])
+	by mx.example.org with ESMTPS id 26
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop27.example.org (hop27.example.org [192.0.2.28])
+	by mx.example.org with ESMTPS id 27
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop28.example.org (hop28.example.org [192.0.2.29])
+	by mx.example.org with ESMTPS id 28
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop29.example.org (hop29.example.org [192.0.2.30])
+	by mx.example.org with ESMTPS id 29
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop30.example.org (hop30.example.org [192.0.2.31])
+	by mx.example.org with ESMTPS id 30
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop31.example.org (hop31.example.org [192.0.2.32])
+	by mx.example.org with ESMTPS id 31
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop32.example.org (hop32.example.org [192.0.2.33])
+	by mx.example.org with ESMTPS id 32
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop33.example.org (hop33.example.org [192.0.2.34])
+	by mx.example.org with ESMTPS id 33
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop34.example.org (hop34.example.org [192.0.2.35])
+	by mx.example.org with ESMTPS id 34
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop35.example.org (hop35.example.org [192.0.2.36])
+	by mx.example.org with ESMTPS id 35
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop36.example.org (hop36.example.org [192.0.2.37])
+	by mx.example.org with ESMTPS id 36
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop37.example.org (hop37.example.org [192.0.2.38])
+	by mx.example.org with ESMTPS id 37
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop38.example.org (hop38.example.org [192.0.2.39])
+	by mx.example.org with ESMTPS id 38
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+Received: from hop39.example.org (hop39.example.org [192.0.2.40])
+	by mx.example.org with ESMTPS id 39
+	for <lista@example.org>; Mon, 06 Jan 2025 10:00:00 +0000
+References:
+	<thread-0@example.org>
+	<thread-1@example.org>
+	<thread-2@example.org>
+	<thread-3@example.org>
+	<thread-4@example.org>
+	<thread-5@example.org>
+	<thread-6@example.org>
+	<thread-7@example.org>
+	<thread-8@example.org>
+	<thread-9@example.org>
+	<thread-10@example.org>
+	<thread-11@example.org>
+	<thread-12@example.org>
+	<thread-13@example.org>
+	<thread-14@example.org>
+	<thread-15@example.org>
+	<thread-16@example.org>
+	<thread-17@example.org>
+	<thread-18@example.org>
+	<thread-19@example.org>
+	<thread-20@example.org>
+	<thread-21@example.org>
+	<thread-22@example.org>
+	<thread-23@example.org>
+	<thread-24@example.org>
+	<thread-25@example.org>
+	<thread-26@example.org>
+	<thread-27@example.org>
+	<thread-28@example.org>
+	<thread-29@example.org>
+	<thread-30@example.org>
+	<thread-31@example.org>
+	<thread-32@example.org>
+	<thread-33@example.org>
+	<thread-34@example.org>
+	<thread-35@example.org>
+	<thread-36@example.org>
+	<thread-37@example.org>
+	<thread-38@example.org>
+	<thread-39@example.org>
+	<thread-40@example.org>
+	<thread-41@example.org>
+	<thread-42@example.org>
+	<thread-43@example.org>
+	<thread-44@example.org>
+	<thread-45@example.org>
+	<thread-46@example.org>
+	<thread-47@example.org>
+	<thread-48@example.org>
+	<thread-49@example.org>
+	<thread-50@example.org>
+	<thread-51@example.org>
+	<thread-52@example.org>
+	<thread-53@example.org>
+	<thread-54@example.org>
+	<thread-55@example.org>
+	<thread-56@example.org>
+	<thread-57@example.org>
+	<thread-58@example.org>
+	<thread-59@example.org>
+	<thread-60@example.org>
+	<thread-61@example.org>
+	<thread-62@example.org>
+	<thread-63@example.org>
+	<thread-64@example.org>
+	<thread-65@example.org>
+	<thread-66@example.org>
+	<thread-67@example.org>
+	<thread-68@example.org>
+	<thread-69@example.org>
+	<thread-70@example.org>
+	<thread-71@example.org>
+	<thread-72@example.org>
+	<thread-73@example.org>
+	<thread-74@example.org>
+	<thread-75@example.org>
+	<thread-76@example.org>
+	<thread-77@example.org>
+	<thread-78@example.org>
+	<thread-79@example.org>
+	<thread-80@example.org>
+	<thread-81@example.org>
+	<thread-82@example.org>
+	<thread-83@example.org>
+	<thread-84@example.org>
+	<thread-85@example.org>
+	<thread-86@example.org>
+	<thread-87@example.org>
+	<thread-88@example.org>
+	<thread-89@example.org>
+	<thread-90@example.org>
+	<thread-91@example.org>
+	<thread-92@example.org>
+	<thread-93@example.org>
+	<thread-94@example.org>
+	<thread-95@example.org>
+	<thread-96@example.org>
+	<thread-97@example.org>
+	<thread-98@example.org>
+	<thread-99@example.org>
+	<thread-100@example.org>
+	<thread-101@example.org>
+	<thread-102@example.org>
+	<thread-103@example.org>
+	<thread-104@example.org>
+	<thread-105@example.org>
+	<thread-106@example.org>
+	<thread-107@example.org>
+	<thread-108@example.org>
+	<thread-109@example.org>
+	<thread-110@example.org>
+	<thread-111@example.org>
+	<thread-112@example.org>
+	<thread-113@example.org>
+	<thread-114@example.org>
+	<thread-115@example.org>
+	<thread-116@example.org>
+	<thread-117@example.org>
+	<thread-118@example.org>
+	<thread-119@example.org>
+	<thread-120@example.org>
+	<thread-121@example.org>
+	<thread-122@example.org>
+	<thread-123@example.org>
+	<thread-124@example.org>
+	<thread-125@example.org>
+	<thread-126@example.org>
+	<thread-127@example.org>
+	<thread-128@example.org>
+	<thread-129@example.org>
+	<thread-130@example.org>
+	<thread-131@example.org>
+	<thread-132@example.org>
+	<thread-133@example.org>
+	<thread-134@example.org>
+	<thread-135@example.org>
+	<thread-136@example.org>
+	<thread-137@example.org>
+	<thread-138@example.org>
+	<thread-139@example.org>
+	<thread-140@example.org>
+	<thread-141@example.org>
+	<thread-142@example.org>
+	<thread-143@example.org>
+	<thread-144@example.org>
+	<thread-145@example.org>
+	<thread-146@example.org>
+	<thread-147@example.org>
+	<thread-148@example.org>
+	<thread-149@example.org>
+	<thread-150@example.org>
+	<thread-151@example.org>
+	<thread-152@example.org>
+	<thread-153@example.org>
+	<thread-154@example.org>
+	<thread-155@example.org>
+	<thread-156@example.org>
+	<thread-157@example.org>
+	<thread-158@example.org>
+	<thread-159@example.org>
+	<thread-160@example.org>
+	<thread-161@example.org>
+	<thread-162@example.org>
+	<thread-163@example.org>
+	<thread-164@example.org>
+	<thread-165@example.org>
+	<thread-166@example.org>
+	<thread-167@example.org>
+	<thread-168@example.org>
+	<thread-169@example.org>
+	<thread-170@example.org>
+	<thread-171@example.org>
+	<thread-172@example.org>
+	<thread-173@example.org>
+	<thread-174@example.org>
+	<thread-175@example.org>
+	<thread-176@example.org>
+	<thread-177@example.org>
+	<thread-178@example.org>
+	<thread-179@example.org>
+	<thread-180@example.org>
+	<thread-181@example.org>
+	<thread-182@example.org>
+	<thread-183@example.org>
+	<thread-184@example.org>
+	<thread-185@example.org>
+	<thread-186@example.org>
+	<thread-187@example.org>
+	<thread-188@example.org>
+	<thread-189@example.org>
+	<thread-190@example.org>
+	<thread-191@example.org>
+	<thread-192@example.org>
+	<thread-193@example.org>
+	<thread-194@example.org>
+	<thread-195@example.org>
+	<thread-196@example.org>
+	<thread-197@example.org>
+	<thread-198@example.org>
+	<thread-199@example.org>
+Content-Type: text/plain; charset=us-ascii
+
+Reply in a very long thread.

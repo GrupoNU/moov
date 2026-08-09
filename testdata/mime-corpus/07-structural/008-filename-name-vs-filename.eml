@@ -1,0 +1,11 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: name= and filename= disagree
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-fname@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: application/octet-stream; name="factura.pdf"
+Content-Disposition: attachment; filename="factura.pdf.exe"
+Content-Transfer-Encoding: base64
+
+TVogZmFrZSBleGVjdXRhYmxlIGhlYWRlcg==

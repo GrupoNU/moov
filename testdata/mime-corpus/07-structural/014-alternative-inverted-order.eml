@@ -1,0 +1,17 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: multipart/alternative in inverted order
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-altorder@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_ao_="
+
+--=_ao_=
+Content-Type: text/html; charset=us-ascii
+
+<p>The <b>rich</b> version, placed first.</p>
+--=_ao_=
+Content-Type: text/plain; charset=us-ascii
+
+The plain version, placed last.
+--=_ao_=--

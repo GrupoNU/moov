@@ -1,0 +1,15 @@
+# Moov Mail — line-ending policy
+#
+# Default: let git normalize text files to LF in the repository.
+* text=auto
+
+# MIME test vectors are BYTE-EXACT. CRLF vs LF is semantically significant in
+# RFC 5322 / RFC 2045: a corpus case that tests "LF-only message" or "CR-only
+# message" stops testing anything the moment git normalizes its line endings.
+# `-text` disables all eol conversion (checkin and checkout) for these files.
+#
+# These rules MUST come after the `* text=auto` line above: in .gitattributes
+# the LAST matching pattern wins, so a trailing catch-all would silently
+# re-enable normalization and corrupt the corpus.
+*.eml   -text
+*.mbox  -text

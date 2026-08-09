@@ -1,0 +1,19 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: TNEF winmail.dat attachment
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-tnef@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_tnef_="
+
+--=_tnef_=
+Content-Type: text/plain; charset=us-ascii
+
+This message was sent with Rich Text Format.
+--=_tnef_=
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Disposition: attachment; filename="winmail.dat"
+Content-Transfer-Encoding: base64
+
+eJ8+IgAAc3ludGhldGljIHRuZWYgc3RyZWFtLCB0cnVuY2F0ZWQgb24gcHVycG9zZQ==
+--=_tnef_=--

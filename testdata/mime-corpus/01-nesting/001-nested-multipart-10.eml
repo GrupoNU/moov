@@ -1,0 +1,49 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Nested multipart x10
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <nest-10@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_lvl0001_="
+
+--=_lvl0001_=
+Content-Type: multipart/mixed; boundary="=_lvl0002_="
+
+--=_lvl0002_=
+Content-Type: multipart/mixed; boundary="=_lvl0003_="
+
+--=_lvl0003_=
+Content-Type: multipart/mixed; boundary="=_lvl0004_="
+
+--=_lvl0004_=
+Content-Type: multipart/mixed; boundary="=_lvl0005_="
+
+--=_lvl0005_=
+Content-Type: multipart/mixed; boundary="=_lvl0006_="
+
+--=_lvl0006_=
+Content-Type: multipart/mixed; boundary="=_lvl0007_="
+
+--=_lvl0007_=
+Content-Type: multipart/mixed; boundary="=_lvl0008_="
+
+--=_lvl0008_=
+Content-Type: multipart/mixed; boundary="=_lvl0009_="
+
+--=_lvl0009_=
+Content-Type: multipart/mixed; boundary="=_lvl0010_="
+
+--=_lvl0010_=
+Content-Type: text/plain; charset=us-ascii
+
+bottom of the well
+--=_lvl0010_=--
+--=_lvl0009_=--
+--=_lvl0008_=--
+--=_lvl0007_=--
+--=_lvl0006_=--
+--=_lvl0005_=--
+--=_lvl0004_=--
+--=_lvl0003_=--
+--=_lvl0002_=--
+--=_lvl0001_=--

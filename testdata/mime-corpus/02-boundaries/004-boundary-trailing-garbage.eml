@@ -1,0 +1,13 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Boundary with trailing garbage
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <bnd-garbage@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_g_="
+
+--=_g_= XXXX
+Content-Type: text/plain; charset=us-ascii
+
+is this a part or is it preamble?
+--=_g_=--

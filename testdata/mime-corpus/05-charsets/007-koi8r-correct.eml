@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: KOI8-R declared correctly
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-koi8r@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=KOI8-R
+Content-Transfer-Encoding: 8bit
+
+Привет - Russian greeting in KOI8-R.

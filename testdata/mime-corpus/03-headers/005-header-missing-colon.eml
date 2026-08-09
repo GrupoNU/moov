@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Header line without a colon
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <hdr-nocolon@corpus.example.com>
+MIME-Version: 1.0
+ThisLineHasNoColonAtAll
+Content-Type: text/plain; charset=us-ascii
+
+does the parser drop the bad line, or abandon the header block?

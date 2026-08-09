@@ -1,0 +1,269 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 1
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-1@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg001_="
+
+--=_msg001_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 2
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-2@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg002_="
+
+--=_msg002_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 3
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-3@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg003_="
+
+--=_msg003_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 4
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-4@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg004_="
+
+--=_msg004_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 5
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-5@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg005_="
+
+--=_msg005_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 6
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-6@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg006_="
+
+--=_msg006_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 7
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-7@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg007_="
+
+--=_msg007_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 8
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-8@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg008_="
+
+--=_msg008_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 9
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-9@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg009_="
+
+--=_msg009_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 10
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-10@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg010_="
+
+--=_msg010_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 11
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-11@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg011_="
+
+--=_msg011_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 12
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-12@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg012_="
+
+--=_msg012_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 13
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-13@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg013_="
+
+--=_msg013_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 14
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-14@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg014_="
+
+--=_msg014_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 15
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-15@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg015_="
+
+--=_msg015_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 16
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-16@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg016_="
+
+--=_msg016_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 17
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-17@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg017_="
+
+--=_msg017_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 18
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-18@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg018_="
+
+--=_msg018_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 19
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-19@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg019_="
+
+--=_msg019_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 20
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-20@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg020_="
+
+--=_msg020_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Innermost message
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-leaf@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+the innermost payload
+--=_msg020_=--
+--=_msg019_=--
+--=_msg018_=--
+--=_msg017_=--
+--=_msg016_=--
+--=_msg015_=--
+--=_msg014_=--
+--=_msg013_=--
+--=_msg012_=--
+--=_msg011_=--
+--=_msg010_=--
+--=_msg009_=--
+--=_msg008_=--
+--=_msg007_=--
+--=_msg006_=--
+--=_msg005_=--
+--=_msg004_=--
+--=_msg003_=--
+--=_msg002_=--
+--=_msg001_=--

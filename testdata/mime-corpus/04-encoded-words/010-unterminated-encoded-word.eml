@@ -1,0 +1,9 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: =?UTF-8?Q?nunca_se_cierra
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <ew-unterm@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+Opening delimiter with no terminator: must be treated as literal text.

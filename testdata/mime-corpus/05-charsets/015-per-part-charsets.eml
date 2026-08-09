@@ -1,0 +1,29 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Different charset per part
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-perpart@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_mixcs_="
+
+--=_mixcs_=
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+parte uno: seÃ±or
+--=_mixcs_=
+Content-Type: text/plain; charset=ISO-8859-1
+Content-Transfer-Encoding: 8bit
+
+parte dos: señor
+--=_mixcs_=
+Content-Type: text/plain; charset=KOI8-R
+Content-Transfer-Encoding: 8bit
+
+parte tres: ðÒÉ×ÅÔ
+--=_mixcs_=
+Content-Type: text/plain; charset=windows-1252
+Content-Transfer-Encoding: 8bit
+
+parte cuatro: “comillas”
+--=_mixcs_=--

@@ -1,0 +1,17 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Child reuses parent boundary
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <bnd-reuse@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_same_="
+
+--=_same_=
+Content-Type: multipart/alternative; boundary="=_same_="
+
+--=_same_=
+Content-Type: text/plain; charset=us-ascii
+
+inner plain
+--=_same_=--
+--=_same_=--

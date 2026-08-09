@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Declared cp1252, actually UTF-8
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-utf8-as-1252@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=windows-1252
+Content-Transfer-Encoding: 8bit
+
+El señor dijo “hola” y se fue.

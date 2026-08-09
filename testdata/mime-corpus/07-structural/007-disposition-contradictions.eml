@@ -1,0 +1,26 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Contradictory dispositions
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <st-disp@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="=_disp_="
+
+--=_disp_=
+Content-Type: text/html; charset=us-ascii
+
+<p>Logo: <img src="cid:logo@example.com"></p>
+--=_disp_=
+Content-Type: image/png
+Content-ID: <logo@example.com>
+Content-Disposition: attachment; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgogZmFrZSBwbmc=
+--=_disp_=
+Content-Type: application/zip; name="archivo.zip"
+Content-Disposition: inline; filename="archivo.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBCBmYWtlIHppcA==
+--=_disp_=--

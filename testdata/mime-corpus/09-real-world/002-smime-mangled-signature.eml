@@ -1,0 +1,20 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: multipart/signed with mangled signature
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-smime@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/signed; protocol="application/pkcs7-signature";
+ micalg=sha-256; boundary="=_sig_="
+
+--=_sig_=
+Content-Type: text/plain; charset=us-ascii
+
+This is the signed content and it must remain readable.
+--=_sig_=
+Content-Type: application/pkcs7-signature; name="smime.p7s"
+Content-Disposition: attachment; filename="smime.p7s"
+Content-Transfer-Encoding: base64
+
+MIIF!!!truncated&&&not-valid-base64-nor-valid-pkcs7
+--=_sig_=--

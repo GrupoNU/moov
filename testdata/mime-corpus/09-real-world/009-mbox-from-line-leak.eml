@@ -1,0 +1,11 @@
+From MAILER-DAEMON Mon Jan  6 10:00:00 2025
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: mbox From_ line leaked into the message
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-mbox@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+A body line follows that starts with the mbox separator token:
+From here on, an mbox splitter would think a new message started.

@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: GB18030 declared correctly
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-gb18030@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=GB18030
+Content-Transfer-Encoding: 8bit
+
+÷–Œƒ≤‚ ‘ - Chinese test text.

@@ -1,0 +1,9 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: =?UTF-8?Q?Presupuesto_acci=C3?= =?UTF-8?Q?=B3n?=
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <ew-split-q@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The 'o' with acute accent is split across two encoded-words.

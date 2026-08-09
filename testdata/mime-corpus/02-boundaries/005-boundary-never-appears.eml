@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Boundary declared but absent
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <bnd-missing@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_nowhere_="
+
+There is no boundary delimiter anywhere in this body.
+A strict reading yields a multipart with zero parts.

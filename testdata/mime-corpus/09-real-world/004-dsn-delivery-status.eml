@@ -1,0 +1,32 @@
+From: Mail Delivery System <MAILER-DAEMON@example.org>
+To: ada@example.com
+Subject: Undelivered Mail Returned to Sender
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-dsn@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+ boundary="=_dsn_="
+
+--=_dsn_=
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host mx.example.org.
+
+<nosuchuser@example.org>: host mx.example.org said: 550 5.1.1 User unknown
+--=_dsn_=
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mx.example.org
+
+Final-Recipient: rfc822; nosuchuser@example.org
+Action: failed
+Status: 5.1.1
+--=_dsn_=
+Content-Type: message/rfc822
+
+From: ada@example.com
+To: nosuchuser@example.org
+Subject: the original message, truncated by the MTA
+
+original bo
+--=_dsn_=--

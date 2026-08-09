@@ -1,0 +1,27 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Inline image inside multipart/alternative
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rw-apple@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_out_="
+
+--=_out_=
+Content-Type: multipart/alternative; boundary="=_in_="
+
+--=_in_=
+Content-Type: text/plain; charset=us-ascii
+
+Text before the image.
+--=_in_=
+Content-Type: image/jpeg
+Content-Disposition: inline; filename="foto.jpg"
+Content-Transfer-Encoding: base64
+
+/9j/4CBmYWtlIGpwZWc=
+--=_in_=
+Content-Type: text/html; charset=us-ascii
+
+<p>Text after the image.</p>
+--=_in_=--
+--=_out_=--

@@ -1,0 +1,74 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 1
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-1@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg001_="
+
+--=_msg001_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 2
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-2@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg002_="
+
+--=_msg002_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 3
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-3@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg003_="
+
+--=_msg003_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 4
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-4@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg004_="
+
+--=_msg004_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Wrapper level 5
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-lvl-5@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_msg005_="
+
+--=_msg005_=
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Innermost message
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <rfc822-leaf@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+the innermost payload
+--=_msg005_=--
+--=_msg004_=--
+--=_msg003_=--
+--=_msg002_=--
+--=_msg001_=--

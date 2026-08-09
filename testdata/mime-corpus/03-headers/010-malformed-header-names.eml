@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+Subject : space before colon
+: empty header name
+X-Empty-Value:
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <hdr-malformed@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+
+body

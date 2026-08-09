@@ -1,0 +1,10 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: UTF-8 BOM and invalid sequences
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <cs-bom@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+ï»¿BOM at start. Lone surrogate: í €. Overlong: À¯. Truncated: â‚

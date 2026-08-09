@@ -1,0 +1,17 @@
+From: Ada Lovelace <ada@example.com>
+To: Grace Hopper <grace@example.org>
+Subject: Boundary is a prefix of the inner boundary
+Date: Mon, 06 Jan 2025 10:00:00 +0000
+Message-ID: <bnd-prefix@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_x_="
+
+--=_x_=
+Content-Type: multipart/mixed; boundary="=_x_=inner"
+
+--=_x_=inner
+Content-Type: text/plain; charset=us-ascii
+
+inner part
+--=_x_=inner--
+--=_x_=--
