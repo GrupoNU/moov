@@ -1,6 +1,6 @@
 # Spec L2 — Sync Engine de Moov Mail (fase 1)
 
-> **Estado:** BORRADOR para aprobación de Diego · **Fecha:** 2026-08-09
+> **Estado:** ACEPTADA — arbitrajes A5/A6/A7 y orden de épicas delegados por Diego al director técnico (2026-08-09) y firmados bajo la regla 2 del proyecto · **Fecha:** 2026-08-09
 > **Autor:** Fable 5 (director técnico) · **Nivel:** L2 (brief estructurado con contracts y ACs)
 > **Base:** ADR-001 + hallazgos de los 4 spikes (S1 H1-H7 · S2 H1-H9 · S3 H1-H11 · S4 H1-H9)
 > **Alcance:** el sync engine completo (IMAP → store) y sus fundaciones de repo/CI. La capa JMAP y la PWA tendrán sus propias L2 contra los contracts definidos acá.
@@ -155,5 +155,5 @@ type ParsedMessage struct {
 
 ## 6. Aprobación
 
-- [ ] Diego aprueba arbitrajes A5 (tabla lateral de estado), A6 (labels híbrido keywords+METADATA) y A7 (doble camino de initial sync: por cuenta vs migración masiva)
-- [ ] Diego aprueba el orden de épicas y el arranque de E1
+- [x] Arbitrajes A5, A6 y A7: **delegados por Diego al director técnico** (2026-08-09, "te lo dejo a tu propia responsabilidad usando las mejores prácticas") y firmados por el director con la evidencia de los spikes S2/S3/S4. La validación V1 (E2) es la red de seguridad de A6.
+- [x] Orden de épicas aprobado por la misma delegación; E1 arranca de inmediato.
