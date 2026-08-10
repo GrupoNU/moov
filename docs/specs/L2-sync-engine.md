@@ -56,15 +56,15 @@ Schema base = el validado en S3 (`spikes/s3-fts/schema.sql` + `indexes.sql`) con
 **A6 — Arbitraje: modelo de labels híbrido con METADATA (resuelve el pendiente del ADR §9).**
 - **Asignación** de label a mensaje = IMAP keyword (`$MoovL<n>` o keyword estándar si existe) — viaja por IMAP, visible para otros clientes, reconstruible.
 - **Definición** de labels (nombre, color, orden, mapping keyword↔label) = **IMAP METADATA** (anotación privada del buzón raíz) — nuestro Dovecot lo anuncia (S2 caps) y go-imap lo soporta (`Enable(METADATA)` ya probado en S2). Así la definición TAMBIÉN es reconstruible desde Dovecot y la invariante "cache reconstruible" queda intacta.
-- Límite práctico de keywords en Maildir: si una instalación lo alcanza, el engine rechaza crear el label con error claro (no hay labels "solo-DB" silenciosos).
-- **Tarea de validación V1 (dentro de E2):** probar en nuestro Dovecot límites reales de METADATA (tamaño de anotación, persistencia tras `doveadm`) y cuántas keywords tolera Maildir en la práctica antes de degradar. Si METADATA falla la validación → fallback documentado: definición en DB + export/import explícito, marcado como no-reconstruible.
+- Límite práctico de keywords en Maildir — **medido por V1 (2026-08-10): el techo durable es 26**, compartido con las keywords estándar (`$Forwarded`, `$MDNSent`, …). Dovecot ACEPTA y sirve más de 26, pero `dovecot-keywords` solo persiste los índices 0-25: las excedentes desaparecen en el próximo rebuild del índice, en silencio y posiblemente semanas después. El read-back NO lo detecta (en ese momento la keyword existe). Por lo tanto: el engine cuenta keywords por mailbox contra `MaxDurableKeywordsPerMailbox = 26` (exportada por `internal/imap`) y **rechaza la 27ª con error claro** — el enforcement vive en la capa que crea labels.
+- **Validación V1 ejecutada (E2, `docs/spikes/V1-metadata-dovecot.md`):** METADATA sólido — anotaciones de hasta 64 MiB, persistencia tras reconexión, `/private/` operativo. **A6 se sostiene sin fallback**, con la corrección del techo de 26 de arriba.
 
 ### 2.4 Pipeline de parseo (S4)
 
 Cascada **go-message → enmime → raw blob** (bidireccional probada, S4 H1). El blob crudo SIEMPRE se persiste primero (content-addressed); el parseo es una derivación reintentable (`reparse` por versión de parser).
 
 Mitigaciones obligatorias, cada una con su test del corpus (`testdata/mime-corpus/` corre en CI en cada PR):
-- Caps propios: profundidad ≤100, partes ≤1000, tamaño total configurable; excederlos = `parse_status='failed'` (S4 H8).
+- Caps propios: profundidad ≤512, partes ≤2048, tamaño total configurable (defaults fijados en E4: los "100/1000" originales rechazaban casos que el manifest declara estructuralmente válidos); el vector real de DoS —nest profundo NO terminado, superlineal en enmime, 18 s desde 1,5 KB, hallado por fuzzing— se bloquea con un pre-scan lineal y `MaxUnterminatedDepth=16` ANTES de que ninguna librería vea los bytes. Exceder un cap = `parse_status='failed'` (S4 H8).
 - Nunca descartar bytes parciales en error de decode; marcar la parte como parcial (S4 H5).
 - Post-proceso RFC 2047: `=?…?=` residual → retry con Raw encodings (S4 H4).
 - Cascada de charset: declarado → `chardet` → windows-1252, con flag `charset_guessed` (S4 H6).
@@ -135,9 +135,14 @@ type ParsedMessage struct {
     Parser      string        // "go-message" | "enmime" | "salvage"
     Headers     CanonHeaders  // decodificados, con flags charset_guessed / rfc2047_retried
     Parts       []Part        // árbol aplanado con profundidad, incluye rfc822 descendido
-    TextForFTS  string        // lo que va al tsv (por peso: subject/addrs/body)
+    SubjectText string        // texto FTS separado por peso tsv (A) — ajuste E4:
+    AddressText string        //   (B) el store pondera cada banda por separado;
+    BodyText    string        //   (C) un blob pre-unido lo obligaría a re-separar
     Defects     []Defect      // trazable al caso de corpus cuando aplique
 }
+// Garantía adicional del contrato (E4): todo texto emitido es UTF-8 válido y
+// sin NUL — requisito duro de una columna text de PostgreSQL. Bcc se excluye
+// del índice de direcciones (no filtrar la copia oculta vía búsqueda).
 ```
 
 ### 4.3 Store / JMAP (el contract con la futura capa API)
