@@ -53,7 +53,34 @@
 // that fails to parse must never break a folder's sync.
 //
 // HTML sanitization is declared as a hook here but implemented elsewhere; it is
-// explicitly out of scope for this phase (L2 §1).
+// explicitly out of scope for this phase (L2 §1). See SanitizeHook.
 //
-// Implementation lands in epic E4.
+// # Two additions E4 made to the plan above
+//
+// Both came from fuzzing, which found what 110 handcrafted cases could not:
+//
+//   - A structural pre-scan runs before either library sees the bytes. A
+//     multipart nest that is deep AND unterminated drives enmime into
+//     superlinear work — 18 s on 1.4 KB at depth 24, hours not far beyond — and
+//     the MaxDepth cap cannot prevent it, because that cap is enforced by the
+//     tree walkers and the walkers run only after the library has built its
+//     tree. See prescan.go.
+//   - Everything this package emits for indexing is guaranteed valid UTF-8 and
+//     NUL-free. The store's columns are PostgreSQL TEXT, which rejects both, so
+//     this is a hard contract rather than a nicety. Raw 8-bit header bytes were
+//     reaching the index undecoded because they never pass through an
+//     encoded-word.
+//
+// Two library-level bugs found along the way are recorded where they were fixed:
+// a slice bounds panic from indexing a string with an offset taken from its
+// strings.ToLower copy (gomessage.go, parse.go), which is reachable by any
+// sender and would kill a sync worker.
+//
+// # Contract note for the director
+//
+// L2 §4.2 writes a single TextForFTS string. This package exposes SubjectText,
+// AddressText and BodyText separately, plus a TextForFTS() method that joins
+// them, because the store weights those three classes differently in its tsv
+// (L2 §2.3) and a pre-joined string would force it to re-split text this package
+// had already separated. See the ParsedMessage doc comment.
 package parser
