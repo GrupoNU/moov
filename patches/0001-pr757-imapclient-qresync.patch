@@ -1,0 +1,417 @@
+diff --git a/fetch.go b/fetch.go
+index f146c8971..d444132d0 100644
+--- a/fetch.go
++++ b/fetch.go
+@@ -21,6 +21,12 @@ type FetchOptions struct {
+ 	ModSeq            bool                          // requires CONDSTORE
+ 
+ 	ChangedSince uint64 // requires CONDSTORE
++
++	// Vanished requests a VANISHED (EARLIER) response listing the UIDs expunged
++	// since ChangedSince. It requires QRESYNC to be enabled and is only valid
++	// together with ChangedSince on a UID FETCH. The expunged UIDs are delivered
++	// to UnilateralDataHandler.Vanished.
++	Vanished bool // requires QRESYNC
+ }
+ 
+ // FetchItemBodyStructure contains FETCH options for the body structure.
+diff --git a/imapclient/client.go b/imapclient/client.go
+index 989b49492..a577defa4 100644
+--- a/imapclient/client.go
++++ b/imapclient/client.go
+@@ -986,6 +986,8 @@ func (c *Client) readResponseData(typ string) error {
+ 		return c.handleFetch(num)
+ 	case "EXPUNGE":
+ 		return c.handleExpunge(num)
++	case "VANISHED":
++		return c.handleVanished()
+ 	case "SEARCH":
+ 		return c.handleSearch()
+ 	case "ESEARCH":
+@@ -1202,6 +1204,15 @@ type UnilateralDataHandler struct {
+ 	Mailbox func(data *UnilateralDataMailbox)
+ 	Fetch   func(msg *FetchMessageData)
+ 
++	// Called when the server sends an unsolicited VANISHED response (RFC 7162),
++	// reporting the UIDs of expunged messages. earlier indicates whether the
++	// response covers messages that were expunged earlier (VANISHED (EARLIER),
++	// sent in reply to a QRESYNC SELECT or a FETCH with the VANISHED modifier)
++	// rather than a live expunge.
++	//
++	// Requires QRESYNC.
++	Vanished func(uids imap.UIDSet, earlier bool)
++
+ 	// Requires ENABLE METADATA or ENABLE SERVER-METADATA.
+ 	Metadata func(mailbox string, entries []string)
+ 
+diff --git a/imapclient/enable.go b/imapclient/enable.go
+index 895766643..20aaa0c95 100644
+--- a/imapclient/enable.go
++++ b/imapclient/enable.go
+@@ -14,7 +14,7 @@ func (c *Client) Enable(caps ...imap.Cap) *EnableCommand {
+ 	// extensions we support here
+ 	for _, name := range caps {
+ 		switch name {
+-		case imap.CapIMAP4rev2, imap.CapUTF8Accept, imap.CapMetadata, imap.CapMetadataServer:
++		case imap.CapIMAP4rev2, imap.CapUTF8Accept, imap.CapMetadata, imap.CapMetadataServer, imap.CapQResync, imap.CapCondStore:
+ 			// ok
+ 		default:
+ 			done := make(chan error)
+diff --git a/imapclient/fetch.go b/imapclient/fetch.go
+index 912b22a61..dce3468e4 100644
+--- a/imapclient/fetch.go
++++ b/imapclient/fetch.go
+@@ -34,7 +34,14 @@ func (c *Client) Fetch(numSet imap.NumSet, options *imap.FetchOptions) *FetchCom
+ 	enc.SP().NumSet(numSet).SP()
+ 	writeFetchItems(enc.Encoder, numKind, options)
+ 	if options.ChangedSince != 0 {
+-		enc.SP().Special('(').Atom("CHANGEDSINCE").SP().ModSeq(options.ChangedSince).Special(')')
++		enc.SP().Special('(').Atom("CHANGEDSINCE").SP().ModSeq(options.ChangedSince)
++		if options.Vanished {
++			// The VANISHED modifier (RFC 7162) asks the server to also report,
++			// via a VANISHED (EARLIER) response, the UIDs expunged since
++			// ChangedSince. It requires QRESYNC to be enabled.
++			enc.SP().Atom("VANISHED")
++		}
++		enc.Special(')')
+ 	}
+ 	enc.end()
+ 	return cmd
+diff --git a/imapclient/select.go b/imapclient/select.go
+index c325ff041..11a68f8eb 100644
+--- a/imapclient/select.go
++++ b/imapclient/select.go
+@@ -17,7 +17,21 @@ func (c *Client) Select(mailbox string, options *imap.SelectOptions) *SelectComm
+ 	cmd := &SelectCommand{mailbox: mailbox}
+ 	enc := c.beginCommand(cmdName, cmd)
+ 	enc.SP().Mailbox(mailbox)
+-	if options != nil && options.CondStore {
++	if options != nil && options.QResync != nil {
++		// QRESYNC implies CONDSTORE, so it takes precedence over CondStore.
++		qr := options.QResync
++		enc.SP().Special('(').Atom("QRESYNC").SP().Special('(')
++		enc.Number(qr.UIDValidity).SP().ModSeq(qr.ModSeq)
++		if len(qr.KnownUIDs) > 0 {
++			enc.SP().NumSet(qr.KnownUIDs)
++			if qr.SeqMatchData != nil {
++				enc.SP().Special('(')
++				enc.NumSet(qr.SeqMatchData.KnownSeqSet).SP().NumSet(qr.SeqMatchData.KnownUIDSet)
++				enc.Special(')')
++			}
++		}
++		enc.Special(')').Special(')')
++	} else if options != nil && options.CondStore {
+ 		enc.SP().Special('(').Atom("CONDSTORE").Special(')')
+ 	}
+ 	enc.end()
+diff --git a/imapclient/vanished.go b/imapclient/vanished.go
+new file mode 100644
+index 000000000..145294410
+--- /dev/null
++++ b/imapclient/vanished.go
+@@ -0,0 +1,46 @@
++package imapclient
++
++import (
++	"strings"
++
++	"github.com/emersion/go-imap/v2"
++)
++
++// handleVanished parses a VANISHED response (RFC 7162) and either collects the
++// expunged UIDs on a pending SELECT/EXAMINE command (QRESYNC resynchronization)
++// or delivers them to the unilateral VANISHED handler. The grammar is:
++//
++//	"VANISHED" [SP "(EARLIER)"] SP known-uids
++func (c *Client) handleVanished() error {
++	if !c.dec.ExpectSP() {
++		return c.dec.Err()
++	}
++	var earlier bool
++	if c.dec.Special('(') {
++		var name string
++		if !c.dec.ExpectAtom(&name) || !c.dec.ExpectSpecial(')') || !c.dec.ExpectSP() {
++			return c.dec.Err()
++		}
++		// EARLIER is the only fetch-modifier defined for VANISHED. An unknown
++		// modifier is still recoverable (the remainder is always SP known-uids),
++		// so tolerate it rather than tearing down the connection, matching how
++		// unknown resp-text-codes are discarded.
++		earlier = strings.EqualFold(name, "EARLIER")
++	}
++	var uids imap.UIDSet
++	if !c.dec.ExpectUIDSet(&uids) {
++		return c.dec.Err()
++	}
++
++	// A VANISHED response arriving while a QRESYNC SELECT/EXAMINE is in progress
++	// is part of the resynchronization (always VANISHED (EARLIER) in practice);
++	// collect it on the command instead of treating it as unilateral data.
++	if cmd := findPendingCmdByType[*SelectCommand](c); cmd != nil {
++		cmd.data.VanishedUIDs = append(cmd.data.VanishedUIDs, uids...)
++		return nil
++	}
++	if handler := c.options.unilateralDataHandler().Vanished; handler != nil {
++		handler(uids, earlier)
++	}
++	return nil
++}
+diff --git a/imapclient/vanished_test.go b/imapclient/vanished_test.go
+new file mode 100644
+index 000000000..e76ed2d07
+--- /dev/null
++++ b/imapclient/vanished_test.go
+@@ -0,0 +1,206 @@
++package imapclient_test
++
++import (
++	"bufio"
++	"io"
++	"net"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/emersion/go-imap/v2"
++	"github.com/emersion/go-imap/v2/imapclient"
++)
++
++// TestVanished checks that a VANISHED (EARLIER) response (RFC 7162) is parsed and
++// its expunged UIDs delivered to UnilateralDataHandler.Vanished. A minimal raw
++// server is used because imapmemserver does not implement QRESYNC.
++func TestVanished(t *testing.T) {
++	clientConn, serverConn := net.Pipe()
++
++	var (
++		mu         sync.Mutex
++		gotUIDs    string
++		gotEarlier bool
++		called     bool
++	)
++	client := imapclient.New(clientConn, &imapclient.Options{
++		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
++			Vanished: func(uids imap.UIDSet, earlier bool) {
++				mu.Lock()
++				gotUIDs, gotEarlier, called = uids.String(), earlier, true
++				mu.Unlock()
++			},
++		},
++	})
++	defer client.Close()
++
++	// Minimal server: greeting, then for the client's first command emit a
++	// VANISHED (EARLIER) response followed by the tagged completion.
++	go func() {
++		br := bufio.NewReader(serverConn)
++		_, _ = io.WriteString(serverConn, "* OK [CAPABILITY IMAP4rev2] ready\r\n")
++		line, _ := br.ReadString('\n')
++		tag, _, _ := strings.Cut(line, " ")
++		_, _ = io.WriteString(serverConn, "* VANISHED (EARLIER) 1:3,7\r\n")
++		_, _ = io.WriteString(serverConn, tag+" OK completed\r\n")
++	}()
++
++	if err := client.Noop().Wait(); err != nil {
++		t.Fatalf("Noop() = %v", err)
++	}
++
++	mu.Lock()
++	defer mu.Unlock()
++	if !called {
++		t.Fatal("Vanished handler was not called")
++	}
++	if !gotEarlier {
++		t.Error("earlier = false, want true (VANISHED (EARLIER))")
++	}
++	if gotUIDs != "1:3,7" {
++		t.Errorf("vanished UIDs = %q, want %q", gotUIDs, "1:3,7")
++	}
++}
++
++// TestFetchVanishedModifier checks that FetchOptions.Vanished adds the VANISHED
++// modifier to a UID FETCH with CHANGEDSINCE.
++func TestFetchVanishedModifier(t *testing.T) {
++	clientConn, serverConn := net.Pipe()
++
++	client := imapclient.New(clientConn, nil)
++	defer client.Close()
++
++	gotCmd := make(chan string, 1)
++	go func() {
++		br := bufio.NewReader(serverConn)
++		_, _ = io.WriteString(serverConn, "* OK ready\r\n")
++		line, _ := br.ReadString('\n')
++		gotCmd <- line
++		tag, _, _ := strings.Cut(line, " ")
++		_, _ = io.WriteString(serverConn, tag+" OK completed\r\n")
++	}()
++
++	err := client.Fetch(imap.UIDSetNum(1, 2), &imap.FetchOptions{
++		UID:          true,
++		Flags:        true,
++		ChangedSince: 100,
++		Vanished:     true,
++	}).Close()
++	if err != nil {
++		t.Fatalf("Fetch() = %v", err)
++	}
++
++	cmd := <-gotCmd
++	if !strings.Contains(cmd, "(CHANGEDSINCE 100 VANISHED)") {
++		t.Errorf("FETCH command = %q, want it to contain %q", strings.TrimSpace(cmd), "(CHANGEDSINCE 100 VANISHED)")
++	}
++}
++
++// TestSelectQResync checks that SelectOptions.QResync encodes the QRESYNC
++// parameters (RFC 7162) and that a VANISHED (EARLIER) response received during
++// the SELECT is collected on SelectData.VanishedUIDs rather than dispatched to
++// the unilateral handler.
++func TestSelectQResync(t *testing.T) {
++	clientConn, serverConn := net.Pipe()
++
++	var unilateralCalled bool
++	client := imapclient.New(clientConn, &imapclient.Options{
++		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
++			Vanished: func(uids imap.UIDSet, earlier bool) {
++				unilateralCalled = true
++			},
++		},
++	})
++	defer client.Close()
++
++	gotCmd := make(chan string, 1)
++	go func() {
++		br := bufio.NewReader(serverConn)
++		_, _ = io.WriteString(serverConn, "* OK [CAPABILITY IMAP4rev2 QRESYNC] ready\r\n")
++		line, _ := br.ReadString('\n')
++		gotCmd <- line
++		tag, _, _ := strings.Cut(line, " ")
++		_, _ = io.WriteString(serverConn, "* VANISHED (EARLIER) 1:3,7\r\n")
++		_, _ = io.WriteString(serverConn, tag+" OK [READ-WRITE] SELECT completed\r\n")
++	}()
++
++	data, err := client.Select("INBOX", &imap.SelectOptions{
++		QResync: &imap.QResyncOptions{
++			UIDValidity: 67890,
++			ModSeq:      12345,
++			KnownUIDs:   imap.UIDSetNum(1, 2, 3),
++			SeqMatchData: &imap.SeqMatchData{
++				KnownSeqSet: imap.SeqSetNum(1, 2, 3, 4, 5),
++				KnownUIDSet: imap.UIDSetNum(10, 11, 12),
++			},
++		},
++	}).Wait()
++	if err != nil {
++		t.Fatalf("Select() = %v", err)
++	}
++
++	cmd := <-gotCmd
++	const wantParam = "(QRESYNC (67890 12345 1:3 (1:5 10:12)))"
++	if !strings.Contains(cmd, wantParam) {
++		t.Errorf("SELECT command = %q, want it to contain %q", strings.TrimSpace(cmd), wantParam)
++	}
++	if got := data.VanishedUIDs.String(); got != "1:3,7" {
++		t.Errorf("SelectData.VanishedUIDs = %q, want %q", got, "1:3,7")
++	}
++	if unilateralCalled {
++		t.Error("unilateral Vanished handler was called during SELECT; want it collected on SelectData")
++	}
++}
++
++// TestVanishedUnknownModifier checks that a VANISHED response carrying a
++// fetch-modifier other than EARLIER is handled gracefully: the connection
++// survives, the UIDs are still delivered, and earlier is reported false. The
++// remainder of the response is unambiguous regardless of the modifier, so this
++// follows go-imap's convention of discarding unknown-but-recoverable tokens
++// rather than failing the connection.
++func TestVanishedUnknownModifier(t *testing.T) {
++	clientConn, serverConn := net.Pipe()
++
++	var (
++		mu         sync.Mutex
++		gotUIDs    string
++		gotEarlier bool
++		called     bool
++	)
++	client := imapclient.New(clientConn, &imapclient.Options{
++		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
++			Vanished: func(uids imap.UIDSet, earlier bool) {
++				mu.Lock()
++				gotUIDs, gotEarlier, called = uids.String(), earlier, true
++				mu.Unlock()
++			},
++		},
++	})
++	defer client.Close()
++
++	go func() {
++		br := bufio.NewReader(serverConn)
++		_, _ = io.WriteString(serverConn, "* OK ready\r\n")
++		line, _ := br.ReadString('\n')
++		tag, _, _ := strings.Cut(line, " ")
++		_, _ = io.WriteString(serverConn, "* VANISHED (BOGUS) 1:2\r\n")
++		_, _ = io.WriteString(serverConn, tag+" OK completed\r\n")
++	}()
++
++	if err := client.Noop().Wait(); err != nil {
++		t.Fatalf("Noop() = %v, want nil (unknown modifier should be tolerated)", err)
++	}
++
++	mu.Lock()
++	defer mu.Unlock()
++	if !called {
++		t.Fatal("Vanished handler was not called")
++	}
++	if gotEarlier {
++		t.Error("earlier = true, want false for an unrecognized modifier")
++	}
++	if gotUIDs != "1:2" {
++		t.Errorf("vanished UIDs = %q, want %q", gotUIDs, "1:2")
++	}
++}
+diff --git a/select.go b/select.go
+index f307ff343..4948a1a84 100644
+--- a/select.go
++++ b/select.go
+@@ -4,6 +4,33 @@ package imap
+ type SelectOptions struct {
+ 	ReadOnly  bool
+ 	CondStore bool // requires CONDSTORE
++
++	// QResync requests a QRESYNC mailbox resynchronization (RFC 7162). It
++	// requires QRESYNC to be enabled. QRESYNC implies CONDSTORE, so CondStore
++	// is ignored when QResync is set.
++	QResync *QResyncOptions
++}
++
++// QResyncOptions contains QRESYNC parameters for the SELECT or EXAMINE command
++// (RFC 7162). The server replies with VANISHED (EARLIER) and FETCH responses to
++// resynchronize the client's view of the mailbox.
++type QResyncOptions struct {
++	UIDValidity uint32
++	ModSeq      uint64
++
++	// KnownUIDs optionally restricts the set of UIDs the server reports on.
++	KnownUIDs UIDSet
++	// SeqMatchData optionally provides the client's known sequence-number to
++	// UID mapping, letting the server detect expunges it would otherwise miss.
++	// It requires KnownUIDs to be set.
++	SeqMatchData *SeqMatchData
++}
++
++// SeqMatchData is the client's known sequence-number-to-UID mapping sent as part
++// of a QRESYNC SELECT or EXAMINE command (RFC 7162).
++type SeqMatchData struct {
++	KnownSeqSet SeqSet
++	KnownUIDSet UIDSet
+ }
+ 
+ // SelectData is the data returned by a SELECT command.
+@@ -28,4 +55,8 @@ type SelectData struct {
+ 	List *ListData // requires IMAP4rev2
+ 
+ 	HighestModSeq uint64 // requires CONDSTORE
++
++	// VanishedUIDs are the UIDs reported as expunged by a VANISHED (EARLIER)
++	// response during a QRESYNC SELECT or EXAMINE. Requires QRESYNC.
++	VanishedUIDs UIDSet
+ }

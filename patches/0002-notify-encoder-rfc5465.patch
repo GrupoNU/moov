@@ -1,0 +1,84 @@
+diff --git a/imapclient/notify.go b/imapclient/notify.go
+index e6b4a75..0baea0f 100644
+--- a/imapclient/notify.go
++++ b/imapclient/notify.go
+@@ -41,10 +41,15 @@ func encodeNotifyOptions(enc *imapwire.Encoder, options *imap.NotifyOptions) err
+ 
+ 	enc.SP().Atom("SET")
+ 
++	// RFC 5465 section 6:
++	//
++	//	notify-set = "SET" [SP "STATUS"] 1*(SP event-group)
++	//
++	// The STATUS indicator is a bare atom, not a parenthesised list. Emitting
++	// "(STATUS)" makes Dovecot reject the whole command with
++	// "BAD Error in IMAP command NOTIFY: Invalid arguments".
+ 	if options.Status {
+-		enc.SP().List(1, func(i int) {
+-			enc.Atom("STATUS")
+-		})
++		enc.SP().Atom("STATUS")
+ 	}
+ 
+ 	for _, item := range options.Items {
+@@ -57,8 +62,20 @@ func encodeNotifyOptions(enc *imapwire.Encoder, options *imap.NotifyOptions) err
+ 				enc.Atom(string(item.MailboxSpec))
+ 			} else {
+ 				// len(item.Mailboxes) > 0, as per the check above.
++				//
++				// RFC 5465 section 6:
++				//
++				//	filter-mailboxes-other = ("SUBTREE" / "MAILBOXES")
++				//	                         SP one-or-more-mailbox
++				//
++				// The selector keyword is mandatory in both branches: an
++				// explicit mailbox list must be introduced by MAILBOXES.
++				// Without it Dovecot rejects the command with
++				// "BAD Error in IMAP command NOTIFY: Invalid arguments".
+ 				if item.Subtree {
+ 					enc.Atom("SUBTREE").SP()
++				} else {
++					enc.Atom("MAILBOXES").SP()
+ 				}
+ 				enc.List(len(item.Mailboxes), func(j int) {
+ 					enc.Mailbox(item.Mailboxes[j])
+diff --git a/imapclient/notify_encode_test.go b/imapclient/notify_encode_test.go
+index fae049a..d08acfa 100644
+--- a/imapclient/notify_encode_test.go
++++ b/imapclient/notify_encode_test.go
+@@ -145,7 +145,7 @@ func TestEncodeNotifyOptions(t *testing.T) {
+ 					},
+ 				},
+ 			},
+-			expected: ` SET ((INBOX "Sent") (MessageNew MessageExpunge FlagChange))` + "\r\n",
++			expected: ` SET (MAILBOXES (INBOX "Sent") (MessageNew MessageExpunge FlagChange))` + "\r\n",
+ 		},
+ 		{
+ 			name: "StatusIndicator",
+@@ -161,7 +161,7 @@ func TestEncodeNotifyOptions(t *testing.T) {
+ 					},
+ 				},
+ 			},
+-			expected: " SET (STATUS) (SELECTED (MessageNew MessageExpunge))\r\n",
++			expected: " SET STATUS (SELECTED (MessageNew MessageExpunge))\r\n",
+ 		},
+ 		{
+ 			name: "MultipleItems",
+@@ -251,7 +251,7 @@ func TestEncodeNotifyOptions(t *testing.T) {
+ 					},
+ 				},
+ 			},
+-			expected: ` SET (STATUS) (SELECTED (MessageNew MessageExpunge)) (SUBTREE (INBOX) (MessageNew)) (("Drafts" "Sent") (FlagChange))` + "\r\n",
++			expected: ` SET STATUS (SELECTED (MessageNew MessageExpunge)) (SUBTREE (INBOX) (MessageNew)) (MAILBOXES ("Drafts" "Sent") (FlagChange))` + "\r\n",
+ 		},
+ 		{
+ 			name: "MailboxWithSpecialChars",
+@@ -265,7 +265,7 @@ func TestEncodeNotifyOptions(t *testing.T) {
+ 					},
+ 				},
+ 			},
+-			expected: ` SET ((INBOX "Foo Bar" "Test&-Mailbox") (MessageNew))` + "\r\n",
++			expected: ` SET (MAILBOXES (INBOX "Foo Bar" "Test&-Mailbox") (MessageNew))` + "\r\n",
+ 		},
+ 	}
+ 

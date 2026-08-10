@@ -13,6 +13,11 @@ module github.com/GrupoNU/moov
 go 1.24.3
 
 require (
+	// go-imap is pinned BY COMMIT to the tip of upstream's v2 branch and
+	// vendored with a local patch set (see patches/README.md). `@v2` does not
+	// resolve (branch name collides with the major-version suffix, S2 H2), and
+	// no released tag has the client-side extensions the sync engine needs.
+	github.com/emersion/go-imap/v2 v2.0.0-beta.8.0.20260702120225-f68ef419e622
 	github.com/emersion/go-message v0.18.2
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/jhillyerd/enmime/v2 v2.3.0
@@ -27,6 +32,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/displaywidth v0.10.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
 	github.com/inbucket/html2text v1.0.0 // indirect

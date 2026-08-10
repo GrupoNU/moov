@@ -1,0 +1,83 @@
+diff --git a/imapclient/client.go b/imapclient/client.go
+index 989b494..0484532 100644
+--- a/imapclient/client.go
++++ b/imapclient/client.go
+@@ -745,6 +745,24 @@ func (c *Client) readResponseTagged(tag, typ string) (startTLS *startTLSCommand,
+ 				cmd.data.UID = uid
+ 				cmd.data.UIDValidity = uidValidity
+ 			}
++		case "MODIFIED":
++			// RFC 7162 section 3.1.3: a conditional STORE that fails for some
++			// messages still completes with a tagged OK, and names those
++			// messages in [MODIFIED <set>]. Without surfacing this, a rejected
++			// write is indistinguishable from an applied one.
++			if !c.dec.ExpectSP() {
++				return nil, c.dec.Err()
++			}
++			if cmd, ok := cmd.(*FetchCommand); ok {
++				kind := imapwire.NumSetKind(cmd.numSet)
++				var modified imap.NumSet
++				if !c.dec.ExpectNumSet(kind, &modified) {
++					return nil, fmt.Errorf("in resp-code-modified: %w", c.dec.Err())
++				}
++				cmd.modified = modified
++			} else {
++				c.dec.DiscardUntilByte(']')
++			}
+ 		case "COPYUID":
+ 			if !c.dec.ExpectSP() {
+ 				return nil, c.dec.Err()
+diff --git a/imapclient/fetch.go b/imapclient/fetch.go
+index 912b22a..62508bd 100644
+--- a/imapclient/fetch.go
++++ b/imapclient/fetch.go
+@@ -154,10 +154,35 @@ type FetchCommand struct {
+ 	recvSeqSet imap.SeqSet
+ 	recvUIDSet imap.UIDSet
+ 
++	// modified carries the RFC 7162 [MODIFIED <set>] response code of a
++	// conditional STORE. It is written by the decoder goroutine before the
++	// command completes and read after Close/Wait, so no lock is needed.
++	modified imap.NumSet
++
+ 	msgs chan *FetchMessageData
+ 	prev *FetchMessageData
+ }
+ 
++// Modified returns the message set the server refused to update, as reported
++// by the RFC 7162 [MODIFIED <set>] response code of a conditional STORE
++// (Client.Store with StoreOptions.UnchangedSince).
++//
++// It returns nil when the command was not a conditional STORE, or when every
++// message was updated. A non-nil, non-empty result means the server rejected
++// those messages because they changed since the given modification sequence:
++// the STORE completed with a tagged OK and no error, yet the flags were NOT
++// applied. Callers doing optimistic concurrency MUST check this — a nil error
++// from a conditional STORE does not by itself mean the write took effect.
++//
++// The set is a imap.UIDSet for UID STORE and a imap.SeqSet for STORE, matching
++// the numbering of the command that produced it.
++//
++// Modified is only valid after the command has completed (after Close, Wait or
++// Collect).
++func (cmd *FetchCommand) Modified() imap.NumSet {
++	return cmd.modified
++}
++
+ func (cmd *FetchCommand) recvSeqNum(seqNum uint32) bool {
+ 	set, ok := cmd.numSet.(imap.SeqSet)
+ 	if !ok || !set.Contains(seqNum) {
+diff --git a/response.go b/response.go
+index 0ce54cf..ebe8c9a 100644
+--- a/response.go
++++ b/response.go
+@@ -43,6 +43,9 @@ const (
+ 	ResponseCodeUnavailable          ResponseCode = "UNAVAILABLE"
+ 	ResponseCodeUnknownCTE           ResponseCode = "UNKNOWN-CTE"
+ 
++	// CONDSTORE
++	ResponseCodeModified ResponseCode = "MODIFIED"
++
+ 	// METADATA
+ 	ResponseCodeTooMany   ResponseCode = "TOOMANY"
+ 	ResponseCodeNoPrivate ResponseCode = "NOPRIVATE"

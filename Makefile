@@ -29,8 +29,9 @@ GO      ?= go
 GOLANGCI ?= golangci-lint
 
 .DEFAULT_GOAL := help
-.PHONY: help build run test test-short cover fmt fmt-check vet lint lint-install \
-        corpus-check db-up db-down db-logs migrate tidy clean ci
+.PHONY: help build run test test-short test-imap-integration cover fmt fmt-check \
+        vet lint lint-install corpus-check db-up db-down db-logs migrate tidy \
+        vendor-patches vendor-check clean ci
 
 help: ## Show this help
 	@grep -h -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -55,6 +56,20 @@ test: ## Run all tests (store tests need MOOV_TEST_DATABASE_URL)
 
 test-short: ## Run tests without the ones requiring external services
 	$(GO) test -short -count=1 ./...
+
+# The internal/imap integration suite talks to a real Dovecot. It is skipped
+# unless these are set, and the password MUST come from the environment: this
+# repository is public and no credential may ever be written into a file here.
+#
+#   MOOV_IMAP_TEST_HOST=dovecot MOOV_IMAP_TEST_USER=... \
+#   MOOV_IMAP_TEST_PASSWORD=... make test-imap-integration
+test-imap-integration: ## Run internal/imap against a real Dovecot (env-gated)
+	@if [ -z "$$MOOV_IMAP_TEST_HOST" ]; then \
+	  echo "Set MOOV_IMAP_TEST_HOST, MOOV_IMAP_TEST_USER and MOOV_IMAP_TEST_PASSWORD."; \
+	  echo "See internal/imap/integration_test.go for the full list."; \
+	  exit 1; \
+	fi
+	$(GO) test -count=1 -v -run Integration ./internal/imap/
 
 cover: ## Run tests with a coverage profile
 	$(GO) test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
@@ -123,6 +138,21 @@ migrate: ## Apply migrations to the development database
 tidy: ## Tidy go.mod / go.sum
 	$(GO) mod tidy
 
+# ---------------------------------------------------------------------------
+# Vendored go-imap patch set (patches/README.md).
+#
+# `go mod vendor` regenerates vendor/ from the pristine module cache, which
+# silently reverts all three patches. Anything that re-vendors MUST re-apply
+# them, so the two steps live in one target rather than being two things to
+# remember.
+# ---------------------------------------------------------------------------
+vendor-patches: ## Re-vendor dependencies and re-apply the go-imap patch set
+	$(GO) mod vendor
+	sh patches/apply.sh
+
+vendor-check: ## Fail if the vendored go-imap is missing a patch
+	sh patches/apply.sh --check
+
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out
 
@@ -130,5 +160,5 @@ clean: ## Remove build artifacts
 # The full local gate. Matches what CI runs, so a green `make ci` means a green
 # pipeline — minus the jobs that need service containers.
 # ---------------------------------------------------------------------------
-ci: fmt-check vet lint build corpus-check test ## Run the full local gate
+ci: fmt-check vendor-check vet lint build corpus-check test ## Run the full local gate
 	@echo "ci: all checks passed"

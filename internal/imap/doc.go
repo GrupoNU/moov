@@ -42,7 +42,18 @@
 //     to stay clear of fail2ban (ADR §4).
 //   - NOTIFY encoding needs the patched encoder (S2 H4); NOTIFICATIONOVERFLOW
 //     means a full account resync.
+//   - A mailbox holds at most 26 keywords durably — see
+//     MaxDurableKeywordsPerMailbox. The server does not enforce it and does
+//     not report it; validation V1 measured it on disk.
 //
-// Implementation lands in epic E2. This file documents the contract so that
-// E3-E6 can be written against it in parallel.
+// # The vendored patch set
+//
+// go-imap is carried with three local patches (patches/README.md): QRESYNC
+// support (upstream PR #757), two RFC 5465 fixes in the NOTIFY encoder, and
+// the CONDSTORE [MODIFIED] response code. Without them this package cannot
+// resync, cannot see flag changes in non-selected folders, and cannot tell a
+// rejected conditional write from an applied one.
+//
+// `go mod vendor` silently reverts all three. `make vendor-patches` puts them
+// back, and TestVendoredPatchSetIsApplied fails the build if any is missing.
 package imap
