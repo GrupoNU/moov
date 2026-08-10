@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,129 @@ func TestForceCustomPlanIsActiveOnNewConnections(t *testing.T) {
 			"after five executions and full-text search falls off a cliff. If you are "+
 			"connecting through PgBouncer, see risk 2 in L2 §5 and the caveat in "+
 			"migration 0001.", mode, "force_custom_plan")
+	}
+}
+
+// The third mandatory S3 setting, and the marker migration 0001 left for E3:
+// STATISTICS 4000 on messages.tsv.
+//
+// Without it the planner misestimates tsvector selectivity by ~500x (4,951
+// estimated rows against 10 actual), decides it can satisfy LIMIT 50 by
+// walking the date index, and filters 999,990 rows — 13,085 ms for a query
+// that takes 1.6 ms on the composite GIN (S3 §5.3). The setting is invisible
+// in every functional test: queries return the right rows either way, and only
+// the latency collapses. That is exactly why it is asserted here.
+//
+// pg_attribute.attstattarget is NULL when the column uses the system default
+// and holds the explicit target otherwise, so a NULL scan here means the
+// ALTER was lost.
+func TestTsvStatisticsTargetIsSet(t *testing.T) {
+	db := migrated(t)
+	ctx := context.Background()
+
+	var target *int
+	err := db.QueryRowContext(ctx, `
+		SELECT a.attstattarget
+		  FROM pg_attribute a
+		  JOIN pg_class c ON c.oid = a.attrelid
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relname = 'messages' AND a.attname = 'tsv'`,
+	).Scan(&target)
+	if err != nil {
+		t.Fatalf("querying attstattarget for messages.tsv: %v", err)
+	}
+	if target == nil {
+		t.Fatalf("messages.tsv has the default statistics target; " +
+			"migration 0002 must run ALTER TABLE messages ALTER COLUMN tsv SET STATISTICS 4000 (S3 §5.3)")
+	}
+	if *target != 4000 {
+		t.Errorf("messages.tsv statistics target = %d, want 4000 (S3 §5.3)", *target)
+	}
+}
+
+// The composite GIN index of S3 §5.2 must exist, and must be the composite
+// one: a plain gin(tsv) passes every correctness test and is up to 6,600x
+// slower on a rare term, because without account_id inside the index the cost
+// scales with the whole installation rather than the user's mailbox.
+func TestCompositeGINIndexExists(t *testing.T) {
+	db := migrated(t)
+	ctx := context.Background()
+
+	var indexdef string
+	err := db.QueryRowContext(ctx, `
+		SELECT indexdef FROM pg_indexes
+		 WHERE schemaname = 'public' AND tablename = 'messages'
+		   AND indexname = 'messages_acct_tsv_gin'`).Scan(&indexdef)
+	if err != nil {
+		t.Fatalf("messages_acct_tsv_gin not found: %v", err)
+	}
+
+	// The column order matters: gin (account_id, tsv), not gin (tsv).
+	if !strings.Contains(indexdef, "gin") {
+		t.Errorf("index is not a GIN index: %s", indexdef)
+	}
+	if !strings.Contains(indexdef, "account_id") {
+		t.Errorf("index does not include account_id, which is the whole point (S3 §5.2): %s", indexdef)
+	}
+	if !strings.Contains(indexdef, "tsv") {
+		t.Errorf("index does not include tsv: %s", indexdef)
+	}
+}
+
+// Every table of L2 §2.3 must exist after the migrations, including the A5
+// split: messages (immutable) and message_state (volatile) as SEPARATE tables.
+func TestCoreSchemaTablesExist(t *testing.T) {
+	db := migrated(t)
+	ctx := context.Background()
+
+	for _, table := range []string{
+		"accounts", "mailboxes", "messages", "message_state",
+		"blobs", "blob_refs", "sync_log", "intents",
+	} {
+		t.Run(table, func(t *testing.T) {
+			var exists bool
+			err := db.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM information_schema.tables
+					 WHERE table_schema = 'public' AND table_name = $1
+				)`, table).Scan(&exists)
+			if err != nil {
+				t.Fatalf("querying information_schema: %v", err)
+			}
+			if !exists {
+				t.Errorf("table %s does not exist", table)
+			}
+		})
+	}
+}
+
+// A5 in its structural form: the volatile columns must live on message_state,
+// and must NOT be on messages.
+//
+// A flag column on `messages` would mean every read/unread toggle rewrites the
+// ~2.2 KB generated tsv into the GIN index (S3 §4.5). This test fails the
+// moment somebody "simplifies" the schema by merging the two tables back.
+func TestVolatileColumnsAreNotOnMessages(t *testing.T) {
+	db := migrated(t)
+	ctx := context.Background()
+
+	for _, col := range []string{"flags", "keywords", "uid", "mailbox_id", "modseq_seen"} {
+		t.Run(col, func(t *testing.T) {
+			var exists bool
+			err := db.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					 WHERE table_schema = 'public' AND table_name = 'messages'
+					   AND column_name = $1
+				)`, col).Scan(&exists)
+			if err != nil {
+				t.Fatalf("querying information_schema: %v", err)
+			}
+			if exists {
+				t.Errorf("messages.%s exists; volatile state belongs on message_state "+
+					"(arbitration A5 — otherwise a flag change rewrites the tsv into the GIN index, S3 §4.5)", col)
+			}
+		})
 	}
 }
 
