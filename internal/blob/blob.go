@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -318,6 +320,107 @@ func AddRef(ctx context.Context, tx pgx.Tx, h Hash, accountID int64, kind OwnerK
 	}
 
 	return syncRefcount(ctx, tx, h)
+}
+
+// Ref names one reference to add: which blob, on behalf of which account, held
+// by which owner.
+type Ref struct {
+	Hash      Hash
+	AccountID int64
+	Kind      OwnerKind
+	OwnerID   int64
+}
+
+// AddRefs records a batch of references in tx, taking every blob's lock exactly
+// once and in a deterministic order.
+//
+// # Why a batch variant exists at all
+//
+// AddRef called in a loop does three round trips per reference (lock, insert,
+// recompute) and — the part that matters — takes the same blob's lock once per
+// reference to it. A sync batch of a hundred messages routinely contains
+// several copies of one blob: a mailing list post that landed in two folders, a
+// company-wide announcement held by two accounts being migrated together. Each
+// of those took the lock, released it, and took it again.
+//
+// This variant groups by hash first, so each blob is locked once, all of its
+// reference rows are inserted together, and its count is recomputed once. The
+// lock order is the sorted hash order — the same global order E5's pipeline
+// established after a bulk migration deadlocked on arrival-order locking
+// (SQLSTATE 40P01) — so it composes with any other caller that respects it.
+//
+// # What it does NOT change
+//
+// The invariant is exactly AddRef's: the blob row is locked BEFORE blob_refs is
+// touched, and the refcount is RECOMPUTED from the reference rows rather than
+// incremented. Both properties are what make the count correct under
+// concurrency instead of merely usually right, and batching does not weaken
+// either — it only amortizes them.
+//
+// It is idempotent per (blob, owner), and a duplicate inside one call is
+// harmless for the same reason: the count comes from the rows that exist, not
+// from how many inserts were attempted.
+func AddRefs(ctx context.Context, tx pgx.Tx, refs []Ref) error {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	// Group by blob, preserving one entry per distinct hash. The groups are
+	// then visited in sorted hash order, which is the lock order.
+	byHash := make(map[Hash][]Ref, len(refs))
+	order := make([]Hash, 0, len(refs))
+	for _, r := range refs {
+		if _, seen := byHash[r.Hash]; !seen {
+			order = append(order, r.Hash)
+		}
+		byHash[r.Hash] = append(byHash[r.Hash], r)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		return bytes.Compare(order[i][:], order[j][:]) < 0
+	})
+
+	for _, h := range order {
+		var existing int64
+		err := tx.QueryRow(ctx, `SELECT refcount FROM blobs WHERE sha256 = $1 FOR UPDATE`, h.Bytes()).Scan(&existing)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Collected, or never recorded. Same rule as AddRef: never
+				// create the row here, because that would point a reference at
+				// bytes that are not on disk.
+				return fmt.Errorf("blob %s: %w", h, ErrNotFound)
+			}
+			return fmt.Errorf("blob: locking %s: %w", h, err)
+		}
+
+		group := byHash[h]
+		batch := &pgx.Batch{}
+		for _, r := range group {
+			batch.Queue(`
+				INSERT INTO blob_refs (sha256, account_id, owner_kind, owner_id)
+				VALUES ($1, $2, $3, $4)
+				ON CONFLICT (sha256, owner_kind, owner_id) WHERE owner_id IS NOT NULL
+				DO NOTHING`, r.Hash.Bytes(), r.AccountID, r.Kind, r.OwnerID)
+		}
+		results := tx.SendBatch(ctx, batch)
+		for i := range group {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				return fmt.Errorf("blob: adding reference %d of %d to %s: %w",
+					i+1, len(group), h, err)
+			}
+		}
+		if err := results.Close(); err != nil {
+			return fmt.Errorf("blob: adding references to %s: %w", h, err)
+		}
+
+		// Once per blob, not once per reference: the count is derived from the
+		// rows, so recomputing it after the whole group is the same answer for
+		// a fraction of the work.
+		if err := syncRefcount(ctx, tx, h); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RemoveRef drops a reference and decrements the refcount, in tx.

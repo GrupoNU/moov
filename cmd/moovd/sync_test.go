@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/GrupoNU/moov/internal/config"
+	"github.com/GrupoNU/moov/internal/crypto"
 	"github.com/GrupoNU/moov/internal/store"
 )
 
@@ -30,12 +32,11 @@ func testConfig() config.Config {
 // would be undeployable in exactly the situations where it needs to be looked
 // at.
 func TestStartSyncIsOptIn(t *testing.T) {
-	t.Setenv(envSyncEnabled, "")
-
 	cfg := testConfig()
+	cfg.Sync.Enabled = false
 	logger := newLogger(cfg, discardFile(t))
 
-	components, err := startSync(context.Background(), "postgres://unreachable/db", logger)
+	components, err := startSync(context.Background(), cfg, logger)
 	if err != nil {
 		t.Fatalf("startSync with the supervisor disabled returned %v, want nil", err)
 	}
@@ -45,6 +46,31 @@ func TestStartSyncIsOptIn(t *testing.T) {
 
 	// close on the nil case must be safe: serve defers it unconditionally.
 	components.close()
+}
+
+// TestStartSyncRequiresAKeyring is the security assertion at the daemon's
+// boundary: an engine that cannot decrypt credentials must refuse to start.
+//
+// The failure it prevents is subtle. A daemon that started anyway would run,
+// pass its health check, and report every account as a connection failure —
+// which looks like a Dovecot outage and gets debugged as one, while the actual
+// cause is a missing environment variable that nothing ever printed.
+func TestStartSyncRequiresAKeyring(t *testing.T) {
+	t.Setenv(crypto.EnvMasterKey, "")
+	t.Setenv(crypto.EnvMasterKeyFile, "")
+
+	cfg := testConfig()
+	cfg.Sync.Enabled = true
+	logger := newLogger(cfg, discardFile(t))
+
+	components, err := startSync(context.Background(), cfg, logger)
+	if err == nil {
+		components.close()
+		t.Fatal("startSync built a sync engine with no master key")
+	}
+	if !strings.Contains(err.Error(), "keyring") {
+		t.Errorf("startSync = %v, want an error naming the keyring", err)
+	}
 }
 
 // TestRunSyncWaitsForCancellationWhenDisabled documents the shape serve()
@@ -75,60 +101,96 @@ func TestRunSyncWaitsForCancellationWhenDisabled(t *testing.T) {
 	}
 }
 
-// TestDialAccountRefusesWithoutCredentials is the security assertion of this
-// file: the connector must not invent a password.
-//
-// Until E7 wires decryption, an account whose ciphertext cannot be turned into
-// a password must fail loudly. The failure mode this prevents is a placeholder
-// that "works in development" and reaches production as a plaintext fallback.
-func TestDialAccountRefusesWithoutCredentials(t *testing.T) {
+// testDialer builds a dialer over a fresh single-key keyring.
+func testDialer(t *testing.T) (*accountDialer, *crypto.Keyring) {
+	t.Helper()
+
+	material, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	key, err := crypto.NewKey(1, material)
+	if err != nil {
+		t.Fatalf("NewKey: %v", err)
+	}
+	kr, err := crypto.NewKeyring(key)
+	if err != nil {
+		t.Fatalf("NewKeyring: %v", err)
+	}
+
 	cfg := testConfig()
-	logger := newLogger(cfg, discardFile(t))
-
-	t.Run("no stored credentials", func(t *testing.T) {
-		_, err := dialAccount(context.Background(), store.Account{ID: 1}, 1, logger)
-		if err == nil {
-			t.Fatal("dialAccount connected for an account with no credentials")
-		}
-	})
-
-	t.Run("ciphertext present but decryption not wired", func(t *testing.T) {
-		acct := store.Account{ID: 2, IMAPAppPassword: []byte("ciphertext")}
-		_, err := dialAccount(context.Background(), acct, 1, logger)
-		if !errors.Is(err, errCredentialsNotWired) {
-			t.Fatalf("dialAccount = %v, want errCredentialsNotWired", err)
-		}
-	})
+	return &accountDialer{keyring: kr, logger: newLogger(cfg, discardFile(t))}, kr
 }
 
-func TestEnvInt(t *testing.T) {
-	t.Run("unset means zero", func(t *testing.T) {
-		t.Setenv("MOOV_TEST_ENVINT", "")
-		n, err := envInt("MOOV_TEST_ENVINT")
-		if err != nil || n != 0 {
-			t.Errorf("envInt = (%d, %v), want (0, nil)", n, err)
-		}
-	})
+// TestDialerDecryptsAStoredAppPassword is the E7 wiring this epic completed:
+// what E5 left as a refusal is now a real round trip through internal/crypto.
+func TestDialerDecryptsAStoredAppPassword(t *testing.T) {
+	dialer, kr := testDialer(t)
 
-	t.Run("valid value", func(t *testing.T) {
-		t.Setenv("MOOV_TEST_ENVINT", "6")
-		n, err := envInt("MOOV_TEST_ENVINT")
-		if err != nil || n != 6 {
-			t.Errorf("envInt = (%d, %v), want (6, nil)", n, err)
-		}
-	})
+	const secret = "an-app-password-from-mailcow"
+	const accountID int64 = 42
 
-	t.Run("garbage is an error, not a silent default", func(t *testing.T) {
-		t.Setenv("MOOV_TEST_ENVINT", "many")
-		if _, err := envInt("MOOV_TEST_ENVINT"); err == nil {
-			t.Error("envInt accepted a non-numeric value")
-		}
-	})
+	envelope, err := kr.Seal([]byte(secret), crypto.AccountAAD(accountID))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
-	t.Run("negative is rejected", func(t *testing.T) {
-		t.Setenv("MOOV_TEST_ENVINT", "-3")
-		if _, err := envInt("MOOV_TEST_ENVINT"); err == nil {
-			t.Error("envInt accepted a negative value")
-		}
-	})
+	// The ciphertext must not be the plaintext in disguise — the assertion that
+	// would catch an encryption path quietly reduced to a copy.
+	if strings.Contains(string(envelope), secret) {
+		t.Fatal("the sealed envelope contains the plaintext password")
+	}
+
+	got, err := dialer.password(store.Account{ID: accountID, IMAPAppPassword: envelope})
+	if err != nil {
+		t.Fatalf("password: %v", err)
+	}
+	if got != secret {
+		t.Errorf("password = %q, want %q", got, secret)
+	}
+}
+
+// TestDialerRejectsAnEnvelopeFromAnotherAccount is the multi-tenancy assertion.
+//
+// The AAD binds a ciphertext to its account, so an envelope moved between rows
+// — a bad restore, a mistaken UPDATE, a copied fixture — must fail to open. The
+// alternative is an engine that logs into the wrong mailbox and reports success,
+// which is the worst failure this system can have.
+func TestDialerRejectsAnEnvelopeFromAnotherAccount(t *testing.T) {
+	dialer, kr := testDialer(t)
+
+	envelope, err := kr.Seal([]byte("secret"), crypto.AccountAAD(1))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	if _, err := dialer.password(store.Account{ID: 2, IMAPAppPassword: envelope}); err == nil {
+		t.Fatal("an envelope sealed for account 1 opened for account 2")
+	}
+}
+
+// TestDialerRefusesWithoutCredentials keeps E5's guarantee: the connector must
+// never invent a password for an account that has none.
+func TestDialerRefusesWithoutCredentials(t *testing.T) {
+	dialer, _ := testDialer(t)
+
+	if _, err := dialer.password(store.Account{ID: 1}); err == nil {
+		t.Fatal("password returned a credential for an account with none")
+	}
+}
+
+// TestDialerRejectsAForeignKeyring proves the envelope is authenticated, not
+// merely obscured: a keyring that did not seal it cannot open it.
+func TestDialerRejectsAForeignKeyring(t *testing.T) {
+	_, kr := testDialer(t)
+	other, _ := testDialer(t)
+
+	envelope, err := kr.Seal([]byte("secret"), crypto.AccountAAD(7))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	if _, err := other.password(store.Account{ID: 7, IMAPAppPassword: envelope}); err == nil {
+		t.Fatal("a foreign keyring opened the envelope")
+	}
 }

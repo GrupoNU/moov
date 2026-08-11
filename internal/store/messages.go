@@ -31,6 +31,23 @@ const messageStateColumns = `message_id, account_id, mailbox_id, uid, uidvalidit
 // to blobs, so the caller stores the bytes (blob.Put) before inserting the row.
 // That ordering is what makes the raw message durable before any parsing is
 // attempted (L2 §2.4).
+//
+// # Idempotency at the database, not only in the caller
+//
+// The message_state insert carries ON CONFLICT (mailbox_id, uidvalidity, uid)
+// DO NOTHING, so a UID that is already stored is skipped instead of aborting
+// the batch on the unique index. The sync engine still pre-filters known UIDs —
+// that is what keeps a resumed run from re-downloading bodies — but a
+// pre-filter is a check-then-act and therefore racy by construction: two passes
+// over the same mailbox (a watcher event and a reconciler sweep arriving
+// together, which E6 makes routine) can both read "not stored" before either
+// writes. Before this clause that race aborted a whole batch of a hundred
+// messages; now it costs one skipped row.
+//
+// The returned slice therefore holds the id of every message row that was
+// inserted, positionally aligned with msgs. A skipped entry is reported as id 0
+// so the alignment survives — a caller adding blob references must skip those
+// rather than referencing a message it did not create.
 func (s *Store) InsertMessages(ctx context.Context, msgs []NewMessage) ([]int64, error) {
 	if len(msgs) == 0 {
 		return nil, nil
@@ -70,26 +87,51 @@ func (s *Store) InsertMessages(ctx context.Context, msgs []NewMessage) ([]int64,
 			return fmt.Errorf("inserting messages: %w", err)
 		}
 
+		// RETURNING message_id tells the two cases apart: a row comes back for
+		// an insert that happened and none for one the conflict clause skipped.
+		// pgx reports the skipped case as ErrNoRows on the query result, which
+		// is why these are QueryRow rather than Exec.
 		stateBatch := &pgx.Batch{}
 		for i := range msgs {
 			st := &msgs[i].State
 			stateBatch.Queue(`
 				INSERT INTO message_state (message_id, account_id, mailbox_id,
 					uid, uidvalidity, flags, keywords, modseq_seen)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+				ON CONFLICT (mailbox_id, uidvalidity, uid) DO NOTHING
+				RETURNING message_id`,
 				ids[i], st.AccountID, st.MailboxID,
 				st.UID, st.UIDValidity, st.Flags.toDB(),
 				textArray(st.Keywords), st.ModSeqSeen)
 		}
 		stateResults := tx.SendBatch(ctx, stateBatch)
+		orphans := make([]int64, 0, len(msgs))
 		for i := range msgs {
-			if _, err := stateResults.Exec(); err != nil {
-				_ = stateResults.Close()
-				return fmt.Errorf("inserting message state %d of %d: %w", i+1, len(msgs), err)
+			var stored int64
+			if err := stateResults.QueryRow().Scan(&stored); err != nil {
+				if !isNoRows(err) {
+					_ = stateResults.Close()
+					return fmt.Errorf("inserting message state %d of %d: %w", i+1, len(msgs), err)
+				}
+				// The UID was already present. The messages row inserted above
+				// now has no state and would be an orphan: a message nothing
+				// points at, holding a blob reference forever. It is removed
+				// inside the same transaction, and the caller is told through a
+				// zero id.
+				orphans = append(orphans, ids[i])
+				ids[i] = 0
 			}
 		}
 		if err := stateResults.Close(); err != nil {
 			return fmt.Errorf("inserting message state: %w", err)
+		}
+
+		if len(orphans) > 0 {
+			if _, err := tx.Exec(ctx,
+				`DELETE FROM messages WHERE id = ANY($1)`, orphans); err != nil {
+				return fmt.Errorf("removing %d messages whose uid was already stored: %w",
+					len(orphans), err)
+			}
 		}
 		return nil
 	})
@@ -253,6 +295,49 @@ func (s *Store) ExistingUIDs(ctx context.Context, mailboxID, uidvalidity int64, 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("checking existing uids: %w", err)
+	}
+	return out, nil
+}
+
+// MessageStatesByUID resolves a set of IMAP UIDs to their stored state in one
+// round trip, keyed by UID.
+//
+// It is the incremental path's lookup (E6): a CHANGEDSINCE pass reports UIDs
+// and flags, and turning those into UPDATEs needs the message_id behind each
+// UID. ExistingUIDs answers only "is it there"; this answers "what does Moov
+// currently believe about it", which is what makes a no-op change detectable
+// and therefore skippable — a flag update that changes nothing must not move
+// updated_at, because that column is the cursor JMAP Email/changes pages
+// through and every spurious bump makes clients re-fetch.
+//
+// Tombstoned rows are included. A message the server expunged and Moov has
+// marked deleted still occupies its UID until the tombstone is reaped, and
+// hiding it here would make the caller treat the UID as new and re-fetch a
+// message that no longer exists.
+func (s *Store) MessageStatesByUID(ctx context.Context, mailboxID, uidvalidity int64, uids []int64) (map[int64]MessageState, error) {
+	out := make(map[int64]MessageState, len(uids))
+	if len(uids) == 0 {
+		return out, nil
+	}
+
+	rows, err := s.pool.Query(ctx, `SELECT `+messageStateColumns+`
+		FROM message_state
+		 WHERE mailbox_id = $1 AND uidvalidity = $2 AND uid = ANY($3)`,
+		mailboxID, uidvalidity, uids)
+	if err != nil {
+		return nil, fmt.Errorf("reading message states by uid: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		st, err := scanMessageState(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading message states by uid: %w", err)
+		}
+		out[st.UID] = st
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading message states by uid: %w", err)
 	}
 	return out, nil
 }

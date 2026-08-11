@@ -448,7 +448,24 @@ func (s *Syncer) commitBatch(
 	if err := s.addBlobRefs(ctx, account.ID, ids, batch); err != nil {
 		return 0, 0, err
 	}
-	return len(ids), failed, nil
+	return countInserted(ids), failed, nil
+}
+
+// countInserted counts the rows InsertMessages actually created.
+//
+// A zero id means the UID was already stored and the row was skipped by the ON
+// CONFLICT clause (InsertMessages' doc). Counting it as stored would report
+// progress that did not happen — and on a resumed run, where the pre-filter and
+// the conflict clause overlap, would inflate every figure the acceptance
+// criteria are measured in.
+func countInserted(ids []int64) int {
+	n := 0
+	for _, id := range ids {
+		if id != 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // insertWithRetry inserts a batch, retrying a deadlock.
@@ -497,33 +514,38 @@ func (s *Syncer) insertWithRetry(ctx context.Context, rows []store.NewMessage, m
 // the cycle impossible rather than merely unlikely. The sort is over a batch of
 // ~100 fixed-size keys, so it costs nothing measurable.
 func (s *Syncer) addBlobRefs(ctx context.Context, accountID int64, ids []int64, batch []parsedMessage) error {
-	type ref struct {
-		hash      blob.Hash
-		messageID int64
-	}
-	refs := make([]ref, 0, len(ids))
+	refs := make([]blob.Ref, 0, len(ids))
 	for i, id := range ids {
-		refs = append(refs, ref{hash: batch[i].raw.hash, messageID: id})
+		// A zero id is a message whose UID was already stored, so the insert
+		// was skipped (store.InsertMessages' doc). There is no row to reference
+		// and the existing one already holds its own reference.
+		if id == 0 {
+			continue
+		}
+		refs = append(refs, blob.Ref{
+			Hash:      batch[i].raw.hash,
+			AccountID: accountID,
+			Kind:      blob.OwnerMessage,
+			OwnerID:   id,
+		})
 	}
-	sort.Slice(refs, func(i, j int) bool {
-		return bytes.Compare(refs[i].hash[:], refs[j].hash[:]) < 0
-	})
+	if len(refs) == 0 {
+		return nil
+	}
 
-	// The sort removes the cycle among this engine's own transactions. A
-	// deadlock can still be reported when another writer — the blob GC, a
-	// future reparse job — takes the same locks by a different route, so the
-	// retry stays as a backstop. It is safe by construction: a deadlock abort
-	// rolls the whole transaction back, so a retry repeats work that was never
-	// committed, and AddRef is idempotent per (blob, owner) anyway.
+	// blob.AddRefs sorts by hash internally and takes each blob's lock once for
+	// the whole batch, which is what gives every transaction in this package one
+	// global lock order.
+	//
+	// The retry stays as a backstop for the cycles this package cannot see: the
+	// blob GC, or a future reparse job, taking the same locks by a different
+	// route. It is safe by construction — a deadlock abort rolls the whole
+	// transaction back, so a retry repeats work that was never committed, and
+	// AddRefs is idempotent per (blob, owner) anyway.
 	var err error
 	for attempt := range blobRefRetries {
 		err = s.store.InTx(ctx, func(tx pgx.Tx) error {
-			for _, r := range refs {
-				if aerr := blob.AddRef(ctx, tx, r.hash, accountID, blob.OwnerMessage, r.messageID); aerr != nil {
-					return fmt.Errorf("referencing blob for message %d: %w", r.messageID, aerr)
-				}
-			}
-			return nil
+			return blob.AddRefs(ctx, tx, refs)
 		})
 		if err == nil {
 			return nil

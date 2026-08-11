@@ -45,6 +45,14 @@ type fakeMailbox struct {
 	// noSelect models an intermediate hierarchy node: it appears in LIST and
 	// belongs in the folder tree, but SELECT on it is a protocol error.
 	noSelect bool
+
+	// highestModSeq is the mailbox's CONDSTORE counter (E6). It only ever
+	// increases, which is the property the incremental path depends on.
+	highestModSeq imap.ModSeq
+
+	// vanished is the expunge history QRESYNC replays to a reconnecting client
+	// (E6).
+	vanished []vanishedRecord
 }
 
 func (m *fakeMailbox) uidNext() imap.UID {
@@ -83,6 +91,23 @@ type fakeServer struct {
 
 	// listErr, when set, makes ListMailboxes fail.
 	listErr error
+
+	// ---- E6 ----------------------------------------------------------------
+
+	// watchers are the live watches (E6).
+	watchers []*fakeWatch
+
+	// watchErr, when set, makes Watch fail — the connection failure the
+	// breaker counts.
+	watchErr error
+
+	// silentNotify suppresses event delivery while still applying mutations,
+	// which is how a test creates a divergence behind the watcher's back.
+	silentNotify bool
+
+	// connectErr, when set, makes the connector fail, so a test can drive the
+	// backoff and the breaker without a real socket.
+	connectErr error
 }
 
 func newFakeServer() *fakeServer { return &fakeServer{} }
@@ -166,13 +191,20 @@ func (c *fakeClient) ListMailboxes(_ context.Context) ([]imap.MailboxInfo, error
 			NumMessages:   uint32(len(m.messages)),
 			UIDNext:       m.uidNext(),
 			UIDValidity:   m.uidValidity,
-			HighestModSeq: 1,
+			HighestModSeq: m.highestModSeq,
 		})
 	}
 	return out, nil
 }
 
-func (c *fakeClient) SelectQResync(_ context.Context, mailbox string, uidValidity uint32, _ imap.ModSeq) (imap.SelectResult, error) {
+// SelectQResync selects a mailbox, replaying the QRESYNC delta when the caller
+// supplies a cursor.
+//
+// The VANISHED (EARLIER) replay is the part that matters for E6: a client that
+// reconnects with an old modseq is told which UIDs disappeared while it was
+// away, and getting that wrong is how a reconnected engine keeps showing mail
+// that no longer exists.
+func (c *fakeClient) SelectQResync(_ context.Context, mailbox string, uidValidity uint32, modSeq imap.ModSeq) (imap.SelectResult, error) {
 	c.srv.mu.Lock()
 	defer c.srv.mu.Unlock()
 
@@ -187,18 +219,55 @@ func (c *fakeClient) SelectQResync(_ context.Context, mailbox string, uidValidit
 	}
 	c.selected = mb
 
-	return imap.SelectResult{
+	res := imap.SelectResult{
 		UIDValidity:        mb.uidValidity,
 		UIDValidityChanged: uidValidity != 0 && uidValidity != mb.uidValidity,
-		HighestModSeq:      1,
+		HighestModSeq:      mb.highestModSeq,
 		UIDNext:            mb.uidNext(),
 		NumMessages:        uint32(len(mb.messages)),
+	}
+
+	// QRESYNC only replays when the caller's UIDVALIDITY still matches: after a
+	// change, the old UIDs name nothing and replaying them would be worse than
+	// useless.
+	if modSeq > 0 && uidValidity == mb.uidValidity {
+		res.VanishedUIDs = mb.vanishedSince(modSeq)
+	}
+	return res, nil
+}
+
+// FetchChanges is the live-connection incremental path: everything above the
+// cursor, plus the vanished trail.
+func (c *fakeClient) FetchChanges(_ context.Context, since imap.ModSeq) (imap.ChangeIter, error) {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+
+	if c.selected == nil {
+		return nil, imap.ErrNoMailboxSelected
+	}
+
+	changed := c.selected.changedSince(since)
+	var vanished []imap.UID
+	if since > 0 {
+		vanished = c.selected.vanishedSince(since)
+	}
+
+	// Flags and modseq only: a CHANGEDSINCE pass reports what changed, and the
+	// bodies of genuinely new messages are fetched separately by the engine.
+	spec := imap.FetchSpec{Flags: true, InternalDate: true, Size: true, ChangedSince: since}
+	return &fakeChangeIter{
+		fakeIter: fakeIter{srv: c.srv, msgs: changed, spec: spec},
+		vanished: vanished,
 	}, nil
 }
 
-func (c *fakeClient) FetchChanges(_ context.Context, _ imap.ModSeq) (imap.ChangeIter, error) {
-	return nil, fmt.Errorf("fake: FetchChanges is E6's, not E5's")
+// fakeChangeIter is a fakeIter that also reports the vanished set.
+type fakeChangeIter struct {
+	fakeIter
+	vanished []imap.UID
 }
+
+func (it *fakeChangeIter) Vanished() []imap.UID { return it.vanished }
 
 func (c *fakeClient) FetchMessages(_ context.Context, uids []imap.UID, spec imap.FetchSpec) (imap.MessageIter, error) {
 	c.srv.mu.Lock()
@@ -219,12 +288,31 @@ func (c *fakeClient) FetchMessages(_ context.Context, uids []imap.UID, spec imap
 	return &fakeIter{srv: c.srv, msgs: out, spec: spec}, nil
 }
 
-func (c *fakeClient) Watch(_ context.Context, _ imap.WatchSpec) (<-chan imap.Event, error) {
-	return nil, imap.ErrWatchNotSupported
+func (c *fakeClient) Watch(ctx context.Context, spec imap.WatchSpec) (<-chan imap.Event, error) {
+	return c.watch(ctx, spec)
 }
 
-func (c *fakeClient) StoreFlags(_ context.Context, _ []imap.UID, _ imap.FlagDelta, _ imap.ModSeq) (imap.StoreResult, error) {
-	return imap.StoreResult{}, fmt.Errorf("fake: StoreFlags is not part of E5")
+// StoreFlags applies a flag delta server-side, which the incremental tests use
+// to model another client changing flags.
+func (c *fakeClient) StoreFlags(_ context.Context, uids []imap.UID, delta imap.FlagDelta, _ imap.ModSeq) (imap.StoreResult, error) {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+
+	if c.selected == nil {
+		return imap.StoreResult{}, imap.ErrNoMailboxSelected
+	}
+	if delta.Op != imap.FlagsSet {
+		return imap.StoreResult{}, fmt.Errorf("fake: only FlagsSet is modeled, got %s", delta.Op)
+	}
+
+	var out imap.StoreResult
+	for _, u := range uids {
+		if c.selected.setFlags(u, delta.Flags, nil) {
+			out.Updated = append(out.Updated, u)
+		}
+	}
+	out.HighestModSeq = c.selected.highestModSeq
+	return out, nil
 }
 
 func (c *fakeClient) Metadata() imap.MetadataOps { return nil }
@@ -373,6 +461,11 @@ func seedMailbox(mb *fakeMailbox, n int, newest time.Time, subjectPrefix string)
 			internalDate: date,
 			modSeq:       imap.ModSeq(i + 1),
 		})
+	}
+	// The mailbox counter has to end above every message's, or a delta asking
+	// for "changes since HIGHESTMODSEQ" would replay the whole seeded mailbox.
+	if m := imap.ModSeq(n); m > mb.highestModSeq {
+		mb.highestModSeq = m
 	}
 }
 

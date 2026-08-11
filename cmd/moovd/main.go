@@ -89,7 +89,7 @@ func run() error {
 // stopped in reverse start order under ShutdownTimeout.
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	startCtx, cancelStart := context.WithTimeout(ctx, syncStartTimeout)
-	components, err := startSync(startCtx, cfg.DatabaseURL, logger)
+	components, err := startSync(startCtx, cfg, logger)
 	cancelStart()
 	if err != nil {
 		return fmt.Errorf("starting sync: %w", err)

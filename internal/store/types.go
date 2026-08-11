@@ -235,6 +235,21 @@ type Mailbox struct {
 	UpdatedAt    time.Time
 }
 
+// UIDValidityOrZero returns the mailbox's UIDVALIDITY, or 0 when it has never
+// been selected.
+//
+// The pointer distinguishes "never synced" from "synced, and the server said
+// zero", which is a distinction the sync engine needs. Everywhere else — a
+// lookup keyed by (mailbox, uidvalidity, uid), a log line — the caller wants a
+// number, and writing the nil check at each of those call sites is how one of
+// them eventually gets it wrong.
+func (m Mailbox) UIDValidityOrZero() int64 {
+	if m.UIDValidity == nil {
+		return 0
+	}
+	return *m.UIDValidity
+}
+
 // Message is the immutable half of a stored message (A5): everything derived
 // from the raw bytes at parse time. Nothing here changes because a user
 // clicked something.

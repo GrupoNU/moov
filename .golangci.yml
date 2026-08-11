@@ -151,6 +151,14 @@ linters:
                 internal/crypto).
             - pkg: io/ioutil
               desc: Deprecated since Go 1.16; use os and io.
+          # depguard matches deny entries by PREFIX, so `math/rand` above also
+          # matches `math/rand/v2` — the very package the rule's own message
+          # tells you to use, and the one the gosec G404 exclusion above says
+          # this engine uses for backoff jitter. Allow re-permits it explicitly.
+          # Without this the rule forbids v1 and v2 alike and contradicts
+          # itself; E6's watcher jitter was where that surfaced.
+          allow:
+            - math/rand/v2
 
   exclusions:
     generated: lax

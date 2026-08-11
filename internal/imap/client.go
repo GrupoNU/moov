@@ -184,6 +184,21 @@ var (
 	// ErrWatchNotSupported is returned by Watch when the server advertises
 	// neither NOTIFY nor a usable IDLE.
 	ErrWatchNotSupported = errors.New("imap: server supports neither NOTIFY nor IDLE")
+
+	// ErrMailboxStale is returned by SelectQResync when this SESSION's view of
+	// a mailbox no longer matches the server's, because the mailbox was deleted
+	// or recreated by another client while this connection had it open.
+	//
+	// It is a connection-level condition, not a mailbox-level one: the mailbox
+	// is fine and a new connection selects it without complaint, but this one
+	// will keep refusing it for the rest of its life — Dovecot holds the stale
+	// view per session, and neither UNSELECT nor a plain SELECT clears it
+	// (measured in E6 against Dovecot 2.3.21.1).
+	//
+	// The correct response is therefore to discard the connection and retry on
+	// a fresh one, after which the ordinary UIDVALIDITY-changed branch handles
+	// the rest.
+	ErrMailboxStale = errors.New("imap: this session's view of the mailbox is stale; reconnect")
 )
 
 // MissingCapabilityError names the capabilities that were absent.

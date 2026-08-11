@@ -3,6 +3,7 @@ package imap
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	goimap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -123,6 +124,34 @@ func (cl *client) SelectQResync(ctx context.Context, mailbox string, uidValidity
 
 	data, err := gc.Select(mailbox, opts).Wait()
 	if err != nil {
+		// # The recreated-mailbox case (measured against Dovecot 2.3.21.1 by
+		// E6's integration suite)
+		//
+		// When a mailbox is deleted and recreated — by another client, or by a
+		// user in a webmail — a connection that had it open answers every
+		// subsequent SELECT of that name with one of:
+		//
+		//	NO Mailbox was deleted under us
+		//	NO [SERVERBUG] Internal error occurred…
+		//	  (server log: "Corrupted transaction log file …: indexid changed")
+		//
+		// The mailbox exists; this SESSION's view of it does not. And the
+		// staleness is held per session, not per selection: UNSELECT does not
+		// clear it, a plain SELECT without QRESYNC does not clear it, and a
+		// fresh connection to the same mailbox succeeds immediately. All three
+		// were measured — the retry that seemed obvious was tried first and
+		// fails identically.
+		//
+		// So this is NOT recoverable inside the connection, and pretending
+		// otherwise would spend round trips to arrive at the same error. It is
+		// reported as ErrMailboxStale so the caller can do the one thing that
+		// does work: drop this connection and use a new one.
+		if isStaleIndexError(err) {
+			cl.log.Info("imap: this session's view of the mailbox is stale "+
+				"(deleted or recreated by another client); the connection must be replaced",
+				"mailbox", mailbox)
+			return out, fmt.Errorf("imap: SELECT %q: %w: %w", mailbox, ErrMailboxStale, err)
+		}
 		return out, fmt.Errorf("imap: SELECT %q: %w", mailbox, err)
 	}
 
@@ -165,6 +194,49 @@ func (cl *client) SelectQResync(ctx context.Context, mailbox string, uidValidity
 	cl.mu.Unlock()
 
 	return out, nil
+}
+
+// isStaleIndexError reports whether a SELECT failed because this connection's
+// cached view refers to a mailbox that has since been deleted or recreated.
+//
+// # Two shapes, one condition (both observed on Dovecot 2.3.21.1 by E6's
+// integration suite)
+//
+//	NO [SERVERBUG] Internal error occurred…
+//	  (server log: "Corrupted transaction log file …: indexid changed: A -> B")
+//	NO Mailbox was deleted under us
+//
+// Both mean the same thing: the mailbox this connection has open is not the
+// mailbox on disk any more, because another client deleted or recreated it.
+// Neither is a server fault, and neither is fatal — the connection simply needs
+// to re-open the mailbox.
+//
+// The first shape is the more misleading of the two, since SERVERBUG reads as
+// "the server broke". The second is the more common in production: any user
+// deleting a folder in a webmail while Moov holds it open produces it.
+//
+// Matching is on the response text because that is all the protocol gives; the
+// SERVERBUG arm is additionally scoped by the index-identity wording so a
+// genuine internal error is not retried as if it were this.
+func isStaleIndexError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+
+	// "Deleted under us" is unambiguous on its own.
+	if strings.Contains(msg, "deleted under us") {
+		return true
+	}
+
+	if !strings.Contains(msg, "serverbug") {
+		return false
+	}
+	return strings.Contains(msg, "indexid changed") ||
+		strings.Contains(msg, "corrupted transaction log") ||
+		// The bare form, where the detail is only in the server log. Still
+		// scoped by the SERVERBUG check above.
+		strings.Contains(msg, "internal error occurred")
 }
 
 // dedupeUIDs sorts and de-duplicates, because VANISHED can reach the client by

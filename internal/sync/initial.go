@@ -131,6 +131,13 @@ const (
 
 	// PhaseComplete means every mailbox reached backfill_state 'complete'.
 	PhaseComplete Phase = "complete"
+
+	// PhaseIncremental is E6's steady state: the account is fully synced and
+	// the engine is applying deltas. It never appears in an account checkpoint
+	// — that would make a restart believe the initial sync had finished when it
+	// had not — and exists to label the progress events and the log lines of an
+	// incremental pass.
+	PhaseIncremental Phase = "incremental"
 )
 
 // Progress is one observation of an in-flight run.

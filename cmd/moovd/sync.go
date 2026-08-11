@@ -5,51 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
+	"sync"
 	"time"
 
 	"github.com/GrupoNU/moov/internal/blob"
+	"github.com/GrupoNU/moov/internal/config"
+	"github.com/GrupoNU/moov/internal/crypto"
 	"github.com/GrupoNU/moov/internal/imap"
 	"github.com/GrupoNU/moov/internal/store"
 	syncengine "github.com/GrupoNU/moov/internal/sync"
 )
 
-// The sync supervisor's wiring (E5).
+// The sync engine's wiring: supervisor (E5) plus push watcher (E6).
 //
-// Configuration is read from the environment here rather than through
-// internal/config because the settings below belong to this epic and adding
-// them to the shared Config would make every consumer of that package depend on
-// E5's shape. When E6 lands and the set stabilizes, they move there as one
-// change.
-
-// Environment variables this file reads.
-const (
-	// envSyncEnabled turns the supervisor on. It is opt-in for now: the daemon
-	// must remain startable without a reachable Dovecot, which is what CI and a
-	// bare `moovd -version` depend on.
-	envSyncEnabled = "MOOV_SYNC_ENABLED"
-
-	// envBlobRoot is the directory the content-addressed blobs live in.
-	envBlobRoot = "MOOV_BLOB_ROOT"
-
-	// envSyncConnections overrides the per-account IMAP connection budget.
-	envSyncConnections = "MOOV_SYNC_CONNECTIONS"
-
-	// envSyncParseWorkers overrides the CPU-bound parse pool (default
-	// GOMAXPROCS — S3 H6).
-	envSyncParseWorkers = "MOOV_SYNC_PARSE_WORKERS"
-
-	// envSyncAccounts is how many accounts are initially synced at once.
-	envSyncAccounts = "MOOV_SYNC_ACCOUNTS"
-
-	// envIMAPServerName is the name the Dovecot certificate is verified
-	// against, which differs from the host Moov dials (S1 H2).
-	envIMAPServerName = "MOOV_IMAP_SERVER_NAME"
-
-	// defaultBlobRoot is where blobs go when nothing else is configured.
-	defaultBlobRoot = "/var/lib/moov/blobs"
-)
+// Configuration comes from internal/config, which E6 folded E5's ad-hoc
+// os.Getenv calls into. Credentials come from internal/crypto (E7): this file
+// is where an account's stored ciphertext becomes an IMAP password, and it is
+// deliberately the ONLY place in the daemon that can perform that conversion.
 
 // syncComponents holds everything the supervisor needs, so shutdown can release
 // it in one place.
@@ -63,55 +35,70 @@ type syncComponents struct {
 // It returns a nil *syncComponents and a nil error for the disabled case, which
 // is deliberate: "not configured" is a normal state for a daemon that has not
 // been provisioned yet, not a failure to report.
-func startSync(ctx context.Context, dsn string, logger *slog.Logger) (*syncComponents, error) {
-	if os.Getenv(envSyncEnabled) != "1" {
-		logger.Info("sync supervisor disabled", "hint", envSyncEnabled+"=1 enables it")
+func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger) (*syncComponents, error) {
+	if !cfg.Sync.Enabled {
+		logger.Info("sync supervisor disabled", "hint", "MOOV_SYNC_ENABLED=1 enables it")
 		return nil, nil //nolint:nilnil // "disabled" is a valid, non-error outcome
 	}
 
-	st, err := store.Open(ctx, store.Config{DSN: dsn})
+	// The keyring is loaded ONCE, at startup, and a failure here is fatal.
+	//
+	// Both properties are deliberate. Loading once means the master key is read
+	// from the environment or its file at a single known moment rather than on
+	// every connection, so a key file that is rotated underneath a running
+	// process cannot half-apply. Failing fatally means a daemon that cannot
+	// decrypt credentials refuses to start instead of running and reporting
+	// every account as broken — which is the same outcome, arrived at hours
+	// later and looking like a Dovecot problem.
+	keyring, err := crypto.LoadKeyring()
+	if err != nil {
+		return nil, fmt.Errorf("loading the master keyring: %w", err)
+	}
+	logger.Info("credential keyring loaded", "key_ids", keyring.IDs(), "primary", keyring.PrimaryID())
+
+	st, err := store.Open(ctx, store.Config{DSN: cfg.DatabaseURL})
 	if err != nil {
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
 
-	blobRoot := envOr(envBlobRoot, defaultBlobRoot)
-	blobs, err := blob.New(blob.Config{Root: blobRoot, Pool: st.Pool()})
+	blobs, err := blob.New(blob.Config{Root: cfg.Sync.BlobRoot, Pool: st.Pool()})
 	if err != nil {
 		st.Close()
 		return nil, fmt.Errorf("opening blob store: %w", err)
 	}
 
-	opts := syncengine.Options{Logger: logger}
-	if n, err := envInt(envSyncConnections); err != nil {
-		st.Close()
-		return nil, err
-	} else if n > 0 {
-		opts.Connections = n
+	opts := syncengine.Options{
+		Logger:       logger,
+		Connections:  cfg.Sync.Connections,
+		ParseWorkers: cfg.Sync.ParseWorkers,
 	}
-	if n, err := envInt(envSyncParseWorkers); err != nil {
-		st.Close()
-		return nil, err
-	} else if n > 0 {
-		opts.ParseWorkers = n
-	}
+
+	dialer := &accountDialer{keyring: keyring, serverName: cfg.Sync.IMAPServerName, logger: logger}
+	connector := syncengine.ConnectorFunc(dialer.connect)
 
 	supOpts := syncengine.SupervisorOptions{
-		Options: opts,
-		Connector: syncengine.ConnectorFunc(
-			func(ctx context.Context, a store.Account, n int) ([]imap.Client, error) {
-				return dialAccount(ctx, a, n, logger)
-			}),
-
-		// THE E6 SEAM: leaving this nil means the supervisor performs initial
-		// syncs and then idles, which is exactly E5's scope. E6 sets it to its
-		// NOTIFY+IDLE watcher and nothing else in this file changes.
-		Watcher: nil,
+		Options:     opts,
+		Connector:   connector,
+		Concurrency: cfg.Sync.Accounts,
 	}
-	if n, err := envInt(envSyncAccounts); err != nil {
-		st.Close()
-		return nil, err
-	} else if n > 0 {
-		supOpts.Concurrency = n
+
+	if cfg.Sync.WatcherEnabled {
+		watcher, werr := syncengine.NewPushWatcher(st, blobs, syncengine.WatcherOptions{
+			Options:           opts,
+			Connector:         connector,
+			Debounce:          cfg.Sync.Debounce,
+			ReconcileInterval: cfg.Sync.ReconcileInterval,
+			BreakerThreshold:  cfg.Sync.BreakerThreshold,
+			BreakerCooldown:   cfg.Sync.BreakerCooldown,
+		})
+		if werr != nil {
+			st.Close()
+			return nil, fmt.Errorf("building push watcher: %w", werr)
+		}
+		supOpts.Watcher = watcher
+	} else {
+		logger.Warn("push watcher disabled; the engine will sync once and idle",
+			"hint", "MOOV_SYNC_WATCHER=1 re-enables it")
 	}
 
 	sup, err := syncengine.NewSupervisor(st, blobs, supOpts)
@@ -120,7 +107,8 @@ func startSync(ctx context.Context, dsn string, logger *slog.Logger) (*syncCompo
 		return nil, fmt.Errorf("building sync supervisor: %w", err)
 	}
 
-	logger.Info("sync supervisor configured", "blob_root", blobRoot)
+	logger.Info("sync supervisor configured",
+		"blob_root", cfg.Sync.BlobRoot, "watcher", cfg.Sync.WatcherEnabled)
 	return &syncComponents{store: st, supervisor: sup}, nil
 }
 
@@ -132,23 +120,38 @@ func (c *syncComponents) close() {
 	c.store.Close()
 }
 
-// dialAccount opens n IMAP connections for one account.
+// accountDialer opens IMAP connections for an account, decrypting its stored
+// app password on the way.
 //
-// # The credential gap (E7)
-//
-// accounts.imap_app_password holds AES-256-GCM ciphertext, and decrypting it is
-// internal/crypto's job. Until that wiring exists, this function refuses rather
-// than inventing a fallback: a sync engine that could read plaintext passwords
-// from anywhere would defeat the point of encrypting them, and a placeholder
-// that "works in development" is how such a fallback survives to production.
-func dialAccount(ctx context.Context, account store.Account, n int, logger *slog.Logger) ([]imap.Client, error) {
-	if len(account.IMAPAppPassword) == 0 {
-		return nil, fmt.Errorf("account %d has no stored credentials", account.ID)
-	}
+// It is a type rather than a closure so the keyring has exactly one owner and
+// one lifetime, and so the decryption path is a named thing that can be pointed
+// at in a review.
+type accountDialer struct {
+	keyring *crypto.Keyring
 
-	password, err := decryptAppPassword(account.IMAPAppPassword)
+	// serverName overrides the certificate name for every account, for the
+	// deployment where Dovecot is reached by a container alias (S1 H2).
+	serverName string
+
+	logger *slog.Logger
+
+	// mu guards nothing but is the seam where a future connection budget across
+	// accounts would live; it exists so that the dialer is safe to share across
+	// the supervisor's per-account goroutines today, which it is by being
+	// stateless.
+	mu sync.Mutex
+}
+
+// connect opens n IMAP connections for one account.
+func (d *accountDialer) connect(ctx context.Context, account store.Account, n int) ([]imap.Client, error) {
+	password, err := d.password(account)
 	if err != nil {
 		return nil, fmt.Errorf("account %d: %w", account.ID, err)
+	}
+
+	serverName := d.serverName
+	if serverName == "" {
+		serverName = account.IMAPServerName
 	}
 
 	cfg := imap.Config{
@@ -156,12 +159,12 @@ func dialAccount(ctx context.Context, account store.Account, n int, logger *slog
 		Port:          account.IMAPPort,
 		Username:      account.IMAPUsername,
 		Password:      password,
-		TLSServerName: envOr(envIMAPServerName, account.IMAPServerName),
+		TLSServerName: serverName,
 	}
 
 	clients := make([]imap.Client, 0, n)
 	for range n {
-		c := imap.New(logger)
+		c := imap.New(d.logger)
 		if err := c.Connect(ctx, cfg); err != nil {
 			for _, open := range clients {
 				_ = open.Close()
@@ -173,14 +176,28 @@ func dialAccount(ctx context.Context, account store.Account, n int, logger *slog
 	return clients, nil
 }
 
-// errCredentialsNotWired reports that E7's decryption is not connected yet.
-var errCredentialsNotWired = errors.New(
-	"app password decryption is not wired yet (E7 owns internal/crypto); " +
-		"the sync supervisor cannot connect until it is")
+// password decrypts an account's stored app password.
+//
+// # The AAD is the account id, and that is load-bearing
+//
+// crypto.AccountAAD binds the ciphertext to the account it belongs to, so an
+// envelope copied from one account's row into another's fails to open rather
+// than silently authenticating as the wrong mailbox. That is a real failure
+// mode for a multi-tenant engine — a bad restore, a mistaken UPDATE — and the
+// AAD turns it from "reads someone else's mail" into an error.
+func (d *accountDialer) password(account store.Account) (string, error) {
+	if len(account.IMAPAppPassword) == 0 {
+		return "", errors.New("no stored credentials")
+	}
 
-// decryptAppPassword is the E7 seam.
-func decryptAppPassword(_ []byte) (string, error) {
-	return "", errCredentialsNotWired
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	plaintext, err := d.keyring.Open(account.IMAPAppPassword, crypto.AccountAAD(account.ID))
+	if err != nil {
+		return "", fmt.Errorf("decrypting the app password: %w", err)
+	}
+	return string(plaintext), nil
 }
 
 // runSync runs the supervisor until ctx ends, reporting the outcome.
@@ -198,29 +215,6 @@ func runSync(ctx context.Context, c *syncComponents, logger *slog.Logger) error 
 		logger.Error("sync supervisor stopped", "error", err)
 		return err
 	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// envInt reads an optional positive integer. Zero means "not set".
-func envInt(key string) (int, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	if n < 0 {
-		return 0, fmt.Errorf("%s: must not be negative, got %d", key, n)
-	}
-	return n, nil
 }
 
 // syncStartTimeout bounds opening the store and the blob directory, so a

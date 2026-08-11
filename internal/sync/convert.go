@@ -63,6 +63,32 @@ func uidValidityFromDB(v int64) uint32 {
 // information.
 func uidNextToDB(u imap.UID) int64 { return int64(u) }
 
+// uidFromDB narrows a stored UID back to the wire type.
+//
+// Like uidValidityFromDB, a value outside the uint32 range cannot have come
+// from a server. Returning 0 makes the caller treat the mailbox as having no
+// arrival watermark, which costs one broader scan rather than fabricating a UID
+// that names nothing.
+func uidFromDB(v int64) imap.UID {
+	if v < 0 || v > math.MaxUint32 {
+		return 0
+	}
+	return imap.UID(v)
+}
+
+// modSeqFromDB narrows a stored modseq back to the wire type.
+//
+// The column is signed and MODSEQ is not, so a negative value is corruption
+// rather than a large number. Zero is the safe answer: it means "no cursor",
+// which the incremental path refuses rather than turning into a delta request
+// that would match every message in the mailbox.
+func modSeqFromDB(v int64) imap.ModSeq {
+	if v < 0 {
+		return 0
+	}
+	return imap.ModSeq(v)
+}
+
 // windowSize converts a configured window size to the UID type.
 //
 // The window comes from configuration, so it is an int that could in principle

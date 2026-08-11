@@ -49,7 +49,7 @@
 // before a fetch is issued. And a checkpoint is written only AFTER the batch it
 // describes is committed, so a crash repeats work and never skips it.
 //
-// # Incremental (E6)
+// # Incremental (E6) — IMPLEMENTED (incremental.go)
 //
 // SELECT (QRESYNC (uidvalidity modseq)) on reconnect yields VANISHED (EARLIER)
 // plus the changes to fetch (S2 H1); on a live connection, UID FETCH
@@ -57,22 +57,49 @@
 // forces a resync — cheap, because content is recovered by sha256 without
 // re-downloading blobs already held.
 //
-// # Watcher (E6)
+// One delta is three facts with three different failure modes, applied in a
+// fixed order: tombstones first (an expunge is final and must beat a flag
+// change on the same message), then flags — into message_state ONLY, which is
+// arbitration A5 — then the new messages, through E5's pipeline unchanged.
+//
+// THE ORDERING RULE: the stored HIGHESTMODSEQ moves only after the delta it
+// describes is committed. A cursor advanced first would, on a crash in between,
+// permanently skip the changes it claimed, and nothing would ever revisit them.
+//
+// # Watcher (E6) — IMPLEMENTED (watcher.go, debounce.go)
 //
 // One connection per active account: NOTIFY SET STATUS (PERSONAL …) with the
 // patched encoder — only the STATUS variant makes flag changes visible in
 // unselected mailboxes (S2 H4/H5) — plus a maintenance IDLE loop (S2 H9).
-// Events are notification-only (S2 H7): they enqueue a batched FETCH per
-// mailbox. NOTIFICATIONOVERFLOW escalates to a full account resync. The watcher
-// of an account with no active session stops after N minutes and falls back to
-// scheduled reconciliation.
+// Events are notification-only (S2 H7): each one triggers an incremental pass
+// against the engine's own cursor rather than being applied directly, which is
+// what makes a dropped event harmless. Bursts are coalesced per mailbox with a
+// starvation guard, because a pure quiet-window debounce would leave a busy
+// folder's mail permanently undelivered. NOTIFICATIONOVERFLOW escalates to a
+// full account sweep, as does every reconnection — the changes made while a
+// watcher was down produced no event anybody heard.
 //
-// # Defensive reconciler (E6)
+// Resilience: exponential backoff with jitter (an installation-wide failure
+// must not become a thundering herd against the server that just proved it was
+// struggling) and a per-account circuit breaker persisted in sync_log, so a
+// restart does not hand a broken account a fresh budget of failed logins
+// (ADR §4).
+//
+// # Defensive reconciler (E6) — IMPLEMENTED (reconciler.go)
 //
 // A periodic pass (default 6 h) comparing STATUS of every mailbox against local
-// state, to catch any lost event. This is not paranoia: Dovecot has a history of
-// NOTIFY regressions, and an injected divergence must be found and repaired by
-// this pass as an acceptance criterion.
+// state, to catch any lost event. This is not paranoia: the watcher's channel
+// drops events when the consumer is behind (internal/imap says so in as many
+// words), Dovecot has a history of NOTIFY regressions, and the patched encoder
+// is new code of ours. Divergences are logged as WARN because each one is
+// evidence that push failed, and their rate is the metric that says whether
+// NOTIFY is healthy (E8).
+//
+// # Measured against the real Mailcow (E6 integration suite)
+//
+//	NOTIFY -> visible in the store   median 499 ms, worst 752 ms (bar: <1 s)
+//	offline delta (flags+expunge+new) applied in one 69 ms pass
+//	reconciler sweep of 19 mailboxes  85 ms, divergence found and repaired
 //
 // # Writes towards IMAP (phase 1b)
 //

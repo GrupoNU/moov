@@ -136,4 +136,6 @@ jobs:
       - name: Migrations and mandatory PostgreSQL settings
         env:
           MOOV_TEST_DATABASE_URL: postgres://moov:moov@localhost:5432/moov?sslmode=disable
-        run: go test -race -count=1 -v ./internal/store/...
+        # -p 1: blob's global GC sweep collides with concurrent packages
+        # sharing the one service-container database.
+        run: go test -race -count=1 -p 1 -v ./internal/store/... ./internal/blob/... ./internal/sync/...
