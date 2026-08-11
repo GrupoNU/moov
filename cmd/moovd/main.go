@@ -82,15 +82,30 @@ func run() error {
 
 // serve runs the daemon until the context is canceled or a component fails.
 //
-// E1 has no components to run, so it blocks on the signal. As epics land, each
-// long-lived component (sync supervisor E5/E6, operational HTTP server E8) is
-// started here and stopped in reverse order under shutdownTimeout.
+// E5 starts the sync supervisor here. It is opt-in (MOOV_SYNC_ENABLED=1) so
+// that a daemon without a reachable Dovecot — CI, a first boot before
+// provisioning — still starts and reports itself healthy instead of crash
+// looping. The operational HTTP server (E8) joins this list later and is
+// stopped in reverse start order under ShutdownTimeout.
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	logger.Info("moovd is running; no sync components are wired yet (E1 scaffolding)",
+	startCtx, cancelStart := context.WithTimeout(ctx, syncStartTimeout)
+	components, err := startSync(startCtx, cfg.DatabaseURL, logger)
+	cancelStart()
+	if err != nil {
+		return fmt.Errorf("starting sync: %w", err)
+	}
+	defer components.close()
+
+	logger.Info("moovd is running",
 		"http_addr", cfg.HTTPAddr,
+		"sync", components != nil,
 	)
 
-	<-ctx.Done()
+	// runSync blocks until ctx ends; with the supervisor disabled it simply
+	// waits for the signal, which keeps this function's shape identical in
+	// both configurations.
+	runErr := runSync(ctx, components, logger)
+
 	logger.Info("signal received, shutting down", "grace", cfg.ShutdownTimeout)
 
 	// The shutdown context is derived from Background, not from the canceled
@@ -100,6 +115,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	if err := shutdown(shutdownCtx, logger); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+
+	// A component that failed for its own reasons is reported; a cancellation
+	// is the normal end of a clean shutdown and is left to run() to interpret.
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		return runErr
 	}
 	return ctx.Err()
 }
