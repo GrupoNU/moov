@@ -172,7 +172,7 @@ func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s
 		}
 		return out, nil
 	}
-	return sortIDsStable(hits, s.ascending), nil
+	return sortIDsStable(hits, s.ascending, s.keyword != "", s.keywordFirst), nil
 }
 
 // ChangedSince replays the seeded feed from a cursor, honoring the limit the

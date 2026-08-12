@@ -1,0 +1,61 @@
+# Moov Mail — the same-origin front for the Bulwark pilot (VPN-only).
+#
+# This is the file that lives at /opt/moov-spike/Caddyfile on the mail VPS. It
+# is kept in the repository so the routing is reviewable and reproducible rather
+# than existing only as server state.
+#
+# # What it does
+#
+# Bulwark is a browser application: it calls the JMAP server with fetch(), from
+# the origin it was served from. Spike S1 H7 established that a JMAP server on a
+# different origin is unusable to it unless CORS is perfect, so the whole stack
+# is served from ONE origin and Caddy splits by path:
+#
+#     /jmap*, /.well-known/jmap*  ->  moovd   (OUR JMAP server)
+#     everything else             ->  Bulwark (the webmail's own assets)
+#
+# # Binding
+#
+# Caddy binds :8090 on the TAILSCALE interface only (the container's port
+# mapping is 100.123.119.124:8090). Nothing here is on the public internet.
+#
+# # ROLLBACK to the S1 jmap-proxy — one line
+#
+# The jmap-perl proxy is still running as the S1 oracle (L2 §2.5: "ante duda de
+# mapeo, se compara respuesta contra él"). To send the JMAP routes back to it,
+# change the ONE reverse_proxy line in the @jmap handler below:
+#
+#     reverse_proxy moovd:8620          <- Moov (current)
+#     reverse_proxy moov-jmap-spike:9000  <- jmap-proxy (S1 rollback)
+#
+# then reload without dropping a connection:
+#
+#     docker exec moov-caddy-spike caddy reload --config /etc/caddy/Caddyfile
+#
+# Note that the proxy uses DIFFERENT paths (/session, /raw/, /upload/,
+# /eventsource) than Moov (/jmap/api, /jmap/download/, ...), which is why the
+# matcher below covers both sets: one matcher serves either backend, so the
+# rollback really is a single line.
+
+:8090 {
+	# Both route vocabularies, so this matcher works for either backend:
+	#   Moov:       /.well-known/jmap, /jmap/api, /jmap/download/*, /jmap/upload/*,
+	#               /jmap/eventsource
+	#   jmap-proxy: /session, /jmap, /raw/*, /upload/*, /eventsource
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource*
+	handle @jmap {
+		reverse_proxy moovd:8620
+	}
+
+	# Everything else is the webmail itself.
+	handle {
+		reverse_proxy moov-bulwark-spike:3000
+	}
+
+	# Access logging in JSON, so a milestone verification can prove which routes
+	# a real client actually hit and with which user agent.
+	log {
+		output file /var/log/caddy/access.log
+		format json
+	}
+}

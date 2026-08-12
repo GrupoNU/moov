@@ -114,13 +114,21 @@ func mailAccountCapability() map[string]any {
 		// general relevance sort. Advertising it under a standard name would
 		// promise the unbounded version that measured 892 ms p95.
 		//
-		// The §4.4.2 SHOULD list (size, from, to, subject, sentAt, hasKeyword
-		// and the inThread variants) is absent because the store has no index
+		// hasKeyword IS advertised (J4): it is served over the bounded result
+		// window rather than by an index, which costs nothing extra because the
+		// window was already fetched and the store now returns each row's
+		// keywords. It is what a real client needs — Bulwark opens every folder
+		// with [hasKeyword $pinned, receivedAt] — and the refusal was a genuine
+		// §4.4.2 conformance gap, not a client quirk.
+		//
+		// The rest of the §4.4.2 SHOULD list (size, from, to, subject, sentAt
+		// and the inThread variants) stays absent because the store has no index
 		// that orders by them — advertising them would be the lie this array
 		// exists to avoid.
 		"emailQuerySortOptions": []string{
 			mail.SortReceivedAt,
 			mail.SortRelevance,
+			mail.SortHasKeyword,
 		},
 		// Read-only server: nobody may create mailboxes (§1.3.1).
 		"mayCreateTopLevelMailbox": false,

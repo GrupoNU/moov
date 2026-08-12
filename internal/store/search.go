@@ -82,6 +82,17 @@ type SearchResult struct {
 	Preview   string
 	MailboxID int64
 	Flags     Flags
+	// Keywords are the message's IMAP keywords — where user labels live after
+	// arbitration A6.
+	//
+	// Added in J4 for a concrete client requirement: Bulwark sorts its message
+	// list by `hasKeyword $pinned` before receivedAt (RFC 8621 §4.4.2 lists
+	// hasKeyword as a SHOULD-support sort), and a sort cannot be evaluated over
+	// rows that do not carry the value being sorted on. It rides along in the
+	// SELECT rather than costing a second query: message_state is already
+	// joined by primary key for the flags, so this is one more column from a
+	// row the plan already touches.
+	Keywords []string
 	// Rank is set only by SearchByRelevance.
 	Rank float32
 }
@@ -164,10 +175,10 @@ func (s *Store) SearchByRelevance(ctx context.Context, q SearchQuery) ([]SearchR
 	args = append(args, RankCandidateWindow, limit)
 
 	sql := `
-		SELECT message_id, date, subject, from_addr, preview, mailbox_id, flags, rank
+		SELECT message_id, date, subject, from_addr, preview, mailbox_id, flags, keywords, rank
 		  FROM (
 			SELECT m.id AS message_id, m.date, m.subject, m.from_addr, m.preview,
-			       ms.mailbox_id, ms.flags,
+			       ms.mailbox_id, ms.flags, ms.keywords,
 			       ts_rank_cd(m.tsv, websearch_to_tsquery('simple', immutable_unaccent($2))) AS rank
 			  FROM messages m
 			  JOIN message_state ms ON ms.message_id = m.id
@@ -238,7 +249,7 @@ func (s *Store) ListMailboxMessages(ctx context.Context, accountID, mailboxID in
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags
+		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
 		  FROM messages m
 		  JOIN message_state ms ON ms.message_id = m.id
 		 WHERE m.account_id = $1 AND ms.mailbox_id = $2 AND ms.deleted_at IS NULL
@@ -246,6 +257,51 @@ func (s *Store) ListMailboxMessages(ctx context.Context, accountID, mailboxID in
 		 LIMIT $3`, accountID, mailboxID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing mailbox messages: %w", err)
+	}
+	defer rows.Close()
+	return scanSearchResults(rows, false)
+}
+
+// ListAccountMessages is the account-wide view: every live message an account
+// holds, newest first, regardless of mailbox.
+//
+// # Why this shape exists
+//
+// It closes the one gap the JMAP layer could not honestly paper over: RFC 8620
+// §5.5 defines `filter: null` as "all objects in the account of this type", and
+// until J4 the repertoire had no method for it, so Email/query answered
+// unsupportedFilter. Two independent things then failed against real software:
+//
+//   - the official JMAP conformance suite (jmapio/jmap-test-suite) cannot even
+//     START, because its account-cleaning setup step enumerates the account
+//     before the first test runs;
+//   - any client offering an "All Mail" view asks exactly this question.
+//
+// # Why it is safe to add
+//
+// It is the SAME plan family the eight validated S3 shapes use, minus a
+// predicate: the (account_id, date DESC) index that serves shape #1 serves this
+// directly, the account scope leads the WHERE clause, and the LIMIT is
+// mandatory. Removing the mailbox predicate does not widen the scan — the index
+// is already account-first — so this is bounded by the same LIMIT as every other
+// method here rather than by how much mail the account happens to hold.
+func (s *Store) ListAccountMessages(ctx context.Context, accountID int64, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = DefaultSearchLimit
+	}
+	if limit > MaxSearchLimit {
+		limit = MaxSearchLimit
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
+		  FROM messages m
+		  JOIN message_state ms ON ms.message_id = m.id
+		 WHERE m.account_id = $1 AND ms.deleted_at IS NULL
+		 ORDER BY m.date DESC
+		 LIMIT $2`, accountID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing account messages: %w", err)
 	}
 	defer rows.Close()
 	return scanSearchResults(rows, false)
@@ -321,7 +377,7 @@ func (q SearchQuery) build(prefix bool) (string, []any) {
 	args = append(args, q.effectiveLimit())
 
 	sql := `
-		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags
+		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
 		  FROM messages m
 		  JOIN message_state ms ON ms.message_id = m.id
 		 WHERE ` + where + `
@@ -344,10 +400,10 @@ func scanSearchResults(rows interface {
 		var err error
 		if withRank {
 			err = rows.Scan(&r.MessageID, &r.Date, &r.Subject, &r.FromAddr,
-				&r.Preview, &r.MailboxID, &flags, &r.Rank)
+				&r.Preview, &r.MailboxID, &flags, &r.Keywords, &r.Rank)
 		} else {
 			err = rows.Scan(&r.MessageID, &r.Date, &r.Subject, &r.FromAddr,
-				&r.Preview, &r.MailboxID, &flags)
+				&r.Preview, &r.MailboxID, &flags, &r.Keywords)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("scanning search result: %w", err)

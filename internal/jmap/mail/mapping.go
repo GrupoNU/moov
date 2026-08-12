@@ -3,6 +3,8 @@ package mail
 import (
 	"sort"
 	"strings"
+
+	"github.com/GrupoNU/moov/internal/store"
 )
 
 // Vocabulary mapping: store roles -> JMAP roles, IMAP flags -> JMAP keywords.
@@ -86,6 +88,23 @@ var systemFlagKeywords = []struct {
 	{1 << 1, KeywordAnswered}, // \Answered
 	{1 << 2, KeywordFlagged},  // \Flagged
 	{1 << 4, KeywordDraft},    // \Draft
+}
+
+// systemFlagForKeyword is the reverse of systemFlagKeywords: it maps a JMAP
+// keyword back to the store flag bit that holds it, if any.
+//
+// ok is false for every keyword that lives in the keywords ARRAY rather than in
+// the bitmask — which is most of them, including all of A6's labels. Callers use
+// it to decide which of the two places to look in (see hasKeyword).
+//
+// Comparison is case-insensitive per RFC 8621 §4.1.1.
+func systemFlagForKeyword(keyword string) (store.Flags, bool) {
+	for _, f := range systemFlagKeywords {
+		if strings.EqualFold(f.keyword, keyword) {
+			return store.Flags(f.bit), true
+		}
+	}
+	return 0, false
 }
 
 // jmapKeywords converts a stored flag bitmask plus the stored keyword array

@@ -3,7 +3,43 @@ package mail
 import (
 	"reflect"
 	"testing"
+
+	"github.com/GrupoNU/moov/internal/store"
 )
+
+// hasKeyword has to consult BOTH places a keyword can live: the flags bitmask
+// (the four IMAP system flags) and the keywords array (everything else,
+// including A6's labels and a client's own $pinned). Asking only one would
+// silently answer "no" for half the vocabulary — and a sort built on a silent
+// "no" renders a message list in the wrong order with no error anywhere.
+func TestHasKeywordConsultsFlagsAndKeywords(t *testing.T) {
+	row := store.SearchResult{
+		Flags:    store.FlagSeen | store.FlagFlagged,
+		Keywords: []string{"$pinned", "$MoovL7"},
+	}
+
+	cases := []struct {
+		keyword string
+		want    bool
+		why     string
+	}{
+		{"$flagged", true, "a system flag held in the bitmask"},
+		{"$seen", true, "bit 0"},
+		{"$answered", false, "a system flag that is NOT set"},
+		{"$draft", false, "a system flag that is NOT set"},
+		{"$pinned", true, "a custom keyword held in the array"},
+		{"$MoovL7", true, "an A6 label, which is a keyword"},
+		{"$moovl7", true, "keywords are case-insensitive (RFC 8621 §4.1.1)"},
+		{"$FLAGGED", true, "case-insensitive for system flags too"},
+		{"$nonexistent", false, "absent from both places"},
+	}
+
+	for _, tc := range cases {
+		if got := hasKeyword(row, tc.keyword); got != tc.want {
+			t.Errorf("hasKeyword(%q) = %t, want %t (%s)", tc.keyword, got, tc.want, tc.why)
+		}
+	}
+}
 
 // The store's flag bits, restated as the adapter passes them (store.FlagSeen
 // is bit 0 and the schema pins it there).

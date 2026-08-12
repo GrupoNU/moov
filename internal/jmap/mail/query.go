@@ -120,6 +120,14 @@ const (
 	// A client that asks for it gets relevance WITHIN the recent window, never
 	// a promise that the globally most relevant message is in the list.
 	SortRelevance = "relevance"
+
+	// SortHasKeyword is the §4.4.2 hasKeyword comparator: messages carrying the
+	// named keyword group ahead of those that do not.
+	//
+	// It is served over the bounded result window rather than by the database
+	// (see translateSort), and it exists because a real client needs it: Bulwark
+	// opens every folder with [hasKeyword $pinned, receivedAt].
+	SortHasKeyword = "hasKeyword"
 )
 
 // handleEmailQuery implements Email/query.
@@ -471,6 +479,17 @@ type searchFilter struct {
 	before     *time.Time
 	unreadOnly bool
 	keyword    string
+
+	// accountWide is RFC 8620 §5.5's `filter: null` — "all objects in the
+	// account of this type". It is served by store.ListAccountMessages (J4).
+	//
+	// It is its own field rather than an inference from "no text and no
+	// mailbox", because the two are different requests: `filter: null` asks for
+	// the whole account, while an empty filter OBJECT (`{}`) is a condition with
+	// zero properties, which §4.4.1 says "MUST always evaluate to true" but
+	// which arrives through a different path and stays refused for the reason
+	// translateCondition documents.
+	accountWide bool
 }
 
 // sortSpec is the translated sort.
@@ -481,6 +500,17 @@ type sortSpec struct {
 	// window, which is exact because the window is the whole result set the
 	// server exposes.
 	ascending bool
+
+	// keyword is a §4.4.2 hasKeyword PRIMARY comparator: messages carrying it
+	// group ahead of (or behind) those that do not, with the receivedAt
+	// comparator breaking ties. Empty means no keyword grouping.
+	//
+	// See translateSort for why this one multi-comparator shape is served while
+	// the general case is still refused.
+	keyword string
+	// keywordFirst is the hasKeyword comparator's direction: true puts the
+	// messages that HAVE the keyword first, which is isAscending:false.
+	keywordFirst bool
 }
 
 // translateFilter maps a §4.4.1 filter onto the repertoire, or refuses.
@@ -496,9 +526,11 @@ func translateFilter(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 		return f, merr
 	}
 	// A filter with only a date range or only a keyword names no mailbox and no
-	// text, so it is the account-wide enumeration the repertoire cannot serve
-	// (see translateNode's null case for why that gap exists).
-	if f.text == "" && f.mailboxID == nil {
+	// text. The account-wide listing (J4) can serve the plain `filter: null`
+	// case, but NOT one carrying conditions the account-wide method has no
+	// parameters for — that would silently drop the condition, which is the
+	// privacy failure this file exists to avoid.
+	if f.text == "" && f.mailboxID == nil && !f.accountWide {
 		return f, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
 			WithDescription("this filter needs an inMailbox or a text condition to be answerable")
 	}
@@ -524,18 +556,20 @@ func translateNode(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 	var f searchFilter
 	if len(raw) == 0 || string(raw) == "null" {
 		// §5.5: "If null, all objects in the account of this type are included
-		// in the results." The repertoire serves that through the folder view
-		// only when a mailbox is named; with no filter at all there is neither
-		// text nor mailbox, which the search methods cannot express (Search
-		// requires text, ListMailboxMessages requires a mailbox).
+		// in the results."
 		//
-		// This is a genuine repertoire gap and it is named as such rather than
-		// approximated: "every message in the account, newest first" needs an
-		// account-wide listing method with the same account+LIMIT discipline.
-		// It is in the J3 report as the store gap to close, with its signature.
-		return f, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
-			WithDescription("a filter is required: this server cannot enumerate an entire account; " +
-				"filter by inMailbox or by text")
+		// J3 reported this as a repertoire gap and refused it. J4 closed it:
+		// store.ListAccountMessages is the account-wide, date-ordered shape,
+		// served by the same (account_id, date DESC) index as shape #1 and
+		// bounded by the same LIMIT. The refusal was blocking real software —
+		// the official conformance suite enumerates the account in its SETUP
+		// step, so it could not run a single test against this server.
+		//
+		// accountWide is what carries the intent down to SearchEmails, and it is
+		// a distinct field rather than "no text and no mailbox" so that an
+		// EMPTY filter object cannot be mistaken for an explicit null one.
+		f.accountWide = true
+		return f, nil
 	}
 
 	// A filter is either a FilterOperator (it has an "operator" property) or a
@@ -855,14 +889,34 @@ func translateSort(sort []comparator) (sortSpec, *jmap.MethodError) {
 		return sortSpec{ascending: false}, nil
 	}
 
-	// The repertoire has exactly one ORDER BY per method, so a multi-key sort
-	// cannot be honored. Refusing is required rather than merely honest: §5.5
-	// says a later comparator decides ties, and a server that silently applies
-	// only the first returns a DIFFERENT order than the client asked for, which
-	// then breaks its paging.
+	// A hasKeyword comparator followed by receivedAt is served as ONE shape.
+	//
+	// # Why this specific pair, when the general multi-key sort is still refused
+	//
+	// It is what a real client asks for. Bulwark's message list opens every
+	// folder with sort: [hasKeyword $pinned desc, receivedAt desc] — pinned mail
+	// on top, everything else newest-first — and until J4 that request was
+	// answered with unsupportedSort, which made the inbox render EMPTY while the
+	// folder counts beside it showed four messages. RFC 8621 §4.4.2 lists
+	// hasKeyword among the properties a server SHOULD support sorting on, so the
+	// refusal was a genuine conformance gap, not a client quirk.
+	//
+	// It is also cheap and EXACT here, which is what separates it from the sorts
+	// still refused. The comparator partitions the result window into "has the
+	// keyword" and "does not", and the store now returns each row's keywords
+	// (added in J4 alongside this). Because the partition is applied to the SAME
+	// bounded window the query already fetched — never to a larger candidate set
+	// — it costs a stable sort over at most store.MaxSearchLimit rows and adds no
+	// database work at all. There is no unbounded scan hiding in it, which is the
+	// property L2 §4.3 actually protects.
+	//
+	// Everything else stays refused: a general multi-key sort over properties the
+	// store cannot order by (size, from, subject) would need either sortable
+	// indexes that do not exist or a post-sort over an unbounded set, and §5.5's
+	// rule that "a later comparator decides ties" means applying only the first
+	// would return an order the client did not ask for and then break its paging.
 	if len(sort) > 1 {
-		return sortSpec{}, jmap.NewMethodError(jmap.CodeUnsupportedSort).
-			WithDescription("this server sorts by a single comparator; %d were given", len(sort))
+		return translateKeywordSort(sort)
 	}
 
 	c := sort[0]
@@ -891,25 +945,94 @@ func translateSort(sort []comparator) (sortSpec, *jmap.MethodError) {
 		}
 		return sortSpec{byRelevance: true}, nil
 
+	case SortHasKeyword:
+		// A lone hasKeyword comparator: group by the keyword, and let the
+		// server's default newest-first order break the ties.
+		kw, merr := keywordComparator(c)
+		if merr != nil {
+			return sortSpec{}, merr
+		}
+		return sortSpec{keyword: kw, keywordFirst: !c.ascending(), ascending: false}, nil
+
 	default:
 		// §5.5 unsupportedSort: "The 'sort' is syntactically valid, but it
 		// includes a property the server does not support sorting on".
 		//
-		// §4.4.2 lists size/from/to/subject/sentAt/hasKeyword as SHOULD — all
-		// of them need either a sortable index the store does not have or the
-		// thread derivation it cannot afford. They are named in the J3 report
-		// with what each would cost.
+		// §4.4.2 lists size/from/to/subject/sentAt as SHOULD — all of them need
+		// either a sortable index the store does not have or the thread
+		// derivation it cannot afford. They are named in the J3 report with what
+		// each would cost. (hasKeyword, the fourth SHOULD, is served above.)
 		return sortSpec{}, jmap.NewMethodError(jmap.CodeUnsupportedSort).
-			WithDescription("sorting on %q is not supported; this server sorts on %q or %q",
-				c.Property, SortReceivedAt, SortRelevance)
+			WithDescription("sorting on %q is not supported; this server sorts on %q, %q or %q",
+				c.Property, SortReceivedAt, SortRelevance, SortHasKeyword)
 	}
+}
+
+// translateKeywordSort handles the one multi-comparator shape this server
+// serves: [hasKeyword, receivedAt].
+//
+// The shape is pinned deliberately rather than generalized. Accepting an
+// arbitrary list of comparators would mean promising an ordering the repertoire
+// cannot produce; accepting exactly the pair a conforming client actually sends
+// — and that the bounded window can be sorted by exactly — closes the real gap
+// without opening that door.
+func translateKeywordSort(sort []comparator) (sortSpec, *jmap.MethodError) {
+	if len(sort) != 2 || sort[0].Property != SortHasKeyword || sort[1].Property != SortReceivedAt {
+		return sortSpec{}, jmap.NewMethodError(jmap.CodeUnsupportedSort).
+			WithDescription(
+				"this server serves a single comparator, or the pair [%q, %q]; %d comparators were given",
+				SortHasKeyword, SortReceivedAt, len(sort))
+	}
+
+	for _, c := range sort {
+		if c.Collation != nil && *c.Collation != "" {
+			return sortSpec{}, jmap.NewMethodError(jmap.CodeUnsupportedSort).
+				WithDescription("collation %q is not supported; this server advertises no collation algorithms",
+					*c.Collation)
+		}
+	}
+
+	kw, merr := keywordComparator(sort[0])
+	if merr != nil {
+		return sortSpec{}, merr
+	}
+	return sortSpec{
+		keyword: kw,
+		// §4.4.2: the comparator sorts on "whether the Email has the keyword".
+		// isAscending:false therefore means "those that have it come first",
+		// which is what a client pinning messages to the top asks for.
+		keywordFirst: !sort[0].ascending(),
+		ascending:    sort[1].ascending(),
+	}, nil
+}
+
+// keywordComparator validates a §4.4.2 hasKeyword comparator and returns its
+// keyword.
+func keywordComparator(c comparator) (string, *jmap.MethodError) {
+	// §4.4.2: the hasKeyword comparator "MUST" carry the keyword argument. A
+	// comparator without one names no partition and cannot be honored.
+	if strings.TrimSpace(c.Keyword) == "" {
+		return "", jmap.NewMethodError(jmap.CodeUnsupportedSort).
+			WithDescription("the %q sort requires a non-empty %q argument", SortHasKeyword, "keyword")
+	}
+	return c.Keyword, nil
 }
 
 // sortIDs is a helper for the deterministic ordering of equal-keyed results.
 // The store already orders by date DESC; ties break on id so the order is
 // total, which §5.5 requires ("it MUST be stable between calls").
-func sortIDsStable(results []searchHit, ascending bool) []int64 {
+//
+// keywordFirst, when the sort carries a §4.4.2 hasKeyword comparator, is applied
+// as the PRIMARY key: the hits carrying the keyword group ahead of those that do
+// not (or behind, for an ascending comparator), and the date comparison below
+// decides ties within each group — exactly the "a later comparator decides ties"
+// semantics of §5.5.
+func sortIDsStable(results []searchHit, ascending bool, keywordSort bool, keywordFirst bool) []int64 {
 	sort.SliceStable(results, func(i, j int) bool {
+		if keywordSort && results[i].hasKeyword != results[j].hasKeyword {
+			// The one that HAS the keyword sorts first when keywordFirst.
+			return results[i].hasKeyword == keywordFirst
+		}
 		if results[i].date.Equal(results[j].date) {
 			// A stable tiebreak on id, in the same direction as the dates, so
 			// paging never revisits or skips a row.

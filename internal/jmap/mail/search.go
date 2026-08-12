@@ -40,6 +40,10 @@ type SearchReader interface {
 type searchHit struct {
 	id   int64
 	date time.Time
+	// hasKeyword records whether this hit carries the keyword a hasKeyword
+	// comparator names (§4.4.2). It is only meaningful when the sort asked for
+	// one; otherwise it is false for every hit and partitions nothing.
+	hasKeyword bool
 }
 
 // ChangesReader feeds Email/changes and Mailbox/changes (RFC 8620 §5.2).

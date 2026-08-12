@@ -1,9 +1,10 @@
 # Moov Mail — continuous integration.
 #
-# Three jobs, deliberately separate so a failure names its own cause:
-#   build    formatting, vet, lint, build, unit tests
-#   corpus   the MIME corpus matches its manifest and git is not rewriting it
-#   store    migrations apply and the mandated PostgreSQL settings are ACTIVE
+# Four jobs, deliberately separate so a failure names its own cause:
+#   build        formatting, vet, lint, build, unit tests
+#   corpus       the MIME corpus matches its manifest and git is not rewriting it
+#   store        migrations apply and the mandated PostgreSQL settings are ACTIVE
+#   conformance  the JMAP server answers RFC 8620/8621 as specified
 #
 # Every action is pinned to a released major/minor tag, and nothing here needs a
 # paid plan or a self-hosted runner.
@@ -139,3 +140,62 @@ jobs:
         # -p 1: blob's global GC sweep collides with concurrent packages
         # sharing the one service-container database.
         run: go test -race -count=1 -p 1 -v ./internal/store/... ./internal/blob/... ./internal/sync/...
+
+  conformance:
+    name: JMAP conformance (RFC 8620/8621)
+    runs-on: ubuntu-24.04
+
+    # WHY THIS IS NOT THE OFFICIAL jmapio SUITE
+    #
+    # L2-jmap-server §2.5 asks for "JMAP TestSuite (jmapio) corriendo contra el
+    # server en CI". That was attempted and the attempt is documented in full at
+    # the top of internal/jmap/mail/conformance_test.go. Two blockers, both
+    # verified by running the suite against the live pilot on 2026-08-12:
+    #
+    #   1. github.com/jmapio/jmap-test-suite carries NO LICENCE (no LICENSE
+    #      file, no package.json license field, GitHub API reports null), so it
+    #      is all-rights-reserved and cannot be a dependency of a public
+    #      AGPL-3.0 repository.
+    #
+    #   2. It is architecturally write-only: its runner DELETES and reseeds the
+    #      account in setup, before the first test. Observed failures were
+    #      "Account is not empty ... use -f" and then, with -f, unknownMethod at
+    #      Email/set. Since that is setup rather than a test, --filter cannot
+    #      route around it: no subset of its ~300 tests is reachable on a
+    #      read-only server.
+    #
+    # Running it anyway would produce a red job that proves nothing about this
+    # phase. So this job runs Moov's own RFC-cited conformance suite, and the
+    # official one is revisited in phase 2 when Email/set exists (licence
+    # permitting). The suite it replaces is named here so the substitution is
+    # never mistaken for the real thing.
+    services:
+      postgres:
+        image: postgres:17.4-bookworm
+        env:
+          POSTGRES_USER: moov
+          POSTGRES_PASSWORD: moov
+          POSTGRES_DB: moov
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U moov -d moov"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # -v so every phase-2 gap prints its SKIP line with the reason. L2 §2.5
+      # requires those skips be explicit and never silent; the CI log is where
+      # "explicit" actually means something.
+      - name: RFC 8620/8621 conformance
+        env:
+          MOOV_TEST_DATABASE_URL: postgres://moov:moov@localhost:5432/moov?sslmode=disable
+        run: go test -race -count=1 -v -run Conformance ./internal/jmap/...

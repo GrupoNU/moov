@@ -62,6 +62,28 @@ type Config struct {
 	// protocol tests wants, and what keeps this dependency optional without
 	// ever making the route leak the difference.
 	Blobs BlobReader
+
+	// Metrics receives per-request observations (E8-lite). nil disables
+	// recording entirely, which is what every protocol test runs with.
+	//
+	// It is an INTERFACE declared in this package rather than an import of
+	// internal/metrics, for the same reason BlobReader is: the transport needs
+	// exactly one method, and a local seam keeps a protocol package free of a
+	// dependency on a concrete telemetry implementation. metrics.Metrics
+	// satisfies it by construction.
+	Metrics RequestRecorder
+}
+
+// RequestRecorder is the metrics layer's view of an HTTP request.
+//
+// One method, deliberately: everything a dashboard needs about the transport is
+// (which route, what status, how long), and a wider interface here would invite
+// the protocol layer to grow opinions about telemetry.
+type RequestRecorder interface {
+	// ObserveHTTP records one finished request. route is the ROUTE PATTERN
+	// (/jmap/download/{accountId}/...), never the concrete path: the pattern is
+	// a bounded label set, the path is not.
+	ObserveHTTP(route string, status int, d time.Duration)
 }
 
 // BlobReader is the download endpoint's view of the blob layer.
@@ -87,6 +109,7 @@ type Server struct {
 	cors     *corsPolicy
 	gate     *concurrencyGate
 	blobs    BlobReader
+	metrics  RequestRecorder
 	log      *slog.Logger
 }
 
@@ -119,6 +142,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		cors:     newCORSPolicy(cfg.AllowedOrigins),
 		gate:     newConcurrencyGate(cfg.Limits.MaxConcurrentRequests),
 		blobs:    cfg.Blobs,
+		metrics:  cfg.Metrics,
 		log:      cfg.Logger,
 	}, nil
 }

@@ -227,12 +227,10 @@ func TestQueryUnsupportedFiltersAreRefusedByName(t *testing.T) {
 		filter:    `{"after":"2026-01-01T00:00:00Z"}`,
 		mustName:  "inMailbox",
 		errorCode: jmap.CodeUnsupportedFilter,
-	}, {
-		name:      "a null filter would be the whole account",
-		filter:    `null`,
-		mustName:  "inMailbox",
-		errorCode: jmap.CodeUnsupportedFilter,
 	}}
+	// NOTE: `filter: null` used to belong in this list. J4 implemented it
+	// (store.ListAccountMessages), so it is now ACCEPTED — see
+	// TestQueryNullFilterEnumeratesTheAccount below.
 
 	f := newFakeReaders()
 	for _, tc := range cases {
@@ -246,6 +244,47 @@ func TestQueryUnsupportedFiltersAreRefusedByName(t *testing.T) {
 				t.Errorf("description %q does not name %q", merr.Description, tc.mustName)
 			}
 		})
+	}
+}
+
+// RFC 8620 §5.5: "If null, all objects in the account of this type are included
+// in the results."
+//
+// This was refused until J4, and the refusal was not academic: the official
+// conformance suite (jmapio/jmap-test-suite) enumerates the account in its
+// SETUP step, so it could not run a single test against this server, and any
+// client with an "All Mail" view asks exactly this.
+func TestQueryNullFilterEnumeratesTheAccount(t *testing.T) {
+	f := newFakeReaders()
+	want := seedSearch(f, 3)
+
+	// An explicit null and an omitted filter are the same request.
+	cases := map[string]string{
+		"explicit null":  fmt.Sprintf(`{"accountId":%q,"filter":null}`, testAccountJMAPID()),
+		"omitted filter": fmt.Sprintf(`{"accountId":%q}`, testAccountJMAPID()),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			ids := idsOf(t, query(t, f, body))
+			if len(ids) != len(want) {
+				t.Fatalf("got %d ids, want the whole account (%d)", len(ids), len(want))
+			}
+		})
+	}
+}
+
+// The account-wide path must not become a hole through which unservable
+// conditions pass unapplied. A filter that names a condition the account-wide
+// listing has no parameter for is still refused, rather than answered with the
+// condition silently dropped.
+func TestQueryAccountWideStillRefusesUnservableConditions(t *testing.T) {
+	f := newFakeReaders()
+	// A date-only filter reaches translateCondition (not the null path), so it
+	// is NOT account-wide and stays refused.
+	merr := queryError(t, f, fmt.Sprintf(
+		`{"accountId":%q,"filter":{"after":"2026-01-01T00:00:00Z"}}`, testAccountJMAPID()))
+	if merr.Code != jmap.CodeUnsupportedFilter {
+		t.Errorf("code = %q, want unsupportedFilter", merr.Code)
 	}
 }
 
@@ -298,6 +337,37 @@ func TestQuerySortSupportAndRefusals(t *testing.T) {
 	}, {
 		name: "a multi-key sort cannot be honored by one ORDER BY",
 		sort: `[{"property":"receivedAt"},{"property":"size"}]`,
+		want: nil,
+	}, {
+		// The one multi-comparator shape this server serves, and the exact
+		// request Bulwark opens every folder with (J4).
+		name: "hasKeyword then receivedAt is Bulwark's message-list sort",
+		sort: `[{"property":"hasKeyword","keyword":"$pinned","isAscending":false},` +
+			`{"property":"receivedAt","isAscending":false}]`,
+		want: &sortSpec{keyword: "$pinned", keywordFirst: true, ascending: false},
+	}, {
+		name: "an ascending hasKeyword puts the tagged messages last",
+		sort: `[{"property":"hasKeyword","keyword":"$pinned","isAscending":true},` +
+			`{"property":"receivedAt","isAscending":false}]`,
+		want: &sortSpec{keyword: "$pinned", keywordFirst: false, ascending: false},
+	}, {
+		name: "a lone hasKeyword groups and lets the default order break ties",
+		sort: `[{"property":"hasKeyword","keyword":"$flagged","isAscending":false}]`,
+		want: &sortSpec{keyword: "$flagged", keywordFirst: true, ascending: false},
+	}, {
+		// §4.4.2 requires the keyword argument; without it the comparator
+		// names no partition.
+		name: "hasKeyword without a keyword argument is refused",
+		sort: `[{"property":"hasKeyword","isAscending":false}]`,
+		want: nil,
+	}, {
+		name: "hasKeyword paired with something other than receivedAt is refused",
+		sort: `[{"property":"hasKeyword","keyword":"$pinned"},{"property":"size"}]`,
+		want: nil,
+	}, {
+		name: "three comparators are refused even when the first two are servable",
+		sort: `[{"property":"hasKeyword","keyword":"$pinned"},{"property":"receivedAt"},` +
+			`{"property":"size"}]`,
 		want: nil,
 	}, {
 		name: "an explicit collation is refused, matching the empty advertisement",
@@ -353,7 +423,7 @@ func TestQueryRelevanceWithoutTextIsRefused(t *testing.T) {
 // same set — J1's declared == applied rule, extended to comparators. This test
 // is the mechanical link between session.go's array and this package.
 func TestAdvertisedSortOptionsAreExactlyTheImplementedOnes(t *testing.T) {
-	advertised := []string{SortReceivedAt, SortRelevance}
+	advertised := []string{SortReceivedAt, SortRelevance, SortHasKeyword}
 
 	for _, property := range advertised {
 		c := comparator{Property: property}
@@ -361,17 +431,69 @@ func TestAdvertisedSortOptionsAreExactlyTheImplementedOnes(t *testing.T) {
 			asc := false
 			c.IsAscending = &asc
 		}
+		if property == SortHasKeyword {
+			// §4.4.2 makes the keyword argument part of the comparator, so the
+			// advertised property is only meaningful with one.
+			c.Keyword = "$pinned"
+		}
 		if _, merr := translateSort([]comparator{c}); merr != nil {
 			t.Errorf("advertised sort %q is refused by the handler: %v", property, merr)
 		}
 	}
 
 	// And nothing outside the list is quietly accepted.
-	for _, property := range []string{"size", "from", "to", "subject", "sentAt", "hasKeyword", "id"} {
+	for _, property := range []string{"size", "from", "to", "subject", "sentAt", "id"} {
 		if _, merr := translateSort([]comparator{{Property: property}}); merr == nil {
 			t.Errorf("sort %q is accepted but not advertised", property)
 		}
 	}
+}
+
+// The keyword partition must be the PRIMARY key, with date breaking ties inside
+// each group — §5.5's "a later comparator decides ties". This is the ordering
+// Bulwark renders as "pinned mail on top, newest first within each group".
+func TestKeywordSortPartitionsThenOrdersByDate(t *testing.T) {
+	base := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	// Deliberately interleaved: if the keyword were applied as a tiebreak
+	// instead of the primary key, this input would come back in date order.
+	hits := []searchHit{
+		{id: 1, date: base.Add(4 * time.Hour), hasKeyword: false},
+		{id: 2, date: base.Add(3 * time.Hour), hasKeyword: true},
+		{id: 3, date: base.Add(2 * time.Hour), hasKeyword: false},
+		{id: 4, date: base.Add(1 * time.Hour), hasKeyword: true},
+	}
+
+	got := sortIDsStable(append([]searchHit(nil), hits...), false, true, true)
+	want := []int64{2, 4, 1, 3} // keyword group first, newest first inside each
+	if !slicesEqual(got, want) {
+		t.Errorf("keyword-first order = %v, want %v", got, want)
+	}
+
+	// The ascending comparator flips the groups but not the dates within them.
+	got = sortIDsStable(append([]searchHit(nil), hits...), false, true, false)
+	want = []int64{1, 3, 2, 4}
+	if !slicesEqual(got, want) {
+		t.Errorf("keyword-last order = %v, want %v", got, want)
+	}
+
+	// With no keyword sort the partition must not apply at all.
+	got = sortIDsStable(append([]searchHit(nil), hits...), false, false, false)
+	want = []int64{1, 2, 3, 4}
+	if !slicesEqual(got, want) {
+		t.Errorf("plain date order = %v, want %v", got, want)
+	}
+}
+
+func slicesEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------

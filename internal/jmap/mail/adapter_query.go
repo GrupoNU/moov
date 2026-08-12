@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/GrupoNU/moov/internal/store"
@@ -73,6 +74,14 @@ func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFil
 		results, err = a.store.SearchByRelevance(ctx, q)
 	case f.text != "":
 		results, err = a.store.Search(ctx, q)
+	case f.accountWide:
+		// RFC 8620 §5.5 `filter: null` — the whole account, newest first (J4).
+		// Like the folder view below, this method takes no unread/keyword/date
+		// parameters, so those conditions are applied after the fetch; but
+		// translateFilter refuses to pair them with an account-wide filter in
+		// the first place, so the post-filter here is only the `before` bound
+		// the loop below applies to every path.
+		results, err = a.store.ListAccountMessages(ctx, accountID, store.MaxSearchLimit)
 	default:
 		// ListMailboxMessages takes only (account, mailbox, limit): it has no
 		// parameters for unread, keyword or date. Those conditions are
@@ -131,7 +140,14 @@ func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFil
 				return nil, errKeywordNeedsTextPath
 			}
 		}
-		hits = append(hits, searchHit{id: r.MessageID, date: r.Date})
+		hits = append(hits, searchHit{
+			id:   r.MessageID,
+			date: r.Date,
+			// The keywords ride along on the store row (J4), so evaluating the
+			// §4.4.2 hasKeyword comparator costs no extra query — just a lookup
+			// in the slice the row already carried.
+			hasKeyword: s.keyword != "" && hasKeyword(r, s.keyword),
+		})
 	}
 
 	if s.byRelevance {
@@ -144,7 +160,33 @@ func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFil
 		}
 		return out, nil
 	}
-	return sortIDsStable(hits, s.ascending), nil
+	return sortIDsStable(hits, s.ascending, s.keyword != "", s.keywordFirst), nil
+}
+
+// hasKeyword reports whether a store row carries a JMAP keyword.
+//
+// It has to consult BOTH places a keyword can live, which is a consequence of
+// arbitration A6 and of how IMAP itself is built:
+//
+//   - the four IMAP system flags ($seen, $answered, $flagged, $draft) are bits
+//     in the flags bitmask, never strings in the keywords array;
+//   - every other keyword — including the labels A6 maps onto IMAP keywords, and
+//     including a client's own like $pinned — is a string in that array.
+//
+// Asking only the array would silently answer "no" for $flagged, and asking only
+// the bitmask would answer "no" for every label. Both are consulted, and the
+// comparison is case-insensitive because RFC 8621 §4.1.1 defines keywords as
+// case-insensitive.
+func hasKeyword(r store.SearchResult, keyword string) bool {
+	if flag, ok := systemFlagForKeyword(keyword); ok {
+		return r.Flags.Has(flag)
+	}
+	for _, k := range r.Keywords {
+		if strings.EqualFold(k, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

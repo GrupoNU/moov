@@ -457,10 +457,16 @@ func TestSessionObjectShape(t *testing.T) {
 	if !advertised[mail.SortRelevance] {
 		t.Errorf("emailQuerySortOptions = %v, want it to advertise %q", sorts, mail.SortRelevance)
 	}
-	// Nothing may be advertised that Email/query would reject. The §4.4.2
-	// SHOULD list is the trap: those names look supportable but need indexes
-	// the store does not have.
-	for _, unsupported := range []string{"size", "from", "to", "subject", "sentAt", "hasKeyword"} {
+	// hasKeyword joined the advertised set in J4: it is served over the bounded
+	// result window at no extra database cost, and Bulwark needs it to render a
+	// message list at all.
+	if !advertised[mail.SortHasKeyword] {
+		t.Errorf("emailQuerySortOptions = %v, want it to advertise %q", sorts, mail.SortHasKeyword)
+	}
+	// Nothing may be advertised that Email/query would reject. The rest of the
+	// §4.4.2 SHOULD list is the trap: those names look supportable but need
+	// indexes the store does not have.
+	for _, unsupported := range []string{"size", "from", "to", "subject", "sentAt"} {
 		if advertised[unsupported] {
 			t.Errorf("emailQuerySortOptions advertises %q, which Email/query refuses with unsupportedSort",
 				unsupported)

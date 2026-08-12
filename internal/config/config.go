@@ -42,6 +42,16 @@ type Config struct {
 	// anyway. A sync worker that will not stop must not hold the deploy.
 	ShutdownTimeout time.Duration
 
+	// MigrateOnStart applies pending schema migrations before serving
+	// (MOOV_MIGRATE_ON_START).
+	//
+	// Opt-in, and the deploy stack turns it on: the production image is
+	// distroless (no shell, nothing to exec but moovd), so the daemon applying
+	// its own EMBEDDED migrations is what keeps schema and binary from drifting
+	// — see cmd/moovd/migrate.go for the full reasoning. Defaults to false so a
+	// process that only reads cannot alter the schema by accident.
+	MigrateOnStart bool
+
 	// Sync is the sync engine's configuration (E5/E6).
 	Sync SyncConfig
 
@@ -148,6 +158,12 @@ func Load() (Config, error) {
 		DatabaseURL:     os.Getenv("MOOV_DATABASE_URL"),
 		ShutdownTimeout: DefaultShutdownTimeout,
 	}
+
+	migrateOnStart, err := ParseBool("MOOV_MIGRATE_ON_START", false)
+	if err != nil {
+		return Config{}, err
+	}
+	c.MigrateOnStart = migrateOnStart
 
 	if v := os.Getenv("MOOV_SHUTDOWN_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -281,9 +297,10 @@ func (c Config) Validate() error {
 // Config must never be formatted with %+v anywhere; use this.
 func (c Config) String() string {
 	return fmt.Sprintf(
-		"log_level=%s log_format=%s http_addr=%s database_url=%s shutdown_timeout=%s %s %s",
+		"log_level=%s log_format=%s http_addr=%s database_url=%s shutdown_timeout=%s "+
+			"migrate_on_start=%t %s %s",
 		c.LogLevel, c.LogFormat, c.HTTPAddr, redactDSN(c.DatabaseURL), c.ShutdownTimeout,
-		c.Sync.String(), c.JMAP.String(),
+		c.MigrateOnStart, c.Sync.String(), c.JMAP.String(),
 	)
 }
 

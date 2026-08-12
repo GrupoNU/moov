@@ -1,0 +1,235 @@
+# Moov Mail — production deployment stack (ADR-001 §4).
+#
+# This is the pattern the ADR fixes, and every unusual thing in this file comes
+# from one of its hard rules:
+#
+#   * Mailcow is NEVER touched. This stack joins Mailcow's Docker network as an
+#     EXTERNAL network and talks to it only over IMAP/SMTP/Sieve/HTTP API.
+#     Mailcow's own ./update.sh does not know this stack exists.
+#   * NO vmail filesystem is mounted. Not here, not anywhere. Dovecot runs with
+#     maildir_very_dirty_syncs, and a second writer on those files is guaranteed
+#     corruption. Every byte of mail arrives over IMAP.
+#   * NOTHING is published to the public internet. There is no `ports:` mapping
+#     to 0.0.0.0 anywhere below. The pilot is reached through the existing Caddy
+#     front, which binds the Tailscale interface only (VPN-only, as in S1).
+#   * PostgreSQL is on a PRIVATE network that has no route to Mailcow, so the
+#     store is unreachable from anything but moovd.
+#
+# Usage (on the VPS, from /opt/moov/):
+#   cp env.example .env   &&  $EDITOR .env      # fill in the secrets
+#   docker compose up -d --build
+#   docker compose logs -f moovd
+#
+# The .env file is git-ignored and MUST NOT be committed: it carries the master
+# key that decrypts every stored app password.
+
+name: moov
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 17 — the Moov store.
+  #
+  # Version and settings are not free choices: spike S3 validated the search
+  # repertoire at 5M messages on PostgreSQL 17, and three of the settings below
+  # are the difference between a 9 ms search and a 6,600x regression.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17.4-bookworm
+    container_name: moov-postgres
+    restart: unless-stopped
+
+    # PRIVATE network only. PostgreSQL has no business being reachable from
+    # Mailcow's network, and this is what enforces it.
+    networks:
+      - internal
+
+    environment:
+      POSTGRES_USER: ${MOOV_PG_USER:-moov}
+      POSTGRES_PASSWORD: ${MOOV_PG_PASSWORD:?MOOV_PG_PASSWORD is required}
+      POSTGRES_DB: ${MOOV_PG_DATABASE:-moov}
+      # Deterministic collation: index behavior and sort order must not depend
+      # on the host locale. C.UTF-8 is what S3 measured under.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    # No `ports:` — deliberately. The store is reachable from moovd over the
+    # internal network and from nowhere else, not even the VPN.
+
+    command:
+      - postgres
+      # --- Memory. Sized for this VPS (23 GB RAM, 8 cores), not for a laptop.
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - work_mem=32MB               # per sort/hash node; FTS ranking wants headroom
+      - -c
+      - maintenance_work_mem=512MB  # GIN index builds (migration 0002)
+      - -c
+      - effective_cache_size=8GB    # planner hint only, allocates nothing
+
+      # --- The S3-mandated settings.
+      #
+      # plan_cache_mode=force_custom_plan and the btree_gin/unaccent extensions
+      # are set at DATABASE level by migration 0001, because they are
+      # correctness requirements every environment must have and a test verifies
+      # them. They are NOT repeated here: one authority per setting.
+      #
+      # These two are server-level and therefore live here:
+      - -c
+      - gin_pending_list_limit=8MB
+      - -c
+      - random_page_cost=1.1        # SSD cost model; the default pushes the
+                                    # planner off the index scans S3 depends on
+
+      # --- Observability. Production-quiet: log only genuinely slow queries.
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - log_line_prefix=%m [%p] %q%u@%d
+      - -c
+      - track_io_timing=on
+
+    healthcheck:
+      # Against the real user and database, not just the port: the server
+      # accepts connections briefly before initdb has finished.
+      test: ["CMD-SHELL", "pg_isready -U ${MOOV_PG_USER:-moov} -d ${MOOV_PG_DATABASE:-moov}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+    # A store that dies mid-sync should not take the host's memory with it.
+    stop_grace_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # moovd — the sync engine and the JMAP server, one daemon (L2-jmap-server §2.1).
+  # ---------------------------------------------------------------------------
+  moovd:
+    build:
+      # The repository root, so the build sees cmd/, internal/ and the vendored
+      # tree. Run `docker compose up -d --build` from a checkout, or point
+      # MOOV_IMAGE at a registry image once there is a release pipeline.
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${MOOV_VERSION:-pilot}
+        COMMIT: ${MOOV_COMMIT:-unknown}
+        BUILD_DATE: ${MOOV_BUILD_DATE:-unknown}
+    image: ${MOOV_IMAGE:-moov/moovd:pilot}
+    container_name: moovd
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # BOTH networks, and this is the whole integration story:
+    #   internal — reaches PostgreSQL, and nothing else reaches PostgreSQL.
+    #   mailcow  — reaches dovecot:143 (IMAP), postfix:587 (submission) and the
+    #              Mailcow API, by container alias. Read-only participation: we
+    #              dial in, nothing in Mailcow dials us.
+    networks:
+      - internal
+      - mailcow
+
+    environment:
+      # --- Store
+      MOOV_DATABASE_URL: postgres://${MOOV_PG_USER:-moov}:${MOOV_PG_PASSWORD}@postgres:5432/${MOOV_PG_DATABASE:-moov}?sslmode=disable
+      # sslmode=disable is correct HERE and only here: the connection never
+      # leaves a private Docker bridge that only these two containers join. TLS
+      # would encrypt a hop that has no listener to intercept it.
+
+      # The daemon applies its own embedded migrations (cmd/moovd/migrate.go).
+      # This is a single-writer deployment, which is the precondition that makes
+      # it safe.
+      MOOV_MIGRATE_ON_START: "1"
+
+      # --- Credentials. The master key decrypts every stored app password;
+      # without it the daemon refuses to start rather than running blind.
+      MOOV_MASTER_KEY: ${MOOV_MASTER_KEY:?MOOV_MASTER_KEY is required}
+
+      # --- Sync engine (E5/E6)
+      MOOV_SYNC_ENABLED: "${MOOV_SYNC_ENABLED:-1}"
+      MOOV_SYNC_WATCHER: "${MOOV_SYNC_WATCHER:-1}"
+      MOOV_BLOB_ROOT: /var/lib/moov/blobs
+      # Dovecot's certificate carries the PUBLIC mail hostname while we dial the
+      # container alias `dovecot` (spike S1 H2). Verifying against the alias
+      # would fail; this names what the certificate actually says, so the
+      # connection stays verified instead of falling back to "trust anything".
+      MOOV_IMAP_SERVER_NAME: ${MOOV_IMAP_SERVER_NAME:?MOOV_IMAP_SERVER_NAME is required}
+
+      # --- JMAP server (J1-J3)
+      MOOV_JMAP_ENABLED: "1"
+      MOOV_JMAP_ADDR: ":8620"
+      MOOV_JMAP_IMAP_HOST: ${MOOV_JMAP_IMAP_HOST:-dovecot}
+      MOOV_JMAP_IMAP_PORT: "${MOOV_JMAP_IMAP_PORT:-143}"
+      MOOV_JMAP_IMAP_SERVER_NAME: ${MOOV_IMAP_SERVER_NAME}
+      # The absolute URLs the session object advertises. This MUST be the
+      # address the BROWSER reaches — the Caddy front — not moovd's own
+      # listener, or every client follows apiUrl straight into a dead end.
+      MOOV_JMAP_EXTERNAL_URL: ${MOOV_JMAP_EXTERNAL_URL:?MOOV_JMAP_EXTERNAL_URL is required}
+      # Same-origin through Caddy means no CORS is strictly needed; the list is
+      # configurable for a client served from elsewhere (S1 H7).
+      MOOV_JMAP_CORS_ORIGINS: ${MOOV_JMAP_CORS_ORIGINS:-}
+
+      # --- Operational HTTP: /healthz and /metrics (E8-lite).
+      MOOV_HTTP_ADDR: ":8080"
+
+      # --- Logging
+      MOOV_LOG_LEVEL: ${MOOV_LOG_LEVEL:-info}
+      MOOV_LOG_FORMAT: ${MOOV_LOG_FORMAT:-json}
+
+    volumes:
+      # Content-addressed message blobs. A named volume, not a bind mount: this
+      # is Moov's own data, and Dovecot must never see it.
+      - blobs:/var/lib/moov/blobs
+
+    # No `ports:` — deliberately, and this is the VPN-only property. The JMAP
+    # listener (8620) and the metrics listener (8080) are reachable ONLY from
+    # containers on these networks; the Caddy front proxies to 8620 by alias.
+
+    healthcheck:
+      # distroless has no shell and no curl, so the check runs the binary
+      # itself: `moovd -health` dials its own /healthz and exits non-zero if the
+      # daemon is not serving.
+      test: ["CMD", "/usr/local/bin/moovd", "-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+    # Enough time for an in-flight sync pass to finish cleanly; the daemon's own
+    # MOOV_SHUTDOWN_TIMEOUT (30 s default) fires first.
+    stop_grace_period: 45s
+
+    security_opt:
+      # No process in this container ever needs to gain privileges. The image
+      # already runs as nonroot (uid 65532).
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  # Moov's own network: PostgreSQL and moovd, nothing else.
+  internal:
+    name: moov-internal
+    driver: bridge
+
+  # Mailcow's network, joined as EXTERNAL — this stack never creates or manages
+  # it. If this name is wrong the stack fails to start, which is the correct
+  # outcome: a moovd that cannot reach Dovecot has nothing to sync.
+  mailcow:
+    name: ${MOOV_MAILCOW_NETWORK:-mailcowdockerized_mailcow-network}
+    external: true
+
+volumes:
+  pgdata:
+    name: moov-pgdata
+  blobs:
+    name: moov-blobs

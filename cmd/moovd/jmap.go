@@ -13,6 +13,7 @@ import (
 	"github.com/GrupoNU/moov/internal/jmap"
 	"github.com/GrupoNU/moov/internal/jmap/mail"
 	"github.com/GrupoNU/moov/internal/jmaphttp"
+	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
 )
 
@@ -40,7 +41,7 @@ type jmapComponents struct {
 // engine's: the two components have independent lifecycles (either may be
 // disabled) and independent pool needs. Two pgx pools against one PostgreSQL
 // are cheap; consolidating them is a J4 (deploy) decision, with numbers.
-func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, fatal func(error)) (*jmapComponents, error) {
+func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *metrics.Metrics, fatal func(error)) (*jmapComponents, error) {
 	if !cfg.JMAP.Enabled {
 		logger.Info("jmap server disabled", "hint", "MOOV_JMAP_ENABLED=1 enables it")
 		return nil, nil //nolint:nilnil // "disabled" is a valid, non-error outcome
@@ -88,6 +89,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, fata
 		Limits:         limits,
 		Logger:         logger,
 		Blobs:          deps.Blobs,
+		Metrics:        m,
 	}, auth)
 	if err != nil {
 		st.Close()

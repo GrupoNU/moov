@@ -57,6 +57,17 @@ func (rec *statusRecorder) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// effectiveStatus reports the status actually sent. A handler that returns
+// without writing anything has produced a 200 as far as net/http is concerned,
+// so that is what is recorded — otherwise the metric would show a 0 class that
+// corresponds to nothing on the wire.
+func (rec *statusRecorder) effectiveStatus() int {
+	if !rec.wrote {
+		return http.StatusOK
+	}
+	return rec.status
+}
+
 // Flush passes through so a future streaming route (eventsource, phase 2)
 // keeps working behind the middleware.
 func (rec *statusRecorder) Flush() {
@@ -75,14 +86,30 @@ func (s *Server) logMiddleware(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w}
 		start := time.Now()
 		next.ServeHTTP(rec, r)
+		elapsed := time.Since(start)
+
 		s.log.Info("jmap http request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
 			"bytes", rec.bytes,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", elapsed.Milliseconds(),
 			"remote", clientIP(r),
 		)
+
+		if s.metrics != nil {
+			// r.Pattern is the matched ROUTE PATTERN, filled in by ServeMux
+			// (Go 1.22+). Using it rather than r.URL.Path is what bounds the
+			// label set: every blob download shares one series instead of
+			// minting one per blob id. A request that matched no route has an
+			// empty pattern, which becomes an explicit "unmatched" label rather
+			// than an empty string nobody can grep for.
+			route := r.Pattern
+			if route == "" {
+				route = "unmatched"
+			}
+			s.metrics.ObserveHTTP(route, rec.effectiveStatus(), elapsed)
+		}
 	})
 }
 

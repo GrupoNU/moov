@@ -1,0 +1,47 @@
+# What must never reach the build context.
+#
+# Two jobs. The first is security: an .env or a credentials directory copied into
+# a layer stays in the image forever, even if a later layer deletes it. The
+# second is speed: the build context is uploaded to the daemon before anything
+# runs, and the corpus plus git history is most of this repository's bytes.
+#
+# NOTE the deliberate omission: vendor/ is NOT ignored. The image is built with
+# -mod=vendor precisely so the build needs no network (see Dockerfile).
+
+# Secrets — same list as .gitignore, restated because .dockerignore does not
+# inherit it and a mistake here is worse.
+.env
+.env.*
+*.local
+credentials/
+deploy/*.env
+!deploy/env.example
+
+# VCS and CI
+.git
+.github
+.gitignore
+.gitattributes
+
+# Build outputs and caches
+bin/
+dist/
+coverage.out
+*.exe
+
+# Test fixtures and spike material: several megabytes that no production build
+# reads. The MIME corpus is a test asset (S4), exercised by `go test`, never by
+# the binary.
+testdata/
+spikes/
+docs/
+patches/
+
+# Node
+node_modules/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
