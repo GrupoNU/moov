@@ -88,17 +88,30 @@ func run() error {
 // looping. The operational HTTP server (E8) joins this list later and is
 // stopped in reverse start order under ShutdownTimeout.
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	// A component that fails on its own (the JMAP listener dying, say) must
+	// bring the daemon down cleanly rather than leave it half-alive; the
+	// cause-carrying cancel is how it reports why.
+	ctx, fail := context.WithCancelCause(ctx)
+	defer fail(nil)
+
 	startCtx, cancelStart := context.WithTimeout(ctx, syncStartTimeout)
 	components, err := startSync(startCtx, cfg, logger)
-	cancelStart()
 	if err != nil {
+		cancelStart()
 		return fmt.Errorf("starting sync: %w", err)
 	}
 	defer components.close()
 
+	jmapComp, err := startJMAP(startCtx, cfg, logger, fail)
+	cancelStart()
+	if err != nil {
+		return fmt.Errorf("starting jmap: %w", err)
+	}
+
 	logger.Info("moovd is running",
 		"http_addr", cfg.HTTPAddr,
 		"sync", components != nil,
+		"jmap", jmapComp != nil,
 	)
 
 	// runSync blocks until ctx ends; with the supervisor disabled it simply
@@ -113,6 +126,10 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	// Reverse start order: the JMAP server (started last) drains first, so
+	// in-flight API requests finish against a still-open store.
+	jmapComp.shutdown(shutdownCtx)
+
 	if err := shutdown(shutdownCtx, logger); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
@@ -121,6 +138,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	// is the normal end of a clean shutdown and is left to run() to interpret.
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
 		return runErr
+	}
+	// When the shutdown was triggered by a component failure (see `fail`
+	// above), the cause is the story; a plain context.Canceled is a normal
+	// signal-driven exit.
+	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
 	}
 	return ctx.Err()
 }

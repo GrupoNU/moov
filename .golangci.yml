@@ -138,6 +138,35 @@ linters:
                 interface does not expose, extend the interface — do not reach
                 past it.
 
+        # L2-jmap-server §4: internal/jmap is the protocol CONTRACT. It may
+        # not import storage, parsing or transport — the dependency arrow
+        # points the other way (internal/jmap/mail implements its interfaces
+        # over the store; internal/jmaphttp mounts it). Like the go-imap rule,
+        # it is enforced twice: here, and by
+        # TestJMAPCoreImportsNothingBelowTheContract in internal/jmap.
+        # The file glob matches only the package's own files, NOT
+        # internal/jmap/mail/** — that subpackage exists to import the store.
+        jmap-contract-purity:
+          list-mode: lax
+          files:
+            - "**/internal/jmap/*.go"
+          deny:
+            - pkg: github.com/GrupoNU/moov/internal/store
+              desc: >-
+                internal/jmap defines contracts and must not import the store
+                (L2-jmap-server §4). Implement store-backed methods in
+                internal/jmap/mail instead.
+            - pkg: github.com/GrupoNU/moov/internal/blob
+              desc: internal/jmap must not touch the blob layer (L2-jmap-server §4).
+            - pkg: github.com/GrupoNU/moov/internal/parser
+              desc: internal/jmap must not parse messages (L2-jmap-server §4).
+            - pkg: github.com/GrupoNU/moov/internal/imap
+              desc: the JMAP protocol layer never speaks IMAP (L2-jmap-server §4.3).
+            - pkg: github.com/GrupoNU/moov/internal/jmaphttp
+              desc: the protocol layer must not depend on its own transport.
+            - pkg: github.com/jackc/pgx
+              desc: internal/jmap must not know the database exists (L2-jmap-server §4).
+
         # Standard-library packages with no place in this codebase.
         hygiene:
           list-mode: lax

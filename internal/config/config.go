@@ -44,6 +44,9 @@ type Config struct {
 
 	// Sync is the sync engine's configuration (E5/E6).
 	Sync SyncConfig
+
+	// JMAP is the JMAP HTTP server's configuration (J1).
+	JMAP JMAPConfig
 }
 
 // SyncConfig is everything the sync supervisor, its initial-sync pipeline and
@@ -163,6 +166,12 @@ func Load() (Config, error) {
 	}
 	c.Sync = sync
 
+	jmap, err := loadJMAP()
+	if err != nil {
+		return Config{}, err
+	}
+	c.JMAP = jmap
+
 	return c, c.Validate()
 }
 
@@ -265,16 +274,16 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("MOOV_LOG_FORMAT: want one of json|text, got %q", c.LogFormat)
 	}
-	return nil
+	return c.JMAP.validate()
 }
 
 // String renders the configuration for logging with every secret redacted.
 // Config must never be formatted with %+v anywhere; use this.
 func (c Config) String() string {
 	return fmt.Sprintf(
-		"log_level=%s log_format=%s http_addr=%s database_url=%s shutdown_timeout=%s %s",
+		"log_level=%s log_format=%s http_addr=%s database_url=%s shutdown_timeout=%s %s %s",
 		c.LogLevel, c.LogFormat, c.HTTPAddr, redactDSN(c.DatabaseURL), c.ShutdownTimeout,
-		c.Sync.String(),
+		c.Sync.String(), c.JMAP.String(),
 	)
 }
 
