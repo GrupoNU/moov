@@ -442,13 +442,179 @@ func (s *Syncer) commitBatch(
 
 	ids, err := s.insertWithRetry(ctx, rows, mb)
 	if err != nil {
-		return 0, 0, err
+		// The batch failed as a unit. If the cause is a per-row DATA error, one
+		// message is poisoning the other ninety-nine and retrying the same batch
+		// forever cannot help — degrade to inserting them one at a time so the
+		// innocent ones land and only the offender is quarantined.
+		if !isDataError(err) {
+			return 0, 0, err
+		}
+		degraded, derr := s.insertDegraded(ctx, account, mb, rows, batch)
+		if derr != nil {
+			return 0, 0, derr
+		}
+		ids = degraded
+		// `failed` is NOT incremented here. It counts messages whose PARSE
+		// failed, and it was already computed above from parsed.Status. A
+		// quarantined message may or may not be among them, so adding the
+		// quarantine count would double-count the overlap. The quarantined rows
+		// carry parse_status='failed' in the database, which is what the
+		// re-parse sweep and the E8 failure-rate alert actually read.
 	}
 
 	if err := s.addBlobRefs(ctx, account.ID, ids, batch); err != nil {
 		return 0, 0, err
 	}
 	return countInserted(ids), failed, nil
+}
+
+// insertDegraded re-inserts a failed batch one message at a time, quarantining
+// the ones that still fail.
+//
+// # Why this exists (production incident, 2026-08-12)
+//
+// A real message carried 2 MB of extracted body text, which overflowed
+// PostgreSQL's 1 MiB tsvector limit (SQLSTATE 54000). The insert is a batch of
+// 100 in ONE transaction, so the single bad row aborted the other 99. The
+// supervisor treats every error as transient and retried the identical doomed
+// batch every 5 minutes, indefinitely: one message blocked an entire folder's
+// backfill, and the account never finished syncing.
+//
+// Migration 0003 removed that particular cause by capping the tsvector's input.
+// This function removes the FAILURE CLASS, which is the more valuable half:
+// whatever data-dependent insert error the wild produces next — a constraint
+// this schema grows later, an encoding case the parser does not yet normalize —
+// costs one message instead of one mailbox.
+//
+// # What "quarantined" means
+//
+// A message that still fails alone is re-inserted with parse_status='failed'
+// and its derived text fields emptied, which is R4's own remedy (L2 §2.4)
+// applied to a store error rather than a parse error. The raw blob is already
+// durable and untouched, so the message is not lost: it can be re-derived by a
+// later parser bump or a schema fix, and until then it occupies its UID so the
+// sync does not keep re-fetching it. If even the stripped row fails, the
+// message is skipped with a WARN naming the mailbox and UID — the sync
+// continues, which is the whole point.
+func (s *Syncer) insertDegraded(
+	ctx context.Context,
+	account store.Account,
+	mb syncMailbox,
+	rows []store.NewMessage,
+	batch []parsedMessage,
+) ([]int64, error) {
+	s.opts.Logger.Warn("batch insert failed with a data error; degrading to per-message inserts",
+		"account_id", account.ID, "mailbox", mb.info.Name, "batch_size", len(rows))
+
+	ids := make([]int64, len(rows))
+
+	for i := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		got, err := s.store.InsertMessages(ctx, rows[i:i+1])
+		if err == nil {
+			ids[i] = got[0]
+			continue
+		}
+		// A non-data error here is a real failure — a lost connection, a
+		// deadlock that outlived its retries — and must propagate rather than
+		// be recorded as a bad message.
+		if !isDataError(err) {
+			return nil, fmt.Errorf("inserting message uid %d in %q: %w",
+				batch[i].raw.uid, mb.info.Name, err)
+		}
+
+		s.opts.Logger.Warn("message rejected by the store; storing it as failed",
+			"account_id", account.ID,
+			"mailbox", mb.info.Name,
+			"uid", uint32(batch[i].raw.uid),
+			"raw_size", batch[i].raw.size,
+			"body_text_bytes", len(rows[i].Message.BodyText),
+			"error", err)
+
+		stripped := quarantineRow(rows[i])
+		got, err = s.store.InsertMessages(ctx, []store.NewMessage{stripped})
+		if err != nil {
+			// Nothing more this package can do for this message. The blob is
+			// durable, so the bytes survive for a later re-derivation; the run
+			// carries on, which is the property that matters.
+			s.opts.Logger.Warn("message could not be stored even as failed; skipping it",
+				"account_id", account.ID,
+				"mailbox", mb.info.Name,
+				"uid", uint32(batch[i].raw.uid),
+				"error", err)
+			continue
+		}
+		ids[i] = got[0]
+	}
+
+	return ids, nil
+}
+
+// quarantineRow strips a message down to what is certain to be storable.
+//
+// Everything the parser derived is dropped — it is exactly what the store
+// refused — while the identity the sync engine needs (account, blob hash, UID,
+// flags, date) is kept. parse_status='failed' is what makes the row visible to
+// the re-parse sweep (migration 0002's `messages_reparse` index) and to the
+// failure-rate alert E8 watches, so a quarantined message is reported rather
+// than silently absorbed.
+func quarantineRow(row store.NewMessage) store.NewMessage {
+	m := &row.Message
+	m.Subject = ""
+	m.BodyText = ""
+	m.Preview = ""
+	m.FromAddr = ""
+	m.ToAddrs = ""
+	m.CcAddrs = ""
+	m.Addresses = nil
+	m.MIMEStructure = nil
+	m.ReferencesIDs = nil
+	m.InReplyTo = ""
+	m.ParseStatus = store.ParseFailed
+	// The defect vocabulary is the parser's; this is a STORE rejection, so it is
+	// recorded under its own name rather than borrowed from a parse outcome.
+	m.Defects = []byte(`[{"kind":"store-rejected"}]`)
+	return row
+}
+
+// isDataError reports whether err is a PostgreSQL error caused by the CONTENT
+// of a row rather than by the state of the system.
+//
+// The distinction is the whole point of the degraded path: a data error is
+// PERMANENT for that row — retrying it, alone or in a batch, produces the same
+// error forever — while a connection loss, a deadlock or a shutdown is
+// transient and must keep the existing retry semantics.
+//
+// The classes accepted here are the ones whose SQLSTATE says "this value is
+// wrong", by the class prefixes PostgreSQL defines (Appendix A):
+//
+//	22xxx  data exception          — 54000 lives in 54 but see below
+//	23xxx  integrity constraint violation
+//	54xxx  program limit exceeded  — 54000 is the tsvector overflow itself
+//
+// 23505 (unique_violation) is deliberately EXCLUDED: InsertMessages resolves a
+// duplicate UID through its ON CONFLICT clause, so a 23505 arriving here means
+// something this package does not understand, and swallowing it as a bad
+// message would hide it.
+func isDataError(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	if pgErr.Code == "23505" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(pgErr.Code, "22"), // data exception
+		strings.HasPrefix(pgErr.Code, "23"), // integrity constraint violation
+		strings.HasPrefix(pgErr.Code, "54"): // program limit exceeded
+		return true
+	default:
+		return false
+	}
 }
 
 // countInserted counts the rows InsertMessages actually created.
