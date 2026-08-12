@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrupoNU/moov/internal/jmap/mail"
 	"github.com/GrupoNU/moov/internal/store"
 )
 
@@ -101,6 +102,40 @@ func (c *fakeClock) Advance(d time.Duration) {
 	defer c.mu.Unlock()
 	c.t = c.t.Add(d)
 }
+
+// emptyMailReaders satisfies every J2 reader contract with no data. It exists
+// so the HTTP layer can exercise dispatch and limit enforcement on real
+// registered /get methods without standing up a database — the readers'
+// behavior itself is tested in internal/jmap/mail.
+type emptyMailReaders struct{}
+
+func (emptyMailReaders) Mailboxes(context.Context, int64) ([]mail.MailboxRow, error) {
+	return nil, nil
+}
+
+func (emptyMailReaders) MailboxesByID(context.Context, int64, []int64) ([]mail.MailboxRow, error) {
+	return nil, nil
+}
+
+func (emptyMailReaders) EmailsByID(context.Context, int64, []int64) ([]mail.EmailRow, error) {
+	return nil, nil
+}
+
+func (emptyMailReaders) RawMessage(context.Context, int64, int64) (io.ReadCloser, error) {
+	return nil, mail.ErrNotFound
+}
+
+func (emptyMailReaders) ThreadsByID(context.Context, int64, []string) ([]mail.ThreadRow, error) {
+	return nil, nil
+}
+
+func (emptyMailReaders) OpenBlob(context.Context, int64, string) (io.ReadCloser, int64, error) {
+	return nil, 0, mail.ErrNotFound
+}
+
+func (emptyMailReaders) MailboxState(context.Context, int64) (string, error) { return "s1", nil }
+func (emptyMailReaders) EmailState(context.Context, int64) (string, error)   { return "s1", nil }
+func (emptyMailReaders) ThreadState(context.Context, int64) (string, error)  { return "s1", nil }
 
 // testAccount is the provisioned account most tests authenticate as.
 func testAccount() store.Account {

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/GrupoNU/moov/internal/jmap"
+	"github.com/GrupoNU/moov/internal/jmap/mail"
 )
 
 const testOrigin = "https://webmail.example"
@@ -193,22 +194,119 @@ func proveMaxConcurrentRequests(t *testing.T) {
 	}
 }
 
+// proveMaxObjectsInGet is the REAL HTTP proof, registered by J2: a genuine
+// /get method call over the wire, with more ids than the session advertises,
+// answered with requestTooLarge.
+//
+// Until J2 this proof could only assert that CheckObjectsInGet enforced the
+// advertised number, because no /get method existed to call. Now Mailbox/get
+// does, so the limit is proved end to end — declared in the session, applied
+// to an actual request — which is what the declared==applied AC always meant.
 func proveMaxObjectsInGet(t *testing.T) {
-	// No /get method exists until J2, so the enforcement point is the helper
-	// the J2 contract obliges every /get handler to call — and the proof is
-	// that the helper enforces the very value the session advertises.
-	s, _, _, _ := newTestServer(t, nil)
-	limits := s.cfg.Limits
-	if merr := limits.CheckObjectsInGet(limits.MaxObjectsInGet); merr != nil {
-		t.Fatalf("at-limit rejected: %v", merr)
+	const limit = 3
+	s, _, _, _ := newTestServer(t, func(c *Config) {
+		c.Limits = jmap.DefaultLimits()
+		c.Limits.MaxObjectsInGet = limit
+	})
+	registerTestMailMethods(t, s)
+
+	ids := func(n int) string {
+		parts := make([]string, 0, n)
+		for i := 1; i <= n; i++ {
+			parts = append(parts, `"`+mail.EncodeMailboxID(int64(i))+`"`)
+		}
+		return "[" + strings.Join(parts, ",") + "]"
 	}
-	merr := limits.CheckObjectsInGet(limits.MaxObjectsInGet + 1)
-	if merr == nil || merr.Code != jmap.CodeRequestTooLarge {
-		t.Fatalf("over-limit: %v, want requestTooLarge", merr)
+
+	// At the limit: a normal response, not an error.
+	w := doReq(s, http.MethodPost, PathAPI, apiBody(
+		`["Mailbox/get",{"accountId":"a7","ids":`+ids(limit)+`},"c1"]`), true, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("at-limit request: %d (%s)", w.Code, w.Body)
 	}
-	if sessionLimit(t, s, "maxObjectsInGet") != int64(limits.MaxObjectsInGet) {
+	if name := methodResponseName(t, w, 0); name != "Mailbox/get" {
+		t.Fatalf("at-limit response name = %q, want Mailbox/get", name)
+	}
+
+	// One over: the §5.1 requestTooLarge method error.
+	w = doReq(s, http.MethodPost, PathAPI, apiBody(
+		`["Mailbox/get",{"accountId":"a7","ids":`+ids(limit+1)+`},"c1"]`), true, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("over-limit request: HTTP %d, want 200 with a method error", w.Code)
+	}
+	if name := methodResponseName(t, w, 0); name != "error" {
+		t.Fatalf("over-limit response name = %q, want error", name)
+	}
+	if typ := methodErrorType(t, w, 0); typ != string(jmap.CodeRequestTooLarge) {
+		t.Fatalf("over-limit error type = %q, want requestTooLarge", typ)
+	}
+
+	// And the number enforced is the number advertised.
+	if sessionLimit(t, s, "maxObjectsInGet") != int64(limit) {
 		t.Fatal("session advertises a different maxObjectsInGet than is enforced")
 	}
+}
+
+// registerTestMailMethods wires the J2 get-family onto a test server with
+// empty readers, so the limit and dispatch paths can be exercised over HTTP
+// without a database.
+func registerTestMailMethods(t *testing.T, s *Server) {
+	t.Helper()
+	readers := &emptyMailReaders{}
+	mail.RegisterGetMethods(s.Registry(), &mail.Deps{
+		Mailboxes: readers,
+		Emails:    readers,
+		Threads:   readers,
+		Blobs:     readers,
+		State:     readers,
+		Limits:    s.cfg.Limits,
+	})
+}
+
+// methodResponseName returns the name of the nth method response.
+func methodResponseName(t *testing.T, w *httptest.ResponseRecorder, n int) string {
+	t.Helper()
+	var body struct {
+		MethodResponses []json.RawMessage `json:"methodResponses"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding response: %v (%s)", err, w.Body)
+	}
+	if n >= len(body.MethodResponses) {
+		t.Fatalf("no method response %d in %s", n, w.Body)
+	}
+	var tuple []json.RawMessage
+	if err := json.Unmarshal(body.MethodResponses[n], &tuple); err != nil {
+		t.Fatalf("decoding invocation: %v", err)
+	}
+	var name string
+	if err := json.Unmarshal(tuple[0], &name); err != nil {
+		t.Fatalf("decoding name: %v", err)
+	}
+	return name
+}
+
+// methodErrorType returns the "type" of the nth method response, which must be
+// an error.
+func methodErrorType(t *testing.T, w *httptest.ResponseRecorder, n int) string {
+	t.Helper()
+	var body struct {
+		MethodResponses []json.RawMessage `json:"methodResponses"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	var tuple []json.RawMessage
+	if err := json.Unmarshal(body.MethodResponses[n], &tuple); err != nil {
+		t.Fatalf("decoding invocation: %v", err)
+	}
+	var args struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(tuple[1], &args); err != nil {
+		t.Fatalf("decoding error args: %v", err)
+	}
+	return args.Type
 }
 
 func proveMaxObjectsInSet(t *testing.T) {
@@ -458,19 +556,24 @@ func TestStubbedRoutes(t *testing.T) {
 		t.Fatalf("eventsource = %d, want 501", w.Code)
 	}
 
-	// Download: own account is a 404 that says J2; a foreign or malformed
-	// accountId is an indistinguishable generic 404 (no existence oracle).
-	w = doReq(s, http.MethodGet, "/jmap/download/a7/blob1/x.txt", "", true, nil)
-	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "J2") {
-		t.Fatalf("own-account download = %d (%s)", w.Code, w.Body)
+	// Download on a server with no blob reader wired: every case is a 404, and
+	// since J2 they are BYTE-IDENTICAL. The stub used to answer the caller's
+	// own account with a message naming the epic, which was already the right
+	// authorization shape but a weaker version of it; now a missing blob, a
+	// foreign accountId and a malformed one are literally indistinguishable,
+	// so there is no existence oracle left to reason about.
+	own := doReq(s, http.MethodGet, "/jmap/download/a7/blob1/x.txt", "", true, nil)
+	if own.Code != http.StatusNotFound {
+		t.Fatalf("own-account download = %d (%s)", own.Code, own.Body)
 	}
 	for _, path := range []string{"/jmap/download/a999/blob1/x.txt", "/jmap/download/zzz/blob1/x.txt"} {
 		w = doReq(s, http.MethodGet, path, "", true, nil)
-		if w.Code != http.StatusNotFound {
-			t.Fatalf("%s = %d, want 404", path, w.Code)
+		if w.Code != own.Code {
+			t.Fatalf("%s = %d, want the same %d as the caller's own account", path, w.Code, own.Code)
 		}
-		if strings.Contains(w.Body.String(), "J2") {
-			t.Fatalf("%s leaks that the account differs from a missing blob", path)
+		if w.Body.String() != own.Body.String() {
+			t.Fatalf("%s answers %q but the caller's own account answers %q: the two are distinguishable",
+				path, w.Body.String(), own.Body.String())
 		}
 	}
 }

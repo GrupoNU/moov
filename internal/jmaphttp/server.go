@@ -1,16 +1,19 @@
 package jmaphttp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GrupoNU/moov/internal/jmap"
+	"github.com/GrupoNU/moov/internal/jmap/mail"
 )
 
 // Timeouts for the *http.Server that mounts Handler. They are exported so
@@ -53,6 +56,25 @@ type Config struct {
 	// Logger receives structured request and error logs. nil means
 	// slog.Default().
 	Logger *slog.Logger
+
+	// Blobs serves the download endpoint. nil leaves the route answering the
+	// same 404 as a missing blob — which is what a server built only for
+	// protocol tests wants, and what keeps this dependency optional without
+	// ever making the route leak the difference.
+	Blobs BlobReader
+}
+
+// BlobReader is the download endpoint's view of the blob layer.
+//
+// It is declared here, as a one-method interface, rather than imported from
+// internal/jmap/mail: the HTTP layer needs nothing else from that package's
+// contracts, and a local interface keeps the transport testable with a fake
+// that has no store behind it. mail.Adapter satisfies it by construction.
+type BlobReader interface {
+	// OpenBlob returns the blob's content and size, or mail.ErrNotFound when
+	// the account does not reference it — the two cases the route must render
+	// identically.
+	OpenBlob(ctx context.Context, accountID int64, blobID string) (io.ReadCloser, int64, error)
 }
 
 // Server is the JMAP HTTP server: routes, auth, CORS and the protocol engine.
@@ -64,6 +86,7 @@ type Server struct {
 	engine   *jmap.Engine
 	cors     *corsPolicy
 	gate     *concurrencyGate
+	blobs    BlobReader
 	log      *slog.Logger
 }
 
@@ -95,6 +118,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		engine:   engine,
 		cors:     newCORSPolicy(cfg.AllowedOrigins),
 		gate:     newConcurrencyGate(cfg.Limits.MaxConcurrentRequests),
+		blobs:    cfg.Blobs,
 		log:      cfg.Logger,
 	}, nil
 }
@@ -201,14 +225,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleDownload is the wired-but-stubbed blob route: real blob serving (with
-// per-account ownership checks and safe Content-Type headers, L2 §2.3)
-// arrives with J2. Until then every download answers 404 with a problem body.
+// handleDownload serves GET /jmap/download/{accountId}/{blobId}/{name}
+// (RFC 8620 §6.2).
 //
-// The ownership check is already live so the route's authorization shape is
-// final from day one: a download URL naming an account that is not the
-// caller's answers the same 404 as a missing blob — never 403, which would
-// confirm to a probing client that the foreign accountId exists.
+// The authorization shape was fixed when the route was stubbed and is
+// unchanged: a download URL naming an account that is not the caller's answers
+// the same 404 as a missing blob — never 403, which would confirm to a probing
+// client that the foreign accountId exists. J2 fills in the body: an ownership
+// check in the store, then the bytes with headers that can never execute.
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	id, ok := identityFromContext(r.Context())
 	if !ok {
@@ -220,8 +244,60 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		writeGenericProblem(w, http.StatusNotFound, "not found")
 		return
 	}
-	writeGenericProblem(w, http.StatusNotFound,
-		"blob download is not available yet (arrives with epic J2)")
+	if s.blobs == nil {
+		// No blob reader wired (a server built for protocol tests only). Same
+		// 404 as everything else on this route: the client cannot tell, and
+		// must not be able to tell, why.
+		writeGenericProblem(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	rc, size, err := s.blobs.OpenBlob(r.Context(), accountID, r.PathValue("blobId"))
+	if err != nil {
+		// Every failure is the same 404, including an unexpected internal one:
+		// distinguishing "missing" from "broken" here would leak existence
+		// through the error channel that the status code closes. The real
+		// error goes to the log for the operator.
+		if !errors.Is(err, mail.ErrNotFound) {
+			s.log.Error("jmap: opening blob for download failed",
+				"account_id", accountID, "error", err)
+		}
+		writeGenericProblem(w, http.StatusNotFound, "not found")
+		return
+	}
+	defer func() { _ = rc.Close() }()
+
+	// §6.2: "the server MUST NOT use the type given by the client without
+	// validating it". DownloadHeaders applies the allowlist and sanitizes the
+	// name; nothing client-supplied reaches a header unchecked.
+	contentType, disposition := mail.DownloadHeaders(
+		r.URL.Query().Get("type"), r.PathValue("name"))
+
+	h := w.Header()
+	h.Set("Content-Type", contentType)
+	h.Set("Content-Disposition", disposition)
+	// Belt and braces with the allowlist: even for an allowlisted type, a
+	// browser must not be allowed to sniff the bytes into something else.
+	h.Set("X-Content-Type-Options", "nosniff")
+	// Other people's mail is never a shared cache's business.
+	h.Set("Cache-Control", "private, max-age=0, no-store")
+	// Defense in depth for the inline types: no scripts, no plugins, no
+	// framing, whatever the bytes turn out to be.
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	if size >= 0 {
+		h.Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	// Range requests are not supported in phase 1 (L2 §2.3 scopes download to
+	// whole blobs). Saying so explicitly stops a client from issuing a Range
+	// request and misreading the complete 200 response as a partial one.
+	h.Set("Accept-Ranges", "none")
+
+	if _, err := io.Copy(w, rc); err != nil {
+		// The status is already sent; all that is left is the log. A client
+		// disconnect mid-download is routine, not an error worth alarming on.
+		s.log.Debug("jmap: blob download interrupted",
+			"account_id", accountID, "error", err)
+	}
 }
 
 // handleUpload is the phase-1 upload stub: uploadUrl must exist in the

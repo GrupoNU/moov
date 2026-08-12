@@ -8,7 +8,10 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/GrupoNU/moov/internal/blob"
 	"github.com/GrupoNU/moov/internal/config"
+	"github.com/GrupoNU/moov/internal/jmap"
+	"github.com/GrupoNU/moov/internal/jmap/mail"
 	"github.com/GrupoNU/moov/internal/jmaphttp"
 	"github.com/GrupoNU/moov/internal/store"
 )
@@ -64,15 +67,37 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, fata
 		return nil, fmt.Errorf("building jmap authenticator: %w", err)
 	}
 
+	// The blob store backs both the download endpoint and Email/get's
+	// bodyValues, which re-parse the raw message on demand (L2 §5 risk 2).
+	blobs, err := blob.New(blob.Config{Root: cfg.Sync.BlobRoot, Pool: st.Pool()})
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("opening blob store for jmap: %w", err)
+	}
+
+	limits := jmap.DefaultLimits()
+	deps, err := mail.NewDeps(st, blobs, limits)
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("building jmap mail dependencies: %w", err)
+	}
+
 	srv, err := jmaphttp.New(jmaphttp.Config{
 		BaseURL:        cfg.JMAP.ExternalURL,
 		AllowedOrigins: cfg.JMAP.CORSOrigins,
+		Limits:         limits,
 		Logger:         logger,
+		Blobs:          deps.Blobs,
 	}, auth)
 	if err != nil {
 		st.Close()
 		return nil, fmt.Errorf("building jmap server: %w", err)
 	}
+
+	// The mail methods (J2: the get family). J3 adds RegisterQueryMethods
+	// here, over the same Deps. Registration must happen before Handler() is
+	// mounted, which is why it sits above the http.Server construction.
+	mail.RegisterGetMethods(srv.Registry(), deps)
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
