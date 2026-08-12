@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/GrupoNU/moov/internal/jmap"
 	"github.com/GrupoNU/moov/internal/parser"
@@ -19,6 +20,23 @@ type Deps struct {
 	Threads   ThreadReader
 	Blobs     BlobReader
 	State     StateReader
+
+	// Search answers Email/query (J3). It takes translated filters, so the
+	// decisions about what this server can answer stay in query.go.
+	Search SearchReader
+
+	// Changes feeds Email/changes and Mailbox/changes (J3).
+	Changes ChangesReader
+
+	// SearchWindow overrides how deep Email/query looks. The zero value means
+	// DefaultSearchWindow, which is the store's own cap; tests set it smaller
+	// to exercise the truncation paths without seeding 200 messages.
+	//
+	// It may never EXCEED the store's cap: the store would silently clamp, and
+	// Email/query's "a short result set means the window was not filled, so
+	// this total is exact" reasoning would then be wrong. RegisterQueryMethods
+	// enforces that.
+	SearchWindow int
 
 	// Limits are the server's declared limits. The same struct the session
 	// advertises must be passed here, because CheckObjectsInGet is the
@@ -67,4 +85,36 @@ func RegisterGetMethods(registry *jmap.Registry, deps *Deps) {
 	registry.Register("Mailbox/get", jmap.CapMail, deps.handleMailboxGet)
 	registry.Register("Thread/get", jmap.CapMail, deps.handleThreadGet)
 	registry.Register("Email/get", jmap.CapMail, deps.handleEmailGet)
+}
+
+// RegisterQueryMethods registers the query/changes mail methods (J3).
+//
+// It is separate from RegisterGetMethods because the two epics have disjoint
+// scopes and either can be mounted without the other — which is also what lets
+// J2's tests keep registering only the get family. cmd/moovd calls both.
+//
+// The /queryChanges methods are registered even though they only ever decline:
+// a client that sees unknownMethod concludes the server is partial, whereas
+// cannotCalculateChanges is a conforming answer it knows how to handle
+// (changes.go documents the decision against RFC 8620 §5.6).
+func RegisterQueryMethods(registry *jmap.Registry, deps *Deps) {
+	if registry == nil || deps == nil {
+		panic("mail: RegisterQueryMethods requires a registry and deps")
+	}
+	if deps.Search == nil || deps.Changes == nil || deps.State == nil {
+		panic("mail: RegisterQueryMethods requires Search, Changes and State readers")
+	}
+	// A window deeper than the store's own cap cannot be honored: the store
+	// clamps, and Email/query would then believe an exhausted result set was a
+	// truncated one. Failing at startup beats serving a wrong total.
+	if deps.SearchWindow > DefaultSearchWindow {
+		panic(fmt.Sprintf("mail: SearchWindow %d exceeds the store's cap of %d",
+			deps.SearchWindow, DefaultSearchWindow))
+	}
+
+	registry.Register("Email/query", jmap.CapMail, deps.handleEmailQuery)
+	registry.Register("Email/changes", jmap.CapMail, deps.handleEmailChanges)
+	registry.Register("Mailbox/changes", jmap.CapMail, deps.handleMailboxChanges)
+	registry.Register("Email/queryChanges", jmap.CapMail, deps.handleEmailQueryChanges)
+	registry.Register("Mailbox/queryChanges", jmap.CapMail, deps.handleMailboxQueryChanges)
 }

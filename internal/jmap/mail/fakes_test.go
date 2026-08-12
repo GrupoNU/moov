@@ -25,6 +25,16 @@ type fakeReaders struct {
 	raw       map[int64][]byte // message id -> raw bytes
 	blobs     map[string][]byte
 
+	// J3: the search corpus, in the order the repertoire would return it
+	// (newest first), and the change feed, oldest first.
+	hits         []searchHit
+	searchWindow int
+	changes      []ChangeRow
+	newestChange time.Time
+
+	mailboxCountChanges []int64
+	mailboxRowChanges   []int64
+
 	state string
 	err   error // when set, every read fails with it
 }
@@ -138,14 +148,91 @@ func (f *fakeReaders) MailboxState(context.Context, int64) (string, error) { ret
 func (f *fakeReaders) EmailState(context.Context, int64) (string, error)   { return f.state, f.err }
 func (f *fakeReaders) ThreadState(context.Context, int64) (string, error)  { return f.state, f.err }
 
+// SearchEmails answers a translated query out of the seeded corpus.
+//
+// It applies the SAME truncation the store does — the window bound — because
+// that bound is what Email/query's total and anchor reasoning depend on. A
+// fake that returned everything would make those paths untestable.
+func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s sortSpec) ([]int64, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	hits := append([]searchHit(nil), f.hits...)
+	window := f.searchWindow
+	if window <= 0 {
+		window = DefaultSearchWindow
+	}
+	if len(hits) > window {
+		hits = hits[:window]
+	}
+	if s.byRelevance {
+		out := make([]int64, 0, len(hits))
+		for _, h := range hits {
+			out = append(out, h.id)
+		}
+		return out, nil
+	}
+	return sortIDsStable(hits, s.ascending), nil
+}
+
+// ChangedSince replays the seeded feed from a cursor, honoring the limit the
+// handler uses to detect a further page.
+func (f *fakeReaders) ChangedSince(_ context.Context, _ int64, since time.Time, limit int) ([]ChangeRow, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []ChangeRow
+	for _, c := range f.changes {
+		if !c.UpdatedAt.After(since) {
+			continue
+		}
+		out = append(out, c)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// NewestChangeAt reports the account watermark. When a test does not set one,
+// it is derived from the seeded feed, so the common case needs no setup.
+func (f *fakeReaders) NewestChangeAt(context.Context, int64) (time.Time, error) {
+	if f.err != nil {
+		return time.Time{}, f.err
+	}
+	if !f.newestChange.IsZero() {
+		return f.newestChange, nil
+	}
+	var newest time.Time
+	for _, c := range f.changes {
+		if c.UpdatedAt.After(newest) {
+			newest = c.UpdatedAt
+		}
+	}
+	return newest, nil
+}
+
+func (f *fakeReaders) MailboxesTouchedSince(_ context.Context, _ int64, _ time.Time, _ int) ([]int64, []int64, error) {
+	if f.err != nil {
+		return nil, nil, f.err
+	}
+	return f.mailboxCountChanges, f.mailboxRowChanges, nil
+}
+
 // deps builds a Deps over the fakes, with the real default limits so the
 // maxObjectsInGet path is exercised with production values.
 func (f *fakeReaders) deps() *Deps {
 	return &Deps{
 		Mailboxes: f, Emails: f, Threads: f, Blobs: f, State: f,
+		Search: f, Changes: f, SearchWindow: f.searchWindow,
 		Limits: jmap.DefaultLimits(),
 	}
 }
+
+// contextType is the context interface the handler signatures take. It is
+// aliased so the queryChanges table test can hold both handlers in one map
+// without repeating the full signature.
+type contextType = context.Context
 
 // testAccountID is the account every handler test authenticates as, and
 // otherAccountID is the one whose data must never be visible.

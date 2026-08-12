@@ -433,6 +433,54 @@ func TestSessionObjectShape(t *testing.T) {
 		t.Fatal("a read-only server must not offer mailbox creation")
 	}
 
+	// The advertised sort options must be exactly the ones Email/query
+	// implements (J1's declared == applied rule, extended to comparators by
+	// J3). The handler-side half of this pact is asserted in
+	// internal/jmap/mail: TestAdvertisedSortOptionsAreExactlyTheImplementedOnes.
+	sorts, ok := mailCap["emailQuerySortOptions"].([]any)
+	if !ok {
+		t.Fatalf("emailQuerySortOptions = %v, want an array", mailCap["emailQuerySortOptions"])
+	}
+	advertised := make(map[string]bool, len(sorts))
+	for _, s := range sorts {
+		name, ok := s.(string)
+		if !ok {
+			t.Fatalf("emailQuerySortOptions contains %T, want strings", s)
+		}
+		advertised[name] = true
+	}
+	// RFC 8621 §4.4.2 makes receivedAt the one sort a server MUST support.
+	if !advertised[mail.SortReceivedAt] {
+		t.Errorf("emailQuerySortOptions = %v, want it to advertise %q (RFC 8621 §4.4.2 MUST)",
+			sorts, mail.SortReceivedAt)
+	}
+	if !advertised[mail.SortRelevance] {
+		t.Errorf("emailQuerySortOptions = %v, want it to advertise %q", sorts, mail.SortRelevance)
+	}
+	// Nothing may be advertised that Email/query would reject. The §4.4.2
+	// SHOULD list is the trap: those names look supportable but need indexes
+	// the store does not have.
+	for _, unsupported := range []string{"size", "from", "to", "subject", "sentAt", "hasKeyword"} {
+		if advertised[unsupported] {
+			t.Errorf("emailQuerySortOptions advertises %q, which Email/query refuses with unsupportedSort",
+				unsupported)
+		}
+	}
+
+	// collationAlgorithms stays empty while both sorts compare non-strings
+	// (RFC 8620 §5.5: "When the property being compared is not a string, the
+	// 'collation' property is ignored"). Advertising one would claim a string
+	// ordering this server never performs.
+	coreCap := asObject(t, caps[jmap.CapCore], "core capability")
+	collations, ok := coreCap["collationAlgorithms"].([]any)
+	if !ok {
+		t.Fatalf("collationAlgorithms = %v, want an array", coreCap["collationAlgorithms"])
+	}
+	if len(collations) != 0 {
+		t.Errorf("collationAlgorithms = %v, want empty: Email/query refuses every explicit collation",
+			collations)
+	}
+
 	primary := asObject(t, obj["primaryAccounts"], "primaryAccounts")
 	if primary[jmap.CapMail] != "a7" {
 		t.Fatalf("primaryAccounts = %v", primary)

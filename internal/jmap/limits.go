@@ -70,10 +70,22 @@ func DefaultLimits() Limits {
 // the Session (RFC 8620 §2) from these limits — the same fields the engine
 // and the HTTP layer enforce, by construction.
 //
-// collationAlgorithms is the RFC 4790 collation list. Phase 1 implements no
-// /query methods at all, so Moov truthfully advertises none; J3 extends this
-// when Email/query lands with its real comparator support (regla: never
-// advertise what is not enforced).
+// collationAlgorithms is the RFC 4790 collation list, and it stays EMPTY now
+// that Email/query exists (J3) — because an empty list is the truthful answer,
+// not a leftover stub.
+//
+// RFC 8620 §5.5 attaches a collation to a Comparator, and says: "When the
+// property being compared is not a string, the 'collation' property is
+// ignored". Both sorts this server implements compare non-strings —
+// "receivedAt" is a Date and "relevance" is a Number — so no collation
+// algorithm is ever consulted, and advertising one would claim a string
+// ordering the server never performs.
+//
+// mail.translateSort refuses any explicitly requested collation with
+// unsupportedSort, which is what keeps this array and the handler in agreement.
+// A string-ordered comparator (subject, from) would need both an index in the
+// store and a real collation here; neither exists, and they arrive together or
+// not at all.
 func (l Limits) CoreCapability() map[string]any {
 	return map[string]any{
 		"maxSizeUpload":         l.MaxSizeUpload,

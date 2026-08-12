@@ -94,10 +94,11 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, fata
 		return nil, fmt.Errorf("building jmap server: %w", err)
 	}
 
-	// The mail methods (J2: the get family). J3 adds RegisterQueryMethods
-	// here, over the same Deps. Registration must happen before Handler() is
-	// mounted, which is why it sits above the http.Server construction.
+	// The mail methods: J2's get family and J3's query/changes family, over the
+	// same Deps. Registration must happen before Handler() is mounted, which is
+	// why it sits above the http.Server construction.
 	mail.RegisterGetMethods(srv.Registry(), deps)
+	mail.RegisterQueryMethods(srv.Registry(), deps)
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),

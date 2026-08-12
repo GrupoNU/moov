@@ -52,7 +52,11 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 		Threads:   a,
 		Blobs:     a,
 		State:     a,
-		Limits:    limits,
+		// J3's readers are the same adapter: Search goes through the store's
+		// typed repertoire and Changes through the sync_log/message_state feed.
+		Search:  a,
+		Changes: a,
+		Limits:  limits,
 	}, nil
 }
 

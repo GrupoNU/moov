@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/GrupoNU/moov/internal/jmap"
+	"github.com/GrupoNU/moov/internal/jmap/mail"
 	"github.com/GrupoNU/moov/internal/version"
 )
 
@@ -96,10 +97,31 @@ func mailAccountCapability() map[string]any {
 		// No Email creation in phase 1; 25 MB mirrors the Mailcow default
 		// message size ceiling the future submission path inherits.
 		"maxSizeAttachmentsPerEmail": 25_000_000,
-		// Email/query does not exist until J3; advertising sort options for
-		// a method the server does not have would be a lie. J3 fills this
-		// with its real comparator support (receivedAt first, per S3 H5).
-		"emailQuerySortOptions": []string{},
+		// The sort properties Email/query actually accepts — exactly what
+		// mail.translateSort implements, no more (J1's declared == applied
+		// rule, applied to comparators).
+		//
+		// "receivedAt" is the one RFC 8621 §4.4.2 says MUST be supported, and
+		// it is the store's native date order (S3 shape #1, 9.3 ms p95).
+		//
+		// "relevance" is not an RFC 8621 property name: §4.4.2 permits extra
+		// ones ("The server MAY support sorting based on other properties as
+		// well. A client can discover which properties are supported by
+		// inspecting the account's capabilities object"), and this server
+		// deliberately does NOT name it after any standard property, because
+		// what it implements is relevance within a bounded recent window
+		// (store.RankCandidateWindow = 200, S3 mitigation #102) rather than a
+		// general relevance sort. Advertising it under a standard name would
+		// promise the unbounded version that measured 892 ms p95.
+		//
+		// The §4.4.2 SHOULD list (size, from, to, subject, sentAt, hasKeyword
+		// and the inThread variants) is absent because the store has no index
+		// that orders by them — advertising them would be the lie this array
+		// exists to avoid.
+		"emailQuerySortOptions": []string{
+			mail.SortReceivedAt,
+			mail.SortRelevance,
+		},
 		// Read-only server: nobody may create mailboxes (§1.3.1).
 		"mayCreateTopLevelMailbox": false,
 	}
