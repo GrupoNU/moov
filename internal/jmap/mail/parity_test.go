@@ -117,18 +117,19 @@ func TestParityMailboxProperties(t *testing.T) {
 	}
 }
 
-// TestParityMailboxRightsDivergence records the ONE deliberate difference in
-// myRights, so that a future change back to the oracle's shape is noticed.
+// TestParityMailboxRightsDivergence records the remaining deliberate
+// difference in myRights, so that a future change back to the oracle's shape
+// is noticed.
 //
-// EXPECTED DIVERGENCE (classified in the J2 report):
+// Since W1 the message-level rights AGREE with the oracle: Email/set is real,
+// so mayAddItems/mayRemoveItems/maySetSeen/maySetKeywords are true here as
+// they are in jmap-perl. What still diverges (classified in the J2 report,
+// updated by W1):
 //
-//	jmap-perl reports mayAddItems/mayRemoveItems/maySetSeen/... as TRUE and
-//	adds a non-standard "mayAdmin" member. Moov reports every mutation right
-//	as false, because the phase-1 server is genuinely read-only, and omits
-//	mayAdmin because RFC 8621 §2 does not define it.
-//
-// Ours is the correct behavior for this phase: a client that believes it may
-// add items will offer an action that silently fails.
+//	jmap-perl adds a non-standard "mayAdmin" member, which Moov omits because
+//	RFC 8621 §2 does not define it; and Moov still reports the
+//	mailbox-mutation rights (mayCreateChild/mayRename/mayDelete) and
+//	maySubmit as false, because Mailbox/set is W2 and submission is W3.
 func TestParityMailboxRightsDivergence(t *testing.T) {
 	dir := parityDir(t)
 	oracle := loadOracle(t, dir, "mailbox-get.json")
@@ -167,16 +168,15 @@ func TestParityMailboxRightsDivergence(t *testing.T) {
 		}
 	}
 
-	// The divergence, asserted as expected rather than as a failure.
+	// The agreement W1 restored, and the divergence that remains.
 	if ourRights["mayReadItems"] != true {
 		t.Error("mayReadItems must be true: the server does serve mail")
 	}
-	if ourRights["mayAddItems"] {
-		t.Error("mayAddItems must be false while the server is read-only")
+	if !ourRights["mayAddItems"] || !ourRights["mayRemoveItems"] {
+		t.Error("mayAddItems/mayRemoveItems must be true since W1: Email/set moves and destroys are real")
 	}
-	if oracleRights["mayAddItems"] && !ourRights["mayAddItems"] {
-		t.Logf("EXPECTED DIVERGENCE: the oracle grants mayAddItems=true, " +
-			"Moov reports false because phase 1 cannot write (L2 §1)")
+	if oracleRights["mayAddItems"] && ourRights["mayAddItems"] {
+		t.Logf("W1 closed the phase-1 divergence: both the oracle and Moov grant mayAddItems")
 	}
 	if _, ok := ourRights["mayAdmin"]; ok {
 		t.Error(`we emit "mayAdmin", which RFC 8621 §2 does not define`)

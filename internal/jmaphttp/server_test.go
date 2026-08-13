@@ -415,7 +415,8 @@ func TestSessionObjectShape(t *testing.T) {
 		t.Fatalf("session must contain exactly the caller's account, got %d", len(accounts))
 	}
 	acct := asObject(t, accounts["a7"], "accounts.a7")
-	if acct["name"] != "user@example.com" || acct["isPersonal"] != true || acct["isReadOnly"] != true {
+	// isReadOnly false since W1: Email/set really mutates (L2-jmap-write §3).
+	if acct["name"] != "user@example.com" || acct["isPersonal"] != true || acct["isReadOnly"] != false {
 		t.Fatalf("account object = %v", acct)
 	}
 	acctCaps := asObject(t, acct["accountCapabilities"], "accountCapabilities")
@@ -430,7 +431,13 @@ func TestSessionObjectShape(t *testing.T) {
 		}
 	}
 	if mailCap["mayCreateTopLevelMailbox"] != false {
-		t.Fatal("a read-only server must not offer mailbox creation")
+		t.Fatal("mailbox creation is W2; advertising it before Mailbox/set exists would be a lie")
+	}
+	// The one-mailbox constraint W1 enforces must be advertised (§1.3.1;
+	// declared == applied). JSON numbers decode as float64.
+	if mailCap["maxMailboxesPerEmail"] != float64(1) {
+		t.Fatalf("maxMailboxesPerEmail = %v, want 1 (IMAP folder semantics, enforced by Email/set)",
+			mailCap["maxMailboxesPerEmail"])
 	}
 
 	// The advertised sort options must be exactly the ones Email/query

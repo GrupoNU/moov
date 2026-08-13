@@ -126,19 +126,22 @@ func TestMailboxGetReturnsAllStandardProperties(t *testing.T) {
 	if !ok {
 		t.Fatalf("myRights is %T", mb["myRights"])
 	}
-	// Read-only and truthful: exactly one right is true.
-	if rights["mayReadItems"] != true {
-		t.Error("mayReadItems must be true")
-	}
+	// Truthful per W1 (L2-jmap-write §3): the rights Email/set actually
+	// honors are true, and ONLY those — mailbox mutation is W2, submission
+	// is W3.
 	for _, r := range []string{
-		"mayAddItems", "mayRemoveItems", "maySetSeen", "maySetKeywords",
-		"mayCreateChild", "mayRename", "mayDelete", "maySubmit",
+		"mayReadItems", "mayAddItems", "mayRemoveItems", "maySetSeen", "maySetKeywords",
 	} {
-		if rights[r] != false {
-			t.Errorf("%s = %v, want false (the phase-1 server cannot mutate)", r, rights[r])
+		if rights[r] != true {
+			t.Errorf("%s = %v, want true (Email/set implements it since W1)", r, rights[r])
 		}
 	}
-	// All nine members of MailboxRights are present, not just the false ones.
+	for _, r := range []string{"mayCreateChild", "mayRename", "mayDelete", "maySubmit"} {
+		if rights[r] != false {
+			t.Errorf("%s = %v, want false (Mailbox/set is W2, submission is W3)", r, rights[r])
+		}
+	}
+	// All nine members of MailboxRights are present, not just the true ones.
 	if len(rights) != 9 {
 		t.Errorf("myRights has %d members, want the 9 of RFC 8621 §2", len(rights))
 	}

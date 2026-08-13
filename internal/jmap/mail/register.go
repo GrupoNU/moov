@@ -28,6 +28,11 @@ type Deps struct {
 	// Changes feeds Email/changes and Mailbox/changes (J3).
 	Changes ChangesReader
 
+	// Writer applies Email/set mutations (W1). It stays nil on a read-only
+	// deployment, in which case RegisterSetMethods must not be called — the
+	// session then keeps advertising the truth the old way.
+	Writer EmailWriter
+
 	// SearchWindow overrides how deep Email/query looks. The zero value means
 	// DefaultSearchWindow, which is the store's own cap; tests set it smaller
 	// to exercise the truncation paths without seeding 200 messages.
@@ -117,4 +122,24 @@ func RegisterQueryMethods(registry *jmap.Registry, deps *Deps) {
 	registry.Register("Mailbox/changes", jmap.CapMail, deps.handleMailboxChanges)
 	registry.Register("Email/queryChanges", jmap.CapMail, deps.handleEmailQueryChanges)
 	registry.Register("Mailbox/queryChanges", jmap.CapMail, deps.handleMailboxQueryChanges)
+}
+
+// RegisterSetMethods registers the write-family mail methods (W1: Email/set).
+//
+// Separate from the get and query families for the same reason those are
+// separate from each other: disjoint epics, independently mountable, and a
+// read-only deployment simply never calls this. W2 adds Mailbox/set here.
+//
+// It panics on a nil Writer, matching the other registrars: a /set surface
+// with nothing to write through is a wiring bug that must fail at startup,
+// never at the first click that tries to archive a message.
+func RegisterSetMethods(registry *jmap.Registry, deps *Deps) {
+	if registry == nil || deps == nil {
+		panic("mail: RegisterSetMethods requires a registry and deps")
+	}
+	if deps.Writer == nil || deps.Emails == nil || deps.State == nil {
+		panic("mail: RegisterSetMethods requires Writer, Emails and State")
+	}
+
+	registry.Register("Email/set", jmap.CapMail, deps.handleEmailSet)
 }

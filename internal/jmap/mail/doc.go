@@ -12,13 +12,19 @@
 // interfaces, never on *store.Store, which is what makes them testable with
 // fakes and what keeps a future store change from reaching into protocol code.
 //
-// # Phase 1 is read-only and truthful about it
+// # Rights are truthful, phase by phase
 //
-// Every Mailbox reports myRights with mayReadItems true and every mutation
-// right false (RFC 8621 §2). That is not a placeholder: this server genuinely
-// cannot mutate anything yet, and advertising a right it does not honor would
-// make a client offer its user an action that silently fails. The rights
-// become dynamic when Email/set lands, not before.
+// A myRights member is true exactly when a registered method honors it
+// (RFC 8621 §2 — rights are what a client builds its UI from). Phase 1 was
+// read-only and said so; since W1, Email/set makes the message-level rights
+// (mayAddItems, mayRemoveItems, maySetSeen, maySetKeywords) real, while the
+// mailbox-mutation rights and maySubmit stay false until W2/W3 land
+// (mailbox.go writableRights).
+//
+// The write side follows the same layering as the read side: handlers speak
+// to the EmailWriter interface (write.go), and the only file that knows the
+// sync engine's write executor implements it is write_adapter.go — the JMAP
+// layer never touches internal/imap (L2-jmap-write §4).
 //
 // # The load-bearing decisions, each cited where it is implemented
 //

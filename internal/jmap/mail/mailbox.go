@@ -33,17 +33,25 @@ var mailboxProperties = map[string]bool{
 	"isSubscribed":  true,
 }
 
-// mailboxRights is the myRights value every mailbox reports in phase 1.
+// mailboxRights is the myRights value every mailbox reports.
 //
-// RFC 8621 §2 defines MailboxRights with nine boolean members. This server is
-// read-only (L2 §1), so exactly one of them is true. That is a truthful
-// statement about what this server can do, not a placeholder: a client that
-// sees mayAddItems true will offer its user a drag-and-drop that would fail
-// silently, and RFC 8621 §2 is explicit that these rights are what the client
-// uses to decide which actions to present.
+// RFC 8621 §2 defines MailboxRights with nine boolean members, and is
+// explicit that these rights are what the client uses to decide which
+// actions to present — so the rule here (regla J1) is that a right is true
+// exactly when a registered method actually honors it. The truth as of W1
+// (Email/set):
 //
-// The J-later epic that lands Email/set replaces this constant with rights
-// derived from the account's real ACLs.
+//   - mayReadItems: the read families of J2/J3.
+//   - maySetSeen / maySetKeywords: Email/set keywords, both forms.
+//   - mayAddItems / mayRemoveItems: §2 defines them as adding/removing "the
+//     ids of Emails to/from this Mailbox (by either creating a new Email or
+//     MOVING an existing one)" — Email/set mailboxIds moves are real, and
+//     destroy removes (W-A2). Email CREATION is still refused (W3), which a
+//     client discovers per-call; the alternative — advertising
+//     mayAddItems:false — would hide the moves that DO work behind a right
+//     the RFC scopes to both.
+//   - mayCreateChild / mayRename / mayDelete: false until Mailbox/set (W2).
+//   - maySubmit: false until EmailSubmission (W3).
 type mailboxRights struct {
 	MayReadItems   bool `json:"mayReadItems"`
 	MayAddItems    bool `json:"mayAddItems"`
@@ -56,9 +64,15 @@ type mailboxRights struct {
 	MaySubmit      bool `json:"maySubmit"`
 }
 
-// readOnlyRights is the phase-1 answer for every mailbox.
-func readOnlyRights() mailboxRights {
-	return mailboxRights{MayReadItems: true}
+// writableRights is the phase-2 (W1) answer for every mailbox.
+func writableRights() mailboxRights {
+	return mailboxRights{
+		MayReadItems:   true,
+		MayAddItems:    true,
+		MayRemoveItems: true,
+		MaySetSeen:     true,
+		MaySetKeywords: true,
+	}
 }
 
 // handleMailboxGet implements Mailbox/get.
@@ -160,7 +174,7 @@ func renderMailbox(row MailboxRow, props map[string]bool) map[string]any {
 		out["unreadThreads"] = row.UnreadThreads
 	}
 	if wants(props, "myRights") {
-		out["myRights"] = readOnlyRights()
+		out["myRights"] = writableRights()
 	}
 	if wants(props, "isSubscribed") {
 		out["isSubscribed"] = row.IsSubscribed

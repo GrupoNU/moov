@@ -37,6 +37,28 @@ type fakeReaders struct {
 
 	state string
 	err   error // when set, every read fails with it
+
+	// W1: the recorded write calls, and the error every write fails with
+	// when set. A successful write advances the state string, so a test can
+	// prove oldState/newState bracket the call's own effects.
+	flagCalls    []fakeFlagsCall
+	moveCalls    []fakeMoveCall
+	destroyCalls []int64
+	writeErr     error
+}
+
+// fakeFlagsCall is one recorded SetFlags invocation.
+type fakeFlagsCall struct {
+	accountID int64
+	messageID int64
+	change    FlagsChange
+}
+
+// fakeMoveCall is one recorded Move invocation.
+type fakeMoveCall struct {
+	accountID int64
+	messageID int64
+	mailboxID int64
 }
 
 func newFakeReaders() *fakeReaders {
@@ -219,12 +241,69 @@ func (f *fakeReaders) MailboxesTouchedSince(_ context.Context, _ int64, _ time.T
 	return f.mailboxCountChanges, f.mailboxRowChanges, nil
 }
 
+// ---- EmailWriter (W1) ------------------------------------------------------
+
+// advanceState marks that a write landed, so the /set state strings move the
+// way the real StateReader's watermark does.
+func (f *fakeReaders) advanceState() {
+	f.state = f.state + "'"
+}
+
+func (f *fakeReaders) SetFlags(_ context.Context, accountID, messageID int64, change FlagsChange) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	f.flagCalls = append(f.flagCalls, fakeFlagsCall{accountID: accountID, messageID: messageID, change: change})
+	f.advanceState()
+	return nil
+}
+
+func (f *fakeReaders) Move(_ context.Context, accountID, messageID, mailboxID int64) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	// Scoped like the real writer: an unknown or foreign mailbox is absent.
+	owned := false
+	for _, m := range f.mailboxes[accountID] {
+		if m.ID == mailboxID {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		return ErrNotFound
+	}
+	f.moveCalls = append(f.moveCalls, fakeMoveCall{accountID: accountID, messageID: messageID, mailboxID: mailboxID})
+	f.advanceState()
+	return nil
+}
+
+func (f *fakeReaders) Destroy(_ context.Context, accountID, messageID int64) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	owned := false
+	for _, e := range f.emails[accountID] {
+		if e.ID == messageID {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		return ErrNotFound
+	}
+	f.destroyCalls = append(f.destroyCalls, messageID)
+	f.advanceState()
+	return nil
+}
+
 // deps builds a Deps over the fakes, with the real default limits so the
 // maxObjectsInGet path is exercised with production values.
 func (f *fakeReaders) deps() *Deps {
 	return &Deps{
 		Mailboxes: f, Emails: f, Threads: f, Blobs: f, State: f,
 		Search: f, Changes: f, SearchWindow: f.searchWindow,
+		Writer: f,
 		Limits: jmap.DefaultLimits(),
 	}
 }

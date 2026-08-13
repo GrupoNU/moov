@@ -108,6 +108,19 @@ type fakeServer struct {
 	// connectErr, when set, makes the connector fail, so a test can drive the
 	// backoff and the breaker without a real socket.
 	connectErr error
+
+	// ---- W1 ----------------------------------------------------------------
+
+	// storeErr / moveErr / expungeErr, when set, fail the corresponding write
+	// command — the injection the Dovecot-first ordering tests use to prove
+	// the store is untouched when IMAP fails.
+	storeErr   error
+	moveErr    error
+	expungeErr error
+
+	// noCopyUID suppresses the COPYUID mapping a MOVE returns, modeling a
+	// server without UIDPLUS so the degraded reflection path is testable.
+	noCopyUID bool
 }
 
 func newFakeServer() *fakeServer { return &fakeServer{} }
@@ -122,10 +135,15 @@ func (s *fakeServer) mailbox(name string) *fakeMailbox {
 }
 
 // addMailbox registers a folder.
+//
+// A brand-new mailbox starts at HIGHESTMODSEQ 1, matching Dovecot: an empty
+// folder still has a modseq, which is what lets the incremental path own it
+// after the initial sync instead of treating it as never-synced. seedMailbox
+// raises it past the seeded messages.
 func (s *fakeServer) addMailbox(name string, role imap.MailboxRole, uidValidity uint32) *fakeMailbox {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	mb := &fakeMailbox{name: name, role: role, uidValidity: uidValidity}
+	mb := &fakeMailbox{name: name, role: role, uidValidity: uidValidity, highestModSeq: 1}
 	s.mailboxes = append(s.mailboxes, mb)
 	return mb
 }
@@ -208,6 +226,11 @@ func (c *fakeClient) SelectQResync(_ context.Context, mailbox string, uidValidit
 	c.srv.mu.Lock()
 	defer c.srv.mu.Unlock()
 
+	if c.closed {
+		// A dead connection fails its next command, which is what the write
+		// executor's self-healing SELECT probe depends on (W1).
+		return imap.SelectResult{}, imap.ErrNotConnected
+	}
 	mb := c.srv.mailbox(mailbox)
 	if mb == nil {
 		return imap.SelectResult{}, fmt.Errorf("fake: no such mailbox %q", mailbox)
@@ -292,26 +315,51 @@ func (c *fakeClient) Watch(ctx context.Context, spec imap.WatchSpec) (<-chan ima
 	return c.watch(ctx, spec)
 }
 
-// StoreFlags applies a flag delta server-side, which the incremental tests use
-// to model another client changing flags.
-func (c *fakeClient) StoreFlags(_ context.Context, uids []imap.UID, delta imap.FlagDelta, _ imap.ModSeq) (imap.StoreResult, error) {
+// StoreFlags applies a flag delta server-side. Since W1 it models the whole
+// contract the write executor depends on: the three RFC 3501 §6.4.6
+// operations, the RFC 7162 UNCHANGEDSINCE refusal (a rejected message is
+// named in Rejected, never an error — the silent-write hazard of S2 H6), and
+// Dovecot's behavior of bumping a modseq only when the flags actually
+// changed, which is what the executor's no-op and echo reasoning rest on.
+func (c *fakeClient) StoreFlags(_ context.Context, uids []imap.UID, delta imap.FlagDelta, unchangedSince imap.ModSeq) (imap.StoreResult, error) {
 	c.srv.mu.Lock()
-	defer c.srv.mu.Unlock()
 
-	if c.selected == nil {
-		return imap.StoreResult{}, imap.ErrNoMailboxSelected
+	if err := c.srv.storeErr; err != nil {
+		c.srv.mu.Unlock()
+		return imap.StoreResult{}, err
 	}
-	if delta.Op != imap.FlagsSet {
-		return imap.StoreResult{}, fmt.Errorf("fake: only FlagsSet is modeled, got %s", delta.Op)
+	if c.selected == nil {
+		c.srv.mu.Unlock()
+		return imap.StoreResult{}, imap.ErrNoMailboxSelected
 	}
 
 	var out imap.StoreResult
+	changed := false
 	for _, u := range uids {
-		if c.selected.setFlags(u, delta.Flags, nil) {
+		msg := c.selected.find(u)
+		if msg == nil {
+			continue
+		}
+		if unchangedSince > 0 && msg.modSeq > unchangedSince {
+			out.Rejected = append(out.Rejected, u)
+			continue
+		}
+		if c.selected.applyDelta(msg, delta) {
 			out.Updated = append(out.Updated, u)
+			changed = true
 		}
 	}
 	out.HighestModSeq = c.selected.highestModSeq
+	mailbox := c.selected.name
+	status := c.selected.statusFor()
+	c.srv.mu.Unlock()
+
+	if changed {
+		// The echo: a real Dovecot notifies the account's watcher about its
+		// own write, and W1's convergence claim is tested against exactly
+		// this.
+		c.srv.notify(mailbox, status)
+	}
 	return out, nil
 }
 

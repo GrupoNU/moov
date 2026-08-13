@@ -183,6 +183,58 @@ func imapFlagKeyword(k string) (string, bool) {
 	}
 }
 
+// imapNameForKeyword maps a JMAP keyword to the flag vocabulary the sync
+// engine writes to Dovecot: the four system keywords of RFC 8621 §4.1.1
+// become the bare flag names internal/imap re-attaches the backslash to
+// ("$seen" -> "seen"), and everything else travels verbatim as an IMAP user
+// keyword — which is exactly how it will come back through splitFlags and be
+// re-rendered by jmapKeywords, closing the round trip.
+//
+// "$"-prefixed keywords are lowercased, mirroring what jmapKeywords does on
+// the way out (RFC 8621 §4.1.1 keeps the standard keywords lowercase);
+// user-cased keywords are preserved, since IMAP matches flags
+// case-insensitively anyway (RFC 3501 §2.3.2).
+func imapNameForKeyword(k string) string {
+	switch strings.ToLower(k) {
+	case KeywordSeen:
+		return "seen"
+	case KeywordAnswered:
+		return "answered"
+	case KeywordFlagged:
+		return "flagged"
+	case KeywordDraft:
+		return "draft"
+	}
+	if strings.HasPrefix(k, "$") {
+		return strings.ToLower(k)
+	}
+	return k
+}
+
+// validKeyword enforces the RFC 8621 §4.1.1 keyword grammar: "The IANA
+// 'IMAP and JMAP Keywords' registry... keywords... MUST be at least 1
+// character in length and MUST NOT be larger than 255 octets", and "MUST NOT
+// contain any of the following characters: ( ) { ] % * \" \\" nor control
+// characters — the IMAP atom-specials a flag can never carry (RFC 3501
+// §9). A keyword this refuses could never reach Dovecot as a flag, so
+// refusing it here with invalidProperties beats a protocol error later.
+func validKeyword(k string) bool {
+	if len(k) == 0 || len(k) > 255 {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if c <= 0x1f || c == 0x7f || c == ' ' {
+			return false
+		}
+		switch c {
+		case '(', ')', '{', ']', '%', '*', '"', '\\':
+			return false
+		}
+	}
+	return true
+}
+
 // keywordSet renders a keyword list as the JSON object RFC 8621 §4.1.1
 // requires: "a set of keywords... A set is represented as an object with the
 // keys as the set's members and true as the value for each".

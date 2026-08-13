@@ -413,9 +413,9 @@ func TestConformanceForeignAccountIsRejected(t *testing.T) {
 // names why, and what closes it.
 func TestConformancePhase2Gaps(t *testing.T) {
 	gaps := []struct{ name, reason string }{
-		{"Email_set", "writes are phase 2 (L2 §1 no-scope); the session advertises isReadOnly:true. " +
-			"THIS is what blocks the official jmapio suite, whose setup deletes the account first"},
-		{"Mailbox_set", "writes are phase 2; mayCreateTopLevelMailbox is advertised false"},
+		{"Email_set_create", "W1 implements Email/set update/destroy; create (drafts) answers " +
+			"notCreated serverUnavailable until the outbox epic (W3) lands"},
+		{"Mailbox_set", "mailbox mutation is W2; mayCreateTopLevelMailbox is advertised false"},
 		{"EmailSubmission", "submission is phase 2; the capability is deliberately NOT advertised, " +
 			"which is why Bulwark's Identity/get gets unknownCapability (observed, benign)"},
 		{"Blob_upload", "uploadUrl is advertised but answers 501 in phase 1"},

@@ -293,6 +293,28 @@ type StoreResult struct {
 // Conflicted reports whether the server refused part of the write.
 func (r StoreResult) Conflicted() bool { return len(r.Rejected) > 0 }
 
+// MoveResult reports the outcome of Move.
+//
+// The mapping comes from the COPYUID response code (RFC 4315 §3), which pairs
+// the nth source UID with the nth destination UID. It is what lets the sync
+// engine reflect a move as an UPDATE of message_state instead of tombstoning
+// the source and re-downloading the destination.
+type MoveResult struct {
+	// DestUIDValidity is the destination mailbox's UIDVALIDITY as reported by
+	// COPYUID, or 0 when the server gave none.
+	DestUIDValidity uint32
+
+	// DestUIDs maps each moved source UID to the UID the message received in
+	// the destination mailbox. nil when the server reported no usable COPYUID
+	// (no UIDPLUS, or a set too large to expand), in which case the caller
+	// must fall back to letting the ordinary sync discover the destination
+	// copy.
+	DestUIDs map[UID]UID
+}
+
+// Mapped reports whether the server told us where the messages landed.
+func (r MoveResult) Mapped() bool { return len(r.DestUIDs) > 0 }
+
 // EventKind classifies a Watch event.
 type EventKind int
 

@@ -135,38 +135,11 @@ func (m *MailboxMutator) Append(ctx context.Context, mailbox string, raw []byte,
 
 // Expunge permanently removes the given UIDs from the selected mailbox.
 //
-// It sets \Deleted and then issues UID EXPUNGE, which is the surgical form: a
-// bare EXPUNGE would also remove messages another client had marked \Deleted
-// and not yet expunged, which in a shared test mailbox means deleting somebody
-// else's fixture.
+// Since W1 this is the production primitive Client.Expunge (move.go), which
+// carries the same \Deleted + UID EXPUNGE discipline this helper always had;
+// the mutator delegates rather than duplicating it.
 func (m *MailboxMutator) Expunge(ctx context.Context, uids []UID) error {
-	if len(uids) == 0 {
-		return nil
-	}
-	gc, err := m.cl.conn()
-	if err != nil {
-		return err
-	}
-	if _, err := m.cl.selectedMailbox(); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	set := uidSetFromUIDs(uids)
-	if err := gc.Store(set, &goimap.StoreFlags{
-		Op:     goimap.StoreFlagsAdd,
-		Silent: true,
-		Flags:  []goimap.Flag{goimap.FlagDeleted},
-	}, nil).Close(); err != nil {
-		return fmt.Errorf("imap: marking %d messages deleted: %w", len(uids), err)
-	}
-
-	if err := gc.UIDExpunge(set).Close(); err != nil {
-		return fmt.Errorf("imap: UID EXPUNGE: %w", err)
-	}
-	return nil
+	return m.cl.Expunge(ctx, uids)
 }
 
 // Select selects a mailbox plainly, so a mutation that needs a selection has

@@ -41,10 +41,11 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 //   - accounts contains exactly the caller's own account. Basic auth
 //     authenticates one mailbox owner; there are no shared or delegated
 //     accounts in phase 1, so isPersonal is true by construction.
-//   - isReadOnly is true: the phase-1 server registers no method that can
-//     modify state (L2 §1 — read-only by design), and §2 defines the flag as
-//     "true if the entire account is read-only". This flips when the write
-//     phase lands.
+//   - isReadOnly is false since W1: Email/set is registered and really
+//     mutates the mailbox (flags, moves, destroy per W-A2). §2 defines the
+//     flag as "true if the entire account is read-only", which stopped being
+//     the truth the moment the write core landed — this is the "myRights e
+//     isReadOnly pasan a decir la verdad nueva" flip of L2-jmap-write §3.
 func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 	return map[string]any{
 		"capabilities": map[string]any{
@@ -58,7 +59,7 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 			id.AccountID: map[string]any{
 				"name":       id.Account.Email,
 				"isPersonal": true,
-				"isReadOnly": true,
+				"isReadOnly": false,
 				"accountCapabilities": map[string]any{
 					jmap.CapMail: mailAccountCapability(),
 				},
@@ -85,10 +86,13 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 // object (RFC 8621 §1.3.1), with phase-1-truthful values.
 func mailAccountCapability() map[string]any {
 	return map[string]any{
-		// null means no limit (§1.3.1). Moov imposes none of its own: the
-		// A6 label model maps labels onto keywords, and mailbox membership
-		// mirrors IMAP, where a message lives in one folder.
-		"maxMailboxesPerEmail": nil,
+		// A message lives in EXACTLY one mailbox: membership mirrors IMAP,
+		// where a message is a (folder, UID) pair, and the A6 label model
+		// puts Gmail-style multi-membership on keywords instead. Since W1
+		// this is enforced — Email/set rejects a multi-mailbox update with
+		// invalidProperties — so §1.3.1 requires advertising it: declared ==
+		// applied, the same J1 rule as every other limit here.
+		"maxMailboxesPerEmail": 1,
 		"maxMailboxDepth":      nil,
 		// "MUST be at least 100" (§1.3.1). 255 matches what Dovecot accepts
 		// for one mailbox name component in practice; with no Mailbox/set in

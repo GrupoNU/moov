@@ -108,6 +108,33 @@ type Client interface {
 	// StoreResult.Conflicted.
 	StoreFlags(ctx context.Context, uids []UID, delta FlagDelta, unchangedSince ModSeq) (StoreResult, error)
 
+	// Move moves the given UIDs from the selected mailbox to dest (RFC 6851).
+	//
+	// On a server without MOVE the equivalent COPY + STORE \Deleted +
+	// UID EXPUNGE sequence of RFC 6851 §4.1 is used — but only when UIDPLUS is
+	// available, because the fallback would otherwise degrade to a bare
+	// EXPUNGE, which also removes messages OTHER clients marked \Deleted.
+	// Rather than risk collateral expunges, a server with neither extension
+	// gets ErrMissingCapability.
+	//
+	// MoveResult carries the COPYUID mapping (RFC 4315 §3) when the server
+	// provides one, which is what lets the caller reflect the move locally
+	// without re-downloading the message (W1, L2-jmap-write §4).
+	Move(ctx context.Context, uids []UID, dest string) (MoveResult, error)
+
+	// Expunge permanently removes the given UIDs from the selected mailbox:
+	// STORE +FLAGS.SILENT \Deleted, then UID EXPUNGE (RFC 4315 §2.1).
+	//
+	// UID EXPUNGE rather than EXPUNGE is a correctness requirement, not a
+	// preference: a bare EXPUNGE removes every message any client has marked
+	// \Deleted, which in a mailbox shared with other IMAP clients means
+	// destroying messages this caller was never asked about. A server without
+	// UIDPLUS therefore gets ErrMissingCapability instead of a degraded path.
+	//
+	// This is the W-A2 destroy-inside-Trash primitive (L2-jmap-write §2) and
+	// the only production path that removes mail irrecoverably.
+	Expunge(ctx context.Context, uids []UID) error
+
 	// Metadata returns the METADATA operations for label definitions (A6).
 	// The returned value borrows the connection and must not outlive it.
 	Metadata() MetadataOps

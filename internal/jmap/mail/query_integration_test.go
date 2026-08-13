@@ -60,6 +60,11 @@ func (f *fixture) invokeQuery(t *testing.T, method, args string) jmap.Invocation
 	registry := jmap.NewRegistry()
 	mail.RegisterGetMethods(registry, f.deps)
 	mail.RegisterQueryMethods(registry, f.deps)
+	if f.deps.Writer != nil {
+		// The write family mounts only when a fixture wires a writer (the W1
+		// integration suite); the read-only fixtures keep their exact surface.
+		mail.RegisterSetMethods(registry, f.deps)
+	}
 
 	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
 		[]string{jmap.CapCore, jmap.CapMail}, nil)

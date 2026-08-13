@@ -10,11 +10,13 @@ import (
 
 	"github.com/GrupoNU/moov/internal/blob"
 	"github.com/GrupoNU/moov/internal/config"
+	"github.com/GrupoNU/moov/internal/crypto"
 	"github.com/GrupoNU/moov/internal/jmap"
 	"github.com/GrupoNU/moov/internal/jmap/mail"
 	"github.com/GrupoNU/moov/internal/jmaphttp"
 	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
+	syncengine "github.com/GrupoNU/moov/internal/sync"
 )
 
 // The JMAP server's wiring (J1, L2-jmap-server §2.1): same daemon as the sync
@@ -26,6 +28,7 @@ type jmapComponents struct {
 	store  *store.Store
 	server *http.Server
 	ln     net.Listener
+	writer *syncengine.WriteExecutor
 	log    *slog.Logger
 }
 
@@ -83,6 +86,32 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		return nil, fmt.Errorf("building jmap mail dependencies: %w", err)
 	}
 
+	// The write path (W1). Email/set applies to Dovecot through the sync
+	// engine's write executor, which needs the credential keyring to open
+	// per-account IMAP connections — the same fail-fast rule as startSync:
+	// a JMAP server that advertises writes it cannot perform would be lying
+	// to every client, so a missing keyring stops the daemon at startup with
+	// the real cause instead of failing every /set at runtime.
+	keyring, err := crypto.LoadKeyring()
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("loading the master keyring for jmap writes: %w", err)
+	}
+	dialer := &accountDialer{keyring: keyring, serverName: cfg.JMAP.IMAPServerName, logger: logger}
+	writer, err := syncengine.NewWriteExecutor(st, syncengine.ConnectorFunc(dialer.connect),
+		syncengine.WriteOptions{Logger: logger})
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("building the write executor: %w", err)
+	}
+	writerAdapter, err := mail.NewWriterAdapter(writer)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, fmt.Errorf("building the writer adapter: %w", err)
+	}
+	deps.Writer = writerAdapter
+
 	srv, err := jmaphttp.New(jmaphttp.Config{
 		BaseURL:        cfg.JMAP.ExternalURL,
 		AllowedOrigins: cfg.JMAP.CORSOrigins,
@@ -92,15 +121,18 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		Metrics:        m,
 	}, auth)
 	if err != nil {
+		writer.Close()
 		st.Close()
 		return nil, fmt.Errorf("building jmap server: %w", err)
 	}
 
-	// The mail methods: J2's get family and J3's query/changes family, over the
-	// same Deps. Registration must happen before Handler() is mounted, which is
-	// why it sits above the http.Server construction.
+	// The mail methods: J2's get family, J3's query/changes family and W1's
+	// set family, over the same Deps. Registration must happen before
+	// Handler() is mounted, which is why it sits above the http.Server
+	// construction.
 	mail.RegisterGetMethods(srv.Registry(), deps)
 	mail.RegisterQueryMethods(srv.Registry(), deps)
+	mail.RegisterSetMethods(srv.Registry(), deps)
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -112,6 +144,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 
 	ln, err := net.Listen("tcp", cfg.JMAP.Addr)
 	if err != nil {
+		writer.Close()
 		st.Close()
 		return nil, fmt.Errorf("binding jmap listener on %s: %w", cfg.JMAP.Addr, err)
 	}
@@ -128,11 +161,12 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		"cors_origins", len(cfg.JMAP.CORSOrigins),
 		"imap_host", cfg.JMAP.IMAPHost,
 	)
-	return &jmapComponents{store: st, server: httpSrv, ln: ln, log: logger}, nil
+	return &jmapComponents{store: st, server: httpSrv, ln: ln, writer: writer, log: logger}, nil
 }
 
-// shutdown drains the JMAP server within ctx's deadline, then releases its
-// store.
+// shutdown drains the JMAP server within ctx's deadline, then releases the
+// write executor's IMAP connections and its store — in that order, so no
+// in-flight /set loses its connection under it.
 func (c *jmapComponents) shutdown(ctx context.Context) {
 	if c == nil {
 		return
@@ -140,6 +174,9 @@ func (c *jmapComponents) shutdown(ctx context.Context) {
 	if err := c.server.Shutdown(ctx); err != nil {
 		c.log.Warn("jmap server did not drain in time, closing", "error", err)
 		_ = c.server.Close()
+	}
+	if c.writer != nil {
+		c.writer.Close()
 	}
 	c.store.Close()
 }
