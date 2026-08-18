@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver "pgx", for migrations
 
 	"github.com/GrupoNU/moov/internal/blob"
-	"github.com/GrupoNU/moov/internal/store"
 )
 
 // Blob store tests against a real PostgreSQL 17 and a real filesystem.
@@ -38,29 +36,17 @@ func testEnv(t *testing.T) (*blob.Store, *pgxpool.Pool, int64) {
 		t.Skipf("%s is not set; start a dev database with `make db-up` to run the blob tests", testDBEnv)
 	}
 
-	// The schema must exist: blobs and blob_refs come from migration 0002.
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := store.Migrate(ctx, db); err != nil {
-		_ = db.Close()
-		t.Fatalf("Migrate: %v", err)
-	}
-	_ = db.Close()
-
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("pgxpool.New: %v", err)
-	}
-	t.Cleanup(pool.Close)
+	// Every test gets its own schema, migrated from scratch. The GC is a GLOBAL
+	// sweep by design, so sharing a database with another package would have it
+	// collecting that package's rows — see isolation_test.go for the three
+	// failures that causes and why the isolation lives here rather than in a
+	// production GC filter.
+	pool := isolatedPool(t, isolatedSchemaDSN(t, dsn))
 
 	// An account to own the references; removing it cascades them away.
 	var accountID int64
 	email := fmt.Sprintf("blob-%d@example.test", time.Now().UnixNano())
-	err = pool.QueryRow(context.Background(), `
+	err := pool.QueryRow(context.Background(), `
 		INSERT INTO accounts (email, imap_host) VALUES ($1, 'dovecot.internal') RETURNING id`,
 		email).Scan(&accountID)
 	if err != nil {
@@ -359,10 +345,9 @@ func TestGCCollectsOnlyUnreferenced(t *testing.T) {
 // a transaction that has not yet committed its reference is momentarily
 // unreferenced, and collecting it then would delete live data.
 func TestGCRespectsGracePeriod(t *testing.T) {
-	dsn := os.Getenv(testDBEnv)
-	if dsn == "" {
-		t.Skipf("%s is not set", testDBEnv)
-	}
+	// The pool comes from testEnv, so this store shares that test's isolated
+	// schema — a second root over the same tables, which is exactly what the
+	// grace period must protect.
 	_, pool, _ := testEnv(t)
 	ctx := context.Background()
 

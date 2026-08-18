@@ -128,11 +128,21 @@ deployed at `/opt/moov-spike/Caddyfile` on the pilot host:
 everything else             ->  the webmail
 ```
 
-`moovd` must be on the front's network for that to resolve:
+`moovd` must be on the front's network for `moovd:8620` to resolve, and
+**`docker-compose.yml` owns that attachment**: the `front` network is declared
+external and listed among `moovd`'s networks, so `docker compose up -d`
+re-establishes it every time the container is created.
 
-```bash
-docker network connect moov-spike moovd
-```
+This used to be a manual `docker network connect moov-spike moovd` run after
+each deploy. It is not one any more, and the difference is not cosmetic: a
+manual attachment does not survive container recreation, and `up -d` recreates
+`moovd` on every image or configuration change. Each redeploy therefore dropped
+the attachment and the front answered 502 until somebody remembered the command.
+
+The network must already exist — compose joins it, it never creates it, exactly
+as with Mailcow's. It is `moov-spike` by default (the front spike S1 stood up);
+`MOOV_FRONT_NETWORK` points it elsewhere if the front ever moves into a compose
+stack of its own.
 
 **Rollback to the S1 `jmap-proxy` is one line** — change the single
 `reverse_proxy` target in the `@jmap` handler and reload:
@@ -235,6 +245,21 @@ docker compose down && docker volume rm moov-blobs && docker compose up -d --bui
 
 **Accounts do not sync after being added.** The supervisor enumerates accounts
 at start: `docker compose restart moovd`.
+
+**The stack refuses to start with `network … declared as external, but could not
+be found`.** One of the two external networks is missing. Both are joined, never
+created: Mailcow's comes from Mailcow, and the front's (`moov-spike`) from
+whatever stood the front up. Create the front's network if it is genuinely gone
+(`docker network create moov-spike`) and restart the front so it rejoins;
+failing to start is the right behaviour here, since a moovd nothing can reach is
+not a working deployment.
+
+**The front answers 502 after a deploy.** Check the attachment survived —
+`docker inspect moovd --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'`
+must list the front's network. Since compose owns it, the fix is
+`docker compose up -d` and not a manual `docker network connect`; if a bare
+`docker network connect` is what makes it work, this stack is running an old
+`docker-compose.yml` that predates the declaration.
 
 **Certificate errors dialing Dovecot.** `MOOV_IMAP_SERVER_NAME` must be the
 hostname on Mailcow's certificate, not the container alias Moov dials (spike S1

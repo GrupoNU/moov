@@ -34,8 +34,13 @@ branch tip is the only option and it must be named by commit.
 | # | Patch | Origin | Upstream status |
 |---|---|---|---|
 | 0001 | `0001-pr757-imapclient-qresync.patch` | Upstream [PR #757](https://github.com/emersion/go-imap/pull/757) | **Open**, not merged |
-| 0002 | `0002-notify-encoder-rfc5465.patch` | Written by Moov | **Not yet submitted** — ready to submit |
-| 0003 | `0003-expose-condstore-modified.patch` | Written by Moov | **Not yet submitted** — ready to submit |
+| 0002 | `0002-notify-encoder-rfc5465.patch` | Written by Moov | **Not yet submitted** — submission package prepared, awaiting director review: `docs/upstream/go-imap-0002-notify.md` |
+| 0003 | `0003-expose-condstore-modified.patch` | Written by Moov | **Not yet submitted** — submission package prepared, awaiting director review: `docs/upstream/go-imap-0003-modified.md` |
+
+The two `docs/upstream/` notes are the handoff for the actual submission: the
+problem stated against the RFC, the reproduction against a real Dovecot, the
+patch rationale, and a ready PR title and body. They also record the upstream
+drift check, so whoever submits knows whether a rebase is owed.
 
 They are ordered and must be applied in order: 0001 touches `imapclient/enable.go`
 and `imapclient/fetch.go`, and 0003 touches `imapclient/fetch.go` again. Applying

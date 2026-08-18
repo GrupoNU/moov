@@ -125,14 +125,26 @@ services:
       postgres:
         condition: service_healthy
 
-    # BOTH networks, and this is the whole integration story:
+    # THREE networks, and this is the whole integration story:
     #   internal — reaches PostgreSQL, and nothing else reaches PostgreSQL.
     #   mailcow  — reaches dovecot:143 (IMAP), postfix:587 (submission) and the
     #              Mailcow API, by container alias. Read-only participation: we
     #              dial in, nothing in Mailcow dials us.
+    #   front    — the network the Caddy front sits on, so `reverse_proxy
+    #              moovd:8620` resolves. This is an INBOUND path and the only
+    #              one: the front dials us, we never dial it.
+    #
+    # `front` is declared here rather than attached by hand after the fact.
+    # A manual `docker network connect moov-spike moovd` does not survive
+    # container recreation, and `docker compose up -d` recreates moovd on every
+    # image or configuration change — so the attachment silently disappeared on
+    # each redeploy and Caddy answered 502 until somebody remembered the command.
+    # Compose owns it now: the attachment is part of the container's definition
+    # and is re-established every time the container is created.
     networks:
       - internal
       - mailcow
+      - front
 
     environment:
       # --- Store
@@ -226,6 +238,22 @@ networks:
   # outcome: a moovd that cannot reach Dovecot has nothing to sync.
   mailcow:
     name: ${MOOV_MAILCOW_NETWORK:-mailcowdockerized_mailcow-network}
+    external: true
+
+  # The front's network — the Caddy that terminates the browser's connection and
+  # splits by path (`deploy/Caddyfile.pilot`). EXTERNAL for the same reason as
+  # Mailcow's: the pilot's front was stood up by spike S1 and is not this
+  # stack's to create, rename or delete.
+  #
+  # It is declared here so `docker compose up -d` re-attaches moovd on every
+  # recreation. It used to be a manual `docker network connect moov-spike moovd`
+  # run after each deploy, which meant every forgotten invocation was a 502 from
+  # a front whose backend name no longer resolved.
+  #
+  # If the front is ever moved into a compose stack of its own, point
+  # MOOV_FRONT_NETWORK at that stack's network name; nothing else changes.
+  front:
+    name: ${MOOV_FRONT_NETWORK:-moov-spike}
     external: true
 
 volumes:
