@@ -33,6 +33,20 @@ type Deps struct {
 	// session then keeps advertising the truth the old way.
 	Writer EmailWriter
 
+	// Mailboxer applies Mailbox/set mutations (W2). Same rule as Writer: nil
+	// means the folder-mutation surface is not mounted.
+	Mailboxer MailboxWriter
+
+	// MailboxDelimiter is the IMAP hierarchy separator this account's server
+	// uses, which Mailbox/set composes full paths with. Empty means "/", which
+	// is what our Dovecot reports (S1/S2) and what nearly every server uses.
+	//
+	// It is configuration rather than a value read per call because the reader
+	// contract does not carry it: MailboxRow has no delimiter, deliberately —
+	// JMAP expresses hierarchy with parentId, so the READ path never needs one
+	// (contracts.go).
+	MailboxDelimiter string
+
 	// SearchWindow overrides how deep Email/query looks. The zero value means
 	// DefaultSearchWindow, which is the store's own cap; tests set it smaller
 	// to exercise the truncation paths without seeding 200 messages.
@@ -124,15 +138,21 @@ func RegisterQueryMethods(registry *jmap.Registry, deps *Deps) {
 	registry.Register("Mailbox/queryChanges", jmap.CapMail, deps.handleMailboxQueryChanges)
 }
 
-// RegisterSetMethods registers the write-family mail methods (W1: Email/set).
+// RegisterSetMethods registers the write-family mail methods (W1: Email/set;
+// W2: Mailbox/set).
 //
 // Separate from the get and query families for the same reason those are
 // separate from each other: disjoint epics, independently mountable, and a
-// read-only deployment simply never calls this. W2 adds Mailbox/set here.
+// read-only deployment simply never calls this.
 //
-// It panics on a nil Writer, matching the other registrars: a /set surface
-// with nothing to write through is a wiring bug that must fail at startup,
-// never at the first click that tries to archive a message.
+// It panics on a missing dependency, matching the other registrars: a /set
+// surface with nothing to write through is a wiring bug that must fail at
+// startup, never at the first click that tries to archive a message.
+//
+// Mailbox/set additionally needs Mailboxes (to read the tree it composes paths
+// from) and Search (to enumerate a folder's messages for
+// onDestroyRemoveEmails). Both are already required by the get and query
+// families, so a deployment that mounts writes has them.
 func RegisterSetMethods(registry *jmap.Registry, deps *Deps) {
 	if registry == nil || deps == nil {
 		panic("mail: RegisterSetMethods requires a registry and deps")
@@ -140,6 +160,10 @@ func RegisterSetMethods(registry *jmap.Registry, deps *Deps) {
 	if deps.Writer == nil || deps.Emails == nil || deps.State == nil {
 		panic("mail: RegisterSetMethods requires Writer, Emails and State")
 	}
+	if deps.Mailboxer == nil || deps.Mailboxes == nil || deps.Search == nil {
+		panic("mail: RegisterSetMethods requires Mailboxer, Mailboxes and Search for Mailbox/set")
+	}
 
 	registry.Register("Email/set", jmap.CapMail, deps.handleEmailSet)
+	registry.Register("Mailbox/set", jmap.CapMail, deps.handleMailboxSet)
 }

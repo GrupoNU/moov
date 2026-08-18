@@ -110,7 +110,13 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		st.Close()
 		return nil, fmt.Errorf("building the writer adapter: %w", err)
 	}
+	// The same adapter serves both write contracts: Email/set's EmailWriter
+	// (W1) and Mailbox/set's MailboxWriter (W2). One adapter over one executor
+	// means one IMAP connection per account for every write, which is what
+	// keeps a folder rename and a flag change from racing each other on two
+	// sockets.
 	deps.Writer = writerAdapter
+	deps.Mailboxer = writerAdapter
 
 	srv, err := jmaphttp.New(jmaphttp.Config{
 		BaseURL:        cfg.JMAP.ExternalURL,
@@ -126,10 +132,10 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		return nil, fmt.Errorf("building jmap server: %w", err)
 	}
 
-	// The mail methods: J2's get family, J3's query/changes family and W1's
-	// set family, over the same Deps. Registration must happen before
-	// Handler() is mounted, which is why it sits above the http.Server
-	// construction.
+	// The mail methods: J2's get family, J3's query/changes family and the
+	// set family (W1's Email/set, W2's Mailbox/set), over the same Deps.
+	// Registration must happen before Handler() is mounted, which is why it
+	// sits above the http.Server construction.
 	mail.RegisterGetMethods(srv.Registry(), deps)
 	mail.RegisterQueryMethods(srv.Registry(), deps)
 	mail.RegisterSetMethods(srv.Registry(), deps)

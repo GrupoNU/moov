@@ -135,6 +135,41 @@ type Client interface {
 	// the only production path that removes mail irrecoverably.
 	Expunge(ctx context.Context, uids []UID) error
 
+	// CreateMailbox creates a mailbox (RFC 3501 §6.3.3).
+	//
+	// The name is UTF-8; the wire encoding to modified UTF-7 is go-imap's, the
+	// exact inverse of what ListMailboxes decodes. It never sets a SPECIAL-USE
+	// attribute: roles belong to the server (folder.go).
+	//
+	// A name already taken is ErrMailboxExists; a name the protocol cannot
+	// carry is ErrInvalidMailboxName.
+	CreateMailbox(ctx context.Context, name string) error
+
+	// RenameMailbox renames a mailbox, carrying its children with it as
+	// RFC 3501 §6.3.5 requires.
+	//
+	// Renaming INBOX is REFUSED with ErrRenameInbox: the RFC gives it a bulk-
+	// move semantics that empties INBOX and leaves its sub-hierarchy behind,
+	// which no JMAP update can honestly express (folder.go documents it).
+	RenameMailbox(ctx context.Context, from, to string) error
+
+	// DeleteMailbox permanently removes a mailbox and its messages
+	// (RFC 3501 §6.3.4). INBOX is refused with ErrDeleteInbox.
+	//
+	// This is destructive and irreversible on the server. Every caller that
+	// wants a reversible delete must move the messages elsewhere FIRST — which
+	// is exactly what Mailbox/set's onDestroyRemoveEmails does.
+	DeleteMailbox(ctx context.Context, name string) error
+
+	// SetSubscribed subscribes or unsubscribes a mailbox (RFC 3501 §6.3.6,
+	// §6.3.7) — the server-side state RFC 8621 §2's isSubscribed maps onto.
+	SetSubscribed(ctx context.Context, name string, subscribed bool) error
+
+	// StatusMailbox returns one mailbox's STATUS counters without selecting it
+	// (RFC 3501 §6.3.10). It is how a caller learns the UIDVALIDITY a freshly
+	// created mailbox was assigned.
+	StatusMailbox(ctx context.Context, name string) (MailboxInfo, error)
+
 	// Metadata returns the METADATA operations for label definitions (A6).
 	// The returned value borrows the connection and must not outlive it.
 	Metadata() MetadataOps
@@ -211,6 +246,31 @@ var (
 	// ErrWatchNotSupported is returned by Watch when the server advertises
 	// neither NOTIFY nor a usable IDLE.
 	ErrWatchNotSupported = errors.New("imap: server supports neither NOTIFY nor IDLE")
+
+	// ErrInvalidMailboxName is returned by CreateMailbox and RenameMailbox for
+	// a name the IMAP protocol cannot carry at all (empty, only whitespace, or
+	// containing CR/LF/NUL). It is a caller error, not a server condition: the
+	// JMAP layer turns it into an invalidProperties SetError naming "name".
+	ErrInvalidMailboxName = errors.New("imap: invalid mailbox name")
+
+	// ErrMailboxExists is returned when a CREATE or RENAME target name is
+	// already taken ([ALREADYEXISTS], RFC 9051 §6.3.4).
+	ErrMailboxExists = errors.New("imap: a mailbox with that name already exists")
+
+	// ErrMailboxMissing is returned when a RENAME or DELETE names a mailbox
+	// that is not there ([NONEXISTENT], RFC 9051 §6.3.5). It is distinct from
+	// ErrMailboxStale: the mailbox is gone for everyone, not just for this
+	// session's view of it.
+	ErrMailboxMissing = errors.New("imap: no such mailbox")
+
+	// ErrRenameInbox is returned by RenameMailbox for INBOX. RFC 3501 §6.3.5
+	// makes that command a bulk move that empties INBOX and leaves its children
+	// behind — see RenameMailbox for why this package refuses to expose it.
+	ErrRenameInbox = errors.New("imap: INBOX cannot be renamed")
+
+	// ErrDeleteInbox is returned by DeleteMailbox for INBOX (RFC 3501 §6.3.4:
+	// "It is an error to attempt to delete INBOX").
+	ErrDeleteInbox = errors.New("imap: INBOX cannot be deleted")
 
 	// ErrMailboxStale is returned by SelectQResync when this SESSION's view of
 	// a mailbox no longer matches the server's, because the mailbox was deleted

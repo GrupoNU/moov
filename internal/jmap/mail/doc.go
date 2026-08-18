@@ -16,10 +16,12 @@
 //
 // A myRights member is true exactly when a registered method honors it
 // (RFC 8621 §2 — rights are what a client builds its UI from). Phase 1 was
-// read-only and said so; since W1, Email/set makes the message-level rights
-// (mayAddItems, mayRemoveItems, maySetSeen, maySetKeywords) real, while the
-// mailbox-mutation rights and maySubmit stay false until W2/W3 land
-// (mailbox.go writableRights).
+// read-only and said so; W1 made the message-level rights (mayAddItems,
+// mayRemoveItems, maySetSeen, maySetKeywords) real; W2 makes mayCreateChild,
+// mayRename and mayDelete real — the last two PER MAILBOX, since Mailbox/set
+// refuses to rename or destroy a protected role folder and myRights says so
+// rather than letting a client offer an action that will be refused
+// (mailbox.go rightsFor). maySubmit stays false until W3.
 //
 // The write side follows the same layering as the read side: handlers speak
 // to the EmailWriter interface (write.go), and the only file that knows the

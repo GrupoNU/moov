@@ -126,20 +126,26 @@ func TestMailboxGetReturnsAllStandardProperties(t *testing.T) {
 	if !ok {
 		t.Fatalf("myRights is %T", mb["myRights"])
 	}
-	// Truthful per W1 (L2-jmap-write §3): the rights Email/set actually
-	// honors are true, and ONLY those — mailbox mutation is W2, submission
-	// is W3.
+	// Truthful per W2 (L2-jmap-write §3). This fixture is the INBOX, a
+	// protected role: everything Email/set and Mailbox/set honor for it is
+	// true, and the two operations Mailbox/set REFUSES on a role folder —
+	// rename and delete — are false, so a client never offers an action that
+	// will be denied.
 	for _, r := range []string{
 		"mayReadItems", "mayAddItems", "mayRemoveItems", "maySetSeen", "maySetKeywords",
+		"mayCreateChild",
 	} {
 		if rights[r] != true {
-			t.Errorf("%s = %v, want true (Email/set implements it since W1)", r, rights[r])
+			t.Errorf("%s = %v, want true", r, rights[r])
 		}
 	}
-	for _, r := range []string{"mayCreateChild", "mayRename", "mayDelete", "maySubmit"} {
+	for _, r := range []string{"mayRename", "mayDelete"} {
 		if rights[r] != false {
-			t.Errorf("%s = %v, want false (Mailbox/set is W2, submission is W3)", r, rights[r])
+			t.Errorf("%s = %v, want false (Mailbox/set refuses it on a protected role)", r, rights[r])
 		}
+	}
+	if rights["maySubmit"] != false {
+		t.Errorf("maySubmit = %v, want false (submission is W3)", rights["maySubmit"])
 	}
 	// All nine members of MailboxRights are present, not just the true ones.
 	if len(rights) != 9 {

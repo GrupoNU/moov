@@ -45,6 +45,36 @@ type fakeReaders struct {
 	moveCalls    []fakeMoveCall
 	destroyCalls []int64
 	writeErr     error
+
+	// W2: the folder mutations, and the keyword budget per mailbox.
+	//
+	// keywordsInUse is what the ceiling check reads; a nil entry means the
+	// mailbox has no keywords, which is the common case and needs no setup.
+	// keywordLimit overrides the ceiling so a boundary test does not have to
+	// seed 26 keywords by hand — but the DEFAULT is the real 26, so a test
+	// that forgets to set it exercises production behavior.
+	createMailboxCalls  []fakeCreateMailboxCall
+	renameMailboxCalls  []fakeRenameMailboxCall
+	destroyMailboxCalls []int64
+	mailboxWriteErr     error
+	nextMailboxID       int64
+	keywordsInUse       map[int64][]string
+	keywordLimit        int
+	budgetErr           error
+}
+
+// fakeCreateMailboxCall is one recorded CreateMailbox invocation.
+type fakeCreateMailboxCall struct {
+	accountID int64
+	name      string
+	subscribe bool
+}
+
+// fakeRenameMailboxCall is one recorded RenameMailbox invocation.
+type fakeRenameMailboxCall struct {
+	accountID int64
+	mailboxID int64
+	newName   string
 }
 
 // fakeFlagsCall is one recorded SetFlags invocation.
@@ -297,13 +327,128 @@ func (f *fakeReaders) Destroy(_ context.Context, accountID, messageID int64) err
 	return nil
 }
 
+// KeywordBudget implements EmailWriter (W2). The default limit is the real
+// ceiling, so a test that says nothing exercises production behavior.
+func (f *fakeReaders) KeywordBudget(_ context.Context, _, mailboxID int64) (KeywordBudget, error) {
+	if f.budgetErr != nil {
+		return KeywordBudget{}, f.budgetErr
+	}
+	limit := f.keywordLimit
+	if limit == 0 {
+		limit = maxDurableKeywords
+	}
+	return KeywordBudget{InUse: append([]string(nil), f.keywordsInUse[mailboxID]...), Limit: limit}, nil
+}
+
+// ---- MailboxWriter (W2) ----------------------------------------------------
+
+// CreateMailbox implements MailboxWriter, mutating the fake tree so a second
+// operation in the same /set sees the folder the first one made.
+func (f *fakeReaders) CreateMailbox(_ context.Context, accountID int64, name string, subscribe bool) (int64, error) {
+	if f.mailboxWriteErr != nil {
+		return 0, f.mailboxWriteErr
+	}
+	f.createMailboxCalls = append(f.createMailboxCalls,
+		fakeCreateMailboxCall{accountID: accountID, name: name, subscribe: subscribe})
+
+	f.nextMailboxID++
+	id := 9000 + f.nextMailboxID
+
+	// The fake tree stores LEAF names and parent ids, like the real reader, so
+	// the created row has to be decomposed from the full path the handler
+	// composed. That is not busywork: it is what proves the handler composed a
+	// path the tree can round-trip.
+	leaf, parentID := f.splitPath(accountID, name)
+	f.mailboxes[accountID] = append(f.mailboxes[accountID], MailboxRow{
+		ID: id, Name: leaf, ParentID: parentID, IsSubscribed: subscribe, SortOrder: 100,
+	})
+	f.advanceState()
+	return id, nil
+}
+
+// RenameMailbox implements MailboxWriter, keeping the row's ID — the stability
+// property W2 must guarantee — and re-pathing the children with it.
+func (f *fakeReaders) RenameMailbox(_ context.Context, accountID, mailboxID int64, newName string) error {
+	if f.mailboxWriteErr != nil {
+		return f.mailboxWriteErr
+	}
+	f.renameMailboxCalls = append(f.renameMailboxCalls,
+		fakeRenameMailboxCall{accountID: accountID, mailboxID: mailboxID, newName: newName})
+
+	leaf, parentID := f.splitPath(accountID, newName)
+	rows := f.mailboxes[accountID]
+	for i := range rows {
+		if rows[i].ID == mailboxID {
+			// Same ID, new name and parent. Children follow automatically here
+			// because the fake tree stores parent ids rather than paths, which
+			// is exactly how the real store's id survives too.
+			rows[i].Name, rows[i].ParentID = leaf, parentID
+			f.advanceState()
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+// DestroyMailbox implements MailboxWriter.
+func (f *fakeReaders) DestroyMailbox(_ context.Context, accountID, mailboxID int64) error {
+	if f.mailboxWriteErr != nil {
+		return f.mailboxWriteErr
+	}
+	rows := f.mailboxes[accountID]
+	for i := range rows {
+		if rows[i].ID == mailboxID {
+			f.mailboxes[accountID] = append(rows[:i], rows[i+1:]...)
+			f.destroyMailboxCalls = append(f.destroyMailboxCalls, mailboxID)
+			f.advanceState()
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+// splitPath decomposes a full IMAP path into (leaf, parentID) against the
+// current fake tree — the inverse of what the handler composed.
+func (f *fakeReaders) splitPath(accountID int64, path string) (leaf string, parentID int64) {
+	i := strings.LastIndex(path, "/")
+	if i < 0 {
+		return path, 0
+	}
+	leaf = path[i+1:]
+	parentPath := path[:i]
+	for _, m := range f.mailboxes[accountID] {
+		if f.pathOf(accountID, m.ID) == parentPath {
+			return leaf, m.ID
+		}
+	}
+	return leaf, 0
+}
+
+// pathOf rebuilds a row's full path in the fake tree.
+func (f *fakeReaders) pathOf(accountID, id int64) string {
+	byID := map[int64]MailboxRow{}
+	for _, m := range f.mailboxes[accountID] {
+		byID[m.ID] = m
+	}
+	var segments []string
+	for cur, hops := id, 0; cur != 0 && hops <= len(byID); hops++ {
+		row, ok := byID[cur]
+		if !ok {
+			break
+		}
+		segments = append([]string{row.Name}, segments...)
+		cur = row.ParentID
+	}
+	return strings.Join(segments, "/")
+}
+
 // deps builds a Deps over the fakes, with the real default limits so the
 // maxObjectsInGet path is exercised with production values.
 func (f *fakeReaders) deps() *Deps {
 	return &Deps{
 		Mailboxes: f, Emails: f, Threads: f, Blobs: f, State: f,
 		Search: f, Changes: f, SearchWindow: f.searchWindow,
-		Writer: f,
+		Writer: f, Mailboxer: f,
 		Limits: jmap.DefaultLimits(),
 	}
 }

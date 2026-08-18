@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/GrupoNU/moov/internal/jmap"
 )
@@ -197,6 +199,20 @@ func (d *Deps) applyEmailUpdate(ctx context.Context, accountID int64, wire strin
 	// order would race the destination's watcher echo).
 	appliedKeywords := false
 	if upd.touchesKeywords() {
+		// The durable-keyword ceiling (A6 / validation V1) is checked HERE,
+		// before the write, because it is the only place it can be checked at
+		// all — see checkKeywordCeiling.
+		//
+		// The mailbox counted is the one the message is in NOW, not the move
+		// target, and that is correct: the keywords are written by a STORE
+		// against the current folder, so they occupy a slot in ITS
+		// dovecot-keywords. A subsequent move carries them into the
+		// destination, which may then be over its own ceiling — an outcome no
+		// pre-check can prevent without refusing legitimate moves, and one the
+		// destination's next keyword write will report honestly.
+		if serr := d.checkKeywordCeiling(ctx, accountID, row.MailboxIDs[0], upd); serr != nil {
+			return serr
+		}
 		if err := d.Writer.SetFlags(ctx, accountID, msgID, upd.flagsChange()); err != nil {
 			return writeSetError(err, "keywords")
 		}
@@ -217,6 +233,139 @@ func (d *Deps) applyEmailUpdate(ctx context.Context, accountID int64, wire strin
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// the durable keyword ceiling (A6 / validation V1) — a W2 acceptance criterion
+// ---------------------------------------------------------------------------
+
+// checkKeywordCeiling refuses a keyword write that would push the mailbox past
+// the 26 distinct keywords a Maildir folder holds durably.
+//
+// # Why the check lives here and not at the server
+//
+// Dovecot does not enforce this and cannot report it. Validation V1 put 500
+// keywords on one message: Dovecot accepted every one, persisted them in its
+// index, and served all 500 back on the next FETCH. On disk, after a
+// force-resync, only 26 remained — `dovecot-keywords` encodes each keyword as
+// one letter a-z in the Maildir filename and stops at index 25. So keywords
+// past the 26th live only in a warm in-memory index and vanish, silently and
+// all at once, the next time it is rebuilt: possibly weeks later, with no
+// error anywhere.
+//
+// That is also why W1's read-back verification cannot catch it — at the moment
+// of the read-back the keyword really is there. The engine has to count the
+// folder's keywords itself and refuse the 27th, which is what L2 §2.3 means by
+// "no labels that exist only in the DB, silently".
+//
+// # What counts against the budget
+//
+// Every DISTINCT case-folded keyword name in the folder, because that is what
+// dovecot-keywords allocates a letter to. The four system flags of RFC 8621
+// §4.1.1 ($seen, $flagged, $answered, $draft) do NOT: they are IMAP system
+// flags, stored in the Maildir filename's own flag field, not in the keyword
+// registry — which is why imapNameForKeyword translates them to bare flag
+// names before they ever reach the writer. A $forwarded or a NonJunk from
+// another client DOES count, and the error says so, because those really do
+// occupy a slot.
+func (d *Deps) checkKeywordCeiling(ctx context.Context, accountID, mailboxID int64, upd *emailUpdate) *setError {
+	// The keywords this update would ADD to the folder, in the writer's
+	// vocabulary. A full-set replace adds everything in the set (whatever it
+	// removes from THIS message may still be on others, so a replace can only
+	// grow the folder's distinct set, never shrink it within one call).
+	var wanted []string
+	if upd.kwReplace {
+		wanted = upd.kwSet
+	} else {
+		wanted = upd.kwAdd
+	}
+
+	candidates := make([]string, 0, len(wanted))
+	for _, name := range wanted {
+		if isSystemFlagName(name) {
+			continue
+		}
+		candidates = append(candidates, name)
+	}
+	if len(candidates) == 0 {
+		// Nothing that occupies a Maildir keyword slot. Skipping the read is
+		// not just an optimization: marking a message read is the single most
+		// frequent write this server takes, and it must not cost a query.
+		return nil
+	}
+
+	budget, err := d.Writer.KeywordBudget(ctx, accountID, mailboxID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return &setError{Type: setErrNotFound}
+		}
+		return &setError{Type: setErrServerFail,
+			Description: "checking the mailbox's keyword budget failed"}
+	}
+	if budget.Limit <= 0 {
+		// A writer that does not implement the budget (a test double, a future
+		// backend on a store without the Maildir constraint) must not silently
+		// block every keyword write.
+		return nil
+	}
+
+	// The NEW names only: a keyword already in the folder occupies a slot it
+	// already has, so re-applying it to another message is always free. This
+	// is what makes "tag 500 messages with an existing label" cost nothing.
+	seen := make(map[string]bool, len(candidates))
+	var fresh []string
+	for _, name := range candidates {
+		key := strings.ToLower(name)
+		if seen[key] || budget.Has(name) {
+			continue
+		}
+		seen[key] = true
+		fresh = append(fresh, name)
+	}
+	if len(fresh) == 0 {
+		return nil
+	}
+
+	remaining := budget.Remaining()
+	if len(fresh) <= remaining {
+		return nil
+	}
+
+	sort.Strings(fresh)
+	// The error is deliberately verbose. It is the one refusal in this server
+	// that a user cannot possibly guess the reason for — the folder looks
+	// empty of labels, the server accepted 25 of them, and the 26th is refused
+	// by a rule that lives in a filename format from 1998. Naming the format,
+	// the number and the remaining slots is what makes it actionable instead
+	// of mysterious.
+	return &setError{
+		Type:       setErrInvalidProperties,
+		Properties: []string{"keywords"},
+		Description: fmt.Sprintf(
+			"this mailbox is at the Maildir durable-keyword ceiling: a folder stores at most %d distinct "+
+				"keywords permanently (dovecot-keywords encodes each as one letter a-z in the message "+
+				"filename), %d are already in use here and %d slot(s) remain, but this change needs %d new "+
+				"one(s): %s. Dovecot would ACCEPT this write and lose those keywords silently the next time "+
+				"its index is rebuilt, so Moov refuses it instead. Standard keywords other clients set "+
+				"($forwarded, $mdnsent, NonJunk) consume from the same budget; the four system keywords "+
+				"($seen, $flagged, $answered, $draft) do not. Reuse an existing keyword, or remove one from "+
+				"every message in this mailbox to free a slot.",
+			budget.Limit, len(budget.InUse), remaining, len(fresh), strings.Join(fresh, ", ")),
+	}
+}
+
+// isSystemFlagName reports the bare IMAP system-flag names imapNameForKeyword
+// produces for the four RFC 8621 §4.1.1 system keywords.
+//
+// They are excluded from the keyword budget because Maildir stores them in the
+// filename's flag field ("S" for \Seen, "F" for \Flagged, …), not in
+// dovecot-keywords — so they occupy no letter of the a-z registry.
+func isSystemFlagName(name string) bool {
+	switch strings.ToLower(name) {
+	case "seen", "answered", "flagged", "draft", "deleted":
+		return true
+	}
+	return false
 }
 
 // writeSetError maps an EmailWriter error onto the §5.3 SetError vocabulary

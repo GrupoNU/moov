@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 
 	"github.com/GrupoNU/moov/internal/jmap"
 )
@@ -33,13 +34,13 @@ var mailboxProperties = map[string]bool{
 	"isSubscribed":  true,
 }
 
-// mailboxRights is the myRights value every mailbox reports.
+// mailboxRights is the myRights value a mailbox reports.
 //
 // RFC 8621 §2 defines MailboxRights with nine boolean members, and is
 // explicit that these rights are what the client uses to decide which
 // actions to present — so the rule here (regla J1) is that a right is true
-// exactly when a registered method actually honors it. The truth as of W1
-// (Email/set):
+// exactly when a registered method actually honors it FOR THAT MAILBOX. The
+// truth as of W2:
 //
 //   - mayReadItems: the read families of J2/J3.
 //   - maySetSeen / maySetKeywords: Email/set keywords, both forms.
@@ -50,7 +51,13 @@ var mailboxProperties = map[string]bool{
 //     client discovers per-call; the alternative — advertising
 //     mayAddItems:false — would hide the moves that DO work behind a right
 //     the RFC scopes to both.
-//   - mayCreateChild / mayRename / mayDelete: false until Mailbox/set (W2).
+//   - mayCreateChild: true everywhere since W2 — Mailbox/set create accepts
+//     any existing mailbox as a parentId.
+//   - mayRename / mayDelete: true for ordinary folders since W2, and FALSE for
+//     the protected role mailboxes (inbox, trash, sent, drafts, junk,
+//     archive), which Mailbox/set refuses to rename or destroy. Reporting
+//     true there and then refusing per-call would be the same lie J1's rule
+//     exists to prevent, only per-mailbox instead of per-server.
 //   - maySubmit: false until EmailSubmission (W3).
 type mailboxRights struct {
 	MayReadItems   bool `json:"mayReadItems"`
@@ -64,14 +71,53 @@ type mailboxRights struct {
 	MaySubmit      bool `json:"maySubmit"`
 }
 
-// writableRights is the phase-2 (W1) answer for every mailbox.
-func writableRights() mailboxRights {
+// rightsFor is the phase-2 (W2) answer for one mailbox, given its role.
+//
+// The role is the only input because it is the only thing that varies: every
+// mailbox of this account is readable and writable, and the sole per-mailbox
+// difference is whether Mailbox/set will let the folder be renamed or
+// destroyed — which mailbox_set.go decides from exactly this role.
+func rightsFor(role string) mailboxRights {
+	mutable := !isProtectedRole(role)
 	return mailboxRights{
 		MayReadItems:   true,
 		MayAddItems:    true,
 		MayRemoveItems: true,
 		MaySetSeen:     true,
 		MaySetKeywords: true,
+		MayCreateChild: true,
+		MayRename:      mutable,
+		MayDelete:      mutable,
+	}
+}
+
+// sortOrderForRole gives a role the sort order the adapter assigns it.
+//
+// It duplicates adapter.go's sortOrderFor by value rather than by call because
+// that one takes a store.MailboxRole and this package must not import the
+// store outside adapter.go (contracts.go). The table is small, closed, and
+// asserted equal to the adapter's by a test — which is what keeps a
+// duplication from becoming a divergence.
+func sortOrderForRole(role string) uint64 {
+	switch strings.ToLower(role) {
+	case "inbox":
+		return 10
+	case "drafts":
+		return 20
+	case "sent":
+		return 30
+	case "archive":
+		return 40
+	case "flagged":
+		return 50
+	case "all":
+		return 60
+	case "junk":
+		return 70
+	case "trash":
+		return 80
+	default:
+		return 100
 	}
 }
 
@@ -174,7 +220,7 @@ func renderMailbox(row MailboxRow, props map[string]bool) map[string]any {
 		out["unreadThreads"] = row.UnreadThreads
 	}
 	if wants(props, "myRights") {
-		out["myRights"] = writableRights()
+		out["myRights"] = rightsFor(row.Role)
 	}
 	if wants(props, "isSubscribed") {
 		out["isSubscribed"] = row.IsSubscribed

@@ -53,6 +53,45 @@ func (a *WriterAdapter) Destroy(ctx context.Context, accountID, messageID int64)
 	return mapWriteErr(err)
 }
 
+// KeywordBudget implements EmailWriter.
+func (a *WriterAdapter) KeywordBudget(ctx context.Context, accountID, mailboxID int64) (KeywordBudget, error) {
+	b, err := a.exec.KeywordBudgetFor(ctx, accountID, mailboxID)
+	if err != nil {
+		return KeywordBudget{Limit: b.Limit}, mapWriteErr(err)
+	}
+	return KeywordBudget{InUse: b.InUse, Limit: b.Limit}, nil
+}
+
+// ---- MailboxWriter (W2) ----------------------------------------------------
+
+// CreateMailbox implements MailboxWriter.
+func (a *WriterAdapter) CreateMailbox(ctx context.Context, accountID int64, name string, subscribe bool) (int64, error) {
+	res, err := a.exec.ApplyMailboxCreate(ctx, accountID, name, subscribe)
+	if err != nil {
+		return 0, mapWriteErr(err)
+	}
+	return res.MailboxID, nil
+}
+
+// RenameMailbox implements MailboxWriter.
+func (a *WriterAdapter) RenameMailbox(ctx context.Context, accountID, mailboxID int64, newName string) error {
+	_, err := a.exec.ApplyMailboxRename(ctx, accountID, mailboxID, newName)
+	return mapWriteErr(err)
+}
+
+// DestroyMailbox implements MailboxWriter.
+func (a *WriterAdapter) DestroyMailbox(ctx context.Context, accountID, mailboxID int64) error {
+	_, err := a.exec.ApplyMailboxDestroy(ctx, accountID, mailboxID)
+	return mapWriteErr(err)
+}
+
+// Compile-time assertions: the adapter is the sole bridge, so a signature
+// drifting from either interface must fail here rather than at wiring time.
+var (
+	_ EmailWriter   = (*WriterAdapter)(nil)
+	_ MailboxWriter = (*WriterAdapter)(nil)
+)
+
 // mapWriteErr translates the executor's sentinels into this package's, so the
 // handlers branch on one vocabulary.
 func mapWriteErr(err error) error {
@@ -65,6 +104,18 @@ func mapWriteErr(err error) error {
 		return ErrWriteConflict
 	case errors.Is(err, syncengine.ErrNoTrashMailbox):
 		return ErrNoTrash
+
+	// ---- W2 -----------------------------------------------------------------
+	case errors.Is(err, syncengine.ErrMailboxNotFound):
+		return ErrNotFound
+	case errors.Is(err, syncengine.ErrMailboxNameTaken):
+		return ErrMailboxExists
+	case errors.Is(err, syncengine.ErrMailboxNameInvalid):
+		return ErrInvalidName
+	case errors.Is(err, syncengine.ErrMailboxProtected):
+		return ErrMailboxProtected
+	case errors.Is(err, syncengine.ErrMailboxHasChildren):
+		return ErrMailboxHasChild
 	default:
 		return err
 	}

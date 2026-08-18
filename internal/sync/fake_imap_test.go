@@ -53,6 +53,10 @@ type fakeMailbox struct {
 	// vanished is the expunge history QRESYNC replays to a reconnecting client
 	// (E6).
 	vanished []vanishedRecord
+
+	// subscribed models the SUBSCRIBE state (W2). Mailboxes seeded by
+	// addMailbox are subscribed, matching what a real account looks like.
+	subscribed bool
 }
 
 func (m *fakeMailbox) uidNext() imap.UID {
@@ -121,6 +125,20 @@ type fakeServer struct {
 	// noCopyUID suppresses the COPYUID mapping a MOVE returns, modeling a
 	// server without UIDPLUS so the degraded reflection path is testable.
 	noCopyUID bool
+
+	// ---- W2 ----------------------------------------------------------------
+
+	// The folder-command failure injections, one per command, so a test can
+	// prove the store is untouched when Dovecot refuses (the W-A1 ordering
+	// claim, restated for folders).
+	createErr    error
+	renameErr    error
+	deleteErr    error
+	subscribeErr error
+	statusErr    error
+
+	// uidValiditySeq hands out a fresh UIDVALIDITY per CREATE.
+	uidValiditySeq uint32
 }
 
 func newFakeServer() *fakeServer { return &fakeServer{} }
@@ -143,7 +161,7 @@ func (s *fakeServer) mailbox(name string) *fakeMailbox {
 func (s *fakeServer) addMailbox(name string, role imap.MailboxRole, uidValidity uint32) *fakeMailbox {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	mb := &fakeMailbox{name: name, role: role, uidValidity: uidValidity, highestModSeq: 1}
+	mb := &fakeMailbox{name: name, role: role, uidValidity: uidValidity, highestModSeq: 1, subscribed: true}
 	s.mailboxes = append(s.mailboxes, mb)
 	return mb
 }
@@ -203,7 +221,7 @@ func (c *fakeClient) ListMailboxes(_ context.Context) ([]imap.MailboxInfo, error
 			Name:          m.name,
 			Delimiter:     "/",
 			Role:          m.role,
-			Subscribed:    true,
+			Subscribed:    m.subscribed,
 			NoSelect:      m.noSelect,
 			HasStatus:     true,
 			NumMessages:   uint32(len(m.messages)),

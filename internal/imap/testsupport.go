@@ -62,39 +62,17 @@ func Mutator(c Client) (*MailboxMutator, error) {
 }
 
 // CreateMailbox creates a mailbox.
+//
+// Since W2 this is the production primitive Client.CreateMailbox (folder.go);
+// the mutator delegates rather than keeping a second, subtly different CREATE.
 func (m *MailboxMutator) CreateMailbox(ctx context.Context, name string) error {
-	gc, err := m.cl.conn()
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := gc.Create(name, nil).Wait(); err != nil {
-		return fmt.Errorf("imap: CREATE %q: %w", name, err)
-	}
-	return nil
+	return m.cl.CreateMailbox(ctx, name)
 }
 
-// DeleteMailbox removes a mailbox.
+// DeleteMailbox removes a mailbox. Also the production primitive since W2,
+// including its UNSELECT-first discipline.
 func (m *MailboxMutator) DeleteMailbox(ctx context.Context, name string) error {
-	gc, err := m.cl.conn()
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// A selected mailbox cannot be deleted on some servers, so the selection is
-	// released first. The error is ignored: not having one selected is fine.
-	_ = gc.Unselect().Wait()
-	if err := gc.Delete(name).Wait(); err != nil {
-		return fmt.Errorf("imap: DELETE %q: %w", name, err)
-	}
-	m.cl.mu.Lock()
-	m.cl.selected = ""
-	m.cl.mu.Unlock()
-	return nil
+	return m.cl.DeleteMailbox(ctx, name)
 }
 
 // Append stores a message in a mailbox and returns its UID.
