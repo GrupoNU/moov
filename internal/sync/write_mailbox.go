@@ -208,6 +208,8 @@ func (w *WriteExecutor) ApplyMailboxCreate(ctx context.Context, accountID int64,
 			return out, fmt.Errorf("recording the sync state of %q: %w", name, err)
 		}
 	}
+	// W4a: a new folder changes Mailbox/get's state for the account.
+	w.broker.Notify(accountID)
 	return out, nil
 }
 
@@ -276,6 +278,7 @@ func (w *WriteExecutor) ApplyMailboxRename(ctx context.Context, accountID, mailb
 	if renamed > 0 {
 		out.ChildrenRenamed = renamed - 1
 	}
+	w.broker.Notify(accountID)
 	return out, nil
 }
 
@@ -344,6 +347,10 @@ func (w *WriteExecutor) ApplyMailboxDestroy(ctx context.Context, accountID, mail
 	if err := w.store.DeleteMailbox(ctx, mailboxID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return out, fmt.Errorf("removing the mailbox row for %q: %w", mb.Name, err)
 	}
+	// A destroy changes both the mailbox list and, when it tombstoned
+	// messages, the Email state — one notification covers both, since the
+	// payload is a snapshot of every type's state.
+	w.broker.Notify(accountID)
 	return out, nil
 }
 

@@ -52,6 +52,15 @@ type JMAPConfig struct {
 	// (MOOV_JMAP_AUTH_CACHE_TTL). Zero means the jmaphttp default of 10
 	// minutes (arbitration J-A1).
 	AuthCacheTTL time.Duration
+
+	// MaxSSEPerAccount caps concurrent EventSource push connections per
+	// account (MOOV_SSE_MAX_CONN_PER_ACCOUNT, W-A4, default 4).
+	//
+	// The cap is per ACCOUNT rather than per server for the same reason
+	// maxConcurrentRequests is: an SSE connection is cheap but unbounded in
+	// time, so the failure mode to prevent is one client's reconnect loop
+	// accumulating streams — which is a per-account phenomenon.
+	MaxSSEPerAccount int
 }
 
 // DefaultJMAPAddr is the default JMAP listen address.
@@ -95,8 +104,31 @@ func loadJMAP() (JMAPConfig, error) {
 		return JMAPConfig{}, err
 	}
 
+	// Zero is left as zero rather than defaulted here: jmaphttp owns the
+	// default (DefaultMaxSSEPerAccount), and defaulting in both places is how
+	// the two drift apart. Explicit values are validated, though — a
+	// negative cap would silently disable push.
+	j.MaxSSEPerAccount = DefaultMaxSSEPerAccount
+	if v := os.Getenv("MOOV_SSE_MAX_CONN_PER_ACCOUNT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return JMAPConfig{}, fmt.Errorf("MOOV_SSE_MAX_CONN_PER_ACCOUNT: %w", err)
+		}
+		if n < 1 {
+			return JMAPConfig{}, fmt.Errorf(
+				"MOOV_SSE_MAX_CONN_PER_ACCOUNT: %d must be at least 1", n)
+		}
+		j.MaxSSEPerAccount = n
+	}
+
 	return j, nil
 }
+
+// DefaultMaxSSEPerAccount is the default per-account EventSource connection
+// cap (W-A4). It mirrors jmaphttp.DefaultMaxSSEPerAccount; config does not
+// import jmaphttp (the dependency runs the other way), so the value is
+// restated here and the two are pinned together by a test.
+const DefaultMaxSSEPerAccount = 4
 
 // validate checks the invariants of an enabled JMAP server.
 func (j JMAPConfig) validate() error {
@@ -113,8 +145,10 @@ func (j JMAPConfig) validate() error {
 func (j JMAPConfig) String() string {
 	return fmt.Sprintf(
 		"jmap_enabled=%t jmap_addr=%s jmap_external_url=%s jmap_cors_origins=%s "+
-			"jmap_imap_host=%s jmap_imap_port=%d jmap_imap_server_name=%s jmap_auth_cache_ttl=%s",
+			"jmap_imap_host=%s jmap_imap_port=%d jmap_imap_server_name=%s jmap_auth_cache_ttl=%s "+
+			"sse_max_conn_per_account=%d",
 		j.Enabled, j.Addr, orUnset(j.ExternalURL), orUnset(strings.Join(j.CORSOrigins, ",")),
 		orUnset(j.IMAPHost), j.IMAPPort, orUnset(j.IMAPServerName), orDefault(j.AuthCacheTTL),
+		j.MaxSSEPerAccount,
 	)
 }

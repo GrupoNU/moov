@@ -25,6 +25,7 @@ import (
 	"github.com/GrupoNU/moov/internal/config"
 	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
+	syncengine "github.com/GrupoNU/moov/internal/sync"
 	"github.com/GrupoNU/moov/internal/version"
 )
 
@@ -121,15 +122,23 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	// per-method observations) and the operational endpoint that exposes it.
 	m := metrics.New()
 
+	// The push broker (W4a) is created here, above both components, because it
+	// is the seam BETWEEN them: the sync engine publishes to it and the JMAP
+	// server's EventSource endpoint subscribes to it. Either component may be
+	// disabled independently, and the broker is harmless in both directions —
+	// publishing with no subscribers is a map lookup, subscribing with no
+	// publisher is a channel nobody writes to.
+	broker := syncengine.NewBroker()
+
 	startCtx, cancelStart := context.WithTimeout(ctx, syncStartTimeout)
-	components, err := startSync(startCtx, cfg, logger)
+	components, err := startSync(startCtx, cfg, logger, broker)
 	if err != nil {
 		cancelStart()
 		return fmt.Errorf("starting sync: %w", err)
 	}
 	defer components.close()
 
-	jmapComp, err := startJMAP(startCtx, cfg, logger, m, fail)
+	jmapComp, err := startJMAP(startCtx, cfg, logger, m, broker, fail)
 	if err != nil {
 		cancelStart()
 		return fmt.Errorf("starting jmap: %w", err)
@@ -167,9 +176,16 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	// Reverse start order: the operational server drains first (nothing depends
-	// on it), then the JMAP server, so in-flight API requests finish against a
-	// still-open store.
+	// The broker closes FIRST, before any server drains: closing it ends every
+	// EventSource subscription, so each streaming handler returns and its
+	// response finishes normally (W-A4's "cierre limpio en shutdown"). Without
+	// this, Shutdown would wait out its whole grace period on connections that
+	// are healthy and, by design, never end on their own.
+	broker.Close()
+
+	// Then reverse start order: the operational server drains first (nothing
+	// depends on it), then the JMAP server, so in-flight API requests finish
+	// against a still-open store.
 	opsComp.shutdown(shutdownCtx)
 	jmapComp.shutdown(shutdownCtx)
 

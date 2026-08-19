@@ -36,7 +36,7 @@ func TestStartSyncIsOptIn(t *testing.T) {
 	cfg.Sync.Enabled = false
 	logger := newLogger(cfg, discardFile(t))
 
-	components, err := startSync(context.Background(), cfg, logger)
+	components, err := startSync(context.Background(), cfg, logger, nil)
 	if err != nil {
 		t.Fatalf("startSync with the supervisor disabled returned %v, want nil", err)
 	}
@@ -63,7 +63,7 @@ func TestStartSyncRequiresAKeyring(t *testing.T) {
 	cfg.Sync.Enabled = true
 	logger := newLogger(cfg, discardFile(t))
 
-	components, err := startSync(context.Background(), cfg, logger)
+	components, err := startSync(context.Background(), cfg, logger, nil)
 	if err == nil {
 		components.close()
 		t.Fatal("startSync built a sync engine with no master key")

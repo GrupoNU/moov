@@ -532,6 +532,11 @@ func (w *PushWatcher) passOne(
 		if _, berr := syncer.backfillMailbox(ctx, account, mb, log); berr != nil {
 			return berr
 		}
+		// A backfill that just imported a mailbox changed the account's data
+		// as surely as a delta did, and it is the path a folder created by
+		// another client takes — exactly the case a connected client is
+		// waiting to see (W4a).
+		w.opts.Options.Broker.Notify(account.ID)
 		return nil
 	}
 	if err != nil {
@@ -584,6 +589,7 @@ func (w *PushWatcher) sweepAll(
 				return fmt.Errorf("sweep %s: backfilling %q: %w", reason, mb.info.Name, berr)
 			}
 			changed++
+			w.opts.Options.Broker.Notify(account.ID)
 			continue
 		}
 		if perr != nil {

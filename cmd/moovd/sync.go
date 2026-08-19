@@ -35,7 +35,7 @@ type syncComponents struct {
 // It returns a nil *syncComponents and a nil error for the disabled case, which
 // is deliberate: "not configured" is a normal state for a daemon that has not
 // been provisioned yet, not a failure to report.
-func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger) (*syncComponents, error) {
+func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, broker *syncengine.Broker) (*syncComponents, error) {
 	if !cfg.Sync.Enabled {
 		logger.Info("sync supervisor disabled", "hint", "MOOV_SYNC_ENABLED=1 enables it")
 		return nil, nil //nolint:nilnil // "disabled" is a valid, non-error outcome
@@ -71,6 +71,11 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger) (*sy
 		Logger:       logger,
 		Connections:  cfg.Sync.Connections,
 		ParseWorkers: cfg.Sync.ParseWorkers,
+		// W4a: every sync path that advances an account's state notifies the
+		// broker, which the JMAP EventSource endpoint fans out to browsers.
+		// SupervisorOptions and WatcherOptions both embed these Options, so
+		// this one assignment reaches the incremental passes and the watcher.
+		Broker: broker,
 	}
 
 	dialer := &accountDialer{keyring: keyring, serverName: cfg.Sync.IMAPServerName, logger: logger}

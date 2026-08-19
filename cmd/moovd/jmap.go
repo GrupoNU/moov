@@ -44,7 +44,7 @@ type jmapComponents struct {
 // engine's: the two components have independent lifecycles (either may be
 // disabled) and independent pool needs. Two pgx pools against one PostgreSQL
 // are cheap; consolidating them is a J4 (deploy) decision, with numbers.
-func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *metrics.Metrics, fatal func(error)) (*jmapComponents, error) {
+func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *metrics.Metrics, broker *syncengine.Broker, fatal func(error)) (*jmapComponents, error) {
 	if !cfg.JMAP.Enabled {
 		logger.Info("jmap server disabled", "hint", "MOOV_JMAP_ENABLED=1 enables it")
 		return nil, nil //nolint:nilnil // "disabled" is a valid, non-error outcome
@@ -99,7 +99,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 	dialer := &accountDialer{keyring: keyring, serverName: cfg.JMAP.IMAPServerName, logger: logger}
 	writer, err := syncengine.NewWriteExecutor(st, syncengine.ConnectorFunc(dialer.connect),
-		syncengine.WriteOptions{Logger: logger})
+		syncengine.WriteOptions{Logger: logger, Broker: broker})
 	if err != nil {
 		st.Close()
 		return nil, fmt.Errorf("building the write executor: %w", err)
@@ -125,6 +125,13 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		Logger:         logger,
 		Blobs:          deps.Blobs,
 		Metrics:        m,
+		// Push (W4a): the broker says WHEN, the mail adapter says WHAT. The
+		// State reader is deliberately the SAME object that answers Email/get
+		// and Email/changes, which is what guarantees a pushed state string
+		// equals the one a follow-up /changes call is compared against.
+		Notifier:         brokerNotifier{broker},
+		State:            deps.State,
+		MaxSSEPerAccount: cfg.JMAP.MaxSSEPerAccount,
 	}, auth)
 	if err != nil {
 		writer.Close()
@@ -168,6 +175,49 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		"imap_host", cfg.JMAP.IMAPHost,
 	)
 	return &jmapComponents{store: st, server: httpSrv, ln: ln, writer: writer, log: logger}, nil
+}
+
+// brokerNotifier adapts internal/sync's Broker to the HTTP layer's
+// StateNotifier (W4a).
+//
+// It exists to drop the payload. The broker publishes a StateChange carrying
+// an account id and a timestamp; the EventSource endpoint must NOT build its
+// event from those, because RFC 8620 §7.1 defines the pushed state strings as
+// "the 'state' property that would currently be returned by a call to
+// 'Foo/get'" — which only the store, read at send time, can answer. Converting
+// to an empty struct here makes that impossible to get wrong downstream:
+// there is nothing left to misuse.
+type brokerNotifier struct {
+	broker *syncengine.Broker
+}
+
+func (n brokerNotifier) StateEvents(accountID int64) (<-chan jmaphttp.Notification, func()) {
+	src, cancel := n.broker.StateEvents(accountID)
+	out := make(chan jmaphttp.Notification, 1)
+
+	go func() {
+		// Closing out when src closes is what propagates the broker's
+		// shutdown to the handler's select, so a stream ends cleanly rather
+		// than hanging until its client gives up.
+		defer close(out)
+		for range src {
+			select {
+			case out <- jmaphttp.Notification{}:
+			default:
+				// out already holds an unread notification. Dropping this one
+				// is correct and lossless in effect: the pending signal will
+				// make the handler read the CURRENT state, which is the state
+				// this notification would have pointed at. Same coalescing
+				// argument as the broker's own one-slot mailbox.
+			}
+		}
+	}()
+
+	return out, cancel
+}
+
+func (n brokerNotifier) Subscribers(accountID int64) int {
+	return n.broker.Subscribers(accountID)
 }
 
 // shutdown drains the JMAP server within ctx's deadline, then releases the

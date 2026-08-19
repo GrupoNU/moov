@@ -126,3 +126,48 @@ func TestJMAPStringIsGreppableAndSecretFree(t *testing.T) {
 		t.Fatalf("Config.String() leaks the database password: %s", s)
 	}
 }
+
+// The SSE push cap (W4a, W-A4).
+
+func TestJMAPSSECapDefault(t *testing.T) {
+	t.Setenv("MOOV_DATABASE_URL", "postgres://u:p@h/db")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.JMAP.MaxSSEPerAccount; got != DefaultMaxSSEPerAccount {
+		t.Errorf("MaxSSEPerAccount = %d, want the W-A4 default %d", got, DefaultMaxSSEPerAccount)
+	}
+}
+
+func TestJMAPSSECapFromEnv(t *testing.T) {
+	t.Setenv("MOOV_DATABASE_URL", "postgres://u:p@h/db")
+	t.Setenv("MOOV_SSE_MAX_CONN_PER_ACCOUNT", "9")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.JMAP.MaxSSEPerAccount; got != 9 {
+		t.Errorf("MaxSSEPerAccount = %d, want 9", got)
+	}
+	if !strings.Contains(cfg.JMAP.String(), "sse_max_conn_per_account=9") {
+		t.Errorf("String() does not report the cap: %s", cfg.JMAP.String())
+	}
+}
+
+// A cap below 1 would silently disable push for every account, so it is a
+// configuration error rather than a value to clamp.
+func TestJMAPSSECapRejectsNonPositive(t *testing.T) {
+	for _, v := range []string{"0", "-1", "many"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("MOOV_DATABASE_URL", "postgres://u:p@h/db")
+			t.Setenv("MOOV_SSE_MAX_CONN_PER_ACCOUNT", v)
+
+			if _, err := Load(); err == nil {
+				t.Errorf("MOOV_SSE_MAX_CONN_PER_ACCOUNT=%q was accepted", v)
+			}
+		})
+	}
+}

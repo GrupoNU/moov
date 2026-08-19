@@ -172,6 +172,14 @@ func (s *Syncer) incrementalMailbox(
 			"new", res.New, "flags_updated", res.FlagsUpdated, "vanished", res.Vanished,
 			"modseq", fmt.Sprintf("%d->%d", res.FromModSeq, res.ToModSeq),
 			"elapsed", res.Elapsed.Round(time.Millisecond))
+
+		// W4a push hook. It sits AFTER the cursor advance, and only under
+		// Changed(), for two reasons: everything the pushed state string will
+		// describe is committed by now (a client that reacts by calling
+		// /changes cannot outrun its own notification), and a pass that found
+		// nothing must not wake every connected browser — the state string it
+		// would carry is the one the client already holds.
+		s.opts.Broker.Notify(account.ID)
 	}
 	return res, nil
 }

@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,6 +47,16 @@ type Metrics struct {
 	// what the fail2ban breaker exists to bound, so it needs to be visible.
 	AuthAttempts *Counter
 
+	// --- Push (W4a)
+
+	// SSEConnections is the number of EventSource streams currently open.
+	// It is the one number that says whether push is actually being used, and
+	// the one that would reveal a connection leak: streams are long-lived, so
+	// a handler that failed to return would show up here and nowhere else.
+	SSEConnections *Gauge
+	// SSEEvents counts emitted server-sent events by kind ("state", "ping").
+	SSEEvents *Counter
+
 	// --- Sync engine (E5/E6)
 
 	// SyncLagSeconds is how long ago each account last completed a sync pass.
@@ -73,6 +84,10 @@ type Metrics struct {
 	// BuildInfo is the standard always-1 gauge carrying version labels, so a
 	// dashboard can annotate a graph with the deploy that changed it.
 	BuildInfo *Gauge
+
+	// sseOpen is the running total behind SSEConnections; see
+	// AddSSEConnections.
+	sseOpen atomic.Int64
 }
 
 // New builds the metric set on a fresh registry.
@@ -98,6 +113,11 @@ func NewWithRegistry(r *Registry) *Metrics {
 
 		AuthAttempts: r.Counter("moov_jmap_auth_attempts_total",
 			"JMAP authentication attempts by outcome."),
+
+		SSEConnections: r.Gauge("moov_jmap_sse_connections",
+			"Currently open JMAP EventSource connections."),
+		SSEEvents: r.Counter("moov_jmap_sse_events_total",
+			"Server-sent events emitted by the JMAP EventSource endpoint, by kind."),
 
 		SyncLagSeconds: r.Gauge("moov_sync_lag_seconds",
 			"Seconds since each account's most recent sync checkpoint."),
@@ -150,6 +170,23 @@ func (m *Metrics) ObserveHTTP(route string, status int, d time.Duration) {
 func (m *Metrics) ObserveMethod(method, outcome string, d time.Duration) {
 	m.MethodCalls.Inc(Labels{"method": method, "outcome": outcome})
 	m.MethodDuration.ObserveDuration(Labels{"method": method}, d)
+}
+
+// AddSSEConnections adjusts the live EventSource connection count (W4a).
+//
+// The running total is kept here as an atomic rather than by giving Gauge an
+// Add method: a gauge series is a value, and two handlers incrementing it
+// concurrently through read-modify-write on the registry would need the
+// registry's lock held across both halves. One atomic counter, one Set, and
+// the gauge stays a plain value — no change to the registry's shape.
+func (m *Metrics) AddSSEConnections(delta float64) {
+	n := m.sseOpen.Add(int64(delta))
+	m.SSEConnections.Set(nil, float64(n))
+}
+
+// IncSSEEvents counts one emitted server-sent event.
+func (m *Metrics) IncSSEEvents(kind string) {
+	m.SSEEvents.Inc(Labels{"kind": kind})
 }
 
 // statusClass buckets an HTTP status into its class ("2xx", "4xx", ...).

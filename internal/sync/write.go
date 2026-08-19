@@ -134,6 +134,18 @@ type WriteResult struct {
 type WriteOptions struct {
 	// Logger receives structured diagnostics. Default slog.Default().
 	Logger *slog.Logger
+
+	// Broker, when set, is notified after every write that changed something
+	// (W4a). It is what makes a change made through Moov's own JMAP API reach
+	// the account's OTHER connected clients promptly, instead of waiting for
+	// the watcher's NOTIFY echo to complete a round trip through Dovecot.
+	//
+	// The echo still arrives and is still handled — the write path's
+	// echo-safety rules (see the package comment) make the resulting pass a
+	// no-op by content, and a no-op pass does not notify. So the fast local
+	// notification and the slower authoritative echo coalesce into at most a
+	// second harmless wake-up, never into divergent state.
+	Broker *Broker
 }
 
 // WriteExecutor applies client writes per W-A1. One instance serves every
@@ -142,6 +154,7 @@ type WriteExecutor struct {
 	store     *store.Store
 	connector Connector
 	log       *slog.Logger
+	broker    *Broker
 
 	mu       sync.Mutex
 	accounts map[int64]*accountConn
@@ -172,6 +185,7 @@ func NewWriteExecutor(st *store.Store, connector Connector, opts WriteOptions) (
 		store:     st,
 		connector: connector,
 		log:       log.With("component", "write-executor"),
+		broker:    opts.Broker,
 		accounts:  map[int64]*accountConn{},
 	}, nil
 }
@@ -273,6 +287,13 @@ func (w *WriteExecutor) ApplyFlagChange(ctx context.Context, accountID, messageI
 		out.Flags, out.Keywords = flags, keywords
 		return nil
 	})
+	if err == nil {
+		// W4a: the store now agrees with Dovecot, so the state string a
+		// pushed StateChange resolves to already describes this write. The
+		// no-op branch above returned before reaching here, so an idempotent
+		// replay wakes nobody.
+		w.broker.Notify(accountID)
+	}
 	return out, err
 }
 
@@ -389,6 +410,11 @@ func (w *WriteExecutor) ApplyMove(ctx context.Context, accountID, messageID, tar
 		}
 		return nil
 	})
+	if err == nil {
+		// A move changes two mailboxes' counts and the message's own row; the
+		// already-there short circuit above returned before reaching here.
+		w.broker.Notify(accountID)
+	}
 	return out, err
 }
 
@@ -436,6 +462,12 @@ func (w *WriteExecutor) ApplyDestroy(ctx context.Context, accountID, messageID i
 		out = WriteResult{MailboxID: mb.ID, UID: st.UID, Flags: st.Flags, Keywords: st.Keywords, Expunged: true}
 		return nil
 	})
+	if err == nil {
+		// Only the expunge-inside-Trash branch reaches here; the
+		// destroy-outside-Trash branch returned through ApplyMove above,
+		// which notified for itself. One notification per destroy either way.
+		w.broker.Notify(accountID)
+	}
 	return out, err
 }
 

@@ -26,10 +26,38 @@ const (
 	// ReadTimeout bounds reading a whole request. Generous because a request
 	// body may legitimately approach maxSizeRequest over a slow uplink.
 	ReadTimeout = 2 * time.Minute
-	// WriteTimeout bounds writing a response. Phase 2's EventSource endpoint
-	// will need a dedicated server or per-route control; phase 1 has no
-	// long-lived responses.
-	WriteTimeout = 2 * time.Minute
+	// WriteTimeout bounds writing a response.
+	//
+	// It is ZERO — no deadline — since W4a, and that is a deliberate,
+	// narrow trade rather than an oversight.
+	//
+	// http.Server's WriteTimeout is absolute: it is set once from the moment
+	// the request is read and is never extended by a successful write. An
+	// EventSource stream is a response that must stay open for hours (RFC
+	// 8620 §7.3: "a long running HTTP request, where the server can push data
+	// to the client by appending data without ending the response"), so ANY
+	// non-zero value here is a timer that kills every healthy push connection
+	// at exactly that interval — the failure would look like a client bug and
+	// would not appear in a short test.
+	//
+	// What is lost is a write deadline on the ordinary API responses. What
+	// replaces it, for the slowloris-style risks that deadline addressed:
+	//
+	//   - ReadHeaderTimeout and ReadTimeout below still bound the REQUEST
+	//     side, which is where a slow-sending attacker operates.
+	//   - IdleTimeout still reaps quiet keep-alive connections.
+	//   - Every handler's work is bounded by the request context, which
+	//     net/http cancels when the client disconnects; the streaming handler
+	//     selects on it (eventsource.go) and every other handler passes it to
+	//     the store.
+	//   - maxConcurrentRequests (§2) bounds how many requests one user may
+	//     hold open at once, and MaxSSEPerAccount bounds the streams.
+	//
+	// The alternative — a second http.Server on its own listener just for
+	// this route — was rejected for W4a: it would need its own TLS, its own
+	// CORS, its own auth wiring and its own entry in the fronting proxy, all
+	// to reinstate a deadline whose job is already covered above.
+	WriteTimeout = 0
 	// IdleTimeout closes keep-alive connections that go quiet.
 	IdleTimeout = 5 * time.Minute
 )
@@ -62,6 +90,20 @@ type Config struct {
 	// protocol tests wants, and what keeps this dependency optional without
 	// ever making the route leak the difference.
 	Blobs BlobReader
+
+	// Notifier and State power the EventSource endpoint (W4a, RFC 8620 §7.3).
+	//
+	// Both are required for push: Notifier says WHEN an account changed
+	// (internal/sync's Broker), State says what its current per-type state
+	// strings are (mail.Adapter, the same reader /get and /changes use — see
+	// eventsource.go on why that identity matters). With either nil the route
+	// answers 501, which is exactly what it answered before push existed.
+	Notifier StateNotifier
+	State    StateSource
+
+	// MaxSSEPerAccount caps concurrent EventSource connections per account
+	// (W-A4). Zero means DefaultMaxSSEPerAccount.
+	MaxSSEPerAccount int
 
 	// Metrics receives per-request observations (E8-lite). nil disables
 	// recording entirely, which is what every protocol test runs with.
@@ -111,6 +153,11 @@ type Server struct {
 	blobs    BlobReader
 	metrics  RequestRecorder
 	log      *slog.Logger
+
+	// Push (W4a).
+	notifier         StateNotifier
+	state            StateSource
+	maxSSEPerAccount int
 }
 
 // New builds a Server over an Authenticator.
@@ -134,16 +181,24 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 	// session advertises — one list, used twice, so they cannot drift.
 	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(), cfg.Logger)
 
+	maxSSE := cfg.MaxSSEPerAccount
+	if maxSSE <= 0 {
+		maxSSE = DefaultMaxSSEPerAccount
+	}
+
 	return &Server{
-		cfg:      cfg,
-		auth:     auth,
-		registry: registry,
-		engine:   engine,
-		cors:     newCORSPolicy(cfg.AllowedOrigins),
-		gate:     newConcurrencyGate(cfg.Limits.MaxConcurrentRequests),
-		blobs:    cfg.Blobs,
-		metrics:  cfg.Metrics,
-		log:      cfg.Logger,
+		cfg:              cfg,
+		auth:             auth,
+		registry:         registry,
+		engine:           engine,
+		cors:             newCORSPolicy(cfg.AllowedOrigins),
+		gate:             newConcurrencyGate(cfg.Limits.MaxConcurrentRequests),
+		blobs:            cfg.Blobs,
+		metrics:          cfg.Metrics,
+		log:              cfg.Logger,
+		notifier:         cfg.Notifier,
+		state:            cfg.State,
+		maxSSEPerAccount: maxSSE,
 	}, nil
 }
 
@@ -329,12 +384,6 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpload(w http.ResponseWriter, _ *http.Request) {
 	writeGenericProblem(w, http.StatusNotImplemented,
 		"upload is not implemented in this phase (read-only server)")
-}
-
-// handleEventSource is the phase-1 push stub (SSE push is phase 2, L2 §1).
-func (s *Server) handleEventSource(w http.ResponseWriter, _ *http.Request) {
-	writeGenericProblem(w, http.StatusNotImplemented,
-		"event source push is not implemented in this phase")
 }
 
 // concurrencyGate enforces maxConcurrentRequests per authenticated user.
