@@ -465,7 +465,64 @@ func (s *Syncer) commitBatch(
 	if err := s.addBlobRefs(ctx, account.ID, ids, batch); err != nil {
 		return 0, 0, err
 	}
+	if err := s.assignThreads(ctx, account.ID, ids, rows); err != nil {
+		return 0, 0, err
+	}
 	return countInserted(ids), failed, nil
+}
+
+// assignThreads groups the batch's messages into conversations (migration 0004).
+//
+// # Why a failure here does not fail the batch
+//
+// The messages are already committed and each is already its own thread — the
+// JWZ base case, written by InsertMessages itself. Threading turns those
+// singletons into conversations; it does not make the mail readable, searchable
+// or safe. Failing the batch on a threading error would therefore roll back
+// nothing (the insert is a separate committed transaction) while making the
+// pipeline retry a fetch it has already completed, which is the one outcome
+// worse than a temporarily split thread.
+//
+// So the error is logged and swallowed, and the state it leaves behind —
+// messages threaded as singletons — is exactly what store.ReindexThreads exists
+// to converge, idempotently and online. This mirrors the reasoning in
+// insertDegraded: a per-message defect must cost that message, never the run.
+//
+// The exception is context cancellation, which is propagated: a shutdown must
+// stop the pipeline rather than be logged as a threading problem.
+func (s *Syncer) assignThreads(ctx context.Context, accountID int64, ids []int64, rows []store.NewMessage) error {
+	candidates := make([]store.ThreadCandidate, len(rows))
+	for i := range rows {
+		candidates[i] = threadCandidate(&rows[i].Message)
+	}
+
+	assignments, err := s.store.AssignThreads(ctx, accountID, ids, candidates)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		s.opts.Logger.Warn("threading failed for a batch; messages remain single-message threads",
+			"account_id", accountID, "batch_size", len(rows), "error", err)
+		return nil
+	}
+
+	// A merge is worth a log line: it is the rare case (an ancestor arriving
+	// after its descendants), it changes existing messages' threadId — which
+	// ADR-001 §2 arbitrated as Thread destroyed+created on the wire — and it is
+	// the thing to look at first if a client reports a thread that split or
+	// jumped.
+	for _, a := range assignments {
+		if len(a.MergedFrom) == 0 {
+			continue
+		}
+		s.opts.Logger.Info("threads merged by a late ancestor",
+			"account_id", accountID,
+			"message_id", a.MessageID,
+			"thread_id", a.ThreadID,
+			"merged_from", a.MergedFrom,
+			"moved_messages", a.MovedMessages)
+	}
+	return nil
 }
 
 // insertDegraded re-inserts a failed batch one message at a time, quarantining

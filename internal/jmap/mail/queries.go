@@ -2,24 +2,27 @@ package mail
 
 import (
 	"context"
-	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/GrupoNU/moov/internal/blob"
-	"github.com/GrupoNU/moov/internal/store"
 )
 
 // The reads J2 needs that internal/store does not expose as methods.
 //
 // # Why these are here and not in internal/store, where they belong
 //
-// The J2 scope explicitly excludes modifying internal/store: the store is
-// another epic's surface and a concurrent change there would collide. These
-// four reads are therefore written against the pool the store already exports
-// (store.Pool()), and every one of them is listed in the J2 report as a store
-// gap with the method signature it should become.
+// The J2 scope explicitly excluded modifying internal/store, so these reads
+// were written against the pool the store already exports (store.Pool()), and
+// each was listed in the J2 report as a store gap with the method signature it
+// should become.
+//
+// TWO OF THE FOUR HAVE SINCE MOVED. The threading pair — resolving a Message-ID
+// to a message, and finding the messages that reference one — are now
+// store.AssignThreads and store.ThreadMembers, which read a real thread_id
+// column instead of deriving a thread per request (migration 0004). What
+// remains here are the two reads that are genuinely about the JMAP layer's own
+// concerns rather than about mail: a blob ownership check and the /get state
+// watermark.
 //
 // They hold to the store's own rules regardless (search.go's three
 // guarantees), because those rules are about the database, not about which
@@ -29,81 +32,6 @@ import (
 //   - every read that can return more than one row has a LIMIT;
 //   - each is served by an index migration 0002 already creates, named in the
 //     comment above the query.
-//
-// When they move into the store, this file disappears and adapter.go's calls
-// change name only.
-
-// messageByMessageID resolves a Message-ID header to a stored message id.
-//
-// Served by messages_acct_msgid — the partial index migration 0002 creates
-// with the comment "Threading (JWZ) resolves parents by Message-ID within an
-// account", which is exactly this query.
-//
-// LIMIT 1 because a Message-ID is supposed to be unique but is not
-// guaranteed to be: duplicates occur with mailing lists that deliver a copy to
-// several folders. The oldest wins, so a thread root is stable rather than
-// depending on which duplicate the planner reaches first.
-func (a *Adapter) messageByMessageID(ctx context.Context, accountID int64, messageID string) (int64, error) {
-	const q = `
-		SELECT id FROM messages
-		 WHERE account_id = $1 AND message_id = $2
-		 ORDER BY id
-		 LIMIT 1`
-
-	var id int64
-	err := a.store.Pool().QueryRow(ctx, q, accountID, messageID).Scan(&id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNotFound
-		}
-		return 0, err
-	}
-	return id, nil
-}
-
-// messagesReferencing returns the account's messages whose References or
-// In-Reply-To name the given Message-ID — the descendants of a thread root.
-//
-// The bound is deliberate and load-bearing: a thread is a conversation, and a
-// conversation with more than threadMemberLimit messages is either a mailing
-// list or an abuse case. Returning the oldest N keeps Thread/get bounded in
-// the same spirit as the store's own LIMIT rule, and the cap is far above any
-// real thread.
-//
-// Tombstoned messages are excluded: a destroyed message is not a member of a
-// thread any more.
-func (a *Adapter) messagesReferencing(ctx context.Context, accountID int64, messageID string) ([]store.Message, error) {
-	const q = `
-		SELECT m.id, m.date, m.internal_date
-		  FROM messages m
-		  JOIN message_state ms ON ms.message_id = m.id
-		 WHERE m.account_id = $1
-		   AND ms.deleted_at IS NULL
-		   AND ($2 = ANY(m.references_ids) OR m.in_reply_to = $2)
-		 ORDER BY m.id
-		 LIMIT $3`
-
-	rows, err := a.store.Pool().Query(ctx, q, accountID, messageID, threadMemberLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []store.Message
-	for rows.Next() {
-		var m store.Message
-		if err := rows.Scan(&m.ID, &m.Date, &m.InternalDate); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
-}
-
-// threadMemberLimit bounds a derived thread. Chosen well above any real
-// conversation: the longest threads in the reference mailboxes are in the low
-// hundreds.
-const threadMemberLimit = 500
 
 // accountReferencesBlob reports whether an account holds any reference to a
 // blob — the ownership check the download route enforces.

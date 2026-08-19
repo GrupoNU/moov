@@ -204,6 +204,11 @@ func (s *Store) CopyMessages(ctx context.Context, msgs []NewMessage) (CopyResult
 			return fmt.Errorf("inserting copied messages: %w", err)
 		}
 
+		// NOTE ON THREADING: every copied message becomes its own thread, which
+		// the BEFORE INSERT trigger of migration 0004 does for this path exactly
+		// as it does for InsertMessages — nothing is needed here. Grouping them
+		// into conversations is AssignThreads' job, run by the caller after this
+		// returns, exactly as blob references are.
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO message_state (message_id, account_id, mailbox_id,
 			    uid, uidvalidity, flags, keywords, modseq_seen)

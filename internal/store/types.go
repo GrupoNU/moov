@@ -284,6 +284,14 @@ type Message struct {
 	Defects       []byte // JSON array
 
 	CreatedAt time.Time
+
+	// ThreadID is the message's thread: the id of the thread's OLDEST member
+	// (migration 0004). It is NOT set by the caller on insert — InsertMessages
+	// stores the row's own id, making every message its own thread, and
+	// AssignThreads then resolves the real one. See threads.go for why the two
+	// are separate steps and why that intermediate state is valid rather than
+	// torn.
+	ThreadID int64
 }
 
 // MessageState is the volatile half (A5): the narrow, hot row that flag

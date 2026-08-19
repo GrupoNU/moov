@@ -10,34 +10,44 @@ import (
 
 // Thread/get — RFC 8621 §3.1 over the §3 Thread object.
 //
-// # STORE GAP, flagged for the director (J2 report)
+// # Threading is STORE-BACKED (migration 0004)
 //
-// L2-sync-engine §2.3 specifies threading (a JWZ-simplified algorithm) and
-// migration 0002 even creates the index it would need — "Threading (JWZ)
-// resolves parents by Message-ID within an account", messages_acct_msgid.
-// But no thread column, no threads table and no threading pass exist yet: the
-// epic that owns them has not landed. J2 is scoped out of modifying
-// internal/store, so this package derives threads instead, from the
-// References/In-Reply-To data the store already persists per message.
+// This file used to document a store gap: with no thread column, the adapter
+// derived a thread per request from the References chain, which could not join
+// on subject, could not group a thread whose root was not stored locally, and
+// left Mailbox.totalThreads / unreadThreads approximate.
 //
-// What that derivation is, precisely (adapter.go threadOf): a message's thread
-// is keyed by the OLDEST ancestor reachable through its References chain that
-// this account actually stores; a message with no stored ancestor is its own
-// thread root. This satisfies the two properties Thread/get must have —
-// every Email has exactly one threadId, and every id in a Thread's emailIds
-// reports that same threadId back — and it matches what JWZ would produce for
-// the common case of a well-formed reply chain.
+// That gap is closed. `messages.thread_id` holds the id of the thread's OLDEST
+// member, assigned at insert time by a JWZ-simplified pass
+// (internal/store/threads.go, L2-sync-engine §2.3) that resolves the
+// Message-ID graph in both directions — ancestors this message names, and
+// descendants stored before it arrived — and falls back to a normalized-subject
+// hint when the graph is silent, which is RFC 8621 §3's second suggested
+// condition.
 //
-// Where it is weaker than the real thing, stated plainly so the reader does
-// not over-trust it:
+// So a thread id is now a real, stored identity rather than a derivation, and
+// the three reads this handler needs are indexed lookups:
 //
-//   - subject-based joining (JWZ step 5, the "Re:" heuristic) is not applied,
-//     so a reply that drops References starts a new thread;
-//   - a thread whose root is not stored locally splits into as many threads as
-//     it has stored sub-roots, until the backfill brings the root in.
+//   - Thread/get -> store.ThreadMembers, one range scan of messages_acct_thread,
+//     already in the receivedAt order §3 mandates;
+//   - Email.threadId -> the column, read by the same query that reads the rest
+//     of the message;
+//   - the mailbox thread counts -> COUNT(DISTINCT thread_id), exact.
 //
-// Both resolve when the threading pass lands and the adapter reads a
-// thread_id column instead. Handlers do not change: ThreadReader is the seam.
+// # The one thing a reader must know about thread ids
+//
+// RFC 8621 §4.1.1 makes threadId "immutable; server-set", and §3 states the
+// consequence: "Since the 'threadId' of an Email is immutable, if the server
+// wishes to merge the Threads, it MUST handle this by deleting and reinserting
+// (with a new Email id) the Emails that change 'threadId'."
+//
+// Moov cannot reinsert an Email under a new id — the Email id is the store
+// message id, which anchors the IMAP identity — so ADR-001 §2 arbitrated the
+// alternative: "fusión de threads emite destroyed+created (el frontend lo
+// tolera)". The store makes that as rare as it can be by ALWAYS keeping the
+// oldest thread id when two threads merge, so the ordinary case (a reply
+// arriving after its parent) changes no existing message's threadId at all.
+// The full argument is in migration 0004's header.
 
 // handleThreadGet implements Thread/get.
 func (d *Deps) handleThreadGet(ctx context.Context, args json.RawMessage) (any, *jmap.MethodError) {

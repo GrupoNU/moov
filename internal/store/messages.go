@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,7 +14,7 @@ const messageColumns = `id, account_id, raw_sha256, raw_size,
 	subject, from_addr, to_addrs, cc_addrs, addresses,
 	date, internal_date,
 	mime_structure, has_attachments, preview, body_text,
-	parse_status, parser, parser_version, defects, created_at`
+	parse_status, parser, parser_version, defects, created_at, thread_id`
 
 const messageStateColumns = `message_id, account_id, mailbox_id, uid, uidvalidity,
 	flags, keywords, modseq_seen, deleted_at, updated_at`
@@ -58,6 +59,31 @@ func (s *Store) InsertMessages(ctx context.Context, msgs []NewMessage) ([]int64,
 		batch := &pgx.Batch{}
 		for i := range msgs {
 			m := &msgs[i].Message
+			// thread_id is set to the row's OWN id by a BEFORE INSERT trigger
+			// (migration 0004, moov_thread_id_default).
+			//
+			// The column is NOT NULL and its correct initial value is the
+			// identity the INSERT is generating, which no DEFAULT expression can
+			// reference — a DEFAULT is evaluated before the identity exists. The
+			// obvious alternatives were both worse:
+			//
+			//   * a CTE (INSERT … RETURNING, then UPDATE FROM it) does NOT work:
+			//     every statement of a WITH clause sees the same snapshot, so
+			//     the UPDATE cannot see the row the INSERT just wrote and
+			//     matches nothing. This was tried and it silently returned zero
+			//     rows for every insert.
+			//   * a second UPDATE statement per batch costs an extra round trip
+			//     on the hot sync path and widens the window in which a NOT NULL
+			//     column would have to be nullable.
+			//
+			// The trigger is invisible to every caller and cannot be forgotten
+			// by one, which is the property that matters: bulk.go's COPY path
+			// and any future writer get the same guarantee without repeating it.
+			//
+			// The result is the JWZ base case made durable — every message is
+			// its own thread until AssignThreads finds it a relative — which is
+			// what makes the assignment step a grouping pass rather than a
+			// correctness requirement. A crash between the two leaves valid data.
 			batch.Queue(`
 				INSERT INTO messages (account_id, raw_sha256, raw_size,
 					message_id, in_reply_to, references_ids,
@@ -410,21 +436,80 @@ func (s *Store) CountMailboxMessages(ctx context.Context, mailboxID int64) (tota
 
 func scanMessage(row scanner) (Message, error) {
 	var m Message
+	if err := scanMessageInto(row, &m); err != nil {
+		return Message{}, err
+	}
+	return m, nil
+}
+
+// scanMessageInto scans the messageColumns list into m.
+//
+// It is factored out of scanMessage so the batch read in threads.go, which
+// scans a message and its state from ONE row, uses the identical column order.
+// Two scan functions listing the same columns by hand is how a column added to
+// messageColumns ends up silently missing from one of them.
+func scanMessageInto(row scanner, m *Message) error {
 	var messageID, inReplyTo *string
 	err := row.Scan(&m.ID, &m.AccountID, &m.RawSHA256, &m.RawSize,
 		&messageID, &inReplyTo, &m.ReferencesIDs,
 		&m.Subject, &m.FromAddr, &m.ToAddrs, &m.CcAddrs, &m.Addresses,
 		&m.Date, &m.InternalDate,
 		&m.MIMEStructure, &m.HasAttachments, &m.Preview, &m.BodyText,
-		&m.ParseStatus, &m.Parser, &m.ParserVersion, &m.Defects, &m.CreatedAt)
+		&m.ParseStatus, &m.Parser, &m.ParserVersion, &m.Defects, &m.CreatedAt,
+		&m.ThreadID)
 	if messageID != nil {
 		m.MessageID = *messageID
 	}
 	if inReplyTo != nil {
 		m.InReplyTo = *inReplyTo
 	}
-	return m, err
+	return err
 }
+
+// scanMessageAndState scans a joined row carrying both halves.
+//
+// The scan is done through a shim rather than by calling scanMessageInto and
+// scanMessageState in sequence, because pgx's Scan consumes the whole row in
+// one call: the two column sets have to be presented to a single Scan.
+func scanMessageAndState(row scanner, m *Message, st *MessageState) error {
+	var (
+		messageID, inReplyTo *string
+		flags                int64
+	)
+	err := row.Scan(&m.ID, &m.AccountID, &m.RawSHA256, &m.RawSize,
+		&messageID, &inReplyTo, &m.ReferencesIDs,
+		&m.Subject, &m.FromAddr, &m.ToAddrs, &m.CcAddrs, &m.Addresses,
+		&m.Date, &m.InternalDate,
+		&m.MIMEStructure, &m.HasAttachments, &m.Preview, &m.BodyText,
+		&m.ParseStatus, &m.Parser, &m.ParserVersion, &m.Defects, &m.CreatedAt,
+		&m.ThreadID,
+		&st.MessageID, &st.AccountID, &st.MailboxID, &st.UID, &st.UIDValidity,
+		&flags, &st.Keywords, &st.ModSeqSeen, &st.DeletedAt, &st.UpdatedAt)
+	if messageID != nil {
+		m.MessageID = *messageID
+	}
+	if inReplyTo != nil {
+		m.InReplyTo = *inReplyTo
+	}
+	st.Flags = flagsFromDB(flags)
+	return err
+}
+
+// splitColumns splits a column list constant into its individual column names,
+// dropping the whitespace and newlines the constants are formatted with.
+func splitColumns(columns string) []string {
+	raw := strings.Split(columns, ",")
+	out := make([]string, 0, len(raw))
+	for _, c := range raw {
+		if c = strings.TrimSpace(c); c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// joinColumns is splitColumns' inverse.
+func joinColumns(parts []string) string { return strings.Join(parts, ", ") }
 
 func scanMessageState(row scanner) (MessageState, error) {
 	var st MessageState

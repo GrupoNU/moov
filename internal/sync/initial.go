@@ -63,6 +63,18 @@ type Options struct {
 	// OnProgress, when set, is called after every committed batch. It exists
 	// for tests and for the E8 metrics exporter; it must not block.
 	OnProgress func(Progress)
+
+	// Broker, when set, receives a notification every time an account's data
+	// changes durably, so the JMAP EventSource endpoint can push an RFC 8620
+	// §7.1 StateChange (W4a / arbitration W-A4).
+	//
+	// It rides in Options rather than being a separate constructor argument
+	// because SupervisorOptions and WatcherOptions both embed Options: one
+	// field here reaches every path that can advance an account's state,
+	// which is exactly the set of places a push must originate from. A nil
+	// Broker makes every hook a no-op (Broker.Notify is nil-safe), so a
+	// daemon running without a JMAP server pays nothing.
+	Broker *Broker
 }
 
 // Defaults for Options.

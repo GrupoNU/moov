@@ -157,6 +157,23 @@ func (f *fixture) seedRaw(t *testing.T, raw []byte, mailbox store.Mailbox, uid i
 	if err := f.blobs.AddRefTx(f.ctx, h, f.account.ID, blob.OwnerMessage, ids[0]); err != nil {
 		t.Fatalf("AddRef: %v", err)
 	}
+
+	// Threading, which is a SEPARATE step from the insert in the real pipeline
+	// too (internal/sync commitBatch): InsertMessages leaves every message as
+	// its own thread and AssignThreads groups them. Omitting it here would make
+	// the fixture disagree with production — every seeded message would be a
+	// singleton thread — so it is performed for the same reason AddRef is.
+	refs := msg.ReferencesIDs
+	if msg.InReplyTo != "" {
+		refs = append(append([]string{}, msg.ReferencesIDs...), msg.InReplyTo)
+	}
+	if _, err := f.store.AssignThreads(f.ctx, f.account.ID, ids, []store.ThreadCandidate{{
+		MessageID:  msg.MessageID,
+		References: refs,
+		Subject:    msg.Subject,
+	}}); err != nil {
+		t.Fatalf("AssignThreads: %v", err)
+	}
 	return ids[0]
 }
 
@@ -477,7 +494,9 @@ func TestIntegrationAccountScopingIsEnforcedInSQL(t *testing.T) {
 	_ = rc.Close()
 }
 
-// Threading, derived from References against the real store.
+// Threading against the real store: the thread_id column of migration 0004,
+// assigned by the same JWZ pass the sync pipeline runs, read back through
+// Email/get and Thread/get.
 func TestIntegrationThreadGetOverRealStore(t *testing.T) {
 	f := newFixture(t)
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 
@@ -104,6 +103,12 @@ func (a *Adapter) MailboxesByID(ctx context.Context, accountID int64, ids []int6
 
 // mailboxRows converts store mailboxes to MailboxRows, resolving parents,
 // sort order and counts.
+//
+// All four counts of the WHOLE TREE come from one aggregate query
+// (store.CountMailboxes) rather than two queries per mailbox. Before migration
+// 0004 this loop issued one CountMailboxMessages per folder — 12 round trips
+// for the pilot's tree — and making the thread counts exact would have added a
+// second per folder. Grouping instead makes it one.
 func (a *Adapter) mailboxRows(ctx context.Context, accountID int64, boxes []store.Mailbox) ([]MailboxRow, error) {
 	if len(boxes) == 0 {
 		return nil, nil
@@ -120,16 +125,16 @@ func (a *Adapter) mailboxRows(ctx context.Context, accountID int64, boxes []stor
 		byName[m.Name] = m.ID
 	}
 
+	counts, err := a.store.CountMailboxes(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]MailboxRow, 0, len(boxes))
 	for _, m := range boxes {
-		total, unread, err := a.store.CountMailboxMessages(ctx, m.ID)
-		if err != nil {
-			return nil, err
-		}
-		totalThreads, unreadThreads, err := a.threadCounts(ctx, m.ID)
-		if err != nil {
-			return nil, err
-		}
+		// A mailbox with no messages has no row in the aggregate, and the zero
+		// value is exactly right for it: four zeroes.
+		c := counts[m.ID]
 
 		out = append(out, MailboxRow{
 			ID:           m.ID,
@@ -139,11 +144,16 @@ func (a *Adapter) mailboxRows(ctx context.Context, accountID int64, boxes []stor
 			SortOrder:    sortOrderFor(m.Role),
 			IsSubscribed: m.Subscribed,
 
-			TotalEmails:  unsigned(total),
-			UnreadEmails: unsigned(unread),
+			TotalEmails:  unsigned(c.TotalEmails),
+			UnreadEmails: unsigned(c.UnreadEmails),
 
-			TotalThreads:  totalThreads,
-			UnreadThreads: unreadThreads,
+			// EXACT, as of migration 0004: COUNT(DISTINCT thread_id), which is
+			// what RFC 8621 §2 defines them as ("The number of Threads where at
+			// least one Email in the Thread is in this Mailbox"). They used to
+			// be the message counts, which over-counted whenever a thread had
+			// two messages in one folder.
+			TotalThreads:  unsigned(c.TotalThreads),
+			UnreadThreads: unsigned(c.UnreadThreads),
 		})
 	}
 	return out, nil
@@ -218,30 +228,6 @@ func sortOrderFor(role store.MailboxRole) uint64 {
 	}
 }
 
-// threadCounts computes totalThreads and unreadThreads for a mailbox.
-//
-// RFC 8621 §2 defines them as the number of distinct THREADS with at least one
-// email in the mailbox, and — for unreadThreads — the number of threads with
-// at least one unread email in the mailbox.
-//
-// With no thread column in the store (see thread.go), the honest computation
-// would be to thread the whole mailbox on every Mailbox/get, which is exactly
-// the unbounded work L2 §4.3 forbids. So the counts are derived from the
-// message counts instead, which is correct whenever a thread has one message
-// in the folder — the overwhelmingly common case — and over-counts otherwise.
-//
-// This is a documented, bounded inaccuracy rather than a silent one: it is in
-// the J2 report as the second half of the threading store gap, and it becomes
-// exact for free the moment a thread_id column exists, because this function
-// is then one COUNT(DISTINCT thread_id).
-func (a *Adapter) threadCounts(ctx context.Context, mailboxID int64) (total, unread uint64, err error) {
-	t, u, err := a.store.CountMailboxMessages(ctx, mailboxID)
-	if err != nil {
-		return 0, 0, err
-	}
-	return unsigned(t), unsigned(u), nil
-}
-
 // unsigned converts a count from the database into the UnsignedInt every JMAP
 // count property is typed as (RFC 8620 §1.3).
 //
@@ -261,67 +247,65 @@ func unsigned(v int64) uint64 {
 // EmailReader
 // ---------------------------------------------------------------------------
 
-// EmailsByID reads message metadata, scoped to the account.
+// EmailsByID reads message metadata, scoped to the account, in ONE round trip.
 //
-// The store exposes GetMessage/GetMessageState per id rather than a batch
-// read, so this loops. That is a store gap worth naming (a MessagesByIDs batch
-// would turn N round trips into one, and Email/get legitimately asks for up to
-// maxObjectsInGet=500 ids), and it is in the J2 report. The loop is correct
-// meanwhile, and every read re-checks the account.
+// # The J2 performance gap, closed
+//
+// This used to loop, calling GetMessage + GetMessageState per id, because the
+// store exposed no batch read. Email/get legitimately asks for up to
+// maxObjectsInGet = 500 ids, so a full request cost 1,000 sequential round
+// trips. store.MessagesByIDs is now that batch read, and this method is one
+// query regardless of how many ids are asked for.
+//
+// The result is ordered to match the REQUEST, not the database: a caller that
+// asked for ids in a particular order gets them back that way, and the handler
+// above builds notFound from what is missing. Ids that do not exist, belong to
+// another account, or are tombstoned are simply absent — the store's query
+// enforces the account scope and the tombstone filter in SQL, so the
+// authorization check cannot be forgotten by a later edit of this loop.
 func (a *Adapter) EmailsByID(ctx context.Context, accountID int64, ids []int64) ([]EmailRow, error) {
-	out := make([]EmailRow, 0, len(ids))
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	found, err := a.store.MessagesByIDs(ctx, accountID, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]EmailRow, 0, len(found))
 	for _, id := range ids {
-		row, err := a.emailRow(ctx, accountID, id)
-		switch {
-		case errors.Is(err, ErrNotFound):
+		ms, ok := found[id]
+		if !ok {
 			continue
-		case err != nil:
-			return nil, err
 		}
-		out = append(out, row)
+		out = append(out, emailRowFrom(ms.Message, ms.State))
 	}
 	return out, nil
 }
 
-// emailRow assembles one EmailRow, or ErrNotFound.
-func (a *Adapter) emailRow(ctx context.Context, accountID, id int64) (EmailRow, error) {
-	msg, err := a.store.GetMessage(ctx, id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return EmailRow{}, ErrNotFound
-		}
-		return EmailRow{}, err
-	}
-	// THE authorization check. A message of another account is reported as
-	// not found, never as forbidden (contracts.go).
-	if msg.AccountID != accountID {
-		return EmailRow{}, ErrNotFound
-	}
-
-	st, err := a.store.GetMessageState(ctx, id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			// A message row with no state is a torn write the store's own
-			// insert path prevents; treat it as absent rather than serving a
-			// message that is in no mailbox.
-			return EmailRow{}, ErrNotFound
-		}
-		return EmailRow{}, err
-	}
-	// A tombstoned message is gone as far as a /get is concerned. It survives
-	// only so Email/changes (J3) can report it as destroyed.
-	if st.DeletedAt != nil {
-		return EmailRow{}, ErrNotFound
-	}
-
-	threadID, err := a.threadOf(ctx, accountID, msg)
-	if err != nil {
-		return EmailRow{}, err
-	}
-
+// emailRowFrom builds an EmailRow from both halves of a stored message.
+//
+// The single-message variant this replaced (emailRow: GetMessage +
+// GetMessageState + a per-message thread derivation) is gone. Every one of its
+// three reads is now unnecessary — MessagesByIDs returns both halves in one
+// query and threadId is a column — so keeping it would have left a second,
+// slower path to the same answer, and the two would eventually disagree. The
+// account scope and the tombstone filter it enforced in Go are enforced in SQL
+// by MessagesByIDs instead, where they cannot be forgotten by a later edit.
+//
+// It takes no context and does no I/O, which is the point: with threadId now a
+// column (migration 0004) rather than a per-message derivation, assembling an
+// Email needs nothing beyond the two rows the batch read already returned.
+func emailRowFrom(msg store.Message, st store.MessageState) EmailRow {
 	row := EmailRow{
-		ID:       msg.ID,
-		ThreadID: threadID,
+		ID: msg.ID,
+		// The column, straight through (migration 0004). RFC 8621 §4.1.1
+		// declares threadId "immutable; server-set", and the store's merge rule
+		// — the OLDEST thread always wins — is what makes that hold for every
+		// message except the losers of a late-ancestor merge, which ADR-001 §2
+		// arbitrated as Thread destroyed+created.
+		ThreadID: EncodeThreadID(msg.ThreadID),
 		BlobID:   blobIDOf(msg.RawSHA256),
 		Size:     unsigned(msg.RawSize),
 
@@ -361,7 +345,7 @@ func (a *Adapter) emailRow(ctx context.Context, accountID, id int64) (EmailRow, 
 
 	row.Addresses = decodeAddresses(msg.Addresses)
 	row.Structure = decodeStructure(msg.MIMEStructure)
-	return row, nil
+	return row
 }
 
 // blobIDOf renders a raw sha256 as the blobId clients download by. L2 §4:
@@ -445,137 +429,60 @@ func (a *Adapter) RawMessage(ctx context.Context, accountID, messageID int64) (i
 // ThreadReader
 // ---------------------------------------------------------------------------
 
-// ThreadsByID resolves threads by their root message id.
+// ThreadsByID resolves threads by their id, in ONE round trip.
 //
-// See thread.go for why threading is derived here rather than read. The
-// derivation walks the account's messages that share the thread's root, which
-// is bounded by the References index the schema already provides.
+// A thread id decodes to the id of the thread's oldest member (migration 0004),
+// which is the value every member of that thread carries in its thread_id
+// column — so resolving a thread is a range scan of messages_acct_thread rather
+// than the per-request derivation this used to do.
+//
+// A thread that no message carries is absent from the result, which the handler
+// turns into notFound. That is the correct answer for both cases it covers: an
+// id this server never issued, and one whose every message has since been
+// destroyed.
 func (a *Adapter) ThreadsByID(ctx context.Context, accountID int64, ids []string) ([]ThreadRow, error) {
-	out := make([]ThreadRow, 0, len(ids))
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Decode first, keeping the wire spelling for each: the response must echo
+	// the id the client sent, and the encoding is canonical so the map is
+	// unambiguous.
+	wanted := make([]int64, 0, len(ids))
+	wireOf := make(map[int64]string, len(ids))
 	for _, wire := range ids {
-		rootID, err := DecodeThreadID(wire)
+		id, err := DecodeThreadID(wire)
 		if err != nil {
 			continue
 		}
-		members, err := a.threadMembers(ctx, accountID, rootID)
-		switch {
-		case errors.Is(err, ErrNotFound):
+		if _, seen := wireOf[id]; seen {
 			continue
-		case err != nil:
-			return nil, err
 		}
-		out = append(out, ThreadRow{ID: wire, EmailIDs: members})
+		wireOf[id] = wire
+		wanted = append(wanted, id)
 	}
-	return out, nil
-}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
 
-// threadMembers returns the messages of the thread rooted at rootID, oldest
-// first, or ErrNotFound when the root is not a message of this account.
-func (a *Adapter) threadMembers(ctx context.Context, accountID, rootID int64) ([]int64, error) {
-	root, err := a.store.GetMessage(ctx, rootID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	if root.AccountID != accountID {
-		return nil, ErrNotFound
-	}
-	// The root of a thread must itself be a root: a message whose own thread
-	// resolves elsewhere is not a thread id this server ever issued.
-	rootOfRoot, err := a.rootMessageID(ctx, accountID, root)
+	members, err := a.store.ThreadMembers(ctx, accountID, wanted)
 	if err != nil {
 		return nil, err
 	}
-	if rootOfRoot != rootID {
-		return nil, ErrNotFound
-	}
 
-	type member struct {
-		id   int64
-		when time.Time
-	}
-	members := []member{{id: root.ID, when: receivedAtOf(root)}}
-
-	// Everything that references the root's Message-ID is in the thread. The
-	// query is bounded by the account and served by messages_acct_msgid.
-	if root.MessageID != "" {
-		descendants, err := a.messagesReferencing(ctx, accountID, root.MessageID)
-		if err != nil {
-			return nil, err
+	out := make([]ThreadRow, 0, len(members))
+	for _, id := range wanted {
+		emails := members[id]
+		if len(emails) == 0 {
+			continue
 		}
-		for _, m := range descendants {
-			if m.ID == root.ID {
-				continue
-			}
-			members = append(members, member{id: m.ID, when: receivedAtOf(m)})
-		}
-	}
-
-	// §3: "sorted by the receivedAt date of the Email, oldest first". Ties
-	// break on id so the order is total and therefore reproducible.
-	sort.Slice(members, func(i, j int) bool {
-		if members[i].when.Equal(members[j].when) {
-			return members[i].id < members[j].id
-		}
-		return members[i].when.Before(members[j].when)
-	})
-
-	out := make([]int64, 0, len(members))
-	for _, m := range members {
-		out = append(out, m.id)
+		// The store returns them ordered by (date, id), which is RFC 8621 §3's
+		// "sorted by the receivedAt date of the Email, oldest first" with a
+		// total-order tiebreak. No sort is needed here, and adding one would
+		// only risk disagreeing with the index.
+		out = append(out, ThreadRow{ID: wireOf[id], EmailIDs: emails})
 	}
 	return out, nil
-}
-
-// threadOf returns the JMAP thread id of a message.
-func (a *Adapter) threadOf(ctx context.Context, accountID int64, msg store.Message) (string, error) {
-	rootID, err := a.rootMessageID(ctx, accountID, msg)
-	if err != nil {
-		return "", err
-	}
-	return EncodeThreadID(rootID), nil
-}
-
-// rootMessageID finds the oldest stored ancestor of a message.
-//
-// The References header lists the thread's ancestry oldest-first (RFC 5322
-// §3.6.4), so the first entry this account actually stores is the thread root.
-// Falling back to In-Reply-To covers the mailers that send only that, and a
-// message with neither is its own root.
-//
-// It resolves ONE level rather than walking transitively: References already
-// carries the full chain, so the first stored entry IS the root, and a walk
-// would cost a query per hop for the same answer. The exception is a chain
-// whose earlier entries are not stored locally, which yields the oldest one
-// that is — the documented weakness in thread.go.
-func (a *Adapter) rootMessageID(ctx context.Context, accountID int64, msg store.Message) (int64, error) {
-	candidates := msg.ReferencesIDs
-	if len(candidates) == 0 && msg.InReplyTo != "" {
-		candidates = []string{msg.InReplyTo}
-	}
-	for _, ref := range candidates {
-		if ref == "" || ref == msg.MessageID {
-			continue
-		}
-		ancestor, err := a.messageByMessageID(ctx, accountID, ref)
-		switch {
-		case errors.Is(err, ErrNotFound):
-			continue
-		case err != nil:
-			return 0, err
-		}
-		return ancestor, nil
-	}
-	return msg.ID, nil
-}
-
-func receivedAtOf(m store.Message) time.Time {
-	if m.InternalDate != nil {
-		return *m.InternalDate
-	}
-	return m.Date
 }
 
 // ---------------------------------------------------------------------------

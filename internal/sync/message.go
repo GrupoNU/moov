@@ -78,6 +78,34 @@ func (s *Syncer) newMessage(accountID, mailboxID int64, uidValidity uint32, pm *
 	return store.NewMessage{Message: msg, State: state}
 }
 
+// threadCandidate extracts the headers threading reads from a store row.
+//
+// It is built from the already-mapped store.Message rather than from the parser
+// output, so the sanitization the row went through (sanitizeText: valid UTF-8,
+// no NUL) applies to the threading inputs too. A Message-ID carrying a NUL byte
+// would otherwise be compared against, and stored in, a text column that
+// rejects it.
+//
+// In-Reply-To is appended to References rather than kept apart: store.AssignThreads
+// treats the whole set as unordered ancestors and takes the OLDEST match, so the
+// distinction between "the direct parent" and "an ancestor" carries no
+// information for the algorithm. Keeping them separate would only invite a
+// caller to trust References' order, which real mailers do not preserve.
+func threadCandidate(m *store.Message) store.ThreadCandidate {
+	c := store.ThreadCandidate{
+		MessageID: m.MessageID,
+		Subject:   m.Subject,
+	}
+	if m.InReplyTo != "" {
+		c.References = make([]string, 0, len(m.ReferencesIDs)+1)
+		c.References = append(c.References, m.ReferencesIDs...)
+		c.References = append(c.References, m.InReplyTo)
+	} else if len(m.ReferencesIDs) > 0 {
+		c.References = m.ReferencesIDs
+	}
+	return c
+}
+
 // messageDate decides what goes in the date column.
 //
 // The Date header wins when it parses, because it is what the sender meant and
