@@ -135,6 +135,9 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 	deps.Submissions = submissions
 	deps.UndoWindow = cfg.Submit.UndoWindow
+	// The cancel half of the submission counters (W4b): an undo never reaches
+	// the outbox, so the JMAP layer is the only place it can be counted.
+	deps.SubmissionObserver = submissionMetrics{m}
 
 	// The uploader is the SAME adapter deps.Blobs is — one object serving
 	// download's reads and upload's writes keeps the account-scoping rule in
@@ -204,7 +207,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	// the HTTP server drains.
 	raws, _ := deps.Emails.(submit.RawSource)
 	outbox, err := startOutbox(cfg, st, &smtpTransport{cfg: cfg.Submit, dialer: dialer, logger: logger},
-		writer, raws, broker, blobs, logger)
+		writer, raws, broker, blobs, submissionMetrics{m}, logger)
 	if err != nil {
 		_ = httpSrv.Close()
 		writer.Close()

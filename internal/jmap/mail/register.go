@@ -54,6 +54,14 @@ type Deps struct {
 	// [5s, 30s] range the config contract states; zero means the 10s default.
 	UndoWindow time.Duration
 
+	// SubmissionObserver, when set, is told once per submission CANCELED here
+	// (W4b metrics). The outbox reports its own terminal outcomes — sent and
+	// failed — but a cancel never reaches it: the row is CAS'd out of 'queued'
+	// before any executor can claim it, so this is the only place an undo is
+	// observable. nil is valid and means "count nothing", which keeps every
+	// existing test constructing Deps without a metrics registry.
+	SubmissionObserver SubmissionObserver
+
 	// MailboxDelimiter is the IMAP hierarchy separator this account's server
 	// uses, which Mailbox/set composes full paths with. Empty means "/", which
 	// is what our Dovecot reports (S1/S2) and what nearly every server uses.

@@ -289,6 +289,36 @@ func TestMoovMetricsSet(t *testing.T) {
 	}
 }
 
+// The submission counters (W4b). The three results are one family with a
+// result label rather than three families, so the assertion that matters is
+// that all three land on the SAME metric name — that is what makes
+// "failed / (sent+failed+canceled)" a single rate() rather than a join.
+func TestSubmissionCounters(t *testing.T) {
+	m := metrics.New()
+	m.IncSubmission(metrics.SubmissionSent)
+	m.IncSubmission(metrics.SubmissionSent)
+	m.IncSubmission(metrics.SubmissionFailed)
+	m.IncSubmission(metrics.SubmissionCanceled)
+
+	got := render(t, m.Registry())
+
+	for _, want := range []string{
+		"# TYPE moov_submissions_total counter",
+		`moov_submissions_total{result="sent"} 2`,
+		`moov_submissions_total{result="failed"} 1`,
+		`moov_submissions_total{result="canceled"} 1`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("exposition is missing %q\ngot:\n%s", want, got)
+		}
+	}
+
+	// One family, not three: a split would break the failure-rate query.
+	if n := strings.Count(got, "# TYPE moov_submissions_total"); n != 1 {
+		t.Errorf("want exactly one submissions family, got %d:\n%s", n, got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

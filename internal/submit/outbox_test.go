@@ -306,6 +306,28 @@ type countingNotifier struct {
 func (c *countingNotifier) Notify(int64) { c.mu.Lock(); c.n++; c.mu.Unlock() }
 func (c *countingNotifier) count() int   { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
 
+// countingObserver records the terminal outcomes reported through Observer.
+type countingObserver struct {
+	mu sync.Mutex
+	by map[string]int
+}
+
+func newCountingObserver() *countingObserver {
+	return &countingObserver{by: map[string]int{}}
+}
+
+func (c *countingObserver) SubmissionFinished(result string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.by[result]++
+}
+
+func (c *countingObserver) count(result string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.by[result]
+}
+
 // ---------------------------------------------------------------------------
 // harness
 // ---------------------------------------------------------------------------
@@ -316,6 +338,7 @@ type outboxEnv struct {
 	sent      *fakeSent
 	raws      *fakeRaws
 	notifier  *countingNotifier
+	observer  *countingObserver
 	outbox    *Outbox
 }
 
@@ -329,6 +352,7 @@ func newOutboxEnv(t *testing.T) *outboxEnv {
 		sent:      newFakeSent(),
 		raws:      &fakeRaws{raw: map[int64][]byte{}},
 		notifier:  &countingNotifier{},
+		observer:  newCountingObserver(),
 	}
 	env.raws.raw[7] = []byte("Message-ID: <" + testMsgID + ">\r\n" +
 		"Date: Sat, 15 Aug 2026 10:00:00 +0000\r\n" +
@@ -338,6 +362,7 @@ func newOutboxEnv(t *testing.T) *outboxEnv {
 	ob, err := NewOutbox(env.queue, env.transport, env.sent, env.raws, Options{
 		Logger:   slog.New(slog.DiscardHandler),
 		Notifier: env.notifier,
+		Observer: env.observer,
 	})
 	if err != nil {
 		t.Fatalf("NewOutbox: %v", err)
@@ -504,6 +529,67 @@ func TestOutboxPermanentFailureIsFinal(t *testing.T) {
 	if env.transport.calls != 1 {
 		t.Errorf("a permanently failed submission was retried (%d calls)", env.transport.calls)
 	}
+}
+
+// The observer seam (W4b metrics) must report each TERMINAL outcome exactly
+// once. The two properties that matter are the ones a naive implementation
+// gets wrong: a transient re-queue is not a failure (the message may still go
+// out, and counting it would make the failure rate report retries), and a row
+// that comes back only for its post-send steps must not count a second send.
+func TestOutboxObserverCountsTerminalOutcomesOnce(t *testing.T) {
+	t.Run("sent once, even across a post-send retry", func(t *testing.T) {
+		env := newOutboxEnv(t)
+		in := env.due()
+		// Fail the \Sent append so the row re-queues AFTER acceptance: the
+		// second pass runs post-send only and must not re-count the send.
+		env.sent.appendErr = errors.New("append failed")
+		env.tick()
+
+		env.sent.appendErr = nil
+		env.queue.mu.Lock()
+		env.queue.rows[in.ID].NotBefore = time.Now().Add(-time.Second)
+		env.queue.rows[in.ID].State = store.IntentQueued
+		env.queue.mu.Unlock()
+		env.tick()
+
+		if row := env.queue.get(in.ID); row.State != store.IntentDone {
+			t.Fatalf("state = %s, want done", row.State)
+		}
+		if got := env.observer.count(ResultSent); got != 1 {
+			t.Errorf("sent counted %d times, want exactly 1", got)
+		}
+		if got := env.observer.count(ResultFailed); got != 0 {
+			t.Errorf("a successful submission counted %d failures", got)
+		}
+	})
+
+	t.Run("a permanent refusal counts one failure", func(t *testing.T) {
+		env := newOutboxEnv(t)
+		env.due()
+		env.transport.script = []string{"permanent"}
+		env.tick()
+
+		if got := env.observer.count(ResultFailed); got != 1 {
+			t.Errorf("failed counted %d times, want exactly 1", got)
+		}
+		if got := env.observer.count(ResultSent); got != 0 {
+			t.Errorf("a refused submission counted %d sends", got)
+		}
+	})
+
+	t.Run("a transient re-queue counts nothing", func(t *testing.T) {
+		env := newOutboxEnv(t)
+		env.due()
+		env.transport.script = []string{"transient"}
+		env.tick()
+
+		if got := env.observer.count(ResultFailed); got != 0 {
+			t.Errorf("a transient re-queue counted %d failures; only a PERMANENT end is terminal", got)
+		}
+		if got := env.observer.count(ResultSent); got != 0 {
+			t.Errorf("a transient re-queue counted %d sends", got)
+		}
+	})
 }
 
 func TestOutboxTransientRetriesWithBackoffThenSucceeds(t *testing.T) {

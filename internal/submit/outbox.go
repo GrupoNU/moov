@@ -75,6 +75,27 @@ type Notifier interface {
 	Notify(accountID int64)
 }
 
+// Observer receives one call per TERMINAL submission outcome, so the daemon
+// can count sends and failures without this package importing the metrics
+// exporter — the same seam shape as Notifier, and for the same reason: an
+// executor whose correctness depends on a metrics registry being present is an
+// executor that cannot be tested without one.
+//
+// result is one of the metrics package's submission result constants ("sent",
+// "failed"); cancellation is not observable here because it happens in the
+// JMAP layer, on a row this executor never claims.
+type Observer interface {
+	SubmissionFinished(result string)
+}
+
+// The terminal results reported through Observer. They mirror the metrics
+// package's constants, which this package does not import; a test in cmd/moovd
+// pins the two sets together.
+const (
+	ResultSent   = "sent"
+	ResultFailed = "failed"
+)
+
 // IntentEnvelope is the submission payload the JMAP layer stores on the
 // intent row and the executor reads back: the RFC 8621 §7.1 envelope, already
 // validated and derived at create time. The executor re-validates nothing —
@@ -115,6 +136,9 @@ type Options struct {
 	// Notifier, when set, is told after every observable transition so SSE
 	// clients see EmailSubmission (and Email) state move.
 	Notifier Notifier
+
+	// Observer, when set, is told once per terminal outcome (W4b metrics).
+	Observer Observer
 }
 
 func (o Options) withDefaults() Options {
@@ -488,6 +512,7 @@ func (o *Outbox) failPermanently(ctx context.Context, in *store.SendIntent, msg 
 		return
 	}
 	log.Warn("submission permanently failed", "reason", msg)
+	o.observe(ResultFailed)
 	o.notify(in.AccountID)
 }
 
@@ -507,15 +532,32 @@ func (o *Outbox) backoff(attempts int) time.Duration {
 	return time.Duration(float64(d) * frac)
 }
 
+// markAccepted stamps the in-memory row after the acceptance was persisted.
+//
+// This is where "sent" is counted, and it is the right place precisely because
+// EVERY acceptance path funnels through it: the ordinary 250, the recovered
+// ErrAcceptedUnrecorded persist, and the recovery probe that found the message
+// already in \Sent. Counting at the transport instead would miss the last two
+// and would count an acceptance the store never recorded.
+//
+// It runs once per intent because execute() branches on Accepted() first: a
+// row that comes back for its post-send steps never re-enters transmit().
 func (o *Outbox) markAccepted(in *store.SendIntent, reply string) {
 	now := o.opts.Clock()
 	in.AcceptedAt = &now
 	in.AcceptedReply = reply
+	o.observe(ResultSent)
 }
 
 func (o *Outbox) notify(accountID int64) {
 	if o.opts.Notifier != nil {
 		o.opts.Notifier.Notify(accountID)
+	}
+}
+
+func (o *Outbox) observe(result string) {
+	if o.opts.Observer != nil {
+		o.opts.Observer.SubmissionFinished(result)
 	}
 }
 

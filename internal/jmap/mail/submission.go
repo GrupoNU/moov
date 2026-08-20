@@ -78,6 +78,14 @@ const identityID = "primary"
 // cancelable — RFC 8621 §7.5's cannotUnsend SetError condition.
 var ErrCannotUnsend = errors.New("mail: the submission can no longer be canceled")
 
+// SubmissionObserver receives one call per submission canceled through this
+// layer (W4b metrics). It is the mirror of internal/submit's Observer, and
+// exists for the same reason: this package must not import the metrics
+// exporter to be able to count an undo.
+type SubmissionObserver interface {
+	SubmissionCanceled()
+}
+
 // SubmissionRow is one EmailSubmission as the handlers need it.
 type SubmissionRow struct {
 	ID         int64
@@ -789,6 +797,7 @@ func (d *Deps) applySubmissionUpdate(ctx context.Context, accountID int64, wire 
 	row, err := d.Submissions.Cancel(ctx, accountID, id)
 	switch {
 	case err == nil:
+		d.observeCancel(row)
 		return row, nil
 	case errors.Is(err, ErrNotFound):
 		return zero, &setError{Type: setErrNotFound}
@@ -815,12 +824,34 @@ func (d *Deps) applySubmissionDestroy(ctx context.Context, accountID int64, wire
 	row, err := d.Submissions.Destroy(ctx, accountID, id)
 	switch {
 	case err == nil:
+		// Only a destroy that CANCELED counts as an undo (the W-A3 deviation
+		// path). Tombstoning an already-final record is record-keeping, and
+		// counting it would report undos the user never performed.
+		d.observeCancel(row)
 		return row, nil
 	case errors.Is(err, ErrNotFound):
 		return zero, &setError{Type: setErrNotFound}
 	default:
 		return zero, &setError{Type: setErrServerFail, Description: "destroying the submission failed"}
 	}
+}
+
+// observeCancel counts one undo, when the row really ended up canceled.
+//
+// The guard is the undoStatus rather than a "did this call change anything"
+// signal, because the store's cancel is deliberately idempotent: replaying a
+// cancel on an already-canceled row is a success, not an error (a client that
+// retries a request whose response it lost must not see a spurious failure).
+// The cost of that idempotency is that a replayed cancel is indistinguishable
+// here from the original, so a client that retries its undo can count two.
+// That is the honest trade and it is the right way round: the alternative —
+// having the store report "already canceled" as a distinct outcome — would put
+// a metrics concern into a correctness path.
+func (d *Deps) observeCancel(row SubmissionRow) {
+	if d.SubmissionObserver == nil || row.UndoStatus != "canceled" {
+		return
+	}
+	d.SubmissionObserver.SubmissionCanceled()
 }
 
 // ---------------------------------------------------------------------------

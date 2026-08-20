@@ -10,6 +10,7 @@ import (
 
 	"github.com/GrupoNU/moov/internal/blob"
 	"github.com/GrupoNU/moov/internal/config"
+	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
 	"github.com/GrupoNU/moov/internal/submit"
 )
@@ -51,6 +52,29 @@ func (t *smtpTransport) Send(ctx context.Context, account store.Account, env sub
 	}, env, msg, onAccepted)
 }
 
+// submissionMetrics adapts the metric set to the two observer seams the
+// submission path exposes: internal/submit's Observer (sent, failed) and
+// internal/jmap/mail's SubmissionObserver (canceled). Neither package imports
+// internal/metrics; this is the one place the three vocabularies meet, and the
+// constants are asserted equal by a test rather than assumed.
+type submissionMetrics struct{ m *metrics.Metrics }
+
+// SubmissionFinished implements submit.Observer.
+func (s submissionMetrics) SubmissionFinished(result string) {
+	if s.m == nil {
+		return
+	}
+	s.m.IncSubmission(result)
+}
+
+// SubmissionCanceled implements mail.SubmissionObserver.
+func (s submissionMetrics) SubmissionCanceled() {
+	if s.m == nil {
+		return
+	}
+	s.m.IncSubmission(metrics.SubmissionCanceled)
+}
+
 // outboxComponent owns the running executor's lifecycle.
 type outboxComponent struct {
 	cancel context.CancelFunc
@@ -73,11 +97,13 @@ func startOutbox(
 	raws submit.RawSource,
 	notifier submit.Notifier,
 	blobs *blob.Store,
+	observer submit.Observer,
 	logger *slog.Logger,
 ) (*outboxComponent, error) {
 	outbox, err := submit.NewOutbox(st, transport, sent, raws, submit.Options{
 		Logger:   logger,
 		Notifier: notifier,
+		Observer: observer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building the outbox: %w", err)

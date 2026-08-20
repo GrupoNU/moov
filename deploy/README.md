@@ -177,6 +177,8 @@ docker run --rm --network moov-internal curlimages/curl -s http://moovd:8080/met
 | `moov_jmap_http_request_duration_seconds{route}` | Latency histogram, bucketed around the 100 ms Gmail-class bar (regla 1). |
 | `moov_jmap_method_calls_total{method,outcome}` | Per-method outcomes. This is the one that answers "is `Email/query` erroring?" — JMAP returns HTTP 200 with an error *invocation*, so an HTTP-only view reports a healthy server while every call fails. |
 | `moov_parse_results_total{stage}` | Which stage of the S4 parse cascade produced each result. A jump in failures means a new class of message in the wild. |
+| `moov_submissions_total{result}` | Terminal outcomes of the outbox: `sent` (the SMTP 250 was read *and persisted*), `failed` (a permanent 5xx or the retry cap), `canceled` (an undo inside the window). A transient re-queue counts as none of them — the message may still go out, so counting it would make the failure rate report retries. |
+| `moov_jmap_sse_connections` | Open EventSource streams. A leak shows up here and nowhere else, since these are long-lived by design. |
 | `moov_build_info{version,commit,go}` | Always 1; the labels identify the running build. |
 
 `/healthz` is a **liveness** probe: it reports that the process and its HTTP
@@ -266,7 +268,28 @@ hostname on Mailcow's certificate, not the container alias Moov dials (spike S1
 H2). Moov verifies against the certificate's name rather than disabling
 verification.
 
-**A client gets `unknownCapability` for `urn:ietf:params:jmap:submission`.**
-Expected in phase 1: submission is not implemented and therefore not advertised.
-Clients that poll `Identity/get` (Bulwark does) log this repeatedly and read mail
-regardless.
+**A client gets `unknownCapability` for `urn:ietf:params:jmap:submission`.** Was
+expected in phase 1, and is a real fault now: phase 2 implements submission and
+the session advertises it whenever the daemon mounts the submission methods. If
+a client still sees this, the deployment is running a phase-1 image.
+
+**Migration 0004 takes tens of seconds on an existing store.** Expected, once.
+It backfills `thread_id` over every message already synced, and the pilot's
+26,869-message account took **29.5 s** (0005 adds ~0.2 s). The daemon does not
+serve until migrations finish, so a redeploy onto a populated store is not the
+sub-second restart an empty one is. A fresh deployment pays nothing: there are
+no rows to backfill.
+
+**`moov_sync_lag_seconds` reads high on a healthy system.** Known limitation of
+E8-lite. The gauge is computed from `sync_log.last_success_at`, which the
+*initial* sync writes; the steady-state watcher records its progress on
+`mailboxes.last_synced_at` instead. An account whose watcher is working
+perfectly therefore reports a lag measured from its last full pass — days, on
+the pilot — while mail arrives in seconds. Until the collector reads the
+mailbox column, **do not alert on this gauge**; `mailboxes.last_synced_at` is
+the honest freshness signal:
+
+```sql
+SELECT name, last_synced_at, now() - last_synced_at AS age
+FROM mailboxes WHERE account_id = $1 ORDER BY last_synced_at DESC;
+```

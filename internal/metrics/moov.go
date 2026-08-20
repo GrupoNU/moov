@@ -57,6 +57,24 @@ type Metrics struct {
 	// SSEEvents counts emitted server-sent events by kind ("state", "ping").
 	SSEEvents *Counter
 
+	// --- Outbox (W3/W4b)
+
+	// Submissions counts EmailSubmission outcomes by result: "sent" when the
+	// SMTP server's 250 was read and persisted, "failed" when the submission
+	// reached its permanent end (a 5xx, or the transient attempt cap), and
+	// "canceled" when the user undid it inside the window.
+	//
+	// One family with a result label rather than three counters: the three are
+	// mutually exclusive terminal outcomes of the SAME state machine, so the
+	// question worth alerting on — "what fraction of submissions failed?" — is
+	// one rate() over one family. Split families would force a join.
+	//
+	// Deliberately unlabeled by account: submission volume per account is a
+	// question for the logs (which carry account_id on every transition), and
+	// an account label here would grow the series set with the user base for a
+	// number nobody alerts on per-account.
+	Submissions *Counter
+
 	// --- Sync engine (E5/E6)
 
 	// SyncLagSeconds is how long ago each account last completed a sync pass.
@@ -118,6 +136,9 @@ func NewWithRegistry(r *Registry) *Metrics {
 			"Currently open JMAP EventSource connections."),
 		SSEEvents: r.Counter("moov_jmap_sse_events_total",
 			"Server-sent events emitted by the JMAP EventSource endpoint, by kind."),
+
+		Submissions: r.Counter("moov_submissions_total",
+			"EmailSubmission terminal outcomes by result (sent, failed, canceled)."),
 
 		SyncLagSeconds: r.Gauge("moov_sync_lag_seconds",
 			"Seconds since each account's most recent sync checkpoint."),
@@ -187,6 +208,32 @@ func (m *Metrics) AddSSEConnections(delta float64) {
 // IncSSEEvents counts one emitted server-sent event.
 func (m *Metrics) IncSSEEvents(kind string) {
 	m.SSEEvents.Inc(Labels{"kind": kind})
+}
+
+// The submission results Submissions counts. They are constants rather than
+// bare strings because the three are a closed set — the outbox's terminal
+// states — and a typo'd label would silently create a fourth series that no
+// dashboard queries.
+const (
+	// SubmissionSent is a message the SMTP server accepted (the 250 was read
+	// and persisted). It says nothing about DELIVERY, which happens after the
+	// relay takes ownership and is not observable from here.
+	SubmissionSent = "sent"
+	// SubmissionFailed is a submission that reached a permanent end: a 5xx, or
+	// the transient retry cap.
+	SubmissionFailed = "failed"
+	// SubmissionCanceled is an undo inside the window.
+	SubmissionCanceled = "canceled"
+)
+
+// IncSubmission counts one terminal submission outcome.
+//
+// Called once per submission at the point the outcome becomes final and
+// persisted, never on the intermediate transitions: a transient re-queue is
+// not a failure (the message may still go out), and counting it as one would
+// make the failure rate report retries rather than lost mail.
+func (m *Metrics) IncSubmission(result string) {
+	m.Submissions.Inc(Labels{"result": result})
 }
 
 // statusClass buckets an HTTP status into its class ("2xx", "4xx", ...).
