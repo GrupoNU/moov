@@ -1,0 +1,166 @@
+# Moov Mail — the PUBLIC front (moov.atmosfera.cloud).
+#
+# This is the file that lives at /opt/moov/public-caddy/Caddyfile on the mail
+# VPS and is owned by `docker-compose.yml` (service `caddy-public`), unlike the
+# hand-run S1 spike Caddy that serves the VPN entry on :8090.
+#
+# # The two fronts, and why both exist
+#
+#   Caddyfile.pilot  — :8090, bound to the TAILSCALE interface. The VPN entry.
+#                      It keeps working exactly as before; opening the public
+#                      door does not close the private one, and the VPN path
+#                      stays available as the fallback when the public one is
+#                      turned off.
+#   Caddyfile.public — :80/:443, bound to the SECOND public IP only
+#                      (217.216.85.211). The public entry.
+#
+# # Binding: why the second IP, and why that is not a detail
+#
+# The primary IP (217.216.83.79) belongs to MAILCOW: its nginx holds :80 and
+# :443 there, along with every mail port. CLAUDE.md's hard rule is that Mailcow
+# is never touched, so Moov cannot take a port on that address — not even by
+# "just adding a vhost" to Mailcow's nginx.
+#
+# The second IP (217.216.85.211) carries only Postal's SMTP on :25. Its :80 and
+# :443 were verified free before this file existed. Binding the container's
+# ports to 217.216.85.211 EXPLICITLY (not 0.0.0.0) is what keeps these two
+# stacks from ever contending: Docker publishes on one address, Mailcow keeps
+# the other, and neither can steal the other's listener even by accident.
+#
+# # TLS
+#
+# Automatic HTTPS via Let's Encrypt HTTP-01. The challenge needs :80 reachable
+# on the address the A record points at, which is why :80 is published — but it
+# serves ONLY the ACME challenge and a redirect to HTTPS. There is no plaintext
+# route to the application.
+#
+# HTTP-01 rather than TLS-ALPN-01 because the A record is direct (unproxied),
+# and rather than DNS-01 because DNS-01 would require handing a Cloudflare API
+# token to this container. A token in the front is a credential that a compromise
+# of the front turns into control of the zone; the HTTP challenge needs no
+# secret at all.
+#
+# # Where the public-IP binding actually happens
+#
+# NOT here. Caddy runs inside the container's network namespace, where the host
+# address 217.216.85.211 does not exist — a `bind 217.216.85.211` directive in
+# this file makes Caddy fail to start outright with "cannot assign requested
+# address". The restriction to the second IP is enforced by DOCKER, in the
+# `ports:` mapping of the `caddy-public` service ("217.216.85.211:443:443"),
+# which is the layer that actually owns host addresses. Caddy binds all
+# interfaces INSIDE its namespace; Docker publishes that on exactly one host
+# address, so the guarantee is unchanged — it is just enforced one layer down.
+#
+# # ROLLBACK to VPN-only — under a minute
+#
+#   docker compose stop caddy-public     # the public door closes
+#
+# The VPN entry on :8090 is untouched by that command and keeps serving. Delete
+# the DNS A record too if the exposure is meant to stay off (see deploy/README).
+{
+	# The ACME account address. Let's Encrypt sends expiry warnings here.
+	email admin@atmosfera.cloud
+
+	# Do not let Caddy grab :80/:443 on every interface for the automatic-HTTPS
+	# redirect vhost: this host has an address that belongs to Mailcow, and the
+	# default behaviour would bind it. Every listener in this file is therefore
+	# written with an explicit host:port, and this turns OFF the implicit one.
+	auto_https disable_redirects
+
+	# No admin API. It is unauthenticated-by-design on localhost and this
+	# container has no need for it; leaving it off removes the endpoint entirely
+	# rather than trusting that nothing can reach it.
+	admin off
+
+	servers {
+		# Do not trust any X-Forwarded-* the client sends: this front is the
+		# FIRST hop from the internet, so an inbound X-Forwarded-For is
+		# necessarily forged. Caddy sets its own from the real peer.
+		trusted_proxies static
+	}
+}
+
+# --- :80 — ACME challenge and redirect ONLY ----------------------------------
+#
+# Bound to the second IP explicitly. Caddy answers the HTTP-01 challenge on this
+# listener automatically (it is handled before any route below), and everything
+# else is redirected to HTTPS. No application traffic is served in plaintext.
+http://moov.atmosfera.cloud:80 {
+	redir https://{host}{uri} permanent
+}
+
+# --- :443 — the application ---------------------------------------------------
+https://moov.atmosfera.cloud:443 {
+	# --- Security headers ---
+	#
+	# Applied to every response. The set is deliberately the one that hardens a
+	# webmail without breaking it: Bulwark is a Next.js application that needs
+	# inline styles and its own scripts, so a strict Content-Security-Policy is
+	# NOT imposed from the edge here — a wrong CSP would break the client in ways
+	# that look like application bugs, and Moov's own PWA (phase 2) ships its own
+	# CSP with the three-layer HTML sanitization of ADR §5. What is set here is
+	# everything that is safe to assert generically.
+	header {
+		# HSTS: two years, subdomains included. No `preload` directive: preload
+		# is a one-way submission that would bind every atmosfera.cloud
+		# subdomain — including hosts this deployment does not own — to
+		# HTTPS-only, and it is effectively irreversible. That is the owner's
+		# decision to make, not this file's.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+
+		# Clickjacking: a webmail inside someone else's frame is a phishing
+		# surface. Both headers, because the CSP form is the modern one and the
+		# legacy header still matters to older clients.
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+
+		# Never let a browser second-guess a declared Content-Type. Mail carries
+		# attacker-supplied attachments; MIME sniffing on those is how a text/plain
+		# response becomes executable script.
+		X-Content-Type-Options "nosniff"
+
+		# Do not leak the mailbox URL (which can carry ids) to third-party hosts
+		# that a message's remote content might reference.
+		Referrer-Policy "strict-origin-when-cross-origin"
+
+		# Deny device access the webmail does not use.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+
+		# Do not advertise the server software.
+		-Server
+	}
+
+	# --- JMAP routes -> moovd ---
+	#
+	# Byte-for-byte the same matcher as Caddyfile.pilot, deliberately: the public
+	# and VPN entries must route identically, or a bug reproduces on one path and
+	# not the other. It covers both route vocabularies so the S1 jmap-proxy
+	# rollback stays a one-line change here too.
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource*
+	handle @jmap {
+		reverse_proxy moovd:8620 {
+			# SSE (/jmap/eventsource) is a long-lived stream that must not be
+			# buffered or the push feels broken; and it must not be cut by a
+			# proxy read timeout while it is legitimately idle between events.
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	# --- Everything else -> Bulwark ---
+	handle {
+		reverse_proxy moov-bulwark-spike:3000
+	}
+
+	# Access log, so the exposure can be audited: who reached which route, from
+	# which address, with which user agent.
+	log {
+		output file /var/log/caddy/public-access.log {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		format json
+	}
+}

@@ -227,6 +227,113 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  # ---------------------------------------------------------------------------
+  # caddy-public — the PUBLIC front (moov.atmosfera.cloud).
+  #
+  # OPTIONAL, and off unless explicitly started:
+  #
+  #   docker compose --profile public up -d caddy-public   # open the door
+  #   docker compose stop caddy-public                     # close it again
+  #
+  # The profile is the safety catch. Without it, a routine `docker compose up -d`
+  # on this stack — the command run for every unrelated redeploy — would silently
+  # publish the pilot to the internet. Exposure must be a decision someone typed,
+  # never a side effect.
+  #
+  # This service does NOT replace the VPN entry. The S1 Caddy on :8090 (bound to
+  # Tailscale, hand-run from /opt/moov-spike) keeps serving unchanged; this adds
+  # a second, public door to the same two backends.
+  # ---------------------------------------------------------------------------
+  caddy-public:
+    image: caddy:2-alpine
+    container_name: moov-caddy-public
+    restart: unless-stopped
+    profiles: [public]
+
+    # ONLY the front network. Deliberately NOT `internal`, so PostgreSQL is
+    # unreachable from the process that terminates hostile traffic.
+    #
+    # What this does NOT do, and it matters: it does not put moovd's operational
+    # listener out of reach. moovd sits on this same front network and its :8080
+    # (/healthz, /metrics — account ids and sync state) binds all interfaces
+    # inside its namespace, so `moovd:8080` IS dialable from this container. That
+    # was verified, not assumed.
+    #
+    # The property that keeps /metrics off the internet is therefore the ROUTING
+    # in Caddyfile.public, not the network topology: the only `reverse_proxy` to
+    # moovd targets port 8620, and no route anywhere names 8080. A request for
+    # /metrics falls through to the Bulwark handler and gets Bulwark's answer —
+    # confirmed by fetching it through the front and finding zero `moov_` series.
+    #
+    # The consequence for review: adding a route to moovd:8080 in the public
+    # Caddyfile would publish the ops listener with nothing else to stop it.
+    # There is no second line of defense here, so that line must never be added.
+    networks:
+      - front
+
+    ports:
+      # Bound to the SECOND IP explicitly, never 0.0.0.0. The primary IP's :80
+      # and :443 belong to Mailcow's nginx (CLAUDE.md: Mailcow is never touched),
+      # and an explicit bind is what makes stealing them impossible rather than
+      # merely unlikely.
+      #
+      # :80 carries the ACME HTTP-01 challenge and a redirect to HTTPS. No
+      # application traffic is served in plaintext.
+      - "217.216.85.211:80:80"
+      - "217.216.85.211:443:443"
+
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account key. A named volume, so a container
+      # recreation does not throw away valid certificates and re-issue them —
+      # Let's Encrypt's rate limits are per-week, and burning them during a
+      # redeploy loop is how a deployment locks itself out of TLS.
+      - caddy_public_data:/data
+      - caddy_public_config:/config
+      - caddy_public_logs:/var/log/caddy
+
+    healthcheck:
+      # Liveness of the FRONT, deliberately not of TLS.
+      #
+      # The probe asserts that :80 answers the HTTPS redirect, and it must NOT
+      # follow that redirect: `wget --spider` does follow it, then tries to
+      # verify the certificate from inside the container and fails — which
+      # reported a perfectly healthy front as unhealthy for as long as the
+      # certificate did not exist yet (i.e. before the DNS record was created,
+      # exactly when the front is most in need of an honest signal).
+      #
+      # The success condition is the redirect LINE, not wget's exit code.
+      # `-S` prints response headers to stderr as they arrive, so the 301 and
+      # its Location are already on the wire before BusyBox wget follows the
+      # redirect and dies on the certificate — and grep has what it needs.
+      # The exit code is therefore deliberately ignored.
+      #
+      # (`--max-redirect=0` would be the clean way to say this and is NOT
+      # available: the alpine image ships BusyBox wget, where that is a GNU-only
+      # flag. `--spider` is no good either — it follows the redirect too, which
+      # is what reported this front unhealthy while it was serving correctly.)
+      #
+      # If the process is dead the connection is refused, nothing is printed,
+      # and the grep fails — which is exactly the signal wanted.
+      test:
+        - CMD-SHELL
+        - >-
+          wget -S -O /dev/null --header='Host: moov.atmosfera.cloud'
+          http://127.0.0.1:80/ 2>&1 | grep -q 'Location: https://'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
 networks:
   # Moov's own network: PostgreSQL and moovd, nothing else.
   internal:
@@ -261,3 +368,14 @@ volumes:
     name: moov-pgdata
   blobs:
     name: moov-blobs
+
+  # The public front's certificates, config and access logs. `caddy_public_data`
+  # holds the ACME account key and the issued certificates: losing it means
+  # re-issuing from scratch and spending Let's Encrypt rate limit, so it is a
+  # named volume that survives `docker compose down`.
+  caddy_public_data:
+    name: moov-caddy-public-data
+  caddy_public_config:
+    name: moov-caddy-public-config
+  caddy_public_logs:
+    name: moov-caddy-public-logs

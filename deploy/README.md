@@ -156,6 +156,121 @@ its answer is the reference.
 
 ---
 
+## Public exposure — `moov.atmosfera.cloud`
+
+The pilot has two front doors. Opening the public one does not close the private
+one, and either can be turned off without touching the other.
+
+| | VPN entry | Public entry |
+|---|---|---|
+| Address | `http://100.123.119.124:8090` | `https://moov.atmosfera.cloud` |
+| Listener | S1 Caddy, Tailscale interface | `caddy-public`, **217.216.85.211** only |
+| Managed by | hand-run, `/opt/moov-spike/` | **compose** (`Caddyfile.public`) |
+| TLS | none (VPN) | Let's Encrypt, HTTP-01 |
+| Turned on by | already running | `--profile public` |
+
+### Why the second IP, and why that is load-bearing
+
+The host has two public addresses. The primary (**217.216.83.79**) is
+**Mailcow's**: its nginx holds `:80`/`:443` there, along with `25/143/993/995/587/465/4190`.
+CLAUDE.md's rule is that Mailcow is never touched, so Moov may not take a port on
+that address — not even by adding a vhost to Mailcow's nginx.
+
+The second (**217.216.85.211**) carries only Postal's SMTP on `:25`; its `:80`
+and `:443` were verified free before anything was deployed. The compose `ports:`
+mapping binds those two ports to **that address explicitly**, never `0.0.0.0`, so
+the two stacks cannot contend for a listener even by accident.
+
+> The public-IP restriction lives in `docker-compose.yml`, **not** in the
+> Caddyfile. Caddy runs in a network namespace where the host address does not
+> exist, so a `bind 217.216.85.211` directive there makes it fail to start
+> outright. Docker owns host addresses; Caddy binds all interfaces inside its
+> own namespace.
+
+### Turning it on
+
+```bash
+cd /opt/moov/src/deploy
+docker compose --profile public up -d caddy-public
+```
+
+The `public` profile is a safety catch. Without it, a routine `docker compose
+up -d` — the command run for every unrelated redeploy — would silently publish
+the pilot. Exposure has to be something a person typed.
+
+Certificate issuance needs the DNS record to already point here, since the
+HTTP-01 challenge is fetched over the public internet. Starting the service
+before the A record exists is harmless: Caddy retries, and the only symptom is
+`could not get certificate` in the log.
+
+### What is NOT exposed, and what actually enforces that
+
+`/metrics` and `/healthz` (`moovd:8080`) expose account ids and sync state, and
+they stay unreachable from the internet. **The mechanism is the routing, not the
+network topology** — worth stating plainly, because the obvious assumption is
+wrong:
+
+- `caddy-public` joins only the front network, so PostgreSQL is unreachable.
+- But `moovd` is on that same front network and its `:8080` binds all interfaces
+  inside its namespace, so **`moovd:8080` is dialable from the public front.**
+  That was verified, not assumed.
+- What keeps it private is that the only `reverse_proxy` to `moovd` targets
+  **8620**, and no route names 8080. `/metrics` falls through to the Bulwark
+  handler — confirmed by fetching it through the front and finding zero `moov_`
+  series.
+
+**Consequence for review:** adding a route to `moovd:8080` in
+`Caddyfile.public` would publish the ops listener with nothing else to stop it.
+
+### Rate limiting: what is honestly there
+
+Stock `caddy:2-alpine` (v2.11.4) has **no `rate_limit` directive** — it is a
+third-party plugin needing a custom `xcaddy` build. Verified with
+`caddy list-modules`; no such module is present. Rather than pull an unvetted
+plugin into the edge, the deployment relies on the limiter that already exists
+in `internal/jmaphttp` and is stricter than a generic edge limit because it
+counts the thing that matters (failed logins), not requests:
+
+- **Per IP+account exponential lockout** — measured from a cold identity through
+  this front: `Retry-After` 2 s → 7 s → 19 s over five wrong passwords.
+- **Global failure budget** — a token bucket of upstream login failures, so an
+  attacker rotating accounts still cannot make Moov the IP that Mailcow's
+  netfilter bans.
+- **Positive-result caching**, so a live user's traffic never pays a LOGIN.
+
+One caveat the exposure makes real: `clientIP` is deliberately the TCP peer and
+never `X-Forwarded-For` (a spoofable header would let an attacker rotate lockout
+keys at will). Behind this front every client shares the proxy's container IP,
+so the per-pair key **collapses to per-account**. That is strictly tighter, never
+looser — one guessed account cannot be attacked faster by rotating source
+addresses — but it also means one noisy client can lock an account for everyone
+on that path. The global budget is what bounds the damage.
+
+If a genuine per-source-IP edge limit is wanted later, it needs a custom Caddy
+build with `caddy-ratelimit`, and the front must then parse a trusted
+`X-Forwarded-For` — a change with its own spoofing surface. Not free, and not
+done here.
+
+### Rollback — back to VPN-only in about a minute
+
+```bash
+docker compose stop caddy-public      # the public door closes immediately
+```
+
+The VPN entry on `:8090` is untouched by that command and keeps serving. If the
+exposure is meant to stay off, delete the DNS record too — otherwise the name
+keeps resolving to a host with nothing listening:
+
+```bash
+curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
+  -H "Authorization: Bearer $CF_TOKEN"
+```
+
+Nothing about this rollback touches Mailcow, `moovd`, or the store; only the
+front is stopped.
+
+---
+
 ## Operating
 
 ### Health and metrics
