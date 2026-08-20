@@ -88,8 +88,8 @@ func TestEveryDeclaredLimitIsApplied(t *testing.T) {
 		"MaxConcurrentRequests": proveMaxConcurrentRequests,
 		"MaxObjectsInGet":       proveMaxObjectsInGet,
 		"MaxObjectsInSet":       proveMaxObjectsInSet,
-		"MaxSizeUpload":         proveUploadLimitsVacuous,
-		"MaxConcurrentUpload":   proveUploadLimitsVacuous,
+		"MaxSizeUpload":         proveMaxSizeUpload,
+		"MaxConcurrentUpload":   proveMaxConcurrentUpload,
 	}
 
 	typ := reflect.TypeOf(jmap.Limits{})
@@ -321,17 +321,9 @@ func proveMaxObjectsInSet(t *testing.T) {
 	}
 }
 
-// proveUploadLimitsVacuous: phase 1 accepts NO uploads at all (501), so no
-// upload can exceed maxSizeUpload or maxConcurrentUpload — the advertised
-// values are vacuously true. The upload epic replaces this proof with real
-// body/concurrency checks.
-func proveUploadLimitsVacuous(t *testing.T) {
-	s, _, _, _ := newTestServer(t, nil)
-	w := doReq(s, http.MethodPost, "/jmap/upload/a7", `{"x":1}`, true, nil)
-	if w.Code != http.StatusNotImplemented {
-		t.Fatalf("upload = %d, want 501 (if uploads now exist, these limits need real enforcement proofs)", w.Code)
-	}
-}
+// The upload limits' proofs live in upload_test.go since W3 made the endpoint
+// real (proveMaxSizeUpload / proveMaxConcurrentUpload) — the phase-1 vacuous
+// proof retired with the 501.
 
 // sessionLimit fetches one advertised core-capability limit over HTTP.
 func sessionLimit(t *testing.T, s *Server, name string) int64 {
@@ -430,8 +422,9 @@ func TestSessionObjectShape(t *testing.T) {
 			t.Errorf("mail accountCapability lacks %s (RFC 8621 §1.3.1: MUST contain it)", k)
 		}
 	}
-	if mailCap["mayCreateTopLevelMailbox"] != false {
-		t.Fatal("mailbox creation is W2; advertising it before Mailbox/set exists would be a lie")
+	if mailCap["mayCreateTopLevelMailbox"] != true {
+		t.Fatal("Mailbox/set create accepts top-level folders since W2; the flag must say so " +
+			"(it lagged the feature by one epic and W3's session-truth pass corrected it)")
 	}
 	// The one-mailbox constraint W1 enforces must be advertised (§1.3.1;
 	// declared == applied). JSON numbers decode as float64.

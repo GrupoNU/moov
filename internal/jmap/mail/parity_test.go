@@ -129,7 +129,7 @@ func TestParityMailboxProperties(t *testing.T) {
 //	jmap-perl adds a non-standard "mayAdmin" member, which Moov omits because
 //	RFC 8621 §2 does not define it; and Moov still reports the
 //	mailbox-mutation rights (mayCreateChild/mayRename/mayDelete) and
-//	maySubmit as false, because Mailbox/set is W2 and submission is W3.
+//	maySubmit true since W2/W3 made both real.
 func TestParityMailboxRightsDivergence(t *testing.T) {
 	dir := parityDir(t)
 	oracle := loadOracle(t, dir, "mailbox-get.json")

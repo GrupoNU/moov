@@ -161,8 +161,8 @@ type Response struct {
 
 	// CreatedIDs is returned if and only if the request included a createdIds
 	// property (§3.4: "optional; only returned if given in the request").
-	// Phase 1 has no /set methods, so it is a pass-through of the request's
-	// map; proxies rely on the round trip (§5.8).
+	// Since W3 it is the request map UPDATED with every id the request's /set
+	// creates assigned (created.go); before that it was a pass-through.
 	CreatedIDs map[string]string
 
 	// SessionState is the current value of the Session object's "state"

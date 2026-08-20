@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/GrupoNU/moov/internal/jmap"
 	"github.com/GrupoNU/moov/internal/parser"
@@ -36,6 +37,22 @@ type Deps struct {
 	// Mailboxer applies Mailbox/set mutations (W2). Same rule as Writer: nil
 	// means the folder-mutation surface is not mounted.
 	Mailboxer MailboxWriter
+
+	// Creator applies Email/set creates (W3: assembled drafts, appended and
+	// reflected). nil keeps create answering the honest refusal it answered
+	// before W3, so a deployment that mounts W1/W2 writes without the append
+	// path stays valid.
+	Creator EmailCreator
+
+	// Submissions is the EmailSubmission surface (W3): the outbox queue's
+	// JMAP-facing reads and writes. Required by RegisterSubmissionMethods,
+	// unused elsewhere.
+	Submissions SubmissionStore
+
+	// UndoWindow is the undo-send window (W-A3): a submission's not_before is
+	// its creation time plus this. RegisterSubmissionMethods clamps it to the
+	// [5s, 30s] range the config contract states; zero means the 10s default.
+	UndoWindow time.Duration
 
 	// MailboxDelimiter is the IMAP hierarchy separator this account's server
 	// uses, which Mailbox/set composes full paths with. Empty means "/", which

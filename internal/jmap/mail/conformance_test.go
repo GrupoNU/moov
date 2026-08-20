@@ -412,16 +412,20 @@ func TestConformanceForeignAccountIsRejected(t *testing.T) {
 // each, so the gap appears in the CI log instead of being absent from it. Each
 // names why, and what closes it.
 func TestConformancePhase2Gaps(t *testing.T) {
+	// Closed since this list was first written, each by its epic and each now
+	// covered by real tests instead of a skip: Email/set update/destroy (W1),
+	// Mailbox/set (W2), EventSource push (W4a), Email/set create + upload +
+	// EmailSubmission/Identity (W3 — email_create_test.go, upload_test.go,
+	// submission_test.go, internal/submit). Keeping a closed gap in this list
+	// would be the same lie as omitting an open one.
 	gaps := []struct{ name, reason string }{
-		{"Email_set_create", "W1 implements Email/set update/destroy; create (drafts) answers " +
-			"notCreated serverUnavailable until the outbox epic (W3) lands"},
-		{"Mailbox_set", "mailbox mutation is W2; mayCreateTopLevelMailbox is advertised false"},
-		{"EmailSubmission", "submission is phase 2; the capability is deliberately NOT advertised, " +
-			"which is why Bulwark's Identity/get gets unknownCapability (observed, benign)"},
-		{"Blob_upload", "uploadUrl is advertised but answers 501 in phase 1"},
-		{"EventSource_push", "SSE push is phase 2 (ADR §2); eventSourceUrl answers 501"},
 		{"SearchSnippet_get", "phase 3 (L2 §1)"},
 		{"VacationResponse", "phase 3; the capability is not advertised"},
+		{"EmailSubmission_query", "not registered: no known client queries submissions, and a /query " +
+			"surface without an index behind it would advertise ordering it cannot honor; " +
+			"revisited when a real client asks"},
+		{"FUTURERELEASE_delayed_send", "maxDelayedSend is advertised 0 (truthful): Postfix offers no " +
+			"client-schedulable release; the W-A3 undo window is a server-side grace, not FUTURERELEASE"},
 		{"Email_queryChanges", "answered with cannotCalculateChanges BY DESIGN (ADR §2), " +
 			"pre-announced via canCalculateChanges:false — conforming, not missing"},
 		{"cross_account", "one account per credential in phase 1; the official suite's " +
@@ -429,7 +433,7 @@ func TestConformancePhase2Gaps(t *testing.T) {
 	}
 	for _, g := range gaps {
 		t.Run(g.name, func(t *testing.T) {
-			t.Skipf("phase 1 does not implement this: %s", g.reason)
+			t.Skipf("not implemented in this phase: %s", g.reason)
 		})
 	}
 }

@@ -57,6 +57,9 @@ type Config struct {
 
 	// JMAP is the JMAP HTTP server's configuration (J1).
 	JMAP JMAPConfig
+
+	// Submit is the outbox's configuration (W3).
+	Submit SubmitConfig
 }
 
 // SyncConfig is everything the sync supervisor, its initial-sync pipeline and
@@ -188,6 +191,12 @@ func Load() (Config, error) {
 	}
 	c.JMAP = jmap
 
+	submit, err := loadSubmit()
+	if err != nil {
+		return Config{}, err
+	}
+	c.Submit = submit
+
 	return c, c.Validate()
 }
 
@@ -298,9 +307,9 @@ func (c Config) Validate() error {
 func (c Config) String() string {
 	return fmt.Sprintf(
 		"log_level=%s log_format=%s http_addr=%s database_url=%s shutdown_timeout=%s "+
-			"migrate_on_start=%t %s %s",
+			"migrate_on_start=%t %s %s %s",
 		c.LogLevel, c.LogFormat, c.HTTPAddr, redactDSN(c.DatabaseURL), c.ShutdownTimeout,
-		c.MigrateOnStart, c.Sync.String(), c.JMAP.String(),
+		c.MigrateOnStart, c.Sync.String(), c.JMAP.String(), c.Submit.String(),
 	)
 }
 

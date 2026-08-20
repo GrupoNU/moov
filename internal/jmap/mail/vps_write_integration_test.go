@@ -195,6 +195,10 @@ func TestVPSIntegrationEmailSetWriteCore(t *testing.T) {
 		t.Fatalf("NewWriterAdapter: %v", err)
 	}
 	f.deps.Writer = writer
+	// One adapter serves every write contract, exactly as cmd/moovd wires it.
+	// (Without Mailboxer, RegisterSetMethods panics since W2 — this fixture
+	// predates that panic and was caught by W3's full VPS rerun.)
+	f.deps.Mailboxer = writer
 
 	// Resolve the fixture's identities.
 	inbox, err := f.store.GetMailboxByName(ctx, account.ID, "INBOX")

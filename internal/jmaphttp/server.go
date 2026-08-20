@@ -91,6 +91,17 @@ type Config struct {
 	// ever making the route leak the difference.
 	Blobs BlobReader
 
+	// Uploader serves the upload endpoint (W3, RFC 8620 §6.1). nil keeps the
+	// route answering the 501 it answered through phase 1.
+	Uploader BlobUploader
+
+	// Submission advertises and accepts the urn:ietf:params:jmap:submission
+	// capability (W3). It must be set exactly when RegisterSubmissionMethods
+	// was called on this server's registry — advertised == registered ==
+	// accepted in "using" is the J1 truthfulness rule, applied to a whole
+	// capability.
+	Submission bool
+
 	// Notifier and State power the EventSource endpoint (W4a, RFC 8620 §7.3).
 	//
 	// Both are required for push: Notifier says WHEN an account changed
@@ -151,8 +162,12 @@ type Server struct {
 	cors     *corsPolicy
 	gate     *concurrencyGate
 	blobs    BlobReader
-	metrics  RequestRecorder
-	log      *slog.Logger
+	uploader BlobUploader
+	// uploadGate enforces maxConcurrentUpload per user, exactly as gate does
+	// maxConcurrentRequests.
+	uploadGate *concurrencyGate
+	metrics    RequestRecorder
+	log        *slog.Logger
 
 	// Push (W4a).
 	notifier         StateNotifier
@@ -179,7 +194,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 
 	// The capability set the engine accepts in "using" is exactly the set the
 	// session advertises — one list, used twice, so they cannot drift.
-	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(), cfg.Logger)
+	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(cfg.Submission), cfg.Logger)
 
 	maxSSE := cfg.MaxSSEPerAccount
 	if maxSSE <= 0 {
@@ -194,6 +209,8 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		cors:             newCORSPolicy(cfg.AllowedOrigins),
 		gate:             newConcurrencyGate(cfg.Limits.MaxConcurrentRequests),
 		blobs:            cfg.Blobs,
+		uploader:         cfg.Uploader,
+		uploadGate:       newConcurrencyGate(cfg.Limits.MaxConcurrentUpload),
 		metrics:          cfg.Metrics,
 		log:              cfg.Logger,
 		notifier:         cfg.Notifier,
@@ -233,8 +250,14 @@ func fillLimitDefaults(l jmap.Limits) jmap.Limits {
 
 // supportedCapabilities is the single source for what this server speaks:
 // advertised in the Session object AND accepted in a request's "using" list.
-func supportedCapabilities() []string {
-	return []string{jmap.CapCore, jmap.CapMail}
+// The submission capability joins exactly when the deployment mounts the
+// submission methods (Config.Submission).
+func supportedCapabilities(submission bool) []string {
+	caps := []string{jmap.CapCore, jmap.CapMail}
+	if submission {
+		caps = append(caps, jmap.CapSubmission)
+	}
+	return caps
 }
 
 // Registry exposes the method registry so the mail packages (J2/J3) register
@@ -377,13 +400,6 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.log.Debug("jmap: blob download interrupted",
 			"account_id", accountID, "error", err)
 	}
-}
-
-// handleUpload is the phase-1 upload stub: uploadUrl must exist in the
-// session (RFC 8620 §2), and L2 §2.3 stubs it at 501 until a write phase.
-func (s *Server) handleUpload(w http.ResponseWriter, _ *http.Request) {
-	writeGenericProblem(w, http.StatusNotImplemented,
-		"upload is not implemented in this phase (read-only server)")
 }
 
 // concurrencyGate enforces maxConcurrentRequests per authenticated user.

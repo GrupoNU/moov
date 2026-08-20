@@ -47,31 +47,43 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 //     the truth the moment the write core landed — this is the "myRights e
 //     isReadOnly pasan a decir la verdad nueva" flip of L2-jmap-write §3.
 func (s *Server) sessionObject(base string, id *Identity) map[string]any {
+	capabilities := map[string]any{
+		jmap.CapCore: s.cfg.Limits.CoreCapability(),
+		// §1.3.1 of RFC 8621: the mail capability's value in the SESSION
+		// capabilities object is an empty object; the per-account limits
+		// live in accountCapabilities below.
+		jmap.CapMail: map[string]any{},
+	}
+	accountCapabilities := map[string]any{
+		jmap.CapMail: mailAccountCapability(),
+	}
+	// §2: "urn:ietf:params:jmap:core SHOULD NOT be present" in
+	// primaryAccounts; each data capability points at the caller's only
+	// account.
+	primaryAccounts := map[string]any{
+		jmap.CapMail: id.AccountID,
+	}
+	if s.cfg.Submission {
+		// §1.3.2 of RFC 8621: the submission capability's session value is an
+		// empty object too, with the account-level truth below.
+		capabilities[jmap.CapSubmission] = map[string]any{}
+		accountCapabilities[jmap.CapSubmission] = submissionAccountCapability()
+		primaryAccounts[jmap.CapSubmission] = id.AccountID
+	}
+
 	return map[string]any{
-		"capabilities": map[string]any{
-			jmap.CapCore: s.cfg.Limits.CoreCapability(),
-			// §1.3.1 of RFC 8621: the mail capability's value in the SESSION
-			// capabilities object is an empty object; the per-account limits
-			// live in accountCapabilities below.
-			jmap.CapMail: map[string]any{},
-		},
+		"capabilities": capabilities,
 		"accounts": map[string]any{
 			id.AccountID: map[string]any{
-				"name":       id.Account.Email,
-				"isPersonal": true,
-				"isReadOnly": false,
-				"accountCapabilities": map[string]any{
-					jmap.CapMail: mailAccountCapability(),
-				},
+				"name":                id.Account.Email,
+				"isPersonal":          true,
+				"isReadOnly":          false,
+				"accountCapabilities": accountCapabilities,
 			},
 		},
-		// §2: "urn:ietf:params:jmap:core SHOULD NOT be present" in
-		// primaryAccounts; mail points at the caller's only account.
-		"primaryAccounts": map[string]any{
-			jmap.CapMail: id.AccountID,
-		},
-		"username": id.Account.Email,
-		"apiUrl":   base + PathAPI,
+		"primaryAccounts": primaryAccounts,
+		"username":        id.Account.Email,
+		"apiUrl":          base + PathAPI,
 		// URI Templates (level 1) with the variables §2 REQUIRES for each
 		// endpoint; {type} rides the query string as §2 recommends ("due to
 		// potential encoding issues with slashes in content types").
@@ -79,6 +91,27 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		"uploadUrl":      base + "/jmap/upload/{accountId}",
 		"eventSourceUrl": base + "/jmap/eventsource?types={types}&closeafter={closeafter}&ping={ping}",
 		"state":          s.sessionState0(base, id),
+	}
+}
+
+// submissionAccountCapability is the urn:ietf:params:jmap:submission account
+// capability object (RFC 8621 §1.3.2), truthful per the J1 rule:
+//
+//   - maxDelayedSend: 0. §1.3.2 defines it as "the number in seconds of the
+//     maximum delay the server supports in sending ... 0 if the server does
+//     not support delayed send" — meaning CLIENT-requested future release
+//     (FUTURERELEASE, RFC 4865), which Postfix submission does not offer and
+//     this server does not fake. The W-A3 undo window is a server-side grace
+//     applied to every send, visible through undoStatus "pending" and sendAt;
+//     it is not a client-schedulable delay and is not advertised as one.
+//   - submissionExtensions: {}. §1.3.2 scopes it to extensions "the client
+//     may use" by putting parameters in the envelope; this server passes none
+//     through, so the truthful set is empty regardless of what Postfix's EHLO
+//     says to the backend.
+func submissionAccountCapability() map[string]any {
+	return map[string]any{
+		"maxDelayedSend":       0,
+		"submissionExtensions": map[string]any{},
 	}
 }
 
@@ -98,8 +131,9 @@ func mailAccountCapability() map[string]any {
 		// for one mailbox name component in practice; with no Mailbox/set in
 		// phase 1 nothing can exceed it, and the write phase will enforce it.
 		"maxSizeMailboxName": 255,
-		// No Email creation in phase 1; 25 MB mirrors the Mailcow default
-		// message size ceiling the future submission path inherits.
+		// Enforced by Email/set create since W3 (mail.maxAttachmentsBytes —
+		// a test pins the two together); 25 MB mirrors the Mailcow message
+		// size ceiling the submission path inherits.
 		"maxSizeAttachmentsPerEmail": 25_000_000,
 		// The sort properties Email/query actually accepts — exactly what
 		// mail.translateSort implements, no more (J1's declared == applied
@@ -134,8 +168,11 @@ func mailAccountCapability() map[string]any {
 			mail.SortRelevance,
 			mail.SortHasKeyword,
 		},
-		// Read-only server: nobody may create mailboxes (§1.3.1).
-		"mayCreateTopLevelMailbox": false,
+		// True since W2: Mailbox/set create accepts parentId:null (a
+		// top-level folder). The flag lagged the feature by one epic —
+		// noticed and corrected during W3's session-truth pass, with the
+		// truth test updated alongside.
+		"mayCreateTopLevelMailbox": true,
 	}
 }
 

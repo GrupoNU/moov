@@ -24,7 +24,8 @@ const (
 	// rides the query string, as §2 recommends).
 	PathDownload = "/jmap/download/{accountId}/{blobId}/{name}"
 
-	// PathUpload is the upload endpoint (§6.1). POST; 501 in phase 1.
+	// PathUpload is the upload endpoint (§6.1). POST, authenticated. Real
+	// since W3 (upload.go); 501 when no uploader is wired.
 	PathUpload = "/jmap/upload/{accountId}"
 
 	// PathEventSource is the push endpoint (§7.3). GET; 501 in phase 1.

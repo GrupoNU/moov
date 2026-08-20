@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	goimap "github.com/emersion/go-imap/v2"
 )
 
 // Mailbox mutation for INTEGRATION TESTS ONLY.
@@ -35,9 +33,10 @@ import (
 // keeps the production contract exactly as L2 §4.1 defines it while giving the
 // integration suites a supported way to arrange the world.
 //
-// If the engine ever genuinely needs to write messages — drafts, undo-send —
-// APPEND joins Client then, for a product reason, and this type does not become
-// that path by default.
+// W3 was the product reason this note always anticipated: drafts and the
+// outbox's \Sent copy need APPEND for real, so it is now the production
+// primitive Client.Append (append.go) and the mutator delegates to it — the
+// same move CreateMailbox, DeleteMailbox and Expunge made in W1/W2.
 
 // MailboxMutator performs the mailbox mutations an integration test needs to
 // arrange a scenario. It is NOT part of the sync engine's contract and must not
@@ -77,38 +76,19 @@ func (m *MailboxMutator) DeleteMailbox(ctx context.Context, name string) error {
 
 // Append stores a message in a mailbox and returns its UID.
 //
+// Since W3 this is the production primitive Client.Append (append.go) — drafts
+// and the outbox's \Sent copy need it for real — so the mutator delegates,
+// exactly as it does for CreateMailbox and Expunge.
+//
 // The UID comes from the UIDPLUS [APPENDUID] response code; a server without
 // UIDPLUS returns 0, which callers must treat as "unknown" rather than as an
 // error, since the message was still appended.
 func (m *MailboxMutator) Append(ctx context.Context, mailbox string, raw []byte, flags []string, internalDate time.Time) (UID, error) {
-	gc, err := m.cl.conn()
+	res, err := m.cl.Append(ctx, mailbox, raw, flags, internalDate)
 	if err != nil {
 		return 0, err
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-
-	var opts *goimap.AppendOptions
-	if len(flags) > 0 || !internalDate.IsZero() {
-		opts = &goimap.AppendOptions{
-			Flags: flagsToGoIMAP(flags),
-			Time:  internalDate,
-		}
-	}
-
-	cmd := gc.Append(mailbox, int64(len(raw)), opts)
-	if _, werr := cmd.Write(raw); werr != nil {
-		return 0, fmt.Errorf("imap: writing APPEND literal for %q: %w", mailbox, werr)
-	}
-	if cerr := cmd.Close(); cerr != nil {
-		return 0, fmt.Errorf("imap: closing APPEND literal for %q: %w", mailbox, cerr)
-	}
-	data, err := cmd.Wait()
-	if err != nil {
-		return 0, fmt.Errorf("imap: APPEND to %q: %w", mailbox, err)
-	}
-	return UID(data.UID), nil
+	return res.UID, nil
 }
 
 // Expunge permanently removes the given UIDs from the selected mailbox.

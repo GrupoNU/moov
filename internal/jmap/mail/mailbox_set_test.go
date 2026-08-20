@@ -768,9 +768,9 @@ func TestRightsAreTruthfulPerMailbox(t *testing.T) {
 		if !r.MayCreateChild {
 			t.Errorf("%s must still accept children: creating INBOX/Work is legal", role)
 		}
-		// maySubmit stays false until W3 actually implements submission.
-		if r.MaySubmit {
-			t.Errorf("%s advertises maySubmit before EmailSubmission exists", role)
+		// maySubmit is true since W3: EmailSubmission really sends.
+		if !r.MaySubmit {
+			t.Errorf("%s reports maySubmit=false, but EmailSubmission/set is real since W3", role)
 		}
 	}
 }

@@ -62,6 +62,25 @@ func (a *WriterAdapter) KeywordBudget(ctx context.Context, accountID, mailboxID 
 	return KeywordBudget{InUse: b.InUse, Limit: b.Limit}, nil
 }
 
+// ---- EmailCreator (W3) -----------------------------------------------------
+
+// CreateMessage implements EmailCreator over the executor's append path.
+func (a *WriterAdapter) CreateMessage(ctx context.Context, accountID, mailboxID int64, raw []byte, flags []string) (CreatedEmail, error) {
+	res, err := a.exec.ApplyAppend(ctx, accountID, mailboxID, raw, flags)
+	if err != nil {
+		if errors.Is(err, syncengine.ErrAppendNotSupported) {
+			return CreatedEmail{}, ErrCreateUnavailable
+		}
+		return CreatedEmail{}, mapWriteErr(err)
+	}
+	return CreatedEmail{
+		ID:       res.MessageID,
+		ThreadID: res.ThreadID,
+		BlobID:   res.BlobHash.String(),
+		Size:     uint64(res.Size), //nolint:gosec // a blob size is never negative
+	}, nil
+}
+
 // ---- MailboxWriter (W2) ----------------------------------------------------
 
 // CreateMailbox implements MailboxWriter.
@@ -90,6 +109,7 @@ func (a *WriterAdapter) DestroyMailbox(ctx context.Context, accountID, mailboxID
 var (
 	_ EmailWriter   = (*WriterAdapter)(nil)
 	_ MailboxWriter = (*WriterAdapter)(nil)
+	_ EmailCreator  = (*WriterAdapter)(nil)
 )
 
 // mapWriteErr translates the executor's sentinels into this package's, so the

@@ -1,5 +1,6 @@
 // Package mail implements the JMAP Mail data types of RFC 8621 — Mailbox,
-// Thread and Email — over Moov's store, blob and parser packages.
+// Thread and Email, and since W3 EmailSubmission and Identity — over Moov's
+// store, blob, parser and submit packages.
 //
 // # Why this package exists separately from internal/jmap
 //
@@ -21,7 +22,7 @@
 // mayRename and mayDelete real — the last two PER MAILBOX, since Mailbox/set
 // refuses to rename or destroy a protected role folder and myRights says so
 // rather than letting a client offer an action that will be refused
-// (mailbox.go rightsFor). maySubmit stays false until W3.
+// (mailbox.go rightsFor). W3 made maySubmit real: EmailSubmission sends.
 //
 // The write side follows the same layering as the read side: handlers speak
 // to the EmailWriter interface (write.go), and the only file that knows the

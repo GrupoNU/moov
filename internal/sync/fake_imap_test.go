@@ -126,6 +126,16 @@ type fakeServer struct {
 	// server without UIDPLUS so the degraded reflection path is testable.
 	noCopyUID bool
 
+	// ---- W3 ----------------------------------------------------------------
+
+	// appendErr, when set, fails Append — the Dovecot-first ordering injection
+	// for Email/set create and the outbox's \Sent copy.
+	appendErr error
+
+	// noAppendUID suppresses the [APPENDUID] response, modeling a server
+	// without UIDPLUS so the refusal-to-reflect path is testable.
+	noAppendUID bool
+
 	// ---- W2 ----------------------------------------------------------------
 
 	// The folder-command failure injections, one per command, so a test can
@@ -204,6 +214,9 @@ func (c *fakeClient) Capabilities() imap.Capabilities {
 		imap.CapCondStore: struct{}{},
 		imap.CapQResync:   struct{}{},
 		imap.CapIdle:      struct{}{},
+		// UIDPLUS: the fake answers [APPENDUID]/COPYUID like the real Dovecot,
+		// and W3's append path refuses to run without the capability.
+		imap.CapUIDPlus: struct{}{},
 	}
 }
 

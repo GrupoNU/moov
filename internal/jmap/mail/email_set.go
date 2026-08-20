@@ -60,18 +60,31 @@ func (d *Deps) handleEmailSet(ctx context.Context, args json.RawMessage) (any, *
 
 	resp := &setResponse{AccountID: req.AccountID, OldState: oldState}
 
-	// create: reserved for W3 (drafts + submission), refused loudly rather
-	// than silently absent — a client that tries learns why, with the §3.6.2
-	// serverUnavailable meaning ("temporarily unavailable") which is the
-	// truthful reading of "the next epic implements this".
+	// create (W3): drafts per RFC 8621 §4.6, in sorted creation-id order for
+	// a reproducible response. Each success is recorded in the request's
+	// creation-id map so a later call — EmailSubmission/set's "#draft" being
+	// the canonical §7.5 flow — resolves it.
+	createIDs := make([]string, 0, len(req.Create))
 	for cid := range req.Create {
-		if resp.NotCreated == nil {
-			resp.NotCreated = map[string]setError{}
+		createIDs = append(createIDs, cid)
+	}
+	sort.Strings(createIDs)
+
+	created := jmap.CreationIDsFromContext(ctx)
+	for _, cid := range createIDs {
+		obj, wire, serr := d.applyEmailCreate(ctx, caller.AccountID, caller.Email, req.Create[cid])
+		if serr != nil {
+			if resp.NotCreated == nil {
+				resp.NotCreated = map[string]setError{}
+			}
+			resp.NotCreated[cid] = *serr
+			continue
 		}
-		resp.NotCreated[cid] = setError{
-			Type:        setErrServerUnavailable,
-			Description: "Email/set create is not available yet; drafts and submission arrive with the outbox epic (W3)",
+		if resp.Created == nil {
+			resp.Created = map[string]any{}
 		}
+		resp.Created[cid] = obj
+		created.Record(cid, wire)
 	}
 
 	destroySet := make(map[string]bool, len(req.Destroy))
@@ -279,7 +292,14 @@ func (d *Deps) checkKeywordCeiling(ctx context.Context, accountID, mailboxID int
 	} else {
 		wanted = upd.kwAdd
 	}
+	return d.checkKeywordCeilingNames(ctx, accountID, mailboxID, wanted)
+}
 
+// checkKeywordCeilingNames is the ceiling check for a plain keyword list —
+// the shared core of updates (above) and creates (email_create.go), which add
+// keywords to a folder through different grammars but against the same
+// Maildir budget.
+func (d *Deps) checkKeywordCeilingNames(ctx context.Context, accountID, mailboxID int64, wanted []string) *setError {
 	candidates := make([]string, 0, len(wanted))
 	for _, name := range wanted {
 		if isSystemFlagName(name) {

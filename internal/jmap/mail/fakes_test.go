@@ -46,6 +46,9 @@ type fakeReaders struct {
 	destroyCalls []int64
 	writeErr     error
 
+	// W3: the recorded creates (email_create_test.go holds the method).
+	createCalls []fakeCreateCall
+
 	// W2: the folder mutations, and the keyword budget per mailbox.
 	//
 	// keywordsInUse is what the ceiling check reads; a nil entry means the
@@ -448,7 +451,7 @@ func (f *fakeReaders) deps() *Deps {
 	return &Deps{
 		Mailboxes: f, Emails: f, Threads: f, Blobs: f, State: f,
 		Search: f, Changes: f, SearchWindow: f.searchWindow,
-		Writer: f, Mailboxer: f,
+		Writer: f, Mailboxer: f, Creator: f,
 		Limits: jmap.DefaultLimits(),
 	}
 }

@@ -323,24 +323,26 @@ func TestEmailSetStateStringsBracketTheCall(t *testing.T) {
 	}
 }
 
-func TestEmailSetCreateIsReservedForW3(t *testing.T) {
+func TestEmailSetCreateIsRealSinceW3(t *testing.T) {
+	// This test asserted the W1-era refusal ("reserved for W3") until W3
+	// landed; it now pins the flip. A minimal creation object goes through
+	// the Creator — the full grammar, refusals and MIME assembly live in
+	// email_create_test.go; the deployment WITHOUT a creator keeps the
+	// honest refusal (TestEmailCreateWithoutCreatorKeepsTheHonestRefusal).
 	f, d := setFixture()
 
 	resp := callGet(t, d.handleEmailSet, setArgs(
 		`"create":{"draft1":{"mailboxIds":{"`+EncodeMailboxID(1)+`":true},"subject":"hi"}}`))
 
-	e := setErrorOf(t, resp, "notCreated", "draft1")
-	if e["type"] != setErrServerUnavailable {
-		t.Errorf("type = %v, want serverUnavailable naming W3", e["type"])
+	created, ok := object(t, resp, "created")["draft1"].(map[string]any)
+	if !ok {
+		t.Fatalf("created lacks draft1: %v", resp)
 	}
-	if desc, _ := e["description"].(string); desc == "" {
-		t.Error("the refusal must say drafts arrive with W3, not be silent")
+	if created["id"] == nil || created["blobId"] == nil {
+		t.Errorf("server-set properties missing: %v", created)
 	}
-	if resp["created"] != nil {
-		t.Errorf("created = %v, want null", resp["created"])
-	}
-	if len(f.flagCalls)+len(f.moveCalls) != 0 {
-		t.Error("a create reached the writer")
+	if len(f.createCalls) != 1 {
+		t.Errorf("creator called %d times, want 1", len(f.createCalls))
 	}
 }
 

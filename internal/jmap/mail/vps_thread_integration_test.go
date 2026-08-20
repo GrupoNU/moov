@@ -293,11 +293,11 @@ const seededThreadFolder = "MoovThreadTest"
 //
 // The chain it asserts (seed_thread.py), in APPEND order:
 //
-//	1. "Re: Presupuesto…"  References: <root>   — an orphan reply
-//	2. "Re: Presupuesto…"  References: <root>   — a second orphan reply
-//	3. "Re: Presupuesto…"  NO References        — joinable only by subject
-//	4. "Presupuesto…"      the root, LAST       — must merge 1, 2 and 3
-//	5. "Otro tema…"        unrelated            — must stay alone
+//  1. "Re: Presupuesto…"  References: <root>   — an orphan reply
+//  2. "Re: Presupuesto…"  References: <root>   — a second orphan reply
+//  3. "Re: Presupuesto…"  NO References        — joinable only by subject
+//  4. "Presupuesto…"      the root, LAST       — must merge 1, 2 and 3
+//  5. "Otro tema…"        unrelated            — must stay alone
 //
 // Delivering the parent last is the whole point: at the moment messages 1 and 2
 // arrive, nothing links them, so they are separate threads. Message 4's arrival

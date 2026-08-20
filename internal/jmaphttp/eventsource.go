@@ -92,6 +92,17 @@ type StateSource interface {
 	ThreadState(ctx context.Context, accountID int64) (string, error)
 }
 
+// SubmissionStateSource is the OPTIONAL fourth type (W3): a StateSource that
+// also answers EmailSubmission state pushes it too. An optional interface
+// rather than a fourth method on StateSource, because a deployment without
+// submission (and every pre-W3 test fake) has no such state to tell — and
+// the push contract is the same either way: the string must be the one
+// EmailSubmission/get would return, which mail.Adapter guarantees by serving
+// both from one implementation.
+type SubmissionStateSource interface {
+	EmailSubmissionState(ctx context.Context, accountID int64) (string, error)
+}
+
 // StateNotifier is the transport's view of internal/sync's Broker: subscribe
 // to one account's change notifications, and cancel when done.
 //
@@ -426,6 +437,13 @@ func (s *Server) readStates(ctx context.Context, accountID int64, types typeFilt
 		}
 		out["Thread"] = st
 	}
+	if sub, ok := s.state.(SubmissionStateSource); ok && types.wants("EmailSubmission") {
+		st, err := sub.EmailSubmissionState(ctx, accountID)
+		if err != nil {
+			return nil, fmt.Errorf("email submission state: %w", err)
+		}
+		out["EmailSubmission"] = st
+	}
 	return out, nil
 }
 
@@ -438,7 +456,7 @@ func (s *Server) readStates(ctx context.Context, accountID int64, types typeFilt
 // the id exists for.
 func stateEventID(states map[string]string) string {
 	var b strings.Builder
-	for _, t := range []string{"Mailbox", "Email", "Thread"} {
+	for _, t := range []string{"Mailbox", "Email", "Thread", "EmailSubmission"} {
 		st, ok := states[t]
 		if !ok {
 			continue

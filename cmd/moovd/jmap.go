@@ -16,6 +16,7 @@ import (
 	"github.com/GrupoNU/moov/internal/jmaphttp"
 	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
+	"github.com/GrupoNU/moov/internal/submit"
 	syncengine "github.com/GrupoNU/moov/internal/sync"
 )
 
@@ -29,6 +30,7 @@ type jmapComponents struct {
 	server *http.Server
 	ln     net.Listener
 	writer *syncengine.WriteExecutor
+	outbox *outboxComponent
 	log    *slog.Logger
 }
 
@@ -99,7 +101,9 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 	dialer := &accountDialer{keyring: keyring, serverName: cfg.JMAP.IMAPServerName, logger: logger}
 	writer, err := syncengine.NewWriteExecutor(st, syncengine.ConnectorFunc(dialer.connect),
-		syncengine.WriteOptions{Logger: logger, Broker: broker})
+		// Blobs enables the append path (W3): Email/set create and the
+		// outbox's \Sent copy store what they append.
+		syncengine.WriteOptions{Logger: logger, Broker: broker, Blobs: blobs})
 	if err != nil {
 		st.Close()
 		return nil, fmt.Errorf("building the write executor: %w", err)
@@ -110,13 +114,32 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		st.Close()
 		return nil, fmt.Errorf("building the writer adapter: %w", err)
 	}
-	// The same adapter serves both write contracts: Email/set's EmailWriter
-	// (W1) and Mailbox/set's MailboxWriter (W2). One adapter over one executor
-	// means one IMAP connection per account for every write, which is what
-	// keeps a folder rename and a flag change from racing each other on two
-	// sockets.
+	// The same adapter serves every write contract: Email/set's EmailWriter
+	// (W1), Mailbox/set's MailboxWriter (W2) and Email/set create's
+	// EmailCreator (W3). One adapter over one executor means one IMAP
+	// connection per account for every write, which is what keeps a folder
+	// rename, a flag change and a draft append from racing each other on
+	// separate sockets.
 	deps.Writer = writerAdapter
 	deps.Mailboxer = writerAdapter
+	deps.Creator = writerAdapter
+
+	// The submission surface (W3): EmailSubmission objects are outbox rows;
+	// the broker rides along so an enqueue/cancel pushes an SSE StateChange
+	// exactly like a flag write does.
+	submissions, err := mail.NewSubmissionAdapter(st, broker)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, fmt.Errorf("building the submission adapter: %w", err)
+	}
+	deps.Submissions = submissions
+	deps.UndoWindow = cfg.Submit.UndoWindow
+
+	// The uploader is the SAME adapter deps.Blobs is — one object serving
+	// download's reads and upload's writes keeps the account-scoping rule in
+	// one place. The assertion is structural: mail.Adapter implements both.
+	uploader, _ := deps.Blobs.(jmaphttp.BlobUploader)
 
 	srv, err := jmaphttp.New(jmaphttp.Config{
 		BaseURL:        cfg.JMAP.ExternalURL,
@@ -124,7 +147,12 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		Limits:         limits,
 		Logger:         logger,
 		Blobs:          deps.Blobs,
-		Metrics:        m,
+		Uploader:       uploader,
+		// Submission is advertised because RegisterSubmissionMethods is
+		// called below — the two must move together (advertised ==
+		// registered, the J1 rule).
+		Submission: true,
+		Metrics:    m,
 		// Push (W4a): the broker says WHEN, the mail adapter says WHAT. The
 		// State reader is deliberately the SAME object that answers Email/get
 		// and Email/changes, which is what guarantees a pushed state string
@@ -139,13 +167,14 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		return nil, fmt.Errorf("building jmap server: %w", err)
 	}
 
-	// The mail methods: J2's get family, J3's query/changes family and the
-	// set family (W1's Email/set, W2's Mailbox/set), over the same Deps.
-	// Registration must happen before Handler() is mounted, which is why it
-	// sits above the http.Server construction.
+	// The mail methods: J2's get family, J3's query/changes family, the set
+	// family (W1's Email/set, W2's Mailbox/set) and W3's submission family,
+	// over the same Deps. Registration must happen before Handler() is
+	// mounted, which is why it sits above the http.Server construction.
 	mail.RegisterGetMethods(srv.Registry(), deps)
 	mail.RegisterQueryMethods(srv.Registry(), deps)
 	mail.RegisterSetMethods(srv.Registry(), deps)
+	mail.RegisterSubmissionMethods(srv.Registry(), deps)
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -168,13 +197,28 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		}
 	}()
 
+	// The outbox executor (W3): claims the send intents the submission
+	// surface above enqueues and drives them through SMTP. It shares the JMAP
+	// component's store, writer (for the \Sent copy) and adapter (for the
+	// draft bytes), and its lifecycle: mounted with submission, stopped after
+	// the HTTP server drains.
+	raws, _ := deps.Emails.(submit.RawSource)
+	outbox, err := startOutbox(cfg, st, &smtpTransport{cfg: cfg.Submit, dialer: dialer, logger: logger},
+		writer, raws, broker, blobs, logger)
+	if err != nil {
+		_ = httpSrv.Close()
+		writer.Close()
+		st.Close()
+		return nil, fmt.Errorf("starting the outbox: %w", err)
+	}
+
 	logger.Info("jmap server listening",
 		"addr", ln.Addr().String(),
 		"external_url", cfg.JMAP.ExternalURL,
 		"cors_origins", len(cfg.JMAP.CORSOrigins),
 		"imap_host", cfg.JMAP.IMAPHost,
 	)
-	return &jmapComponents{store: st, server: httpSrv, ln: ln, writer: writer, log: logger}, nil
+	return &jmapComponents{store: st, server: httpSrv, ln: ln, writer: writer, outbox: outbox, log: logger}, nil
 }
 
 // brokerNotifier adapts internal/sync's Broker to the HTTP layer's
@@ -220,9 +264,10 @@ func (n brokerNotifier) Subscribers(accountID int64) int {
 	return n.broker.Subscribers(accountID)
 }
 
-// shutdown drains the JMAP server within ctx's deadline, then releases the
-// write executor's IMAP connections and its store — in that order, so no
-// in-flight /set loses its connection under it.
+// shutdown drains the JMAP server within ctx's deadline, then stops the
+// outbox, then releases the write executor's IMAP connections and its store —
+// in that order, so no in-flight /set loses its connection under it and the
+// outbox's last pass keeps its \Sent path alive to the end.
 func (c *jmapComponents) shutdown(ctx context.Context) {
 	if c == nil {
 		return
@@ -231,6 +276,7 @@ func (c *jmapComponents) shutdown(ctx context.Context) {
 		c.log.Warn("jmap server did not drain in time, closing", "error", err)
 		_ = c.server.Close()
 	}
+	c.outbox.shutdown(ctx)
 	if c.writer != nil {
 		c.writer.Close()
 	}

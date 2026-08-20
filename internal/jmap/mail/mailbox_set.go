@@ -158,6 +158,7 @@ func (d *Deps) handleMailboxSet(ctx context.Context, args json.RawMessage) (any,
 	}
 	sort.Strings(createIDs)
 
+	creationIDs := jmap.CreationIDsFromContext(ctx)
 	for _, cid := range createIDs {
 		created, serr := d.applyMailboxCreate(ctx, caller.AccountID, tree, req.Create[cid])
 		if serr != nil {
@@ -174,6 +175,12 @@ func (d *Deps) handleMailboxSet(ctx context.Context, args json.RawMessage) (any,
 		// set by the client" — here the server-assigned id, role, sortOrder and
 		// the counts, which are all zero for a brand-new empty folder.
 		resp.Created[cid] = created
+		// §3.3: the request's creation-id map learns every /set create, so a
+		// later call (an Email/set filing a draft into "#newFolder") resolves
+		// it.
+		if wire, ok := created["id"].(string); ok {
+			creationIDs.Record(cid, wire)
+		}
 		if tree, merr = d.readTree(ctx, caller.AccountID); merr != nil {
 			return nil, merr
 		}

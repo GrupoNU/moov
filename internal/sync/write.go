@@ -146,6 +146,12 @@ type WriteOptions struct {
 	// notification and the slower authoritative echo coalesce into at most a
 	// second harmless wake-up, never into divergent state.
 	Broker *Broker
+
+	// Blobs, when set, enables the append path (W3: Email/set create and the
+	// outbox's \Sent copy — append.go). An executor without it refuses appends
+	// loudly and serves the W1/W2 operations unchanged, which is what keeps
+	// every pre-W3 construction site valid.
+	Blobs AppendBlobStore
 }
 
 // WriteExecutor applies client writes per W-A1. One instance serves every
@@ -155,6 +161,7 @@ type WriteExecutor struct {
 	connector Connector
 	log       *slog.Logger
 	broker    *Broker
+	blobs     AppendBlobStore
 
 	mu       sync.Mutex
 	accounts map[int64]*accountConn
@@ -186,6 +193,7 @@ func NewWriteExecutor(st *store.Store, connector Connector, opts WriteOptions) (
 		connector: connector,
 		log:       log.With("component", "write-executor"),
 		broker:    opts.Broker,
+		blobs:     opts.Blobs,
 		accounts:  map[int64]*accountConn{},
 	}, nil
 }

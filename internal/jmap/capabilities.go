@@ -17,4 +17,10 @@ const (
 	// "capabilities" object is an empty object; the per-account limits live in
 	// the Account's accountCapabilities (RFC 8621 §1.3.1).
 	CapMail = "urn:ietf:params:jmap:mail"
+
+	// CapSubmission is the JMAP submission capability (RFC 8621 §1.3.2):
+	// Identity and EmailSubmission data types (W3). Like the mail capability,
+	// its session value is an empty object and the per-account values
+	// (maxDelayedSend, submissionExtensions) live in accountCapabilities.
+	CapSubmission = "urn:ietf:params:jmap:submission"
 )

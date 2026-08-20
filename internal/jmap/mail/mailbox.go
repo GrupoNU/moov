@@ -46,11 +46,9 @@ var mailboxProperties = map[string]bool{
 //   - maySetSeen / maySetKeywords: Email/set keywords, both forms.
 //   - mayAddItems / mayRemoveItems: §2 defines them as adding/removing "the
 //     ids of Emails to/from this Mailbox (by either creating a new Email or
-//     MOVING an existing one)" — Email/set mailboxIds moves are real, and
-//     destroy removes (W-A2). Email CREATION is still refused (W3), which a
-//     client discovers per-call; the alternative — advertising
-//     mayAddItems:false — would hide the moves that DO work behind a right
-//     the RFC scopes to both.
+//     MOVING an existing one)" — Email/set mailboxIds moves are real, destroy
+//     removes (W-A2), and since W3 creation is real too (drafts append and
+//     reflect), so the right is finally true in both of the RFC's senses.
 //   - mayCreateChild: true everywhere since W2 — Mailbox/set create accepts
 //     any existing mailbox as a parentId.
 //   - mayRename / mayDelete: true for ordinary folders since W2, and FALSE for
@@ -58,7 +56,7 @@ var mailboxProperties = map[string]bool{
 //     archive), which Mailbox/set refuses to rename or destroy. Reporting
 //     true there and then refusing per-call would be the same lie J1's rule
 //     exists to prevent, only per-mailbox instead of per-server.
-//   - maySubmit: false until EmailSubmission (W3).
+//   - maySubmit: true since W3 (EmailSubmission/set really sends).
 type mailboxRights struct {
 	MayReadItems   bool `json:"mayReadItems"`
 	MayAddItems    bool `json:"mayAddItems"`
@@ -71,12 +69,17 @@ type mailboxRights struct {
 	MaySubmit      bool `json:"maySubmit"`
 }
 
-// rightsFor is the phase-2 (W2) answer for one mailbox, given its role.
+// rightsFor is the phase-2 answer for one mailbox, given its role.
 //
 // The role is the only input because it is the only thing that varies: every
 // mailbox of this account is readable and writable, and the sole per-mailbox
 // difference is whether Mailbox/set will let the folder be renamed or
 // destroyed — which mailbox_set.go decides from exactly this role.
+//
+// maySubmit is TRUE since W3 — the truthful flip this field waited for:
+// EmailSubmission/set is registered and really sends, and the account may
+// submit any message it holds regardless of which folder it sits in, so the
+// right is uniform (RFC 8621 §2: "The user may submit messages to send").
 func rightsFor(role string) mailboxRights {
 	mutable := !isProtectedRole(role)
 	return mailboxRights{
@@ -88,6 +91,7 @@ func rightsFor(role string) mailboxRights {
 		MayCreateChild: true,
 		MayRename:      mutable,
 		MayDelete:      mutable,
+		MaySubmit:      true,
 	}
 }
 

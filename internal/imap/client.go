@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Client is the contract of docs/specs/L2-sync-engine.md §4.1: everything the
@@ -121,6 +122,20 @@ type Client interface {
 	// provides one, which is what lets the caller reflect the move locally
 	// without re-downloading the message (W1, L2-jmap-write §4).
 	Move(ctx context.Context, uids []UID, dest string) (MoveResult, error)
+
+	// Append stores a message in a mailbox (RFC 3501 §6.3.11) and returns the
+	// UID the server assigned via UIDPLUS [APPENDUID] (RFC 4315 §3), or a zero
+	// UID on a server without UIDPLUS — the message was still appended.
+	//
+	// It does not require the mailbox to be selected and does not change the
+	// selection. flags use this package's normalized vocabulary (bare system
+	// flag names, user keywords verbatim), the same one StoreFlags takes.
+	//
+	// This is W3's write primitive: Email/set create appends assembled drafts,
+	// and the outbox appends the transmitted copy to \Sent after the SMTP 250
+	// (ADR §4). It joined Client for that product reason, exactly as
+	// testsupport.go's note anticipated.
+	Append(ctx context.Context, mailbox string, raw []byte, flags []string, internalDate time.Time) (AppendResult, error)
 
 	// Expunge permanently removes the given UIDs from the selected mailbox:
 	// STORE +FLAGS.SILENT \Deleted, then UID EXPUNGE (RFC 4315 §2.1).

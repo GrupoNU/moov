@@ -144,8 +144,8 @@ func TestMailboxGetReturnsAllStandardProperties(t *testing.T) {
 			t.Errorf("%s = %v, want false (Mailbox/set refuses it on a protected role)", r, rights[r])
 		}
 	}
-	if rights["maySubmit"] != false {
-		t.Errorf("maySubmit = %v, want false (submission is W3)", rights["maySubmit"])
+	if rights["maySubmit"] != true {
+		t.Errorf("maySubmit = %v, want true (EmailSubmission is real since W3)", rights["maySubmit"])
 	}
 	// All nine members of MailboxRights are present, not just the true ones.
 	if len(rights) != 9 {
