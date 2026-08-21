@@ -629,10 +629,49 @@ func canonHeadersFromFields(fields message.HeaderFields, out *ParsedMessage) Can
 			}
 		}
 		h.All[canonKey] = append(h.All[canonKey], decoded)
+		// RFC 8621 §4.1.3 wants the name with "the same capitalization that it
+		// has in the message", but Key() has already been through
+		// textproto.CanonicalMIMEHeaderKey — which turns a message's
+		// "Message-ID" into "Message-Id" and "MIME-Version" into "Mime-Version".
+		// Raw() still carries the original bytes for a header read off the wire,
+		// so the name is recovered from there and falls back to the canonical
+		// form when it is not available (a synthesized header, or a raw line too
+		// mangled to split).
+		h.Ordered = append(h.Ordered, Header{
+			Name:  originalHeaderName(fields, key),
+			Value: decoded,
+		})
 	}
 
 	h.populate(out)
 	return h
+}
+
+// originalHeaderName recovers a header's name as the message spelled it.
+//
+// go-message canonicalizes every key at parse time, so Key() cannot answer
+// this. Raw() returns the untouched source line for a header that came off the
+// wire, and the name is everything before the first colon. fallback (the
+// canonical form) is returned whenever the raw line is unavailable or has no
+// colon to split on — the honest answer beats a guess, and the value is still
+// correct either way.
+func originalHeaderName(fields message.HeaderFields, fallback string) string {
+	raw, err := fields.Raw()
+	if err != nil {
+		return fallback
+	}
+	colon := bytes.IndexByte(raw, ':')
+	if colon <= 0 {
+		return fallback
+	}
+	name := string(bytes.TrimSpace(raw[:colon]))
+	// Only trust the raw name when it is the same header, spelled differently.
+	// A mangled line that repairHeaderName already rescued must not smuggle its
+	// damage back in here.
+	if !strings.EqualFold(name, fallback) {
+		return fallback
+	}
+	return name
 }
 
 // populate fills the typed fields from the All map.

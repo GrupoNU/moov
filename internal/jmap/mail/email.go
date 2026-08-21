@@ -3,7 +3,6 @@ package mail
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -49,7 +48,9 @@ var emailProperties = func() map[string]bool {
 		// §4.1: metadata.
 		"id": true, "blobId": true, "threadId": true, "mailboxIds": true,
 		"keywords": true, "size": true, "receivedAt": true,
-		// §4.1.3: header fields parsed into convenience properties.
+		// §4.1.3: header fields parsed into convenience properties, plus the
+		// raw `headers` list they are derived from.
+		"headers":   true,
 		"messageId": true, "inReplyTo": true, "references": true,
 		"sender": true, "from": true, "to": true, "cc": true, "bcc": true,
 		"replyTo": true, "subject": true, "sentAt": true,
@@ -139,8 +140,16 @@ func (d *Deps) handleEmailGet(ctx context.Context, args json.RawMessage) (any, *
 	needBodies := (req.FetchTextBodyValues || req.FetchHTMLBodyValues || req.FetchAllBodyValues) &&
 		props["bodyValues"]
 
+	// `headers` (§4.1.3) is served from the same re-parse: the store keeps a
+	// fixed field set, not the raw header block, so the blob is the only place
+	// the full list in original order exists. It is NOT in the §4.6 default
+	// property list, so this cost is only ever paid by a client that asked for
+	// it by name — which is exactly the message-open request, one message at a
+	// time, and the same request that already fetches bodyValues.
+	needHeaders := props["headers"]
+
 	for i := range rows {
-		obj, merr := d.renderEmail(ctx, caller.AccountID, rows[i], props, bodyProps, &req, needBodies)
+		obj, merr := d.renderEmail(ctx, caller.AccountID, rows[i], props, bodyProps, &req, needBodies, needHeaders)
 		if merr != nil {
 			return nil, merr
 		}
@@ -158,9 +167,38 @@ func (d *Deps) renderEmail(
 	bodyProps []string,
 	req *emailGetRequest,
 	needBodies bool,
+	needHeaders bool,
 ) (map[string]any, *jmap.MethodError) {
 	// §5.1: id is always returned.
 	out := map[string]any{"id": EncodeEmailID(row.ID)}
+
+	// The raw message is opened AT MOST ONCE per Email, however many properties
+	// need it. headers and bodyValues both come from the same re-parse, so the
+	// result is memoized here and shared: opening the blob twice for one object
+	// would double the cost L2 §5 risk 2 already flagged as the price of not
+	// storing decoded bodies.
+	var (
+		parsed     *parser.ParsedMessage
+		parseTried bool
+	)
+	rawParse := func() *parser.ParsedMessage {
+		if parseTried {
+			return parsed
+		}
+		parseTried = true
+		rc, err := d.Emails.RawMessage(ctx, accountID, row.ID)
+		if err != nil {
+			// ErrNotFound is the torn state the GC grace period exists to
+			// prevent (metadata row present, blob gone). Either way the honest
+			// answer is "no content available", not a failed batch: the user
+			// still gets the headers the store itself holds.
+			return nil
+		}
+		defer func() { _ = rc.Close() }()
+		p := parser.Parse(rc, d.ParserLimits)
+		parsed = &p
+		return parsed
+	}
 
 	// ---- §4.1.1 metadata --------------------------------------------------
 	if props["blobId"] {
@@ -192,6 +230,11 @@ func (d *Deps) renderEmail(
 	}
 
 	// ---- §4.1.3 header convenience properties ----------------------------
+	if needHeaders {
+		// §4.1.3: "headers: EmailHeader[] — This is a list of all header fields
+		// in the message, in the same order they appear in the message."
+		out["headers"] = rawHeaderList(rawParse())
+	}
 	if props["messageId"] {
 		out["messageId"] = nilIfEmptyStrings(row.MessageID)
 	}
@@ -290,12 +333,34 @@ func (d *Deps) renderEmail(
 		return out, nil
 	}
 
-	values, merr := d.bodyValuesFor(ctx, accountID, row, root, textBody, htmlBody, req)
+	values, merr := d.bodyValuesFor(rawParse(), root, textBody, htmlBody, req)
 	if merr != nil {
 		return nil, merr
 	}
 	out["bodyValues"] = values
 	return out, nil
+}
+
+// rawHeaderList renders the §4.1.3 `headers` property: every header field in
+// the order it appeared, as EmailHeader objects.
+//
+// A message whose blob is gone or whose MIME cascade failed yields an empty
+// list rather than null. §4.1.3 types the property as EmailHeader[] — not
+// nullable — so an empty list is the only conformant way to say "this server
+// has no headers to give", and it is the same reading the body-part `headers`
+// already takes for parts whose raw headers were never persisted.
+func rawHeaderList(p *parser.ParsedMessage) []any {
+	out := []any{}
+	if p == nil {
+		return out
+	}
+	for _, h := range p.Headers.Ordered {
+		// §4.1.3: "name: String — The header field name as defined in RFC 5322,
+		// with the same capitalization that it has in the message."
+		// "value: String — The header field value as defined in RFC 5322."
+		out = append(out, map[string]any{"name": h.Name, "value": h.Value})
+	}
+	return out
 }
 
 // bodyValuesFor re-parses the raw message and builds the bodyValues map.
@@ -307,9 +372,7 @@ func (d *Deps) renderEmail(
 // (blobId, parser-version) — is a J-later decision to be taken with numbers
 // from real Bulwark usage, not speculatively here.
 func (d *Deps) bodyValuesFor(
-	ctx context.Context,
-	accountID int64,
-	row EmailRow,
+	parsed *parser.ParsedMessage,
 	root *bodyPartNode,
 	textBody, htmlBody []*bodyPartNode,
 	req *emailGetRequest,
@@ -340,20 +403,14 @@ func (d *Deps) bodyValuesFor(
 		return map[string]bodyValue{}, nil
 	}
 
-	rc, err := d.Emails.RawMessage(ctx, accountID, row.ID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// The metadata row exists but its blob does not — a torn state the
-			// GC grace period exists to prevent. Serve the message without
-			// bodies rather than failing the whole batch: the user sees the
-			// headers of a message whose content is gone, which is the truth.
-			return map[string]bodyValue{}, nil
-		}
-		return nil, serverFail("opening the raw message", err)
+	// A nil parse means the raw message could not be opened — the torn state
+	// (metadata row present, blob gone) the GC grace period exists to prevent.
+	// Serve the message without bodies rather than failing the whole batch: the
+	// user sees the headers of a message whose content is gone, which is the
+	// truth.
+	if parsed == nil {
+		return map[string]bodyValue{}, nil
 	}
-	defer func() { _ = rc.Close() }()
-
-	parsed := parser.Parse(rc, d.ParserLimits)
 
 	out := make(map[string]bodyValue, len(want))
 	for _, p := range parsed.Parts {

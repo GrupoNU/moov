@@ -265,6 +265,13 @@ type CanonHeaders struct {
 	// header a message repeats) keep every occurrence in order.
 	All map[string][]string
 
+	// Ordered holds the same headers as All, but as a flat list in the order
+	// they appeared in the message, which a map cannot express. RFC 8621
+	// §4.1.3 defines the JMAP `headers` property as "a list of all header
+	// fields ... in the same order they appear in the message", so a consumer
+	// that must reproduce the header block reads this rather than All.
+	Ordered []Header
+
 	// CharsetGuessed is true when any header value's charset was detected or
 	// defaulted rather than taken from an honest declaration (S4 H6).
 	CharsetGuessed bool
@@ -272,6 +279,15 @@ type CanonHeaders struct {
 	// RFC2047Retried is true when at least one header needed the raw-base64
 	// retry pass to decode (S4 H4 / corpus ew-004).
 	RFC2047Retried bool
+}
+
+// Header is one header field occurrence, kept in message order.
+//
+// Name preserves the capitalization the message used (RFC 8621 §4.1.3 asks for
+// exactly that), while CanonHeaders.All is keyed by the canonical form.
+type Header struct {
+	Name  string
+	Value string
 }
 
 // Get returns the first value of a header, or "" when absent. The name is

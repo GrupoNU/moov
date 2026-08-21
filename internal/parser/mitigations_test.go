@@ -764,6 +764,48 @@ func TestParseAcceptsAnyReaderAndNeverReturnsAnError(t *testing.T) {
 	}
 }
 
+// CanonHeaders.All is a map and cannot express the order the message used, so
+// Ordered carries it. RFC 8621 §4.1.3 requires the JMAP `headers` property to
+// list fields "in the same order they appear in the message", and the go-message
+// path — which handles the overwhelming majority of mail — must reproduce it
+// exactly, repeats included.
+func TestCanonHeadersOrderedPreservesMessageOrder(t *testing.T) {
+	raw := "Received: from a\r\n" +
+		"Received: from b\r\n" +
+		"From: Alice <alice@example.com>\r\n" +
+		"Subject: ordering\r\n" +
+		"\r\n" +
+		"body\r\n"
+
+	msg := ParseBytes([]byte(raw), DefaultLimits())
+
+	var got []string
+	for _, h := range msg.Headers.Ordered {
+		got = append(got, h.Name)
+	}
+	want := []string{"Received", "Received", "From", "Subject"}
+	if len(got) != len(want) {
+		t.Fatalf("Ordered = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Ordered = %v, want %v", got, want)
+		}
+	}
+
+	// Both occurrences of a repeated header keep their own value, in order.
+	if msg.Headers.Ordered[0].Value != "from a" || msg.Headers.Ordered[1].Value != "from b" {
+		t.Errorf("repeated Received values = %q, %q",
+			msg.Headers.Ordered[0].Value, msg.Headers.Ordered[1].Value)
+	}
+
+	// Ordered and All must agree: Ordered is a view of the same headers, not a
+	// second, drifting copy.
+	if len(msg.Headers.Values("Received")) != 2 {
+		t.Errorf("All lost a repeated header: %v", msg.Headers.All)
+	}
+}
+
 // --- helpers -------------------------------------------------------------
 
 // buildNestedMultipart makes a message with depth levels of multipart/mixed

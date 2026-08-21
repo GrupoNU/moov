@@ -3,6 +3,7 @@ package parser
 import (
 	"bytes"
 	"errors"
+	"sort"
 	"strings"
 
 	"github.com/jhillyerd/enmime/v2"
@@ -330,9 +331,26 @@ func canonHeadersFromEnmime(env *enmime.Envelope, out *ParsedMessage) CanonHeade
 					}
 				}
 				h.All[canonKey] = append(h.All[canonKey], decoded)
+				h.Ordered = append(h.Ordered, Header{Name: rawKey, Value: decoded})
 			}
 		}
 	}
+
+	// enmime hands back a map (textproto.MIMEHeader), so the message's original
+	// header order is ALREADY LOST before this function sees it — unlike the
+	// go-message path, which iterates the wire order directly. Go randomizes map
+	// iteration, so leaving Ordered as-is would make the same message produce a
+	// different header list on every parse.
+	//
+	// Sorting by name is therefore not an attempt to reconstruct the original
+	// order (that is unrecoverable here); it is what makes this path
+	// DETERMINISTIC. Only the ~8% of messages that fail go-message and fall
+	// through to enmime are affected, and for those a stable, honest ordering
+	// beats a randomized one. The typed fields (From, Subject, ...) are
+	// unaffected either way: they are looked up by name.
+	sort.SliceStable(h.Ordered, func(i, j int) bool {
+		return h.Ordered[i].Name < h.Ordered[j].Name
+	})
 
 	h.populate(out)
 	return h

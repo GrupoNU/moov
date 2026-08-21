@@ -160,6 +160,115 @@ func TestEmailGetBodyValuesFromRealParse(t *testing.T) {
 	}
 }
 
+// RFC 8621 §4.1.3 defines `headers` as "a list of all header fields in the
+// message, in the same order they appear in the message". It is a mandatory
+// Email property, and omitting it from the known-property set made the server
+// answer the WHOLE Email/get with invalidArguments — which is how the pilot's
+// reading pane stayed empty: Bulwark asks for `headers` on every message open,
+// got an error instead of an Email, and rendered nothing.
+func TestEmailGetHeadersInMessageOrder(t *testing.T) {
+	f := newFakeReaders()
+	f.emails[testAccountID] = []EmailRow{sampleEmail(1, "Hello")}
+	f.raw[1] = []byte(plainMessage)
+	d := f.deps()
+
+	got := callGet(t, d.handleEmailGet,
+		`{"accountId":"`+testAccountJMAPID()+`","ids":["`+EncodeEmailID(1)+`"],`+
+			`"properties":["id","headers"]}`)
+
+	e := firstObject(t, got, 0)
+	raw, ok := e["headers"].([]any)
+	if !ok {
+		t.Fatalf("headers is %T, want a list", e["headers"])
+	}
+
+	// Order is the point: plainMessage is From, To, Subject, Date, Message-ID,
+	// Content-Type, and the list must reproduce that sequence.
+	wantOrder := []string{"From", "To", "Subject", "Date", "Message-ID", "Content-Type"}
+	if len(raw) != len(wantOrder) {
+		t.Fatalf("got %d headers, want %d: %+v", len(raw), len(wantOrder), raw)
+	}
+	for i, want := range wantOrder {
+		h, ok := raw[i].(map[string]any)
+		if !ok {
+			t.Fatalf("headers[%d] is %T, want an object", i, raw[i])
+		}
+		if h["name"] != want {
+			t.Errorf("headers[%d].name = %v, want %q", i, h["name"], want)
+		}
+		if _, ok := h["value"].(string); !ok {
+			t.Errorf("headers[%d].value = %T, want a string", i, h["value"])
+		}
+	}
+
+	// §4.1.3 keeps the capitalization the message used, so a client that
+	// re-renders the header block gets "Message-ID", not "Message-Id".
+	first, _ := raw[0].(map[string]any)
+	if v, _ := first["value"].(string); !strings.Contains(v, "alice@example.com") {
+		t.Errorf("From value = %q, want the raw address", v)
+	}
+}
+
+// The exact Email/get the pilot's Bulwark sends when a message is clicked,
+// property list verbatim from the captured request. It must return an Email,
+// never an error — this is the regression that closes the empty reading pane.
+func TestEmailGetBulwarkMessageOpenRequest(t *testing.T) {
+	f := newFakeReaders()
+	f.emails[testAccountID] = []EmailRow{sampleEmail(1, "Hello")}
+	f.raw[1] = []byte(plainMessage)
+	d := f.deps()
+
+	got := callGet(t, d.handleEmailGet,
+		`{"accountId":"`+testAccountJMAPID()+`","ids":["`+EncodeEmailID(1)+`"],`+
+			`"properties":["id","threadId","mailboxIds","keywords","size","receivedAt",`+
+			`"sentAt","from","to","cc","bcc","replyTo","subject","preview","textBody",`+
+			`"htmlBody","bodyValues","hasAttachment","attachments","messageId","inReplyTo",`+
+			`"references","headers","bodyStructure","blobId"],`+
+			`"fetchTextBodyValues":true,"fetchHTMLBodyValues":true,"fetchAllBodyValues":true,`+
+			`"maxBodyValueBytes":256000}`)
+
+	e := firstObject(t, got, 0)
+	if _, ok := e["headers"].([]any); !ok {
+		t.Errorf("headers = %T, want a list", e["headers"])
+	}
+	// The body must arrive in the same response: a pane with headers and no
+	// text is still an empty pane to the user.
+	bv := object(t, e, "bodyValues")
+	if len(bv) == 0 {
+		t.Fatal("bodyValues is empty; the reading pane would render nothing")
+	}
+	if v, _ := object(t, bv, "0")["value"].(string); !strings.Contains(v, "Hello, world.") {
+		t.Errorf("body value = %q", v)
+	}
+}
+
+// A message whose blob is gone still has to answer `headers` with a list:
+// §4.1.3 types it EmailHeader[], not nullable, so null would be a type error
+// for a client that iterates it.
+func TestEmailGetHeadersMissingBlobIsEmptyList(t *testing.T) {
+	f := newFakeReaders()
+	f.emails[testAccountID] = []EmailRow{sampleEmail(1, "Hello")}
+	// No f.raw entry: the blob is absent.
+	d := f.deps()
+
+	got := callGet(t, d.handleEmailGet,
+		`{"accountId":"`+testAccountJMAPID()+`","ids":["`+EncodeEmailID(1)+`"],`+
+			`"properties":["id","subject","headers"]}`)
+
+	e := firstObject(t, got, 0)
+	raw, ok := e["headers"].([]any)
+	if !ok {
+		t.Fatalf("headers = %T, want an empty list rather than null", e["headers"])
+	}
+	if len(raw) != 0 {
+		t.Errorf("headers = %+v, want empty", raw)
+	}
+	// The metadata the store itself holds is still served.
+	if e["subject"] != "Hello" {
+		t.Errorf("subject = %v, want the stored value", e["subject"])
+	}
+}
+
 func TestEmailGetMaxBodyValueBytesTruncates(t *testing.T) {
 	f := newFakeReaders()
 	f.emails[testAccountID] = []EmailRow{sampleEmail(1, "Hello")}
