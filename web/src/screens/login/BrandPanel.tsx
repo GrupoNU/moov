@@ -37,6 +37,11 @@ export function BrandPanel({ branding }: BrandPanelProps): React.JSX.Element {
 
   return (
     <aside
+      /* data-brand-panel lets the login layout target this element across the
+       * CSS-Module boundary: LoginScreen.module.css needs to flip the panel
+       * above the form on collapsed viewports, and hashed class names from
+       * another module are not addressable from there. */
+      data-brand-panel=""
       className={styles.panel}
       /*
        * The panel is presentation plus the product name. The name is genuine

@@ -3,19 +3,28 @@
  *
  * # The grid
  *
- * Two columns on wide viewports. The brand half is given the LARGER share
- * (1.1fr vs 1fr) because the form column has a max-width on its card — without
+ * Two columns on wide viewports: FORM on the left, brand on the right
+ * (product decision, Diego 2026-08-25). The brand half keeps the LARGER share
+ * (1fr vs 1.1fr) because the form column has a max-width on its card — without
  * the bias, the form column's leftover whitespace makes the split look
  * accidental. The brand side is the one that should feel generous.
  *
- * Below 900px it becomes a single column: band on top, form below. See
+ * The form comes FIRST in the DOM, so keyboard and screen-reader order reach
+ * the thing the user came to do before the decorative panel; the visual order
+ * follows the DOM, so no `order` property is needed and there is no mismatch
+ * between focus order and what the eye sees.
+ *
+ * Below 900px it becomes a single column: band on top, form below — the band
+ * is moved back above the form with `order`, the one place where visual and
+ * DOM order legitimately differ (a decorative header above the form is the
+ * conventional mobile shape, and the form still receives focus first). See
  * BrandPanel.module.css for why the panel collapses to a band rather than
  * becoming a background image.
  */
 
 .layout {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: 1fr 1.1fr;
   /* 100dvh, not 100vh: on mobile browsers vh includes the retractable URL bar,
    * so 100vh puts the bottom of the form under the browser chrome — the exact
    * "form below the fold" failure P2 forbids. dvh tracks the visible viewport. */
@@ -307,8 +316,18 @@
   .layout {
     grid-template-columns: 1fr;
     /* Band first, then the form taking everything that is left — this is what
-     * keeps the form above the fold. */
+     * keeps the form above the fold. The form is first in the DOM (so it wins
+     * focus order), so the band is pulled above it visually here. */
     grid-template-rows: auto 1fr;
+  }
+
+  .brandPanel,
+  [data-brand-panel] {
+    order: -1;
+  }
+
+  .formSide {
+    order: 0;
   }
 
   .formSide {
@@ -383,7 +402,13 @@
     grid-template-rows: auto 1fr;
   }
 
+  .brandPanel,
+  [data-brand-panel] {
+    order: -1;
+  }
+
   .formSide {
+    order: 0;
     padding: var(--space-4) var(--space-5) var(--space-5);
     align-items: flex-start;
   }

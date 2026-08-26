@@ -122,12 +122,6 @@ export function LoginScreen(): React.JSX.Element {
 
   return (
     <div className={styles.layout}>
-      {/*
-        The brand half. `aria-hidden` is NOT set: the product name inside it is
-        genuine content a screen reader user should hear. What IS hidden is the
-        decorative image, inside BrandPanel.
-      */}
-      <BrandPanel branding={branding} />
 
       <main className={styles.formSide} id="main">
         <div className={styles.formCard}>
@@ -273,6 +267,12 @@ export function LoginScreen(): React.JSX.Element {
           {activeError ?? ""}
         </div>
       </main>
+      {/*
+        The brand half. `aria-hidden` is NOT set: the product name inside it is
+        genuine content a screen reader user should hear. What IS hidden is the
+        decorative image, inside BrandPanel.
+      */}
+      <BrandPanel branding={branding} />
     </div>
   );
 }

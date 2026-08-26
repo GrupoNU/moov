@@ -27,6 +27,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require golang.org/x/net v0.50.0
+
 require (
 	github.com/cention-sany/utf7 v0.0.0-20170124080048-26cad61bd60a // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -54,7 +56,6 @@ require (
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
