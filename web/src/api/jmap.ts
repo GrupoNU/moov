@@ -275,6 +275,35 @@ export class JmapClient {
   }
 
   /**
+   * Signs remote-image URLs for the image proxy (W-A4, ADR §5).
+   *
+   * An auxiliary REST endpoint like /branding, not a JMAP method — the RFC
+   * has no vocabulary for "mint me a capability URL". The response maps each
+   * ACCEPTED original URL to a relative `/jmap/imgproxy?...` path carrying
+   * an expiry and an HMAC; URLs the server refused (bad scheme, private
+   * address, oversized) are simply absent, and the client leaves those
+   * images blocked. The path is relative and requested same-origin by the
+   * message iframe's <img>, which can carry no credentials — the HMAC is
+   * the authorization.
+   */
+  async signImageProxyUrls(
+    urls: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Record<string, string>> {
+    const response = await this.request(
+      "/jmap/imgproxy/sign",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+      },
+      signal,
+    );
+    const body = (await response.json()) as { urls?: Record<string, string> };
+    return body.urls ?? {};
+  }
+
+  /**
    * Expands the Session's `downloadUrl` template (RFC 8620 §2).
    *
    * NOTE the deliberate correction: the server advertises the template with

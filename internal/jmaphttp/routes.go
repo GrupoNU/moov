@@ -66,6 +66,15 @@ func (s *Server) routes() []route {
 		// Branding (W-A1): public by design, see branding.go.
 		{method: http.MethodGet, pattern: PathBranding, handler: s.handleBranding, public: true},
 		{method: http.MethodGet, pattern: PathBrandingAsset, handler: s.handleBrandingAsset, public: true},
+
+		// The remote-image proxy (ADR §5). Signing requires auth; serving a
+		// signed image CANNOT (the requester is an <img> in a sandboxed
+		// iframe, which can attach no header), so the GET route is public in
+		// this table's sense and authorized by HMAC instead — the full
+		// argument is in imgproxy.go, and the public-set pin in
+		// branding_test.go names it.
+		{method: http.MethodPost, pattern: PathImageProxySign, handler: s.handleImageProxySign},
+		{method: http.MethodGet, pattern: PathImageProxy, handler: s.handleImageProxy, public: true},
 	}
 }
 

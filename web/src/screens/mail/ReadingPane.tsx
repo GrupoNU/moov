@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import type { JmapClient } from "../../api/jmap";
+import { signImageProxyUrls } from "../../mail/api";
 import { formatBytes, formatFullDate, initialsFor, machineDate } from "../../mail/format";
 import { displaySubject, senderLabel } from "../../mail/threading";
 import type { Email, EmailAddress, EmailBodyPart, Thread } from "../../mail/types";
@@ -39,6 +40,14 @@ export function ReadingPane({
   accountId,
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
+
+  // The remote-image signer the secure HTML renderer uses (W-A4): the ONLY
+  // path by which a message's remote image can ever be fetched, and it goes
+  // through our authenticated sign endpoint plus the HMAC proxy.
+  const signImages = useCallback(
+    (urls: readonly string[]) => signImageProxyUrls(client, urls),
+    [client],
+  );
 
   if (isLoading && email === undefined) {
     return (
@@ -147,7 +156,9 @@ export function ReadingPane({
       )}
 
       <div className={styles.bodyRegion}>
-        <MessageBody email={email} />
+        {/* Keyed by message id so per-message state — the remote-images
+            opt-in above all — can never leak from one message to the next. */}
+        <MessageBody key={email.id} email={email} signImageUrls={signImages} />
       </div>
 
       <footer className={styles.footer}>

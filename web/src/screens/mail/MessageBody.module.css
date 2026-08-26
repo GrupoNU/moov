@@ -1,10 +1,11 @@
 /*
  * The message body.
  *
- * P2 renders plain text only — see the seam contract in MessageBody.tsx. The
- * styles here are for TEXT, and the HTML epic will add its own iframe rules
- * rather than reusing these (an iframe's contents are a separate document and
- * inherit nothing from this stylesheet, which is part of the isolation).
+ * The styles here are for TEXT and for the layout shells; the HTML path's
+ * iframe rules live in SecureHtmlBody.module.css, and the CONTENT inside the
+ * iframe inherits nothing from either stylesheet (a srcdoc iframe is a
+ * separate document — that inheritance boundary is part of the isolation,
+ * not an oversight).
  */
 
 .body {
@@ -33,8 +34,25 @@
   font-family: var(--font-sans);
 }
 
-.truncated,
-.htmlHint {
+/* The HTML rendering path (W-A4): a flex column that fills the body region
+ * so the sandboxed iframe inside SecureHtmlBody can take the pane's height.
+ * NOT capped at a reading measure like .body — the iframe is a document with
+ * its own margins, and mail layouts are designed at their own widths. */
+.htmlBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-3);
+}
+
+.truncated {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.emptyBody {
   font-size: var(--text-sm);
   color: var(--text-muted);
   font-style: italic;

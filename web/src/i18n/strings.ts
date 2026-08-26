@@ -183,11 +183,31 @@ export const en = {
   "reader.emptyBody": "This message has no text content.",
   "reader.bodyTruncated":
     "This message is long and has been shortened. Download the original to read all of it.",
-  // The plain-text-only notice. P2 renders text bodies exclusively; the
-  // sanitised HTML renderer arrives in its own epic.
-  "reader.htmlNotRendered": "Formatted version not shown",
-  "reader.htmlNotRenderedBody":
-    "This message was written with formatting. Moov is showing its plain-text version while the secure formatted view is being finished.",
+  // --- the secure HTML renderer (W-A4) ---
+  // The iframe's accessible name: what the region IS, for a screen-reader
+  // user landing on it.
+  "reader.htmlFrameTitle": "Message content",
+  // Remote images: blocked by default (they leak the reader's IP and the
+  // moment of opening to the sender), loadable through the privacy proxy on
+  // an explicit action. The banner explains the WHY in one clause, because a
+  // bare "images blocked" reads as a malfunction.
+  "reader.imagesBlocked": (count: number): string =>
+    count === 1
+      ? "1 remote image is hidden to protect your privacy."
+      : `${count} remote images are hidden to protect your privacy.`,
+  "reader.showImages": "Show images",
+  "reader.imagesLoading": "Loading images through the privacy proxy…",
+  "reader.imagesFailed":
+    "The images could not be loaded through the privacy proxy, so they stay hidden. Try again later.",
+  "reader.inlineImagesUnavailable": (count: number): string =>
+    count === 1
+      ? "1 embedded image cannot be displayed yet."
+      : `${count} embedded images cannot be displayed yet.`,
+  // The honest fallback: sanitization refused the whole document. Never
+  // rendered silently — the user is told a formatted version exists.
+  "reader.htmlSanitizeFailed": "The formatted version cannot be shown safely",
+  "reader.htmlSanitizeFailedBody":
+    "This message's formatting could not be made safe to display, so Moov is not showing it. The plain-text version, when the sender included one, is shown below; the original message can be downloaded in full.",
   "reader.parseFailed": "Moov could not read this message's contents",
   "reader.parseFailedBody":
     "The message is stored safely and can be downloaded in full, but its structure could not be parsed.",
@@ -378,9 +398,22 @@ export const es: Strings = {
   "reader.emptyBody": "Este mensaje no tiene contenido de texto.",
   "reader.bodyTruncated":
     "Este mensaje es largo y se acortó. Descargá el original para leerlo completo.",
-  "reader.htmlNotRendered": "No se muestra la versión con formato",
-  "reader.htmlNotRenderedBody":
-    "Este mensaje fue escrito con formato. Moov muestra su versión de texto plano mientras se termina la vista con formato segura.",
+  "reader.htmlFrameTitle": "Contenido del mensaje",
+  "reader.imagesBlocked": (count: number): string =>
+    count === 1
+      ? "1 imagen remota está oculta para proteger tu privacidad."
+      : `${count} imágenes remotas están ocultas para proteger tu privacidad.`,
+  "reader.showImages": "Mostrar imágenes",
+  "reader.imagesLoading": "Cargando imágenes a través del proxy de privacidad…",
+  "reader.imagesFailed":
+    "Las imágenes no se pudieron cargar a través del proxy de privacidad, así que siguen ocultas. Probá más tarde.",
+  "reader.inlineImagesUnavailable": (count: number): string =>
+    count === 1
+      ? "1 imagen incrustada todavía no se puede mostrar."
+      : `${count} imágenes incrustadas todavía no se pueden mostrar.`,
+  "reader.htmlSanitizeFailed": "La versión con formato no se puede mostrar de forma segura",
+  "reader.htmlSanitizeFailedBody":
+    "El formato de este mensaje no se pudo hacer seguro para mostrar, así que Moov no lo muestra. La versión de texto plano, cuando el remitente incluyó una, se muestra abajo; el mensaje original se puede descargar completo.",
   "reader.parseFailed": "Moov no pudo leer el contenido de este mensaje",
   "reader.parseFailedBody":
     "El mensaje está guardado a salvo y se puede descargar completo, pero no se pudo interpretar su estructura.",

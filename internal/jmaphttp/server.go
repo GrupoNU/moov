@@ -181,6 +181,9 @@ type Server struct {
 
 	// Branding (W-A1).
 	branding *brandingStore
+
+	// Remote-image proxy (ADR §5, the PWA's W-A4 epic). See imgproxy.go.
+	imgproxy *imageProxy
 }
 
 // New builds a Server over an Authenticator.
@@ -218,6 +221,15 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 			"dir", cfg.BrandingDir, "error", err)
 	}
 
+	// The image proxy needs nothing from the configuration: its key is random
+	// per process (see imgproxy.go on why that is a feature) and its limits
+	// are constants. Constructing it here means every server has the routes,
+	// which is what lets the PWA rely on their presence.
+	imgproxy, err := newImageProxy()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
 		cfg:              cfg,
 		auth:             auth,
@@ -234,6 +246,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		state:            cfg.State,
 		maxSSEPerAccount: maxSSE,
 		branding:         newBrandingStore(cfg.BrandingDir, nil),
+		imgproxy:         imgproxy,
 	}, nil
 }
 

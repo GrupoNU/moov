@@ -16,11 +16,16 @@ var corsRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/jmap/download/a7/blob123/report.pdf"},
 	{http.MethodPost, "/jmap/upload/a7"},
 	{http.MethodGet, "/jmap/eventsource"},
-	// Branding (W-A1). These two are the only PUBLIC routes, but they get the
-	// same preflight as everything else: a PWA served from a dev origin fetches
+	// Branding (W-A1). These are PUBLIC routes, but they get the same
+	// preflight as everything else: a PWA served from a dev origin fetches
 	// /branding cross-origin like any other endpoint.
 	{http.MethodGet, "/branding"},
 	{http.MethodGet, "/branding/assets/mail.example.com/logo.png"},
+	// The remote-image proxy (W-A4). The sign route is a normal authenticated
+	// POST; the serve route is fetched by an <img> in the message iframe, so
+	// it too gets a preflight like any endpoint the app calls cross-origin.
+	{http.MethodPost, "/jmap/imgproxy/sign"},
+	{http.MethodGet, "/jmap/imgproxy"},
 }
 
 func TestPreflightCoversEveryRoute(t *testing.T) {

@@ -1,63 +1,42 @@
+import { useState } from "react";
+
 import { useTranslation } from "../../i18n/I18nProvider";
 import type { Email, EmailBodyPart, EmailBodyValue } from "../../mail/types";
+import { SecureHtmlBody, type SignImageUrls } from "./SecureHtmlBody";
 import styles from "./MessageBody.module.css";
 
 /**
- * THE HTML-RENDERER SEAM.
+ * THE BODY RENDERER — where a message's body becomes pixels, and
+ * deliberately the ONLY place.
  *
- * ============================================================================
- * READ THIS BEFORE ADDING HTML RENDERING. This component is the single place
- * where a message's body becomes pixels, and it is deliberately the ONLY one.
- * ============================================================================
+ * P2 rendered plain text exclusively; the W-A4 epic filled the documented
+ * seam with {@link SecureHtmlBody}. The security architecture is layered
+ * and each layer documents itself where it lives:
  *
- * # What P2 does, and why it does so little
+ *   1. server-side sanitization (its own epic; the client assumes NOTHING
+ *      from it — layers must fail independently);
+ *   2. client-side DOMPurify under the explicit policy of
+ *      `mail/html/policy.ts` — allowlisted tags/attributes/URL schemes,
+ *      filtered inline CSS, stripped stylesheets, forced link hygiene,
+ *      remote images stripped or rewritten to the HMAC proxy;
+ *   3. a sandboxed, opaque-origin iframe under `default-src 'none'`
+ *      (`mail/html/srcdoc.ts`) — the layer that holds when 1 and 2 fail.
  *
- * P2 renders `text/plain` bodies and NOTHING else. There is no
- * `dangerouslySetInnerHTML` anywhere in this codebase, no `<iframe>`, and no
- * HTML string is ever passed to the DOM — `Email/get` is not even asked for
- * `fetchHTMLBodyValues` (see `mail/api.ts`), so hostile markup does not enter
- * the client's memory at all.
+ * HTML is preferred when present (it is what the sender designed); the
+ * text/plain alternative renders when there is no HTML, or as the honest
+ * fallback when sanitization refuses the document. A message with neither
+ * readable part gets the parse-failure notice and the raw download.
  *
- * That is not laziness or an oversight. Rendering mail HTML is the largest
- * attack surface in a mail client (ADR §5, L2-pwa risk 2), and a half-safe
- * renderer is worse than none: it produces a product that appears to work
- * while leaking the session of every user who opens a crafted message. The
- * epic that adds it (W-A4) runs on a stronger model for exactly that reason.
- *
- * # The contract for the epic that fills this in
- *
- * Replace ONLY the `HtmlBodyPlaceholder` branch below. Everything else — the
- * metadata header, the attachment list, the thread context, the download path
- * — is finished and must not need to change. The new component must satisfy:
- *
- *   PROPS (stable, do not widen):
- *     { html: string;          // the raw, UNTRUSTED bodyValue
- *       blockRemoteImages: boolean;
- *       onShowRemoteImages: () => void; }
- *
- *   REQUIREMENTS (ADR §5's three layers, none optional):
- *     1. The server sanitises (bluemonday) — already true for what it stores.
- *     2. The client sanitises with DOMPurify before the string reaches the DOM.
- *     3. The result renders in `<iframe sandbox>` WITHOUT `allow-scripts` and
- *        WITHOUT `allow-same-origin` — the two together are equivalent to no
- *        sandbox at all — carrying CSP `default-src 'none'`.
- *     4. Remote images are blocked by default and only loaded on an explicit
- *        user action, through the HMAC image proxy (never a direct fetch,
- *        which leaks the reader's IP to the sender).
- *     5. `target="_blank"` links additionally carry `rel="noopener noreferrer"`.
- *
- *   WHERE TO TURN IT ON: `fetchMessageDetail` in `mail/api.ts` currently sets
- *   `fetchTextBodyValues: true` only. Adding `fetchHTMLBodyValues: true` there
- *   is the deliberate switch that begins delivering HTML to the client, and it
- *   should be flipped in the same change that lands the renderer — not before.
- *
- * Until then this component shows the plain-text alternative and says plainly
- * that a formatted version exists but is not being shown, which is honest
- * rather than silently degrading.
+ * Remote images: this component owns the per-message opt-in state. It
+ * starts blocked for every message; the SecureHtmlBody instance is keyed by
+ * the caller (ReadingPane keys MessageBody on email.id), so the state can
+ * never leak from one message to the next.
  */
 
 export interface MessageBodyProps {
   readonly email: Email;
+  /** Signs remote-image URLs for the proxy (mail/api.ts). */
+  readonly signImageUrls: SignImageUrls;
 }
 
 /** Picks the body value for a part, if the server sent one. */
@@ -69,8 +48,9 @@ function valueFor(
   return email.bodyValues?.[part.partId];
 }
 
-export function MessageBody({ email }: MessageBodyProps): React.JSX.Element {
+export function MessageBody({ email, signImageUrls }: MessageBodyProps): React.JSX.Element {
   const { t } = useTranslation();
+  const [showImages, setShowImages] = useState(false);
 
   const textParts = email.textBody ?? [];
   const htmlParts = email.htmlBody ?? [];
@@ -92,41 +72,63 @@ export function MessageBody({ email }: MessageBodyProps): React.JSX.Element {
     );
   }
 
-  // Collect every text part that actually has a value.
-  const rendered = textParts
+  // Collect every part that actually has a value.
+  const renderedText = textParts
     .map((part) => ({ part, value: valueFor(email, part) }))
     .filter((entry): entry is { part: EmailBodyPart; value: EmailBodyValue } =>
       entry.value !== undefined,
     );
+  const renderedHtml = htmlParts
+    .map((part) => valueFor(email, part))
+    .filter((value): value is EmailBodyValue => value !== undefined);
 
-  const hasHtmlOnly = rendered.length === 0 && htmlParts.length > 0;
+  /*
+   * The plain-text rendering — the whole body when there is no HTML, and the
+   * fallback SecureHtmlBody shows when sanitization refuses the document.
+   */
+  const textFallback =
+    renderedText.length > 0 ? (
+      <>
+        {renderedText.map(({ part, value }, index) => (
+          <PlainTextBody key={part.partId ?? index} value={value} />
+        ))}
+      </>
+    ) : (
+      <p className={styles.emptyBody} role="note">
+        {t("reader.emptyBody")}
+      </p>
+    );
 
-  return (
-    <div className={styles.body}>
-      {/*
-        The HTML seam. When a message is HTML-only there is no text to show,
-        so the placeholder is all the user gets — which is why it explains
-        itself rather than rendering an empty pane.
-      */}
-      {hasHtmlOnly && <HtmlBodyPlaceholder />}
+  if (renderedHtml.length > 0) {
+    /*
+     * Multiple text/html parts are joined into one document: they are
+     * sequential fragments of one body (RFC 8621 §4.1.4 orders htmlBody),
+     * and one frame with one policy beats a stack of frames.
+     */
+    const rawHtml = renderedHtml.map((value) => value.value).join("\n");
+    const anyTruncated = renderedHtml.some((value) => value.isTruncated);
 
-      {rendered.map(({ part, value }, index) => (
-        <PlainTextBody
-          key={part.partId ?? index}
-          value={value}
+    return (
+      <div className={styles.htmlBody}>
+        <SecureHtmlBody
+          html={rawHtml}
+          blockRemoteImages={!showImages}
+          onShowRemoteImages={() => {
+            setShowImages(true);
+          }}
+          signImageUrls={signImageUrls}
+          fallback={textFallback}
         />
-      ))}
+        {anyTruncated && (
+          <p className={styles.truncated} role="note">
+            {t("reader.bodyTruncated")}
+          </p>
+        )}
+      </div>
+    );
+  }
 
-      {/*
-        A message with BOTH parts renders its text and notes that a formatted
-        version exists. multipart/alternative is the common case, and the text
-        alternative is usually the same content.
-      */}
-      {!hasHtmlOnly && htmlParts.length > 0 && rendered.length > 0 && (
-        <p className={styles.htmlHint}>{t("reader.htmlNotRendered")}</p>
-      )}
-    </div>
-  );
+  return <div className={styles.body}>{textFallback}</div>;
 }
 
 /**
@@ -153,21 +155,5 @@ function PlainTextBody({ value }: { readonly value: EmailBodyValue }): React.JSX
         </p>
       )}
     </>
-  );
-}
-
-/**
- * The placeholder that the secure HTML renderer replaces.
- *
- * Named and documented so it is trivially greppable: `HtmlBodyPlaceholder` is
- * the one symbol the next epic deletes.
- */
-function HtmlBodyPlaceholder(): React.JSX.Element {
-  const { t } = useTranslation();
-  return (
-    <div className={styles.notice} role="note">
-      <p className={styles.noticeTitle}>{t("reader.htmlNotRendered")}</p>
-      <p className={styles.noticeBody}>{t("reader.htmlNotRenderedBody")}</p>
-    </div>
   );
 }

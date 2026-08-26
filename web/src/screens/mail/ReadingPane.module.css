@@ -243,6 +243,11 @@
   flex: 1;
   min-height: 0;
   padding: var(--space-5) var(--space-6);
+  /* A flex column, so the HTML path's iframe can FILL the region (the
+   * message scrolls inside its own sandboxed document — W-A4). The text
+   * path is unaffected: its blocks become stretch-aligned flex items. */
+  display: flex;
+  flex-direction: column;
 }
 
 .footer {

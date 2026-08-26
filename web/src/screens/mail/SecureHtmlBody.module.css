@@ -1,0 +1,106 @@
+/*
+ * The secure HTML body (W-A4).
+ *
+ * The container is a flex column that FILLS the body region, and the iframe
+ * takes whatever height the banners leave: the message scrolls inside the
+ * frame (its own document, its own scrollbars), so hostile content can never
+ * grow the frame over the app's UI, and wide content scrolls horizontally
+ * inside the frame without breaking the app's layout. See SecureHtmlBody.tsx
+ * on why sizing-to-content is refused.
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-3);
+}
+
+.frame {
+  flex: 1 1 auto;
+  width: 100%;
+  /* A floor so the frame stays usable when notices stack above it or the
+   * pane is short; below it the pane itself scrolls. */
+  min-height: 20rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  /* The frame's document paints white in both themes (mail is authored on
+   * white — see srcdoc.ts); the same color here means the border, not a
+   * color seam, marks the edge. */
+  background: #ffffff;
+}
+
+/* The remote-images banner: an informational strip, not an error — being
+ * protected is the product working. */
+.imageBanner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-info-tint);
+  border: 1px solid var(--color-info-border);
+  border-radius: var(--radius-md);
+}
+
+.imageBannerText {
+  font-size: var(--text-sm);
+  color: var(--text-default);
+}
+
+.showImagesButton {
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-accent);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.showImagesButton:hover {
+  background: var(--surface-raised);
+}
+
+.signStatus {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* Collapse the live region's row when it has nothing to say, while keeping
+ * it in the DOM (a region inserted alongside its text is often unannounced). */
+.signStatus:empty {
+  display: none;
+}
+
+.inlineNote {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.notice {
+  padding: var(--space-4);
+  background: var(--color-info-tint);
+  border: 1px solid var(--color-info-border);
+  border-radius: var(--radius-md);
+  max-width: 60ch;
+}
+
+.noticeTitle {
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+  margin-bottom: var(--space-1);
+}
+
+.noticeBody {
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  text-wrap: pretty;
+}

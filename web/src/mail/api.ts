@@ -230,11 +230,11 @@ export async function queryEmails(
  * Fetches one message with everything the reading pane needs, plus its thread,
  * in ONE request.
  *
- * `fetchTextBodyValues` only — NOT `fetchHTMLBodyValues`. P2 renders plain
- * text exclusively; asking the server for HTML we have no safe renderer for
- * would put hostile markup in the client's memory for no benefit, and the
- * epic that adds the renderer is the one that should turn the flag on
- * deliberately (see the seam contract in web/README.md).
+ * `fetchHTMLBodyValues` is ON — this is the deliberate switch the P2 seam
+ * contract reserved for the renderer epic (W-A4), flipped in the same change
+ * that landed SecureHtmlBody. The HTML that arrives is UNTRUSTED and is
+ * handled exclusively by the three-layer pipeline documented in
+ * `mail/html/policy.ts`; nothing else in the client may touch it.
  */
 export async function fetchMessageDetail(
   client: JmapClient,
@@ -253,6 +253,7 @@ export async function fetchMessageDetail(
           ids: [emailId],
           properties: DETAIL_PROPERTIES,
           fetchTextBodyValues: true,
+          fetchHTMLBodyValues: true,
           maxBodyValueBytes,
         },
         "e",
@@ -303,6 +304,30 @@ export async function fetchEmailsByIds(
   );
   const args = responseFor(response.methodResponses, "g");
   return (args.list ?? []) as readonly Email[];
+}
+
+/**
+ * Signs remote-image URLs for the proxy, re-validating what comes back.
+ *
+ * The map's VALUES are re-checked client-side (the same paranoia the
+ * branding client applies to server responses): a signed path must be a
+ * relative `/jmap/imgproxy?` path — never an absolute URL, which could
+ * point an <img> at another origin. Anything else is discarded, and its
+ * image stays blocked.
+ */
+export async function signImageProxyUrls(
+  client: JmapClient,
+  urls: readonly string[],
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<string, string>> {
+  const signed = await client.signImageProxyUrls(urls, signal);
+  const map = new Map<string, string>();
+  for (const [original, path] of Object.entries(signed)) {
+    if (typeof path === "string" && path.startsWith("/jmap/imgproxy?")) {
+      map.set(original, path);
+    }
+  }
+  return map;
 }
 
 /**

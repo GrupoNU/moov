@@ -298,8 +298,16 @@ honest reference for the shell's proportions.
 
 ## The HTML-renderer seam
 
-**The single file to change is `src/screens/mail/MessageBody.tsx`.** Its header
-comment is the normative contract; this section is the summary.
+> **Status (W-A4, landed):** this seam is now FILLED. `HtmlBodyPlaceholder` is
+> gone; `MessageBody` renders HTML through `SecureHtmlBody` and the three-layer
+> pipeline in `src/mail/html/` (`policy.ts` → `sanitize.ts` → `srcdoc.ts`), and
+> `fetchMessageDetail` sets `fetchHTMLBodyValues: true`. The server grew an
+> HMAC image proxy (`internal/jmaphttp/imgproxy.go`). The contract below is kept
+> as the record of what the epic was asked to satisfy; see those files' header
+> comments for what was built.
+
+**The single file that was changed is `src/screens/mail/MessageBody.tsx`.** Its
+header comment is the normative contract; this section is the summary.
 
 ### What P2 deliberately does not do
 
