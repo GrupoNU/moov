@@ -1,0 +1,174 @@
+/*
+ * Base styles: a small reset and the element defaults every screen inherits.
+ *
+ * Deliberately short. A large reset fights the browser's sensible defaults and
+ * then re-implements them; this one removes the handful of legacy behaviours
+ * that genuinely get in the way and stops.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Not `scroll-behavior: smooth` globally — it hijacks focus navigation for
+   * keyboard users, which is a regression on the accessibility bar this epic
+   * is held to. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  /* An explicit token background: the page must never inherit a host
+   * background, or the app borrows a theme it did not choose. */
+  background: var(--surface-canvas);
+  color: var(--text-default);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--text-strong);
+  /* Long subjects and customer product names must not overflow their box. */
+  overflow-wrap: break-word;
+}
+
+p {
+  margin: 0;
+}
+
+/* Form controls do not inherit typography by default; without this every input
+ * in the app silently uses the browser's font rather than the product's. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+img,
+svg,
+picture,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+/*
+ * THE FOCUS RULE.
+ *
+ * `:focus-visible` rather than `:focus`: a mouse click on a button should not
+ * leave a ring, but every keyboard arrival must. The ring is drawn with
+ * `outline` — not a box-shadow — so it follows the element's shape, survives
+ * forced-colors mode, and cannot be clipped by an ancestor's overflow.
+ *
+ * Nothing in this app is ever allowed to set `outline: none` without providing
+ * an equivalent affordance. Removing this ring makes the product unusable by
+ * keyboard, which is an AC of this epic.
+ */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* Selection uses the brand, which is a small touch that makes an app feel
+ * like it was designed rather than assembled. */
+::selection {
+  background: var(--color-accent-tint-strong);
+  color: var(--text-strong);
+}
+
+/*
+ * Respect the OS "reduce motion" setting. This is not a nicety: for users with
+ * vestibular disorders, animation can cause nausea. Transitions are reduced to
+ * near-zero rather than removed, so state changes that rely on a transition
+ * ending still fire.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Visually hidden, but present for screen readers. Used for the skip link, for
+ * the live region that announces errors, and for labels whose visual form is
+ * an icon.
+ *
+ * The clip-path + 1px box technique rather than `display: none`, which would
+ * remove it from the accessibility tree entirely, and rather than
+ * `text-indent: -9999px`, which breaks RTL.
+ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The skip link becomes visible when it receives focus — the first Tab stop on
+ * every page. */
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-200%);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}

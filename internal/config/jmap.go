@@ -61,6 +61,16 @@ type JMAPConfig struct {
 	// time, so the failure mode to prevent is one client's reconnect loop
 	// accumulating streams — which is a per-account phenomenon.
 	MaxSSEPerAccount int
+
+	// BrandingDir is the root of the per-host branding directories
+	// (MOOV_BRANDING_DIR, e.g. /etc/moov/branding holding
+	// <host>/branding.json). Arbitration W-A1 of L2-pwa: the PWA reads
+	// GET /branding before login to paint the customer's brand.
+	//
+	// Empty is a complete configuration, not a missing one: every host is
+	// answered with Moov's own brand, which is what the pilot serves and what
+	// most installations will ever need.
+	BrandingDir string
 }
 
 // DefaultJMAPAddr is the default JMAP listen address.
@@ -121,6 +131,11 @@ func loadJMAP() (JMAPConfig, error) {
 		j.MaxSSEPerAccount = n
 	}
 
+	// Not validated for existence here: jmaphttp warns at construction and
+	// falls back to the Moov defaults, so a mistyped path degrades the brand
+	// rather than refusing to start the mail server.
+	j.BrandingDir = strings.TrimSpace(os.Getenv("MOOV_BRANDING_DIR"))
+
 	return j, nil
 }
 
@@ -146,9 +161,9 @@ func (j JMAPConfig) String() string {
 	return fmt.Sprintf(
 		"jmap_enabled=%t jmap_addr=%s jmap_external_url=%s jmap_cors_origins=%s "+
 			"jmap_imap_host=%s jmap_imap_port=%d jmap_imap_server_name=%s jmap_auth_cache_ttl=%s "+
-			"sse_max_conn_per_account=%d",
+			"sse_max_conn_per_account=%d branding_dir=%s",
 		j.Enabled, j.Addr, orUnset(j.ExternalURL), orUnset(strings.Join(j.CORSOrigins, ",")),
 		orUnset(j.IMAPHost), j.IMAPPort, orUnset(j.IMAPServerName), orDefault(j.AuthCacheTTL),
-		j.MaxSSEPerAccount,
+		j.MaxSSEPerAccount, orUnset(j.BrandingDir),
 	)
 }

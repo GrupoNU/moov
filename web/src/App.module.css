@@ -1,0 +1,26 @@
+/* The restoring splash. */
+
+.splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  background: var(--surface-canvas);
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 2.5px solid var(--border-default);
+  /* One coloured arc against a neutral ring reads as motion even at small
+   * sizes, and picks up the brand accent without a second element. */
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-full);
+  animation: spin 720ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

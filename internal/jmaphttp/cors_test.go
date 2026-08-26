@@ -16,6 +16,11 @@ var corsRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/jmap/download/a7/blob123/report.pdf"},
 	{http.MethodPost, "/jmap/upload/a7"},
 	{http.MethodGet, "/jmap/eventsource"},
+	// Branding (W-A1). These two are the only PUBLIC routes, but they get the
+	// same preflight as everything else: a PWA served from a dev origin fetches
+	// /branding cross-origin like any other endpoint.
+	{http.MethodGet, "/branding"},
+	{http.MethodGet, "/branding/assets/mail.example.com/logo.png"},
 }
 
 func TestPreflightCoversEveryRoute(t *testing.T) {

@@ -125,6 +125,11 @@ type Config struct {
 	// dependency on a concrete telemetry implementation. metrics.Metrics
 	// satisfies it by construction.
 	Metrics RequestRecorder
+
+	// BrandingDir is the root of the per-host branding directories (W-A1,
+	// MOOV_BRANDING_DIR). Empty serves the Moov defaults to every host, which
+	// is a complete and supported configuration — it is what the pilot runs.
+	BrandingDir string
 }
 
 // RequestRecorder is the metrics layer's view of an HTTP request.
@@ -173,6 +178,9 @@ type Server struct {
 	notifier         StateNotifier
 	state            StateSource
 	maxSSEPerAccount int
+
+	// Branding (W-A1).
+	branding *brandingStore
 }
 
 // New builds a Server over an Authenticator.
@@ -201,6 +209,15 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		maxSSE = DefaultMaxSSEPerAccount
 	}
 
+	// A configured-but-unusable branding directory is a warning, never a
+	// startup failure: the fallback is Moov's own brand, so the login page
+	// still renders. Failing to boot the mail server over a missing logo
+	// directory would be the wrong trade by a wide margin.
+	if err := brandingDirIsUsable(cfg.BrandingDir); err != nil {
+		cfg.Logger.Warn("jmaphttp: branding directory is unusable; serving Moov defaults",
+			"dir", cfg.BrandingDir, "error", err)
+	}
+
 	return &Server{
 		cfg:              cfg,
 		auth:             auth,
@@ -216,6 +233,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		notifier:         cfg.Notifier,
 		state:            cfg.State,
 		maxSSEPerAccount: maxSSE,
+		branding:         newBrandingStore(cfg.BrandingDir, nil),
 	}, nil
 }
 

@@ -106,6 +106,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		err = accountCommand(ctx, env, rest[1:])
 	case "key":
 		err = keyCommand(ctx, env, rest[1:])
+	case "branding":
+		err = brandingCommand(ctx, env, rest[1:])
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return exitOK
@@ -162,6 +164,10 @@ Commands:
   account disable <email> stop syncing an account, keeping its data
   key generate            generate a master key for MOOV_MASTER_KEY
   key rotate              re-seal every stored credential under the primary key
+  branding set            set a host's logo, splash image, name and colors
+  branding show           print a host's branding
+  branding list           list the hosts with branding configured
+  branding unset          remove a host's branding (back to Moov's defaults)
 
 Flags:
   -v          log at debug level
@@ -178,6 +184,8 @@ Environment:
   MOOV_IMAP_HOST             Dovecot host for the validation login (default "dovecot")
   MOOV_IMAP_SERVER_NAME      name Dovecot's certificate is verified against
   MOOV_ACCOUNT_PASSWORD      mailbox password, for non-interactive use
+  MOOV_BRANDING_DIR          branding root for the branding commands
+                             (default /etc/moov/branding)
 
 No command accepts a secret as an argument: arguments are visible in ps and
 recorded in shell history.

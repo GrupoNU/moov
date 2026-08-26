@@ -1,0 +1,438 @@
+/*
+ * The login screen's layout (product decision P2: split screen).
+ *
+ * # The grid
+ *
+ * Two columns on wide viewports. The brand half is given the LARGER share
+ * (1.1fr vs 1fr) because the form column has a max-width on its card — without
+ * the bias, the form column's leftover whitespace makes the split look
+ * accidental. The brand side is the one that should feel generous.
+ *
+ * Below 900px it becomes a single column: band on top, form below. See
+ * BrandPanel.module.css for why the panel collapses to a band rather than
+ * becoming a background image.
+ */
+
+.layout {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  /* 100dvh, not 100vh: on mobile browsers vh includes the retractable URL bar,
+   * so 100vh puts the bottom of the form under the browser chrome — the exact
+   * "form below the fold" failure P2 forbids. dvh tracks the visible viewport. */
+  min-height: 100dvh;
+  background: var(--surface-canvas);
+}
+
+.formSide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  /* min-height 0 lets the card scroll inside a short viewport instead of
+   * overflowing the grid track. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.formCard {
+  width: 100%;
+  /* ~26rem of form. Wider inputs measurably hurt: an email field the width of
+   * a desktop screen makes a typo hard to spot. */
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* The compact mark, shown only where the panel has collapsed and the full
+ * mark is no longer beside the form. */
+.compactBrand {
+  display: none;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.heading {
+  font-size: var(--text-3xl);
+  letter-spacing: -0.02em;
+}
+
+.subheading {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-wrap: pretty;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+}
+
+.input {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  /* 16px minimum on the font size: iOS Safari zooms the page when a focused
+   * input is smaller, which throws the layout off on every phone sign-in. */
+  font-size: var(--text-base);
+  color: var(--text-strong);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+  /* A placeholder must never be mistaken for a value. */
+  opacity: 0.75;
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.input:focus-visible {
+  border-color: var(--color-accent);
+  /* The global :focus-visible outline still applies; this ring is the filled
+   * halo that makes the active field obvious at a glance. */
+  box-shadow: 0 0 0 3px var(--color-accent-tint-strong);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.input:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* --- password field --- */
+
+.passwordWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.passwordInput {
+  /* Room for the toggle, so a long password never runs under it. */
+  padding-right: calc(var(--space-8) + var(--space-1));
+}
+
+.passwordToggle {
+  position: absolute;
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 40px: comfortably above the 24px WCAG 2.2 target-size minimum, and
+   * comfortable on a phone. */
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.passwordToggle:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+}
+
+.passwordToggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* --- submit --- */
+
+.submit {
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  margin-top: var(--space-1);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.submit:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.submit:active:not(:disabled) {
+  background: var(--color-accent-active);
+  /* A 1px press. Small enough to feel like a button rather than an animation. */
+  transform: translateY(1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.submit:disabled {
+  /* Dimmed, not greyed to a different hue: the button still reads as the
+   * brand's button while it is working. */
+  opacity: 0.65;
+  cursor: progress;
+}
+
+/* --- errors --- */
+
+.fieldError {
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.errorNotice {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-danger-tint);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+  /* Entrance is a fade with a small rise; with prefers-reduced-motion it is
+   * neutralised globally in base.css. */
+  animation: notice-in var(--duration-base) var(--ease-out);
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.errorIcon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--color-danger);
+}
+
+.errorText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.errorTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.errorBody {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-default);
+  text-wrap: pretty;
+}
+
+.errorAction {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-default);
+}
+
+.errorLink {
+  color: var(--color-danger);
+  font-weight: var(--weight-semibold);
+}
+
+/* --- help --- */
+
+.help {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.helpLink {
+  color: var(--text-muted);
+  text-decoration: underline;
+}
+
+.helpLink:hover {
+  color: var(--color-accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * The collapse.
+ * ------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+    /* Band first, then the form taking everything that is left — this is what
+     * keeps the form above the fold. */
+    grid-template-rows: auto 1fr;
+  }
+
+  .formSide {
+    padding: var(--space-6) var(--space-5) var(--space-7);
+    /* Top-aligned rather than centred: on a phone, centring pushes the fields
+     * toward the middle of the screen and away from the thumb. */
+    align-items: flex-start;
+  }
+
+  .formCard {
+    max-width: 26rem;
+    margin-inline: auto;
+    gap: var(--space-4);
+  }
+
+  /*
+   * The compact mark stays HIDDEN even here.
+   *
+   * It was added on the assumption that the collapsed panel would stop showing
+   * the logo — but the band keeps the full mark, so rendering this one puts the
+   * same logo and product name on screen twice, a few pixels apart. Verified in
+   * a real browser at 390x844, which is why the rule is `display: none` and not
+   * the `display: block` this block originally carried.
+   *
+   * The element is kept in the markup rather than deleted: if the band is ever
+   * replaced by a treatment that does NOT carry the mark (a photo-only header,
+   * say), this is the one line that brings the identity back.
+   */
+  .compactBrand {
+    display: none;
+  }
+
+  .heading {
+    font-size: var(--text-2xl);
+  }
+}
+
+@media (max-width: 420px) {
+  .formSide {
+    padding: var(--space-5) var(--space-4) var(--space-6);
+  }
+}
+
+/*
+ * SHORT VIEWPORTS — a phone in landscape, or a small window.
+ *
+ * This block exists because a measured check caught the failure: at 740x360 the
+ * submit button sat 125px BELOW the fold, which is exactly what P2 forbids
+ * ("el formulario nunca queda por debajo del pliegue"). Height, not width, is
+ * the scarce resource here, so a width-based breakpoint could never have fixed
+ * it — the rules below key on height.
+ *
+ * Three things reclaim the space, in order of how much they cost the design:
+ *
+ *   1. The compact mark is dropped. It is a DUPLICATE of the mark already
+ *      visible in the brand band above, so removing it costs nothing at all.
+ *   2. Vertical padding and gaps shrink to the smallest step.
+ *   3. The heading drops to the body-adjacent size. It is still the largest
+ *      thing on the form and still the first heading, so the hierarchy holds.
+ *
+ * What is deliberately NOT done: shrinking the inputs or the submit button.
+ * Those are the touch targets, and trading target size for fold position would
+ * fix one accessibility problem by creating another.
+ */
+@media (max-height: 560px) {
+  /* A short viewport collapses the split for the same reason a narrow one
+   * does: there is not enough of the scarce dimension to give half of it to
+   * imagery. Without this the two-column grid survives at 740x360 and the form
+   * gets a 370px-wide column to fit a full form into. */
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .formSide {
+    padding: var(--space-4) var(--space-5) var(--space-5);
+    align-items: flex-start;
+  }
+
+  .formCard {
+    gap: var(--space-3);
+  }
+
+  /* Already shown in the band directly above it. */
+  .compactBrand {
+    display: none;
+  }
+
+  .header {
+    gap: var(--space-1);
+  }
+
+  .heading {
+    font-size: var(--text-xl);
+  }
+
+  /* The supporting line is the one piece of text a returning user does not
+   * need in order to sign in. */
+  .subheading {
+    display: none;
+  }
+
+  .form {
+    gap: var(--space-3);
+  }
+
+  .submit {
+    margin-top: 0;
+  }
+}
+
+/*
+ * Forced-colors (Windows high contrast). Custom properties are ignored there,
+ * so the outlines below are what keep the form's structure visible.
+ */
+@media (forced-colors: active) {
+  .input,
+  .submit,
+  .errorNotice {
+    border: 1px solid ButtonBorder;
+  }
+
+  .submit {
+    background: ButtonFace;
+    color: ButtonText;
+  }
+}

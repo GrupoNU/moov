@@ -1,0 +1,318 @@
+/*
+ * Moov design tokens (arbitration W-A2 of L2-pwa §3).
+ *
+ * THE RULE THIS FILE EXISTS TO ENFORCE: no component anywhere in the app names
+ * a colour, a logo or a product name. Everything reads a token. That is cheap
+ * today and, as the arbitration says, impossible to retrofit later — a
+ * hardcoded hex in a component is invisible until a customer's brand is
+ * applied and one button stays indigo.
+ *
+ * # The three layers
+ *
+ *   1. SEED tokens (--brand-*). Four colours plus assets, written onto
+ *      :root by applyBranding() at boot from GET /branding. They are the ONLY
+ *      values a customer controls, and the only ones JavaScript ever writes.
+ *   2. SEMANTIC tokens (--color-*, --surface-*, --text-*). What components
+ *      actually consume: "the page background", "the text on a raised
+ *      surface". They are DERIVED from the seeds in plain CSS, which is what
+ *      lets four customer values restyle a whole app without JavaScript
+ *      computing a palette.
+ *   3. SCALE tokens (--space-*, --radius-*, --text-*, --shadow-*). Not
+ *      brandable — they are the product's own craft, identical for every
+ *      customer, and a customer changing them would only make the app worse.
+ *
+ * # How dark mode works
+ *
+ * Layer 2 is redefined under a dark theme; layers 1 and 3 are not. A customer
+ * supplies one accent and gets a coherent light AND dark app, because the dark
+ * theme re-derives the same semantic names from the same seeds. There is no
+ * second palette to configure and therefore no way to configure only half of
+ * one.
+ *
+ * The theme has three states, and all three are handled explicitly:
+ *   - an explicit choice stamps data-theme="light"|"dark" on <html>;
+ *   - "system" stamps nothing and defers to prefers-color-scheme;
+ *   - the dark media block is guarded with :not([data-theme="light"]) so an
+ *     explicit light choice wins over a dark OS.
+ */
+
+:root {
+  /* ---------------------------------------------------------------------
+   * Layer 1 — brand seeds.
+   *
+   * The values here are Moov's own, and they are REAL defaults, not
+   * placeholders: most installations never configure a brand, so this is the
+   * palette most people will see. applyBranding() overwrites these four
+   * properties (and only these four) when a customer has a brand.
+   *
+   * They are duplicated from the Go DefaultBranding() so that a first paint
+   * before /branding resolves is already correct rather than unstyled; a test
+   * pins the two copies together.
+   * ------------------------------------------------------------------- */
+  --brand-primary: #5b5bd6;
+  --brand-on-primary: #ffffff;
+  --brand-splash-from: #1e1b4b;
+  --brand-splash-to: #4c1d95;
+
+  /* ---------------------------------------------------------------------
+   * Layer 3 — the product's scales. Not brandable.
+   * ------------------------------------------------------------------- */
+
+  /* A 4px base step. Every margin and padding in the app is a multiple, which
+   * is what makes spacing look deliberate rather than assembled. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* A type scale with a ~1.25 ratio. Sizes are rem so the browser's font-size
+   * setting is respected — a user who enlarges text gets a larger app, which
+   * is an accessibility requirement, not a preference. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* The system font stack. A webfont on the login screen would mean either a
+   * flash of unstyled text or a blocking request before the first paint of the
+   * page a user is waiting on — and the modern system stacks (Segoe UI
+   * Variable, SF Pro, Inter on Linux) are genuinely good. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Display",
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Shadows are defined as a colour plus a geometry so the dark theme can
+   * change only the colour. A shadow that stays rgba(0,0,0,...) in dark mode is
+   * invisible, which is why elevation disappears in most dark themes. */
+  --shadow-color: 220 40% 12%;
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 0.08);
+  --shadow-md:
+    0 4px 6px -1px hsl(var(--shadow-color) / 0.1),
+    0 2px 4px -2px hsl(var(--shadow-color) / 0.06);
+  --shadow-lg:
+    0 12px 24px -8px hsl(var(--shadow-color) / 0.18),
+    0 4px 8px -4px hsl(var(--shadow-color) / 0.08);
+  --shadow-xl:
+    0 24px 48px -12px hsl(var(--shadow-color) / 0.28),
+    0 8px 16px -8px hsl(var(--shadow-color) / 0.12);
+
+  /* Motion. `--ease-out` is the one curve the app uses for entrances; a single
+   * curve is what makes an interface feel like one piece of software. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* ---------------------------------------------------------------------
+   * Layer 2 — semantic tokens, LIGHT theme.
+   *
+   * Defined on bare :root so there is always a complete palette even in a
+   * context where no media query and no data-theme applies.
+   * ------------------------------------------------------------------- */
+
+  /* Surfaces, from furthest back to nearest the user. */
+  --surface-canvas: #f6f7fb;
+  --surface-default: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef0f6;
+  --surface-overlay: rgba(15, 18, 34, 0.45);
+
+  /* Text. `--text-muted` is the lightest text allowed on --surface-default and
+   * still clears AA at body size; anything lighter belongs in a decoration,
+   * not in text. */
+  --text-strong: #12141d;
+  --text-default: #2b2f3d;
+  --text-muted: #5c6273;
+  --text-inverted: #ffffff;
+
+  --border-subtle: #e3e6ef;
+  --border-default: #cdd2e0;
+  --border-strong: #a8afc4;
+
+  /* The accent, taken straight from the seed. Everything accent-coloured in
+   * the app resolves through here, which is the single hop that makes the
+   * whole product change colour when a customer configures one value. */
+  --color-accent: var(--brand-primary);
+  --color-on-accent: var(--brand-on-primary);
+  /* Hover/active are derived by compositing the accent with black, so they
+   * follow ANY accent without JavaScript computing a shade. color-mix is
+   * supported by every browser this app targets. */
+  --color-accent-hover: color-mix(in srgb, var(--brand-primary) 88%, #000);
+  --color-accent-active: color-mix(in srgb, var(--brand-primary) 78%, #000);
+  /* A tint for selected rows and subtle accent backgrounds. */
+  --color-accent-tint: color-mix(in srgb, var(--brand-primary) 10%, transparent);
+  --color-accent-tint-strong: color-mix(in srgb, var(--brand-primary) 18%, transparent);
+
+  /* Status colours. Deliberately NOT brandable: a customer whose brand colour
+   * is red must still get a red error and a green success, because those
+   * meanings are conventions users bring with them, not brand expression. */
+  --color-danger: #c02b3f;
+  --color-danger-tint: #fdf2f3;
+  --color-danger-border: #f2c2c8;
+  --color-warning: #96601a;
+  --color-warning-tint: #fdf7ee;
+  --color-warning-border: #ecd7b4;
+  --color-success: #12704a;
+  --color-success-tint: #f0faf5;
+  --color-success-border: #b9e2cd;
+  --color-info: #1c5a92;
+  --color-info-tint: #f0f7fd;
+  --color-info-border: #b9d8ef;
+
+  /* The focus ring. One token, used by every focusable thing, so keyboard
+   * focus looks identical everywhere — which is what makes it readable as
+   * "this is where you are" rather than as a rendering artefact. */
+  --focus-ring-color: var(--color-accent);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  color-scheme: light;
+}
+
+/*
+ * Layer 2 — DARK theme.
+ *
+ * Only semantic tokens are redefined. The seeds are untouched, which is the
+ * whole point: a customer's accent is their accent in both themes.
+ *
+ * The accent is LIFTED toward white in dark mode rather than used raw. A mid
+ * indigo that reads well on white drops to about 3:1 on a near-black surface,
+ * below AA for text; mixing in white restores the contrast while keeping the
+ * hue recognisably the customer's.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-canvas: #0d0f17;
+    --surface-default: #151824;
+    --surface-raised: #1c2030;
+    --surface-sunken: #0a0c12;
+    --surface-overlay: rgba(4, 6, 12, 0.62);
+
+    --text-strong: #f4f6fb;
+    --text-default: #dfe3ee;
+    --text-muted: #9aa2b8;
+    --text-inverted: #12141d;
+
+    --border-subtle: #262b3b;
+    --border-default: #333a4e;
+    --border-strong: #4b5468;
+
+    --color-accent: color-mix(in srgb, var(--brand-primary) 72%, #ffffff);
+    --color-on-accent: #0d0f17;
+    --color-accent-hover: color-mix(in srgb, var(--brand-primary) 60%, #ffffff);
+    --color-accent-active: color-mix(in srgb, var(--brand-primary) 52%, #ffffff);
+    --color-accent-tint: color-mix(in srgb, var(--brand-primary) 22%, transparent);
+    --color-accent-tint-strong: color-mix(in srgb, var(--brand-primary) 32%, transparent);
+
+    --color-danger: #ff8a95;
+    --color-danger-tint: #2a1418;
+    --color-danger-border: #58262e;
+    --color-warning: #e8b872;
+    --color-warning-tint: #261c0f;
+    --color-warning-border: #4d3a1d;
+    --color-success: #6fdaa8;
+    --color-success-tint: #0f2419;
+    --color-success-border: #1e4a34;
+    --color-info: #7cc0f0;
+    --color-info-tint: #0f1e2b;
+    --color-info-border: #1f4058;
+
+    /* Shadows in dark mode are pure black at higher opacity: a tinted shadow
+     * on a dark surface reads as a smudge. */
+    --shadow-color: 0 0% 0%;
+    --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 0.4);
+    --shadow-md:
+      0 4px 6px -1px hsl(var(--shadow-color) / 0.5),
+      0 2px 4px -2px hsl(var(--shadow-color) / 0.4);
+    --shadow-lg:
+      0 12px 24px -8px hsl(var(--shadow-color) / 0.6),
+      0 4px 8px -4px hsl(var(--shadow-color) / 0.45);
+    --shadow-xl:
+      0 24px 48px -12px hsl(var(--shadow-color) / 0.7),
+      0 8px 16px -8px hsl(var(--shadow-color) / 0.5);
+
+    color-scheme: dark;
+  }
+}
+
+/*
+ * The explicit dark choice. Duplicated from the media block rather than shared,
+ * because a token defined ONLY inside a media query has no value when the
+ * attribute is what applies — the exact bug that makes a theme toggle work in
+ * one direction and not the other.
+ */
+:root[data-theme="dark"] {
+  --surface-canvas: #0d0f17;
+  --surface-default: #151824;
+  --surface-raised: #1c2030;
+  --surface-sunken: #0a0c12;
+  --surface-overlay: rgba(4, 6, 12, 0.62);
+
+  --text-strong: #f4f6fb;
+  --text-default: #dfe3ee;
+  --text-muted: #9aa2b8;
+  --text-inverted: #12141d;
+
+  --border-subtle: #262b3b;
+  --border-default: #333a4e;
+  --border-strong: #4b5468;
+
+  --color-accent: color-mix(in srgb, var(--brand-primary) 72%, #ffffff);
+  --color-on-accent: #0d0f17;
+  --color-accent-hover: color-mix(in srgb, var(--brand-primary) 60%, #ffffff);
+  --color-accent-active: color-mix(in srgb, var(--brand-primary) 52%, #ffffff);
+  --color-accent-tint: color-mix(in srgb, var(--brand-primary) 22%, transparent);
+  --color-accent-tint-strong: color-mix(in srgb, var(--brand-primary) 32%, transparent);
+
+  --color-danger: #ff8a95;
+  --color-danger-tint: #2a1418;
+  --color-danger-border: #58262e;
+  --color-warning: #e8b872;
+  --color-warning-tint: #261c0f;
+  --color-warning-border: #4d3a1d;
+  --color-success: #6fdaa8;
+  --color-success-tint: #0f2419;
+  --color-success-border: #1e4a34;
+  --color-info: #7cc0f0;
+  --color-info-tint: #0f1e2b;
+  --color-info-border: #1f4058;
+
+  --shadow-color: 0 0% 0%;
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 0.4);
+  --shadow-md:
+    0 4px 6px -1px hsl(var(--shadow-color) / 0.5),
+    0 2px 4px -2px hsl(var(--shadow-color) / 0.4);
+  --shadow-lg:
+    0 12px 24px -8px hsl(var(--shadow-color) / 0.6),
+    0 4px 8px -4px hsl(var(--shadow-color) / 0.45);
+  --shadow-xl:
+    0 24px 48px -12px hsl(var(--shadow-color) / 0.7),
+    0 8px 16px -8px hsl(var(--shadow-color) / 0.5);
+
+  color-scheme: dark;
+}

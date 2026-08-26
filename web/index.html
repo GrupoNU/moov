@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!--
+      The title and theme-color are replaced at runtime by the resolved brand
+      (applyBrandingToDocument). These are the pre-brand values: Moov's own,
+      which is also the correct final value for every unbranded installation.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Moov Mail</title>
+    <meta name="theme-color" content="#5b5bd6" />
+    <meta name="description" content="Moov Mail" />
+
+    <!--
+      A login page must never be indexed or previewed by a crawler: it is a
+      credential prompt, and a cached copy of a customer's branded login screen
+      is a phishing template someone else did not have to build.
+    -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="same-origin" />
+
+    <script>
+      /*
+       * Applies the stored theme BEFORE first paint.
+       *
+       * This is the one piece of logic that must run as a blocking inline
+       * script rather than from the bundle: by the time a module script
+       * executes, the browser has already painted, so a user with dark mode
+       * selected would see a white flash on every load. Inline and synchronous
+       * in <head> is the only placement that prevents it.
+       *
+       * It mirrors theme.ts exactly — three states, and "system" removes the
+       * attribute so prefers-color-scheme decides. Wrapped in try/catch
+       * because a blocked localStorage must not stop the page from loading.
+       */
+      (function () {
+        try {
+          var stored = localStorage.getItem("moov.theme.v1");
+          if (stored === "light" || stored === "dark") {
+            document.documentElement.setAttribute("data-theme", stored);
+          }
+        } catch (error) {
+          /* No stored preference is available; the media query decides. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      Moov Mail necesita JavaScript para funcionar. / Moov Mail requires
+      JavaScript to run.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

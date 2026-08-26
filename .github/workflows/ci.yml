@@ -5,6 +5,7 @@
 #   corpus       the MIME corpus matches its manifest and git is not rewriting it
 #   store        migrations apply and the mandated PostgreSQL settings are ACTIVE
 #   conformance  the JMAP server answers RFC 8620/8621 as specified
+#   web          the PWA typechecks, lints, tests and builds (L2-pwa epic P1)
 #
 # Every action is pinned to a released major/minor tag, and nothing here needs a
 # paid plan or a self-hosted runner.
@@ -27,6 +28,7 @@ concurrency:
 env:
   GO_VERSION: "1.24"
   GOLANGCI_VERSION: "v2.1.6" # keep in step with the Makefile
+  NODE_VERSION: "22" # the PWA's toolchain (web/package.json requires >=20.19)
 
 jobs:
   build:
@@ -199,3 +201,54 @@ jobs:
         env:
           MOOV_TEST_DATABASE_URL: postgres://moov:moov@localhost:5432/moov?sslmode=disable
         run: go test -race -count=1 -v -run Conformance ./internal/jmap/...
+
+  web:
+    name: PWA typecheck, lint, test, build
+    runs-on: ubuntu-24.04
+
+    # A job of its own rather than steps inside `build`, for the same reason
+    # every other job here is separate: a failure must name its own cause. A
+    # broken React component and a broken Go handler are different problems
+    # for different people, and a single red job would make you read the log
+    # to find out which.
+    #
+    # It needs no database and no Dovecot: the unit suite covers logic and
+    # component behaviour, and the truths that require a real server (a real
+    # login, a real brand asset over the wire) are verified against the pilot
+    # with Playwright, which is not something CI can honestly reproduce.
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `npm ci` rather than `npm install`: it installs exactly the lockfile
+      # and fails if package.json and the lock have drifted, which is the
+      # supply-chain property that matters for a public repository.
+      - name: Install dependencies
+        run: npm ci
+
+      # Typecheck first: it is the cheapest of the three and the one whose
+      # failure explains the other two.
+      - name: Typecheck
+        run: npx tsc -b
+
+      # --max-warnings 0 makes a warning a failure. The rule set includes
+      # jsx-a11y at error level, so this step is also the accessibility
+      # regression gate for epic P1 (labels, roles, keyboard handlers). What a
+      # linter cannot see — contrast — is pinned by a unit test instead.
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build

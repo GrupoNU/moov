@@ -1,0 +1,97 @@
+/// <reference types="vitest/config" />
+import { defineConfig, loadEnv } from "vite";
+import react from "@vitejs/plugin-react";
+
+/**
+ * Vite configuration for the Moov PWA (W-A3: React + TypeScript + Vite, no
+ * heavy UI framework).
+ *
+ * # The dev proxy
+ *
+ * The app talks to the JMAP server and to /branding on its OWN origin. In
+ * production that is literally true — Caddy serves the built assets and proxies
+ * the API paths from one origin, exactly as it does for Bulwark today. In
+ * development the dev server must reproduce that, or the browser applies CORS
+ * rules production never sees and the app is being tested under different
+ * conditions than it ships in.
+ *
+ * So the dev server proxies the same path set the production Caddyfile routes,
+ * to MOOV_DEV_API (default: the pilot). `changeOrigin` is deliberately ON: the
+ * upstream resolves branding by Host, and we want the pilot's Host, not
+ * localhost's.
+ */
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const target = env.MOOV_DEV_API ?? "https://moov.atmosfera.cloud";
+
+  // The exact path set Caddyfile.pilot sends to moovd, so dev and production
+  // route identically.
+  const apiPaths = [
+    "/.well-known/jmap",
+    "/jmap",
+    "/branding",
+  ];
+
+  const proxy = Object.fromEntries(
+    apiPaths.map((path) => [
+      path,
+      {
+        target,
+        changeOrigin: true,
+        secure: true,
+        // EventSource must stream; buffering it would make push look broken in
+        // development only.
+        ws: false,
+      },
+    ]),
+  );
+
+  return {
+    plugins: [react()],
+    server: {
+      port: 5173,
+      strictPort: true,
+      proxy,
+    },
+    preview: {
+      port: 4173,
+      strictPort: true,
+      proxy,
+    },
+    build: {
+      // The login screen is the first paint of a cold visit; a source map that
+      // ships to production would triple what a user downloads to see it.
+      sourcemap: false,
+      target: "es2022",
+      // Fail the build rather than silently shipping a chunk that will feel
+      // slow on the pilot's connection.
+      chunkSizeWarningLimit: 500,
+    },
+
+    /*
+     * The test configuration lives HERE rather than in its own vitest.config.ts
+     * on purpose: a separate file makes Vitest resolve its own bundled copy of
+     * Vite, and the two copies' plugin types are structurally incompatible —
+     * which surfaces as an unreadable 30-line type error on the `plugins`
+     * array. One config, one Vite, no duplicate.
+     *
+     * jsdom rather than a real browser: the unit suite covers logic (the
+     * branding merge, the error taxonomy, session persistence) and component
+     * behaviour (labels, roles, focus). Real-browser truths — that the split
+     * screen actually splits, that a brand asset loads — are verified with
+     * Playwright against the live pilot, which is where they can be verified
+     * honestly.
+     */
+    test: {
+      globals: true,
+      environment: "jsdom",
+      setupFiles: ["./src/test/setup.ts"],
+      css: {
+        // CSS modules resolve to their class names rather than being stripped,
+        // so a test can assert on structure without parsing the styles.
+        modules: { classNameStrategy: "non-scoped" as const },
+      },
+      restoreMocks: true,
+    },
+  };
+});

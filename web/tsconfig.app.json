@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Strictness.
+     *
+     * `strict` is the floor, not the ceiling. The four flags below are the ones
+     * that catch the bugs this app is actually prone to:
+     *
+     *   noUncheckedIndexedAccess  — every lookup into a record of translations
+     *     or a list of mailboxes returns `T | undefined`, so a missing key is a
+     *     compile error rather than the string "undefined" rendered on screen.
+     *   exactOptionalPropertyTypes — an optional branding field cannot be set
+     *     to `undefined` explicitly, which keeps "absent" and "present but
+     *     empty" distinguishable in the branding merge.
+     *   noImplicitOverride / noFallthroughCasesInSwitch — cheap, and the error
+     *     taxonomy is a switch. */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "verbatimModuleSyntax": true,
+
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": ["src"]
+}

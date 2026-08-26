@@ -1,0 +1,177 @@
+/*
+ * The brand half of the split screen.
+ *
+ * Layered, back to front: gradient -> image (or texture) -> scrim -> content.
+ * Everything but the content is decorative and aria-hidden in the markup.
+ */
+
+.panel {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: flex;
+  align-items: flex-end;
+  /* The gradient's own colours decide the text colour on top of it, so the
+   * panel sets the inverted text explicitly rather than inheriting. */
+  color: var(--brand-on-primary);
+  /* A sensible colour behind everything, in case an image is still loading. */
+  background: var(--brand-splash-from);
+}
+
+.gradient,
+.image,
+.aurora,
+.grid,
+.scrim {
+  position: absolute;
+  inset: 0;
+}
+
+.gradient {
+  /* 135deg runs the gradient corner-to-corner, which keeps both stops visible
+   * at any aspect ratio — a vertical gradient on a wide panel shows mostly one
+   * colour. */
+  background: linear-gradient(
+    135deg,
+    var(--brand-splash-from) 0%,
+    var(--brand-splash-to) 100%
+  );
+}
+
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Blended rather than laid flat: the customer's photograph keeps the brand
+   * gradient's hue, so an arbitrary stock image still looks like it belongs to
+   * this brand instead of like a sticker on top of it. */
+  mix-blend-mode: overlay;
+  opacity: 0.85;
+}
+
+/*
+ * The no-image treatment. Two cheap layers that turn a flat gradient into
+ * something that looks composed: a large soft light source, and a fine grid
+ * that fades out. Both are pure CSS — no request, no bytes.
+ */
+.aurora {
+  background:
+    radial-gradient(
+      60% 50% at 22% 18%,
+      color-mix(in srgb, var(--brand-primary) 55%, transparent) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      45% 45% at 85% 80%,
+      color-mix(in srgb, #ffffff 22%, transparent) 0%,
+      transparent 70%
+    );
+}
+
+.grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  /* Fades the grid out toward the bottom so it never competes with the mark. */
+  mask-image: radial-gradient(120% 90% at 30% 10%, #000 10%, transparent 75%);
+}
+
+/*
+ * The scrim. This is the element that makes the contrast of the panel's text a
+ * FIXED value rather than a property of the customer's image: whatever is
+ * behind it, the bottom of the panel — where the mark and tagline sit — is
+ * darkened to a known floor.
+ */
+.scrim {
+  background: linear-gradient(
+    to top,
+    rgba(6, 8, 18, 0.72) 0%,
+    rgba(6, 8, 18, 0.34) 38%,
+    rgba(6, 8, 18, 0) 68%
+  );
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  padding: var(--space-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 44ch;
+}
+
+.tagline {
+  font-size: var(--text-lg);
+  line-height: var(--leading-relaxed);
+  /* Not pure white: a slightly softened white on a dark panel reads as
+   * typographic hierarchy rather than as a second heading. Still well above
+   * AA on the scrimmed background. */
+  color: color-mix(in srgb, var(--brand-on-primary) 88%, transparent);
+  text-wrap: pretty;
+}
+
+/*
+ * THE MOBILE COLLAPSE.
+ *
+ * Below the breakpoint the panel stops being a half and becomes a short band
+ * above the form. `flex: none` with a fixed height is what guarantees the form
+ * keeps the rest of the viewport — the P2 requirement that the form never falls
+ * below the fold.
+ *
+ * The tagline is dropped here rather than shrunk: at this height it would push
+ * the band into the form's space to say something the user does not need in
+ * order to sign in.
+ */
+@media (max-width: 900px) {
+  .panel {
+    flex: none;
+    min-height: 128px;
+    align-items: center;
+  }
+
+  .content {
+    padding: var(--space-4) var(--space-5);
+    max-width: none;
+  }
+
+  .tagline {
+    display: none;
+  }
+
+  .grid {
+    background-size: 32px 32px;
+  }
+
+  /* On a short band the image adds noise rather than atmosphere. */
+  .image {
+    opacity: 0.55;
+  }
+}
+
+/*
+ * On a very short viewport (a phone in landscape) the band shrinks further,
+ * because vertical space is the scarce resource and the form must still fit.
+ *
+ * The width condition is deliberately absent: a 740x360 window is short but
+ * NOT below the 900px width breakpoint on every device, and keying this on
+ * height alone is what makes it fire wherever the problem actually exists.
+ * The mark drops to its small size so the band can be genuinely short rather
+ * than merely clipped.
+ */
+@media (max-height: 560px) {
+  .panel {
+    flex: none;
+    min-height: 0;
+    align-items: center;
+  }
+
+  .content {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .tagline {
+    display: none;
+  }
+}

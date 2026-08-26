@@ -197,6 +197,11 @@ linters:
       # holding them to the product's standards would be meaningless.
       - spikes
       - vendor
+      # web/ is the PWA (L2-pwa). Its own toolchain lints it (eslint, in the
+      # `web` CI job); the only Go under it is inside node_modules, shipped by
+      # an npm package that happens to vendor a Go example. Linting someone
+      # else's dependency proves nothing and cannot be fixed here.
+      - web/node_modules
     rules:
       # Test files may use a looser standard for a few checks whose value is
       # about production robustness rather than test clarity.
@@ -217,3 +222,4 @@ formatters:
     paths:
       - spikes
       - vendor
+      - web/node_modules

@@ -26,6 +26,11 @@ data/
 *.eml
 *.mbox
 
+# Playwright MCP browser-verification artifacts (console logs, snapshots,
+# screenshots). These are evidence for a single manual verification run, not
+# fixtures: they name a host and a session and are worthless to anyone else.
+.playwright-mcp/
+
 # ...except the pathological MIME corpus, which is a committed test fixture:
 # these .eml files ARE the parser's regression suite (S4). Without these
 # negations the blanket *.eml rule above silently hides the entire corpus.

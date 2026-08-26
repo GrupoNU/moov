@@ -1,0 +1,83 @@
+/* The brand mark: logo (or drawn glyph) plus the product name. */
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* The glyph inherits currentColor, so setting the colour here recolours the
+   * mark with the brand — the single line that makes the default logo
+   * brandable without shipping a second asset. */
+  color: var(--color-accent);
+  min-width: 0;
+}
+
+.onDark {
+  color: var(--brand-on-primary);
+}
+
+.logo,
+.glyph {
+  flex: none;
+  /* object-fit keeps a customer's non-square logo from being stretched; a
+   * distorted logo is the fastest way to look unprofessional. */
+  object-fit: contain;
+}
+
+.glyphPlate {
+  fill: color-mix(in srgb, currentColor 14%, transparent);
+  stroke: color-mix(in srgb, currentColor 28%, transparent);
+  stroke-width: 1;
+}
+
+.onDark .glyphPlate {
+  fill: color-mix(in srgb, currentColor 20%, transparent);
+  stroke: color-mix(in srgb, currentColor 42%, transparent);
+}
+
+.name {
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.015em;
+  color: var(--text-strong);
+  /* A long customer product name truncates rather than wrapping into the
+   * layout or overflowing it. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.onDark .name {
+  color: var(--brand-on-primary);
+}
+
+/* --- sizes --- */
+
+.sm .logo,
+.sm .glyph {
+  width: 28px;
+  height: 28px;
+}
+
+.sm .name {
+  font-size: var(--text-lg);
+}
+
+.md .logo,
+.md .glyph {
+  width: 32px;
+  height: 32px;
+}
+
+.md .name {
+  font-size: var(--text-xl);
+}
+
+.lg .logo,
+.lg .glyph {
+  width: 44px;
+  height: 44px;
+}
+
+.lg .name {
+  font-size: var(--text-2xl);
+}

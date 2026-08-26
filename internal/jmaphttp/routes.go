@@ -37,19 +37,35 @@ type route struct {
 	method  string
 	pattern string
 	handler http.HandlerFunc
+
+	// public marks a route that is served WITHOUT authentication.
+	//
+	// The field is explicit, and named for what it grants rather than for what
+	// it skips, because the default must stay "authenticated": a route added
+	// to the table below without thinking about this field gets the zero value
+	// and is therefore protected. Exactly two routes set it, both branding
+	// (W-A1), and the reason is in branding.go — the brand IS the login
+	// screen, so it cannot live behind the credentials the login screen exists
+	// to collect. A test pins the public set so a third one cannot appear
+	// unnoticed.
+	public bool
 }
 
-// routes returns the complete route table. Every route requires
-// authentication — there is no anonymous surface — and every route gets a
-// CORS preflight handler, both wired mechanically by Handler below so a route
-// added here cannot forget either.
+// routes returns the complete route table. Every route gets a CORS preflight
+// handler and, unless it is explicitly marked public, an authentication
+// wrapper — both wired mechanically by Handler below so a route added here
+// cannot forget either.
 func (s *Server) routes() []route {
 	return []route{
-		{http.MethodGet, PathWellKnown, s.handleSession},
-		{http.MethodPost, PathAPI, s.handleAPI},
-		{http.MethodGet, PathDownload, s.handleDownload},
-		{http.MethodPost, PathUpload, s.handleUpload},
-		{http.MethodGet, PathEventSource, s.handleEventSource},
+		{method: http.MethodGet, pattern: PathWellKnown, handler: s.handleSession},
+		{method: http.MethodPost, pattern: PathAPI, handler: s.handleAPI},
+		{method: http.MethodGet, pattern: PathDownload, handler: s.handleDownload},
+		{method: http.MethodPost, pattern: PathUpload, handler: s.handleUpload},
+		{method: http.MethodGet, pattern: PathEventSource, handler: s.handleEventSource},
+
+		// Branding (W-A1): public by design, see branding.go.
+		{method: http.MethodGet, pattern: PathBranding, handler: s.handleBranding, public: true},
+		{method: http.MethodGet, pattern: PathBrandingAsset, handler: s.handleBrandingAsset, public: true},
 	}
 }
 
@@ -61,7 +77,11 @@ func (s *Server) Handler() http.Handler {
 
 	methodsByPattern := make(map[string][]string)
 	for _, rt := range s.routes() {
-		mux.Handle(rt.method+" "+rt.pattern, s.requireAuth(rt.handler))
+		h := rt.handler
+		if !rt.public {
+			h = s.requireAuth(h)
+		}
+		mux.Handle(rt.method+" "+rt.pattern, h)
 		methodsByPattern[rt.pattern] = append(methodsByPattern[rt.pattern], rt.method)
 	}
 

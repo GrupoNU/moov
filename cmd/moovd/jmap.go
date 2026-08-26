@@ -135,6 +135,20 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 	deps.Submissions = submissions
 	deps.UndoWindow = cfg.Submit.UndoWindow
+
+	// The identity surface (RFC 8621 §6): stored rows since migration 0006, so
+	// a user can save a signature. NewDeps already installed a notifier-less
+	// adapter; this REPLACES it with one holding the broker, for the same
+	// reason the submission adapter holds it — saving a signature pushes a
+	// StateChange, so the user's other sessions pick the new signature up
+	// without a reload.
+	identities, err := mail.NewIdentityAdapter(st, broker)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, fmt.Errorf("building the identity adapter: %w", err)
+	}
+	deps.Identities = identities
 	// The cancel half of the submission counters (W4b): an undo never reaches
 	// the outbox, so the JMAP layer is the only place it can be counted.
 	deps.SubmissionObserver = submissionMetrics{m}
@@ -163,6 +177,9 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		Notifier:         brokerNotifier{broker},
 		State:            deps.State,
 		MaxSSEPerAccount: cfg.JMAP.MaxSSEPerAccount,
+		// Branding (W-A1): the public, Host-resolved brand document the PWA
+		// reads before anyone has logged in. Empty serves Moov's own brand.
+		BrandingDir: cfg.JMAP.BrandingDir,
 	}, auth)
 	if err != nil {
 		writer.Close()
