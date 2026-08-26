@@ -263,13 +263,26 @@ func (w *PushWatcher) Watch(ctx context.Context, account store.Account) error {
 			state = breakerState{}
 		}
 
-		runErr := w.runOnce(ctx, account, log)
+		healthy, runErr := w.runOnce(ctx, account, log)
 
 		switch {
 		case runErr == nil, errors.Is(runErr, context.Canceled):
 			return ctx.Err()
 		case errors.Is(runErr, context.DeadlineExceeded):
 			return runErr
+		}
+
+		// A session that reached a healthy state and only LATER broke starts
+		// the next count from zero, and its backoff from the minimum. Without
+		// this the in-process counter is the same ratchet the persisted one
+		// was: an account that reconnects successfully every hour and loses
+		// the connection each time would march to the threshold and trip a
+		// breaker that is supposed to mean "this account cannot connect at
+		// all". RecordSyncSuccess has already cleared the stored count, so
+		// leaving the local one high would also make the two disagree.
+		if healthy {
+			failures = 0
+			backoff = w.opts.BackoffMin
 		}
 
 		failures++
@@ -318,7 +331,13 @@ func (w *PushWatcher) Watch(ctx context.Context, account store.Account) error {
 //
 // It returns nil only when ctx ended, which is the clean-shutdown path. Any
 // other return is a failure the caller counts against the breaker.
-func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *slog.Logger) error {
+//
+// The first return value reports whether the session ever reached a healthy
+// state — connected, NOTIFY accepted, and the reconnect sweep completed. The
+// caller uses it to distinguish "could not connect at all", which is what the
+// breaker is for, from "worked and later broke", which must not accumulate
+// toward it.
+func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *slog.Logger) (bool, error) {
 	// Two connections: one is pinned to NOTIFY+IDLE for the whole session and
 	// cannot issue any other command (imap.Client's contract), so the
 	// incremental passes need one of their own. This is the "watcher + N
@@ -327,7 +346,7 @@ func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *s
 	// more thing fail2ban counts.
 	clients, err := w.opts.Connector.Connect(ctx, account, watcherConnections)
 	if err != nil {
-		return fmt.Errorf("connecting watcher: %w", err)
+		return false, fmt.Errorf("connecting watcher: %w", err)
 	}
 	defer func() {
 		for _, c := range clients {
@@ -337,13 +356,13 @@ func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *s
 		}
 	}()
 	if len(clients) < watcherConnections {
-		return fmt.Errorf("watcher needs %d connections, got %d", watcherConnections, len(clients))
+		return false, fmt.Errorf("watcher needs %d connections, got %d", watcherConnections, len(clients))
 	}
 
 	watchConn := clients[0]
 	syncer, err := New(w.store, w.blobs, clients[1:], w.opts.Options)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// The watch's context is a child, so ending the session (a reconnect, a
@@ -354,7 +373,7 @@ func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *s
 
 	events, err := watchConn.Watch(sessionCtx, imap.WatchSpec{})
 	if err != nil {
-		return fmt.Errorf("starting NOTIFY watch: %w", err)
+		return false, fmt.Errorf("starting NOTIFY watch: %w", err)
 	}
 	log.Info("watcher connected", "notify", true)
 	w.emit(WatchObservation{AccountID: account.ID, Kind: ObsConnected})
@@ -364,7 +383,30 @@ func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *s
 	// without this the account would sit stale until the first new change or
 	// the reconciler's next sweep — which is up to six hours (L2 §2.5).
 	if err := w.sweepAll(sessionCtx, syncer, account, log, "reconnect"); err != nil {
-		return err
+		return false, err
+	}
+
+	// The session is now demonstrably healthy — connected, NOTIFY accepted, and
+	// every mailbox swept — so the account's error history is retired here.
+	//
+	// This is the fix for the breaker ratchet. Watch seeds its failure count
+	// from the persisted consecutive_errors, and the watcher's steady state
+	// writes only per-mailbox cursors, so nothing else ever cleared that
+	// column: a count that once reached BreakerThreshold made every later
+	// disconnect re-open the breaker immediately, however healthy the server
+	// was. Measured on the pilot, that left four accounts at one connection
+	// attempt per 15-minute cooldown with no live watcher in between, which is
+	// how 620 messages expunged by another client stayed visible in Moov.
+	//
+	// It is placed after the sweep rather than after Connect because a
+	// connection that authenticates and then fails its first command is not a
+	// success, and clearing the history for it would defeat the breaker for the
+	// one failure mode that most needs it.
+	if err := w.store.RecordSyncSuccess(ctx, account.ID, store.AccountScope); err != nil {
+		// Not fatal: the session is genuinely working, and refusing to watch
+		// because a bookkeeping write failed would turn a logging problem into
+		// an outage. The next successful session retries it.
+		log.Warn("clearing the account's error history after a successful connection", "error", err)
 	}
 
 	var wg sync.WaitGroup
@@ -392,11 +434,12 @@ func (w *PushWatcher) runOnce(ctx context.Context, account store.Account, log *s
 		// A reconciler failure is the real cause; the dispatch loop only ended
 		// because the reconciler canceled the session.
 		if err == nil || errors.Is(err, context.Canceled) {
-			return rerr
+			return true, rerr
 		}
 	default:
 	}
-	return err
+	// Healthy: everything from here on is a session that worked and then ended.
+	return true, err
 }
 
 // watcherConnections is the per-account socket budget of a watching account:

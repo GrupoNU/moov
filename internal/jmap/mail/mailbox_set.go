@@ -809,8 +809,12 @@ func (d *Deps) emptyMailboxToTrash(ctx context.Context, accountID, mailboxID int
 	done := map[int64]bool{}
 
 	for pass := range maxEmptyMailboxPasses {
+		// One window per pass, not the whole folder: each pass moves what it
+		// sees out of the mailbox, so the next pass's window is refilled by the
+		// messages behind it. Asking for a deep reach here would page through a
+		// result set this loop is simultaneously emptying.
 		ids, err := d.Search.SearchEmails(ctx, accountID,
-			searchFilter{mailboxID: &mailboxID}, sortSpec{})
+			searchFilter{mailboxID: &mailboxID}, sortSpec{}, DefaultSearchWindow)
 		if err != nil {
 			return &setError{Type: setErrServerFail,
 				Description: "listing the mailbox's messages failed"}

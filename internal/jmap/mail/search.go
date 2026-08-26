@@ -9,7 +9,7 @@ import (
 // contracts.go: this package's own view types, account id passed explicitly,
 // absence rather than error for things that are not there.
 
-// DefaultSearchWindow is how deep Email/query looks.
+// DefaultSearchWindow is how many rows one store round trip may return.
 //
 // It is store.MaxSearchLimit, restated here as an untyped constant because
 // this file must not import the store (contracts.go's rule — the adapter is
@@ -18,9 +18,28 @@ import (
 // cannot silently desynchronize this one.
 //
 // Why 200 and not more: S3 validated the eight interactive shapes at LIMIT 50
-// and the store caps at 200. Fetching deeper is not a tuning knob — it is the
-// unbounded-work failure the whole repertoire exists to prevent.
+// and the store caps at 200. Fetching a deeper single page is not a tuning
+// knob — it is the unbounded-work failure the whole repertoire exists to
+// prevent. Reaching PAST it is done by paging with a keyset cursor, where each
+// page costs the same as the first, not by raising this number.
 const DefaultSearchWindow = 200
+
+// MaxQueryReach bounds how far into a result set Email/query will page.
+//
+// # Why there is a ceiling at all
+//
+// Keyset paging makes each page cost the same as the first, but a client that
+// asks for position:1000000 still makes the server walk a million rows to
+// answer honestly. The repertoire's promise is bounded work per request
+// (L2 §4.3), so the reach is bounded too — and the bound is stated in the
+// response through the §5.5 `limit` property, exactly as the window cap was.
+//
+// 10,000 is chosen against the product, not the database: it is deeper than
+// any human scrolls a message list, and it is the same order of magnitude
+// Gmail's own "older" pagination stops offering. A client that needs to walk
+// an entire 26k-message mailbox should narrow the filter or follow
+// Email/changes, both of which are index-served at any depth.
+const MaxQueryReach = 10000
 
 // SearchReader answers Email/query over the store's typed search repertoire.
 //
@@ -30,10 +49,16 @@ const DefaultSearchWindow = 200
 // only ever be asked for shapes the repertoire serves.
 type SearchReader interface {
 	// SearchEmails returns the matching message ids, ordered by the sort, and
-	// bounded by the search window. A result shorter than the window means the
-	// window was not filled — which is what lets Email/query report an exact
-	// total in the one case it can (query.go queryTotal).
-	SearchEmails(ctx context.Context, accountID int64, f searchFilter, s sortSpec) ([]int64, error)
+	// bounded by reach — the number of rows the caller needs in order to serve
+	// its page, i.e. position+limit, never more.
+	//
+	// A result shorter than reach means the result set was exhausted, which is
+	// what lets Email/query report an exact total in the one case it can
+	// (query.go queryTotal). The implementation walks the store's fixed-size
+	// pages with a keyset cursor rather than issuing one deep query, so cost
+	// scales with what the caller actually asked for and never with the size of
+	// the mailbox.
+	SearchEmails(ctx context.Context, accountID int64, f searchFilter, s sortSpec, reach int) ([]int64, error)
 }
 
 // searchHit is one result with the key its order depends on.

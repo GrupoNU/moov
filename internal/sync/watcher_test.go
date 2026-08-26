@@ -428,3 +428,85 @@ func TestWatcherUsesOneWatchConnectionPerAccount(t *testing.T) {
 		t.Errorf("the account has %d live watches, want exactly 1 (S2 T2d: NOTIFY collapses the fan-out)", got)
 	}
 }
+
+// TestWatcherClearsTheErrorCountOnASuccessfulSession is the regression test for
+// the production defect that left every pilot account's push permanently
+// degraded (found on the live pilot, 2026-08-26).
+//
+// # The defect
+//
+// Watch seeds its local failure count from the PERSISTED consecutive-error
+// count, and nothing on the success path ever cleared that column: the only
+// writer that zeroes it is SaveCheckpoint, which the watcher's steady state
+// (SetMailboxSyncState) never calls. So the counter was a RATCHET. Once an
+// account had accumulated BreakerThreshold failures — over days, across
+// restarts, from transient causes like a container recreation — every
+// subsequent disconnect re-read a count already past the threshold and
+// re-opened the breaker immediately, no matter how healthy the server was.
+//
+// The observable result on the pilot: all four accounts sat in 'half_open'
+// with counts of 17-50 and last_success_at 5-14 days stale, each getting ONE
+// connection attempt per 15-minute cooldown instead of a live watcher. Between
+// those attempts nothing observed the account, so 620 messages expunged by
+// another client stayed visible in Moov indefinitely.
+//
+// # What this test pins
+//
+// A watcher that connects successfully must clear the persisted error history,
+// so that a later failure starts counting from zero rather than from whatever
+// a bad week left behind. It is written as the sequence that broke: pre-load a
+// count at the threshold, connect successfully, and require that the stored
+// count is back to zero and the breaker closed.
+func TestWatcherClearsTheErrorCountOnASuccessfulSession(t *testing.T) {
+	env := newSyncedEnv(t, 2)
+	ctx := context.Background()
+
+	// The account arrives with a history of failures that has already reached
+	// the breaker threshold — exactly the state the pilot accounts were in.
+	for i := 0; i < DefaultBreakerThreshold; i++ {
+		if _, err := env.store.RecordSyncError(ctx, env.account.ID, store.AccountScope,
+			"stale failure from an earlier outage"); err != nil {
+			t.Fatalf("seeding the error history: %v", err)
+		}
+	}
+
+	before, err := env.store.GetCheckpoint(ctx, env.account.ID, store.AccountScope)
+	if err != nil {
+		t.Fatalf("GetCheckpoint: %v", err)
+	}
+	if before.ConsecutiveErrors < DefaultBreakerThreshold {
+		t.Fatalf("seeded %d consecutive errors, want at least %d",
+			before.ConsecutiveErrors, DefaultBreakerThreshold)
+	}
+
+	// The server is healthy: this session must succeed.
+	h := startWatcher(t, env, nil)
+	h.waitFor(t, ObsConnected, 1, "the watcher never connected")
+
+	// A successful session must retire the stale history. Without this, the
+	// next disconnect — a container restart, a Dovecot reload — re-reads a
+	// count past the threshold and re-opens the breaker at once, which is the
+	// production failure.
+	waitFor(t, 10*time.Second, func() bool {
+		cp, cerr := env.store.GetCheckpoint(ctx, env.account.ID, store.AccountScope)
+		return cerr == nil && cp.ConsecutiveErrors == 0
+	}, "a successful watcher session never cleared the persisted error count "+
+		"(the breaker ratchet: every later disconnect re-opens the breaker immediately)")
+
+	after, err := env.store.GetCheckpoint(ctx, env.account.ID, store.AccountScope)
+	if err != nil {
+		t.Fatalf("GetCheckpoint: %v", err)
+	}
+	if after.ConsecutiveErrors != 0 {
+		t.Errorf("consecutive_errors is %d after a successful session, want 0",
+			after.ConsecutiveErrors)
+	}
+	if after.BreakerState == store.BreakerOpen {
+		t.Errorf("the breaker is still %q after a successful session, want it closed",
+			after.BreakerState)
+	}
+	if after.LastSuccessAt == nil {
+		t.Error("a successful watcher session did not record last_success_at; " +
+			"the health of a push-only account would be invisible to an operator")
+	}
+}

@@ -51,116 +51,155 @@ const (
 //
 // translateFilter guarantees at least one of text/mailbox is set, so the three
 // branches are total.
-func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFilter, s sortSpec) ([]int64, error) {
-	q := store.SearchQuery{
-		AccountID:  accountID,
-		Text:       f.text,
-		MailboxID:  f.mailboxID,
-		Since:      f.since,
-		UnreadOnly: f.unreadOnly,
-		Keyword:    f.keyword,
-		Limit:      store.MaxSearchLimit,
+func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFilter, s sortSpec, reach int) ([]int64, error) {
+	if reach <= 0 {
+		return []int64{}, nil
 	}
 
-	var (
-		results []store.SearchResult
-		err     error
-		// postFilter records which conditions the chosen store method did NOT
-		// apply, so they can be enforced below rather than silently dropped.
-		postFilterFolderView bool
-	)
-	switch {
-	case s.byRelevance:
-		results, err = a.store.SearchByRelevance(ctx, q)
-	case f.text != "":
-		results, err = a.store.Search(ctx, q)
-	case f.accountWide:
-		// RFC 8620 §5.5 `filter: null` — the whole account, newest first (J4).
-		// Like the folder view below, this method takes no unread/keyword/date
-		// parameters, so those conditions are applied after the fetch; but
-		// translateFilter refuses to pair them with an account-wide filter in
-		// the first place, so the post-filter here is only the `before` bound
-		// the loop below applies to every path.
-		results, err = a.store.ListAccountMessages(ctx, accountID, store.MaxSearchLimit)
-	default:
-		// ListMailboxMessages takes only (account, mailbox, limit): it has no
-		// parameters for unread, keyword or date. Those conditions are
-		// therefore applied HERE, after the fetch — never dropped.
-		//
-		// The narrowing this causes is stated plainly: the database truncates
-		// to MaxSearchLimit BEFORE these predicates run, so a folder view with
-		// a keyword or unread filter can return fewer results than exist, if
-		// the matches sit deeper than the window. Correct-but-incomplete, never
-		// incorrect: nothing is returned that the filter excludes.
-		//
-		// The fix is a store method, not more code here. The J3 report names
-		// it: ListMailboxMessages should take a SearchQuery-shaped filter (or
-		// Search should accept an empty Text and skip the tsquery predicate),
-		// which makes all of these index-served rather than post-applied.
-		results, err = a.store.ListMailboxMessages(ctx, accountID, *f.mailboxID, store.MaxSearchLimit)
-		postFilterFolderView = true
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	hits := make([]searchHit, 0, len(results))
-	for _, r := range results {
-		// The `before` bound is applied here for every path because
-		// SearchQuery has no upper date bound — it carries Since only. Applying
-		// it after the fact is exact for the rows fetched, but it can only
-		// SHRINK a window the database already truncated, so a query with a
-		// before filter may see fewer than MaxSearchLimit results while more
-		// exist beyond the window.
-		//
-		// That is a real narrowing and it is why an upper bound belongs in the
-		// store: the J3 report names `SearchQuery.Until *time.Time` as the
-		// one-line store change that makes this exact, served by the same
-		// (account_id, date DESC) index the shape already walks.
-		if f.before != nil && !r.Date.Before(*f.before) {
-			continue
-		}
-		if postFilterFolderView {
-			// \Seen is bit 0 of the stored flags — the same definition
-			// store.SearchQuery.UnreadOnly encodes as `(flags & 1) = 0`.
-			if f.unreadOnly && r.Flags.Has(store.FlagSeen) {
-				continue
-			}
-			if f.since != nil && r.Date.Before(*f.since) {
-				continue
-			}
-			// A keyword filter cannot reach this branch: store.SearchResult
-			// carries no keywords column, so the folder view cannot evaluate
-			// one, and translateCondition therefore refuses a keyword filter
-			// that names no text (query.go applyHasKeyword). If that refusal
-			// were ever relaxed without a store change, this assertion is where
-			// the mistake would surface instead of silently returning
-			// unfiltered mail.
-			if f.keyword != "" {
-				return nil, errKeywordNeedsTextPath
-			}
-		}
-		hits = append(hits, searchHit{
-			id:   r.MessageID,
-			date: r.Date,
-			// The keywords ride along on the store row (J4), so evaluating the
-			// §4.4.2 hasKeyword comparator costs no extra query — just a lookup
-			// in the slice the row already carried.
-			hasKeyword: s.keyword != "" && hasKeyword(r, s.keyword),
-		})
-	}
-
+	// The relevance path is NOT paged, and that is a product decision rather
+	// than an omission.
+	//
+	// SearchByRelevance ranks the RankCandidateWindow most recent matches and
+	// returns them in rank order (S3 mitigation #102). Rank order is not the
+	// index's order, so there is no keyset cursor that can resume it: paging it
+	// would mean re-ranking a larger candidate window per page, which is the
+	// 892 ms unbounded ranking S3 rejected. Relevance therefore stays a single
+	// bounded window, and a client that needs depth uses the date sort — the
+	// same trade S3 recorded when it made relevance an explicit opt-in.
 	if s.byRelevance {
-		// The relevance order is the store's, and it is already the ranked
-		// order — re-sorting by date would discard the ranking that cost 134 ms
-		// to compute.
-		out := make([]int64, 0, len(hits))
-		for _, h := range hits {
-			out = append(out, h.id)
+		results, err := a.store.SearchByRelevance(ctx, store.SearchQuery{
+			AccountID:  accountID,
+			Text:       f.text,
+			MailboxID:  f.mailboxID,
+			Since:      f.since,
+			Until:      f.before,
+			UnreadOnly: f.unreadOnly,
+			Keyword:    f.keyword,
+			Limit:      store.MaxSearchLimit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]int64, 0, len(results))
+		for _, r := range results {
+			out = append(out, r.MessageID)
 		}
 		return out, nil
 	}
+
+	// Everything else is date-ordered, which IS the index's order, so it pages
+	// with a keyset cursor: fetch store-sized pages until `reach` rows have
+	// been collected or the result set runs out. Each page is a bounded,
+	// account-scoped, LIMITed call into the repertoire — the discipline of
+	// L2 §4.3 is per page, and depth costs more pages rather than a deeper
+	// query.
+	var (
+		hits   []searchHit
+		cursor *store.SearchCursor
+	)
+	for len(hits) < reach {
+		want := reach - len(hits)
+		if want > store.MaxSearchLimit {
+			want = store.MaxSearchLimit
+		}
+
+		results, err := a.fetchPage(ctx, accountID, f, want, cursor)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			break
+		}
+
+		for _, r := range results {
+			hits = append(hits, searchHit{
+				id:   r.MessageID,
+				date: r.Date,
+				// The keywords ride along on the store row (J4), so evaluating
+				// the §4.4.2 hasKeyword comparator costs no extra query — just
+				// a lookup in the slice the row already carried.
+				hasKeyword: s.keyword != "" && hasKeyword(r, s.keyword),
+			})
+		}
+
+		// A short page means the result set is exhausted: asking again would
+		// return nothing and cost a round trip.
+		if len(results) < want {
+			break
+		}
+		last := results[len(results)-1]
+		cursor = &store.SearchCursor{Date: last.Date, MessageID: last.MessageID}
+	}
+
 	return sortIDsStable(hits, s.ascending, s.keyword != "", s.keywordFirst), nil
+}
+
+// fetchPage runs one bounded page of the date-ordered repertoire.
+//
+// Every filter condition is now expressed IN SQL — including the `before`
+// bound, which used to be applied in Go after the LIMIT and could therefore
+// only shrink an already-truncated window. That matters more under paging than
+// it did before: a post-applied predicate would drop rows from a page and make
+// the page shorter than requested, which is indistinguishable from "the result
+// set ended" and would silently stop the walk early.
+func (a *Adapter) fetchPage(
+	ctx context.Context,
+	accountID int64,
+	f searchFilter,
+	limit int,
+	cursor *store.SearchCursor,
+) ([]store.SearchResult, error) {
+	switch {
+	case f.text != "":
+		return a.store.Search(ctx, store.SearchQuery{
+			AccountID:  accountID,
+			Text:       f.text,
+			MailboxID:  f.mailboxID,
+			Since:      f.since,
+			Until:      f.before,
+			UnreadOnly: f.unreadOnly,
+			Keyword:    f.keyword,
+			After:      cursor,
+			Limit:      limit,
+		})
+
+	case f.accountWide:
+		// RFC 8620 §5.5 `filter: null` — the whole account, newest first (J4).
+		// translateFilter refuses to pair an account-wide filter with
+		// unread/keyword conditions, so the date bounds are the only narrowing
+		// this shape can carry.
+		return a.store.ListAccountMessages(ctx, store.AccountListQuery{
+			AccountID: accountID,
+			Until:     f.before,
+			After:     cursor,
+			Limit:     limit,
+		})
+
+	default:
+		// The folder view. A keyword filter cannot reach it: translateCondition
+		// refuses a keyword filter that names no text (query.go
+		// applyHasKeyword), because this shape has no keyword predicate. The
+		// assertion is kept so that relaxing the refusal without a store change
+		// surfaces here instead of silently returning unfiltered mail.
+		if f.keyword != "" {
+			return nil, errKeywordNeedsTextPath
+		}
+		// The unread and date conditions are now SQL predicates on the folder
+		// view rather than post-filters applied here. That closes the narrowing
+		// the J3 report recorded — the database used to truncate to the window
+		// BEFORE these ran, so a folder view with an unread filter could return
+		// fewer results than exist — and it is what makes each page a full page,
+		// which the paging walk above depends on to know when to stop.
+		return a.store.ListMailboxMessages(ctx, store.MailboxListQuery{
+			AccountID:  accountID,
+			MailboxID:  *f.mailboxID,
+			Since:      f.since,
+			Until:      f.before,
+			UnreadOnly: f.unreadOnly,
+			After:      cursor,
+			Limit:      limit,
+		})
+	}
 }
 
 // hasKeyword reports whether a store row carries a JMAP keyword.

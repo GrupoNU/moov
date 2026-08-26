@@ -91,6 +91,50 @@ func (s *Store) RecordSyncError(ctx context.Context, accountID int64, scope, mes
 	return count, nil
 }
 
+// RecordSyncSuccess retires an account's error history after a healthy
+// session: it zeroes the consecutive-error counter, clears the last error and
+// closes the breaker.
+//
+// # Why this exists separately from SaveCheckpoint
+//
+// SaveCheckpoint also clears the error history, but it is the wrong instrument
+// for a watcher. A watcher in steady state advances per-mailbox cursors through
+// SetMailboxSyncState and never writes an account-scope checkpoint, so before
+// this method existed there was NO path by which a healthy push session could
+// clear consecutive_errors.
+//
+// That made the counter a ratchet, and the breaker a one-way door. Watch seeds
+// its failure count from this column, so an account that had once accumulated
+// BreakerThreshold failures — spread over days, across restarts, from causes as
+// transient as a container recreation — re-opened its breaker on every
+// subsequent disconnect regardless of how healthy the server was. Measured on
+// the pilot: four accounts pinned in 'half_open' with counts of 17-50 and
+// last_success_at up to 14 days stale, each reduced to one connection attempt
+// per cooldown, and expunges by other clients going unobserved indefinitely.
+//
+// It deliberately does NOT touch the checkpoint or state_counter. The
+// checkpoint is a resume point that only real progress may move, and
+// state_counter is the JMAP state string handed to clients: bumping it here
+// would make every connected browser re-fetch on every reconnection.
+func (s *Store) RecordSyncSuccess(ctx context.Context, accountID int64, scope string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO sync_log (account_id, scope, last_success_at, consecutive_errors, breaker_state)
+		VALUES ($1, $2, now(), 0, 'closed')
+		ON CONFLICT (account_id, scope) DO UPDATE
+		   SET last_success_at    = now(),
+		       last_error         = NULL,
+		       last_error_at      = NULL,
+		       consecutive_errors = 0,
+		       breaker_state      = 'closed',
+		       breaker_until      = NULL,
+		       updated_at         = now()`,
+		accountID, scope)
+	if err != nil {
+		return fmt.Errorf("recording sync success %d/%s: %w", accountID, scope, err)
+	}
+	return nil
+}
+
 // SetBreakerState opens, half-opens or closes the per-account circuit breaker.
 //
 // The breaker is not a nicety: repeated failed logins against Mailcow trip its

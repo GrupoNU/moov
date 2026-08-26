@@ -29,6 +29,9 @@ type fakeReaders struct {
 	// (newest first), and the change feed, oldest first.
 	hits         []searchHit
 	searchWindow int
+	// lastReach records the reach the handler asked for, so a test can assert
+	// that paging requests exactly the depth they need.
+	lastReach    int
 	changes      []ChangeRow
 	newestChange time.Time
 
@@ -205,20 +208,22 @@ func (f *fakeReaders) ThreadState(context.Context, int64) (string, error)  { ret
 
 // SearchEmails answers a translated query out of the seeded corpus.
 //
-// It applies the SAME truncation the store does — the window bound — because
-// that bound is what Email/query's total and anchor reasoning depend on. A
-// fake that returned everything would make those paths untestable.
-func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s sortSpec) ([]int64, error) {
+// It honors `reach` the way the real adapter does — returning at most that many
+// rows — because Email/query's total and anchor reasoning depend on being able
+// to tell "the result set ended" from "the bound applied". The seeded corpus is
+// additionally capped by searchWindow when a test sets one, which is how the
+// pre-paging window behavior is still exercised.
+func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s sortSpec, reach int) ([]int64, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+	f.lastReach = reach
 	hits := append([]searchHit(nil), f.hits...)
-	window := f.searchWindow
-	if window <= 0 {
-		window = DefaultSearchWindow
-	}
-	if len(hits) > window {
+	if window := f.searchWindow; window > 0 && len(hits) > window {
 		hits = hits[:window]
+	}
+	if reach > 0 && len(hits) > reach {
+		hits = hits[:reach]
 	}
 	if s.byRelevance {
 		out := make([]int64, 0, len(hits))

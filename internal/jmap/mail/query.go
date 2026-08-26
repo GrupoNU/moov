@@ -168,10 +168,20 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 		return nil, serverFail("reading email state", err)
 	}
 
-	// Fetch the bounded candidate window ONCE, then window it locally. The
-	// repertoire has no OFFSET, so this is the only correct way to serve
-	// position/anchor over it, and it is why the window is capped.
-	matches, err := d.Search.SearchEmails(ctx, caller.AccountID, filter, order)
+	// Fetch exactly as deep as this request needs, then window it locally.
+	//
+	// The depth is position+limit, not a fixed window: the repertoire pages
+	// with a keyset cursor (store.SearchCursor), so reaching row 400 costs two
+	// pages rather than one impossible one. A request that asks for the first
+	// page still costs exactly one page, which is what keeps the common case at
+	// the latency S3 measured.
+	limit, serverLimited := effectiveQueryLimit(req.Limit)
+	reach, merr := queryReach(req, limit)
+	if merr != nil {
+		return nil, merr
+	}
+
+	matches, err := d.Search.SearchEmails(ctx, caller.AccountID, filter, order, reach)
 	if err != nil {
 		return nil, serverFail("searching emails", err)
 	}
@@ -199,7 +209,6 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 		return nil, merr
 	}
 
-	limit, serverLimited := effectiveQueryLimit(req.Limit)
 	end := start + limit
 	if start > uint64(len(matches)) {
 		// §5.5: "If the index is greater than or equal to the total number of
@@ -297,6 +306,49 @@ func (d *Deps) searchWindow() int {
 		return d.SearchWindow
 	}
 	return DefaultSearchWindow
+}
+
+// queryReach computes how many rows this request must fetch to serve its page.
+//
+// # The three cases
+//
+//   - A non-negative position needs position+limit rows: everything up to the
+//     page, plus the page. This is the ordinary paging case, and it is the one
+//     that used to be impossible — the old code fetched a fixed window and
+//     SLICED it, so any position at or past the window returned nothing.
+//   - A NEGATIVE position is an offset from the end (§5.5), and the end of a
+//     result set cannot be known without walking it. It therefore reaches the
+//     ceiling: the answer is exact whenever the result set fits inside it,
+//     which is the same honest boundedness the anchor case has always had.
+//   - An ANCHOR is looked for in the results, and its position is likewise not
+//     known in advance, so it reaches the ceiling too.
+//
+// Every case is clamped to MaxQueryReach, so no single request can ask the
+// database for unbounded work — the guarantee of L2 §4.3, preserved now that
+// depth is a variable rather than a constant.
+func queryReach(req *queryRequest, limit uint64) (int, *jmap.MethodError) {
+	if req.Anchor != nil || (req.Position != nil && *req.Position < 0) {
+		return MaxQueryReach, nil
+	}
+
+	var pos uint64
+	if req.Position != nil {
+		// Non-negative by the branch above.
+		pos = uint64(*req.Position) //nolint:gosec // guarded by the check above
+	}
+	if pos > MaxQueryReach {
+		// §5.5 says a position at or past the end yields an empty list, not an
+		// error, and this server cannot see past its reach — so a position
+		// beyond it is answered with the empty list rather than a refusal, and
+		// the response's `limit` tells the client a server bound applied.
+		return MaxQueryReach, nil
+	}
+
+	reach := pos + limit
+	if reach > MaxQueryReach {
+		reach = MaxQueryReach
+	}
+	return int(reach), nil //nolint:gosec // clamped to MaxQueryReach above
 }
 
 // resolveStart computes the index of the first id to return, honoring anchor

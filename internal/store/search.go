@@ -67,9 +67,53 @@ type SearchQuery struct {
 	// labels are stored (A6).
 	Keyword string
 
+	// Until restricts to messages strictly BEFORE this instant when non-nil.
+	//
+	// It is the upper half of the date range Since opens, and it exists because
+	// the JMAP layer's `before` filter (RFC 8621 §4.4.1) previously had to be
+	// applied in Go AFTER the SQL LIMIT — which could only shrink a window the
+	// database had already truncated, so a query for older mail returned
+	// nothing whenever the newest MaxSearchLimit messages were all newer than
+	// the bound. In SQL it costs nothing: it narrows the same
+	// (account_id, date DESC) walk the shape already performs.
+	Until *time.Time
+
+	// After is the keyset cursor: results resume strictly after this position
+	// in the (date DESC, id DESC) order. Nil starts at the newest match.
+	//
+	// See SearchCursor for why paging is a cursor rather than an OFFSET.
+	After *SearchCursor
+
 	// Limit caps the result set (default DefaultSearchLimit, max
 	// MaxSearchLimit).
 	Limit int
+}
+
+// SearchCursor is a position in a result set, for keyset pagination.
+//
+// # Why a cursor and not OFFSET
+//
+// OFFSET does not skip work: PostgreSQL must produce and discard every row
+// before the offset, so page N costs N times page one and the deep pages of a
+// 26k-message mailbox degrade into exactly the unbounded scan the repertoire
+// exists to prevent (S3 §6). A keyset predicate instead RESUMES the index walk:
+// every page costs the same as the first, because (date, id) is the order the
+// index is already in, so the planner starts mid-index rather than counting
+// from the top.
+//
+// # Why the id is part of it
+//
+// Because dates tie, and often: a mailing-list burst, an import, an APPEND
+// loop. A cursor on date alone either repeats the whole tied block on the next
+// page or skips it, depending on which way the comparison leans — a corruption
+// of the user's list that appears only on the boundary rows. The composite
+// (date, id) is unique because id is, so the order is total and the boundary is
+// exact.
+type SearchCursor struct {
+	// Date is the last returned row's date.
+	Date time.Time
+	// MessageID is the last returned row's message id, which breaks date ties.
+	MessageID int64
 }
 
 // SearchResult is one hit: enough to render a message-list row without a
@@ -183,10 +227,10 @@ func (s *Store) SearchByRelevance(ctx context.Context, q SearchQuery) ([]SearchR
 			  FROM messages m
 			  JOIN message_state ms ON ms.message_id = m.id
 			 WHERE ` + where + `
-			 ORDER BY m.date DESC
+			 ORDER BY m.date DESC, m.id DESC
 			 LIMIT $` + fmt.Sprint(windowArg) + `
 		  ) candidates
-		 ORDER BY rank DESC, date DESC
+		 ORDER BY rank DESC, date DESC, message_id DESC
 		 LIMIT $` + fmt.Sprint(limitArg)
 
 	rows, err := s.analytic.Query(ctx, sql, args...)
@@ -235,26 +279,93 @@ func (s *Store) CountCapped(ctx context.Context, q SearchQuery, ceiling int) (co
 	return count, count >= ceiling, nil
 }
 
-// ListMailboxMessages is the folder view: no search text, newest first.
+// MailboxListQuery is the folder view's request.
 //
-// It is here rather than in messages.go because it shares the account-scoped,
-// always-limited discipline of the search methods and is served by the same
-// (account_id, date DESC) index that shape #1 walks.
-func (s *Store) ListMailboxMessages(ctx context.Context, accountID, mailboxID int64, limit int) ([]SearchResult, error) {
+// It is a struct rather than a widening parameter list because the folder view
+// grew the same two needs the search shapes have — an upper date bound and a
+// keyset cursor — and a fifth and sixth positional int64 would be a call site
+// nobody can read correctly.
+type MailboxListQuery struct {
+	AccountID int64
+	MailboxID int64
+
+	// Since and Until bound the date range: at or after Since, strictly before
+	// Until. Both are optional.
+	//
+	// They are served in SQL rather than post-applied by the caller, which the
+	// JMAP layer used to do. Under paging that distinction stops being a
+	// nicety: a predicate applied after the LIMIT shortens a page, and a short
+	// page is indistinguishable from "the result set ended", so the walk would
+	// silently stop early and hide mail.
+	Since *time.Time
+	Until *time.Time
+
+	// UnreadOnly restricts to unread messages, matching the partial index
+	// message_state_unread exactly.
+	UnreadOnly bool
+
+	// After resumes the (date DESC, id DESC) walk after a previous page's last
+	// row. Nil starts at the newest message.
+	After *SearchCursor
+
+	// Limit caps the page (default DefaultSearchLimit, max MaxSearchLimit).
+	Limit int
+}
+
+func (q MailboxListQuery) effectiveLimit() int {
+	limit := q.Limit
 	if limit <= 0 {
 		limit = DefaultSearchLimit
 	}
 	if limit > MaxSearchLimit {
 		limit = MaxSearchLimit
 	}
+	return limit
+}
+
+// ListMailboxMessages is the folder view: no search text, newest first, paged
+// by keyset cursor.
+//
+// It is here rather than in messages.go because it shares the account-scoped,
+// always-limited discipline of the search methods and is served by the same
+// (account_id, date DESC) index that shape #1 walks — which is also what makes
+// the cursor resume the walk instead of restarting it.
+func (s *Store) ListMailboxMessages(ctx context.Context, q MailboxListQuery) ([]SearchResult, error) {
+	conds := []string{
+		"m.account_id = $1",
+		"ms.mailbox_id = $2",
+		"ms.deleted_at IS NULL",
+	}
+	args := []any{q.AccountID, q.MailboxID}
+
+	if q.Since != nil {
+		args = append(args, *q.Since)
+		conds = append(conds, fmt.Sprintf("m.date >= $%d", len(args)))
+	}
+	if q.Until != nil {
+		args = append(args, *q.Until)
+		conds = append(conds, fmt.Sprintf("m.date < $%d", len(args)))
+	}
+	if q.UnreadOnly {
+		// Literal 1 rather than a parameter: it is the \Seen bit by definition,
+		// and it matches the partial index predicate exactly.
+		conds = append(conds, "(ms.flags & 1) = 0")
+	}
+	if q.After != nil {
+		// Row-value comparison so the page resumes the index walk; see
+		// SearchCursor for why this is not OFFSET and not a disjunction.
+		args = append(args, q.After.Date, q.After.MessageID)
+		conds = append(conds, fmt.Sprintf("(m.date, m.id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, q.effectiveLimit())
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
 		  FROM messages m
 		  JOIN message_state ms ON ms.message_id = m.id
-		 WHERE m.account_id = $1 AND ms.mailbox_id = $2 AND ms.deleted_at IS NULL
-		 ORDER BY m.date DESC
-		 LIMIT $3`, accountID, mailboxID, limit)
+		 WHERE `+strings.Join(conds, " AND ")+`
+		 ORDER BY m.date DESC, m.id DESC
+		 LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing mailbox messages: %w", err)
 	}
@@ -285,26 +396,62 @@ func (s *Store) ListMailboxMessages(ctx context.Context, accountID, mailboxID in
 // mandatory. Removing the mailbox predicate does not widen the scan — the index
 // is already account-first — so this is bounded by the same LIMIT as every other
 // method here rather than by how much mail the account happens to hold.
-func (s *Store) ListAccountMessages(ctx context.Context, accountID int64, limit int) ([]SearchResult, error) {
+func (s *Store) ListAccountMessages(ctx context.Context, q AccountListQuery) ([]SearchResult, error) {
+	conds := []string{
+		"m.account_id = $1",
+		"ms.deleted_at IS NULL",
+	}
+	args := []any{q.AccountID}
+
+	if q.Until != nil {
+		args = append(args, *q.Until)
+		conds = append(conds, fmt.Sprintf("m.date < $%d", len(args)))
+	}
+	if q.After != nil {
+		args = append(args, q.After.Date, q.After.MessageID)
+		conds = append(conds, fmt.Sprintf("(m.date, m.id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, q.effectiveLimit())
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
+		  FROM messages m
+		  JOIN message_state ms ON ms.message_id = m.id
+		 WHERE `+strings.Join(conds, " AND ")+`
+		 ORDER BY m.date DESC, m.id DESC
+		 LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing account messages: %w", err)
+	}
+	defer rows.Close()
+	return scanSearchResults(rows, false)
+}
+
+// AccountListQuery is the account-wide view's request — the same shape as
+// MailboxListQuery without the mailbox predicate.
+type AccountListQuery struct {
+	AccountID int64
+
+	// Until restricts to messages strictly before this instant when non-nil.
+	Until *time.Time
+
+	// After resumes the (date DESC, id DESC) walk after a previous page's last
+	// row. Nil starts at the newest message.
+	After *SearchCursor
+
+	// Limit caps the page (default DefaultSearchLimit, max MaxSearchLimit).
+	Limit int
+}
+
+func (q AccountListQuery) effectiveLimit() int {
+	limit := q.Limit
 	if limit <= 0 {
 		limit = DefaultSearchLimit
 	}
 	if limit > MaxSearchLimit {
 		limit = MaxSearchLimit
 	}
-
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
-		  FROM messages m
-		  JOIN message_state ms ON ms.message_id = m.id
-		 WHERE m.account_id = $1 AND ms.deleted_at IS NULL
-		 ORDER BY m.date DESC
-		 LIMIT $2`, accountID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("listing account messages: %w", err)
-	}
-	defer rows.Close()
-	return scanSearchResults(rows, false)
+	return limit
 }
 
 // ---------------------------------------------------------------------------
@@ -364,9 +511,25 @@ func (q SearchQuery) conditions(prefix bool) (string, []any) {
 		// definition, and it matches the partial index predicate exactly.
 		conds = append(conds, "(ms.flags & 1) = 0")
 	}
+	if q.Until != nil {
+		args = append(args, *q.Until)
+		conds = append(conds, fmt.Sprintf("m.date < $%d", len(args)))
+	}
 	if q.Keyword != "" {
 		args = append(args, q.Keyword)
 		conds = append(conds, fmt.Sprintf("ms.keywords @> ARRAY[$%d]::text[]", len(args)))
+	}
+	if q.After != nil {
+		// The row-value comparison, not an OR of two predicates.
+		//
+		// (m.date, m.id) < ($n, $n+1) is a single sargable expression that
+		// PostgreSQL can push into an index walk on (account_id, date DESC),
+		// so a page resumes the scan instead of restarting it. Spelling the
+		// same condition as "date < x OR (date = x AND id < y)" is logically
+		// identical and defeats that: the planner treats the disjunction as a
+		// filter and each deeper page re-walks everything above it.
+		args = append(args, q.After.Date, q.After.MessageID)
+		conds = append(conds, fmt.Sprintf("(m.date, m.id) < ($%d, $%d)", len(args)-1, len(args)))
 	}
 
 	return strings.Join(conds, " AND "), args
@@ -376,12 +539,17 @@ func (q SearchQuery) build(prefix bool) (string, []any) {
 	where, args := q.conditions(prefix)
 	args = append(args, q.effectiveLimit())
 
+	// ORDER BY (date DESC, id DESC) — the id is not decoration. It is the same
+	// total order the keyset cursor compares against, and without it a page
+	// boundary that lands inside a block of equal dates is served in an
+	// arbitrary order, which makes the cursor's "everything after this row"
+	// meaningless.
 	sql := `
 		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
 		  FROM messages m
 		  JOIN message_state ms ON ms.message_id = m.id
 		 WHERE ` + where + `
-		 ORDER BY m.date DESC
+		 ORDER BY m.date DESC, m.id DESC
 		 LIMIT $` + fmt.Sprint(len(args))
 
 	return sql, args

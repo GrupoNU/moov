@@ -485,7 +485,9 @@ func TestListMailboxMessages(t *testing.T) {
 	ctx := context.Background()
 	c := seedSearchCorpus(t, s)
 
-	got, err := s.ListMailboxMessages(ctx, c.Account.ID, c.Inbox.ID, 10)
+	got, err := s.ListMailboxMessages(ctx, store.MailboxListQuery{
+		AccountID: c.Account.ID, MailboxID: c.Inbox.ID, Limit: 10,
+	})
 	if err != nil {
 		t.Fatalf("ListMailboxMessages: %v", err)
 	}
