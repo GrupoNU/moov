@@ -59,18 +59,18 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       ...jsxA11y.flatConfigs.recommended.rules,
 
-      // Fast Refresh prefers a file to export only components. The three
-      // provider files here also export their consumer hook (useAuth,
-      // useBranding, useTranslation), which is the conventional React pairing
-      // — splitting a hook from the context it reads produces two files that
-      // can never be understood apart. `allowExportNames` grants exactly those
-      // three names rather than switching the rule off, so an accidental
-      // export of something else still gets flagged.
+      // Fast Refresh prefers a file to export only components. The provider
+      // files here also export their consumer hook (useAuth, useBranding,
+      // useTranslation, useRouter), which is the conventional React pairing —
+      // splitting a hook from the context it reads produces two files that can
+      // never be understood apart. `allowExportNames` grants exactly those
+      // four names rather than switching the rule off, so an accidental export
+      // of something else still gets flagged.
       "react-refresh/only-export-components": [
         "warn",
         {
           allowConstantExport: true,
-          allowExportNames: ["useAuth", "useBranding", "useTranslation"],
+          allowExportNames: ["useAuth", "useBranding", "useTranslation", "useRouter"],
         },
       ],
 

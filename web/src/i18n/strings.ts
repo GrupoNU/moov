@@ -97,6 +97,126 @@ export const en = {
   "theme.light": "Light",
   "theme.dark": "Dark",
   "theme.system": "System",
+
+  // --- P2: mailboxes ---
+  "mailbox.inbox": "Inbox",
+  "mailbox.drafts": "Drafts",
+  "mailbox.sent": "Sent",
+  "mailbox.archive": "Archive",
+  "mailbox.junk": "Junk",
+  "mailbox.trash": "Trash",
+  "mailbox.all": "All mail",
+  "mailbox.flagged": "Starred",
+  "mailbox.unreadCount": (count: number): string =>
+    `${count} unread message${count === 1 ? "" : "s"}`,
+  "mailbox.itemCount": (count: number): string =>
+    `${count} item${count === 1 ? "" : "s"}`,
+  "mailbox.collapse": "Collapse folder",
+  "mailbox.expand": "Expand folder",
+  "mailbox.loadFailed": "Could not load your folders",
+  "mailbox.retry": "Try again",
+
+  // --- P2: the message list ---
+  "list.loading": "Loading messages…",
+  "list.empty": "Nothing here",
+  "list.emptyBody": "This folder has no messages.",
+  "list.emptySearch": "No matches",
+  "list.emptySearchBody": (query: string): string =>
+    `Nothing matched “${query}”. Try fewer or different words.`,
+  "list.label": "Message list",
+  "list.selectMessage": "Select a message to read it",
+  "list.selectMessageBody":
+    "Choose a conversation from the list, or press j and k to move through it.",
+  "list.attachment": "Has an attachment",
+  "list.flagged": "Starred",
+  "list.unread": "Unread",
+  "list.threadSize": (count: number): string => `${count} messages in this conversation`,
+  "list.noSubject": "(no subject)",
+  "list.unknownSender": "(unknown sender)",
+  // The honest ceiling message. The server answers at most 200 rows and has no
+  // working offset, so a longer folder genuinely cannot be paged through yet.
+  //
+  // Two variants, because the advice has to differ: in a folder, searching IS
+  // the way to reach older mail; inside a search, telling the user to search
+  // is advice they have already taken, so the honest thing is to say the
+  // result set is capped and suggest narrowing it.
+  "list.truncated": (shown: number): string =>
+    `Showing the ${shown} most recent conversations. This server cannot page further yet — use search to find older mail.`,
+  "list.truncatedSearch": (shown: number): string =>
+    `Showing the ${shown} most recent matches. There may be more — add words to narrow the search.`,
+  "list.loadFailed": "Could not load these messages",
+
+  // --- P2: search ---
+  "search.label": "Search mail",
+  "search.placeholder": "Search mail",
+  "search.clear": "Clear search",
+  "search.searching": "Searching…",
+  "search.resultCount": (count: number): string =>
+    `${count} result${count === 1 ? "" : "s"}`,
+  "search.inMailbox": "In this folder",
+  "search.everywhere": "All mail",
+  // The graceful degradation the brief requires: never a silent empty list.
+  "search.unsupported": "This server cannot answer that search",
+  "search.unsupportedBody":
+    "Moov's search covers text, sender, recipient and subject, and can be narrowed to one folder and a date range. Other conditions are not available yet.",
+
+  // --- P2: the reading pane ---
+  "reader.from": "From",
+  "reader.to": "To",
+  "reader.cc": "Cc",
+  "reader.bcc": "Bcc",
+  "reader.replyTo": "Reply to",
+  "reader.date": "Date",
+  "reader.close": "Back to the list",
+  "reader.loading": "Loading the message…",
+  "reader.loadFailed": "Could not load this message",
+  "reader.attachments": (count: number): string =>
+    `${count} attachment${count === 1 ? "" : "s"}`,
+  "reader.download": "Download",
+  "reader.downloadMessage": "Download the original message",
+  "reader.downloading": "Preparing the download…",
+  "reader.downloadFailed": "The download did not start. Try again.",
+  "reader.threadContext": (count: number): string =>
+    `Conversation with ${count} messages`,
+  "reader.showThread": "Show the whole conversation",
+  "reader.hideThread": "Hide the conversation",
+  "reader.emptyBody": "This message has no text content.",
+  "reader.bodyTruncated":
+    "This message is long and has been shortened. Download the original to read all of it.",
+  // The plain-text-only notice. P2 renders text bodies exclusively; the
+  // sanitised HTML renderer arrives in its own epic.
+  "reader.htmlNotRendered": "Formatted version not shown",
+  "reader.htmlNotRenderedBody":
+    "This message was written with formatting. Moov is showing its plain-text version while the secure formatted view is being finished.",
+  "reader.parseFailed": "Moov could not read this message's contents",
+  "reader.parseFailedBody":
+    "The message is stored safely and can be downloaded in full, but its structure could not be parsed.",
+
+  // --- P2: keyboard ---
+  "shortcuts.title": "Keyboard shortcuts",
+  "shortcuts.close": "Close",
+  "shortcuts.open": "Open the message",
+  "shortcuts.next": "Next message",
+  "shortcuts.previous": "Previous message",
+  "shortcuts.back": "Back to the list",
+  "shortcuts.search": "Search",
+  "shortcuts.archive": "Archive",
+  "shortcuts.delete": "Delete",
+  "shortcuts.flag": "Star",
+  "shortcuts.toggleRead": "Mark read or unread",
+  "shortcuts.goInbox": "Go to Inbox",
+  "shortcuts.goSent": "Go to Sent",
+  "shortcuts.goDrafts": "Go to Drafts",
+  "shortcuts.goArchive": "Go to Archive",
+  "shortcuts.goTrash": "Go to Trash",
+  "shortcuts.help": "Show this help",
+  "shortcuts.sectionNavigate": "Moving around",
+  "shortcuts.sectionActions": "Acting on mail",
+  "shortcuts.sectionJump": "Jumping to a folder",
+  // P3 wires the actions behind e and #; saying so is more honest than a
+  // shortcut that silently does nothing.
+  "shortcuts.comingSoon": "Arriving in the next release",
+  "action.notYet": "This action arrives in the next release",
 } as const;
 
 /**
@@ -184,6 +304,109 @@ export const es: Strings = {
   "theme.light": "Claro",
   "theme.dark": "Oscuro",
   "theme.system": "Sistema",
+
+  "mailbox.inbox": "Bandeja de entrada",
+  "mailbox.drafts": "Borradores",
+  "mailbox.sent": "Enviados",
+  "mailbox.archive": "Archivo",
+  "mailbox.junk": "Spam",
+  "mailbox.trash": "Papelera",
+  "mailbox.all": "Todo el correo",
+  "mailbox.flagged": "Destacados",
+  "mailbox.unreadCount": (count: number): string =>
+    `${count} mensaje${count === 1 ? "" : "s"} sin leer`,
+  "mailbox.itemCount": (count: number): string =>
+    `${count} elemento${count === 1 ? "" : "s"}`,
+  "mailbox.collapse": "Contraer carpeta",
+  "mailbox.expand": "Expandir carpeta",
+  "mailbox.loadFailed": "No se pudieron cargar tus carpetas",
+  "mailbox.retry": "Reintentar",
+
+  "list.loading": "Cargando mensajes…",
+  "list.empty": "No hay nada acá",
+  "list.emptyBody": "Esta carpeta no tiene mensajes.",
+  "list.emptySearch": "Sin coincidencias",
+  "list.emptySearchBody": (query: string): string =>
+    `Nada coincidió con «${query}». Probá con menos palabras u otras distintas.`,
+  "list.label": "Lista de mensajes",
+  "list.selectMessage": "Elegí un mensaje para leerlo",
+  "list.selectMessageBody":
+    "Elegí una conversación de la lista, o usá j y k para recorrerla.",
+  "list.attachment": "Tiene un adjunto",
+  "list.flagged": "Destacado",
+  "list.unread": "Sin leer",
+  "list.threadSize": (count: number): string => `${count} mensajes en esta conversación`,
+  "list.noSubject": "(sin asunto)",
+  "list.unknownSender": "(remitente desconocido)",
+  "list.truncated": (shown: number): string =>
+    `Se muestran las ${shown} conversaciones más recientes. Este servidor todavía no puede paginar más allá: usá la búsqueda para encontrar correo más viejo.`,
+  "list.truncatedSearch": (shown: number): string =>
+    `Se muestran las ${shown} coincidencias más recientes. Puede haber más: agregá palabras para acotar la búsqueda.`,
+  "list.loadFailed": "No se pudieron cargar estos mensajes",
+
+  "search.label": "Buscar correo",
+  "search.placeholder": "Buscar correo",
+  "search.clear": "Limpiar la búsqueda",
+  "search.searching": "Buscando…",
+  "search.resultCount": (count: number): string =>
+    `${count} resultado${count === 1 ? "" : "s"}`,
+  "search.inMailbox": "En esta carpeta",
+  "search.everywhere": "Todo el correo",
+  "search.unsupported": "Este servidor no puede responder esa búsqueda",
+  "search.unsupportedBody":
+    "La búsqueda de Moov cubre texto, remitente, destinatario y asunto, y se puede acotar a una carpeta y a un rango de fechas. Otras condiciones todavía no están disponibles.",
+
+  "reader.from": "De",
+  "reader.to": "Para",
+  "reader.cc": "Cc",
+  "reader.bcc": "Cco",
+  "reader.replyTo": "Responder a",
+  "reader.date": "Fecha",
+  "reader.close": "Volver a la lista",
+  "reader.loading": "Cargando el mensaje…",
+  "reader.loadFailed": "No se pudo cargar este mensaje",
+  "reader.attachments": (count: number): string =>
+    `${count} adjunto${count === 1 ? "" : "s"}`,
+  "reader.download": "Descargar",
+  "reader.downloadMessage": "Descargar el mensaje original",
+  "reader.downloading": "Preparando la descarga…",
+  "reader.downloadFailed": "La descarga no se inició. Intentá de nuevo.",
+  "reader.threadContext": (count: number): string =>
+    `Conversación con ${count} mensajes`,
+  "reader.showThread": "Ver toda la conversación",
+  "reader.hideThread": "Ocultar la conversación",
+  "reader.emptyBody": "Este mensaje no tiene contenido de texto.",
+  "reader.bodyTruncated":
+    "Este mensaje es largo y se acortó. Descargá el original para leerlo completo.",
+  "reader.htmlNotRendered": "No se muestra la versión con formato",
+  "reader.htmlNotRenderedBody":
+    "Este mensaje fue escrito con formato. Moov muestra su versión de texto plano mientras se termina la vista con formato segura.",
+  "reader.parseFailed": "Moov no pudo leer el contenido de este mensaje",
+  "reader.parseFailedBody":
+    "El mensaje está guardado a salvo y se puede descargar completo, pero no se pudo interpretar su estructura.",
+
+  "shortcuts.title": "Atajos de teclado",
+  "shortcuts.close": "Cerrar",
+  "shortcuts.open": "Abrir el mensaje",
+  "shortcuts.next": "Mensaje siguiente",
+  "shortcuts.previous": "Mensaje anterior",
+  "shortcuts.back": "Volver a la lista",
+  "shortcuts.search": "Buscar",
+  "shortcuts.archive": "Archivar",
+  "shortcuts.delete": "Eliminar",
+  "shortcuts.flag": "Destacar",
+  "shortcuts.toggleRead": "Marcar como leído o sin leer",
+  "shortcuts.goInbox": "Ir a la Bandeja de entrada",
+  "shortcuts.goSent": "Ir a Enviados",
+  "shortcuts.goDrafts": "Ir a Borradores",
+  "shortcuts.goArchive": "Ir a Archivo",
+  "shortcuts.goTrash": "Ir a la Papelera",
+  "shortcuts.help": "Mostrar esta ayuda",
+  "shortcuts.sectionNavigate": "Moverse",
+  "shortcuts.sectionActions": "Actuar sobre el correo",
+  "shortcuts.sectionJump": "Saltar a una carpeta",
+  "shortcuts.comingSoon": "Llega en la próxima versión",
+  "action.notYet": "Esta acción llega en la próxima versión",
 };
 
 /** The locales the app ships with. */

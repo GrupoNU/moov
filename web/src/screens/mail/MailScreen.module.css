@@ -1,0 +1,271 @@
+/*
+ * The three-column mail shell: sidebar | list | reader.
+ *
+ * The list column is a CSS container, so the message rows can drop their
+ * preview when the reading pane takes half the width — a decision that depends
+ * on the COLUMN's width, not the viewport's, and therefore cannot be made with
+ * a media query.
+ */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--surface-canvas);
+}
+
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-default);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.headerBrand {
+  flex: none;
+  /* Matches the sidebar so the brand sits above the folder column. */
+  width: 244px;
+  min-width: 0;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.iconButton svg {
+  width: 17px;
+  height: 17px;
+}
+
+.iconButton:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  border-color: var(--border-subtle);
+}
+
+.account {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22ch;
+}
+
+.signOut {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.signOut:hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+}
+
+.body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* With a message open the list narrows and the reader takes the rest. The
+ * list keeps a usable minimum so it never becomes a strip of ellipses. */
+.reading {
+  grid-template-columns: 260px minmax(20rem, 30rem) minmax(0, 1fr);
+}
+
+.sidebar {
+  padding: var(--space-4) var(--space-3);
+  background: var(--surface-default);
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sidebarError {
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.listColumn {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+  /* The rows query THIS, not the viewport. */
+  container-type: inline-size;
+}
+
+.readerColumn {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --- notices above the list --- */
+
+.noticeInfo,
+.noticeWarn,
+.noticeError,
+.noticeCount {
+  flex: none;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.noticeInfo {
+  background: var(--color-info-tint);
+  color: var(--text-default);
+  border-bottom-color: var(--color-info-border);
+}
+
+.noticeWarn {
+  background: var(--color-warning-tint);
+  color: var(--text-default);
+  border-bottom-color: var(--color-warning-border);
+}
+
+.noticeError {
+  background: var(--color-danger-tint);
+  color: var(--text-default);
+  border-bottom-color: var(--color-danger-border);
+}
+
+.noticeCount {
+  color: var(--text-muted);
+  background: var(--surface-canvas);
+}
+
+/* --- empty state --- */
+
+.empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.emptyTitle {
+  margin-top: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.emptyBody {
+  max-width: 34ch;
+  text-wrap: pretty;
+}
+
+/* --- toast --- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-6);
+  transform: translateX(-50%);
+  z-index: 50;
+  /* The region is always in the DOM (so its content is announced when it
+   * changes) but must not intercept clicks while empty. */
+  pointer-events: none;
+}
+
+.toastBubble {
+  display: inline-block;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-inverted);
+  background: var(--text-strong);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-lg);
+  animation: toast-in var(--duration-base) var(--ease-out);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --- responsive --- */
+
+@media (max-width: 1100px) {
+  .reading {
+    /* The reader takes the list's place rather than squeezing three columns
+     * into a laptop width. */
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .reading .listColumn {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .body,
+  .reading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .headerBrand {
+    width: auto;
+  }
+
+  .account {
+    display: none;
+  }
+
+  .reading .listColumn {
+    display: none;
+  }
+}

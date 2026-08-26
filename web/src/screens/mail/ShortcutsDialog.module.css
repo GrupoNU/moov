@@ -1,0 +1,119 @@
+.dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: min(42rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 4rem);
+  /* The dialog element centres itself with margin:auto in the top layer. */
+  margin: auto;
+  overflow: visible;
+}
+
+.dialog::backdrop {
+  background: var(--surface-overlay);
+  backdrop-filter: blur(2px);
+}
+
+.content {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  max-height: calc(100dvh - 4rem);
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.title {
+  font-size: var(--text-lg);
+  color: var(--text-strong);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+
+.close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.close:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  border-color: var(--border-subtle);
+}
+
+.list {
+  margin: 0;
+  display: grid;
+  /* Two columns on a wide sheet, one on a narrow one — without a media query,
+   * because the sheet's own width is what matters, not the viewport's. */
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: var(--space-2) var(--space-6);
+}
+
+.entry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.keys {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 5.5rem;
+}
+
+.key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  /* The 1px inset bottom border is what makes a kbd read as a physical key. */
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.thenText {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.description {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  text-wrap: pretty;
+}
+
+.footnote {
+  margin-top: var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}

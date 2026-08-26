@@ -1,0 +1,281 @@
+/*
+ * The virtualized message list.
+ *
+ * --row-height MUST equal ROW_HEIGHT in mail/windowing.ts. The two are pinned
+ * together by a unit test, because a silent divergence between the CSS and the
+ * maths is a list whose scrollbar drifts from its content.
+ */
+
+.container {
+  --row-height: 72px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface-default);
+}
+
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Contain paint so scrolling this column never repaints the sidebar or the
+   * reading pane beside it. */
+  contain: strict;
+  /* Anchoring fights explicit scroll management: it silently shifts scrollTop
+   * when content above the viewport changes, which in a virtualized list is
+   * every frame. */
+  overflow-anchor: none;
+}
+
+.grid {
+  position: relative;
+  width: 100%;
+}
+
+.row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--row-height);
+  display: grid;
+  /* avatar | sender | subject+preview | meta */
+  grid-template-columns: auto minmax(9rem, 15rem) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  /* Only the transform is animated on scroll; colour transitions are for
+   * hover, and a transition on transform would make rows lag the scroll. */
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+  contain: layout paint;
+}
+
+.row:hover {
+  background: var(--surface-sunken);
+}
+
+.selected {
+  background: var(--color-accent-tint);
+}
+
+.selected:hover {
+  background: var(--color-accent-tint-strong);
+}
+
+/* The selected row carries an accent spine so the state does not depend on a
+ * background tint alone (forced-colors drops tints entirely). */
+.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-accent);
+}
+
+.avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-tint-strong);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.sender {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+}
+
+.senderText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unreadDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+.unread .senderText,
+.unread .subject {
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.threadCount {
+  flex: none;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  line-height: 16px;
+}
+
+.body {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.subject {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-default);
+}
+
+.separator {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  color: var(--text-muted);
+}
+
+.flagIcon {
+  width: 15px;
+  height: 15px;
+  color: var(--color-warning);
+}
+
+.attachIcon {
+  width: 15px;
+  height: 15px;
+}
+
+.date {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* A fixed min-width stops the subject column from reflowing as dates change
+   * width between "14:02" and "20 ago". */
+  min-width: 4.5rem;
+  text-align: right;
+}
+
+.unread .date {
+  color: var(--text-default);
+  font-weight: var(--weight-medium);
+}
+
+/* --- the loading skeleton --- */
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+}
+
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--row-height);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.skeletonAvatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  animation: row-pulse 1.8s var(--ease-out) infinite;
+}
+
+.skeletonLines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.skeletonBar {
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  animation: row-pulse 1.8s var(--ease-out) infinite;
+}
+
+.skeletonRow:nth-child(even) .skeletonAvatar,
+.skeletonRow:nth-child(even) .skeletonBar {
+  animation-delay: 140ms;
+}
+
+@keyframes row-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* A narrow list column (when the reading pane is open beside it) drops the
+ * preview rather than squeezing every column into uselessness. */
+@container (max-width: 620px) {
+  .row {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .avatar {
+    display: none;
+  }
+
+  .separator,
+  .preview {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .selected {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+}

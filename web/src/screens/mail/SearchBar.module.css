@@ -1,0 +1,103 @@
+.wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  max-width: 34rem;
+  padding: 0 var(--space-3);
+  background: var(--surface-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.wrapper:hover {
+  border-color: var(--border-default);
+}
+
+/* The focus ring is drawn on the WRAPPER when the input inside it has focus,
+ * so the ring follows the visible control rather than the bare input — while
+ * the input keeps its own outline suppressed only because the wrapper supplies
+ * an equivalent affordance. */
+.wrapper:focus-within {
+  background: var(--surface-default);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-tint);
+}
+
+.icon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--text-muted);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+/* The native clear affordance is removed in favour of our own button, which
+ * has an accessible name and matches the product's styling. */
+.input::-webkit-search-cancel-button,
+.input::-webkit-search-decoration {
+  appearance: none;
+}
+
+.clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+}
+
+.clear svg {
+  width: 13px;
+  height: 13px;
+}
+
+.clear:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+.spinner {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-full);
+  animation: search-spin 700ms linear infinite;
+}
+
+@keyframes search-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 700px) {
+  .wrapper {
+    max-width: none;
+  }
+}

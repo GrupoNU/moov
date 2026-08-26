@@ -3,24 +3,31 @@ import { useEffect } from "react";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { BrandingProvider } from "./branding/BrandingProvider";
 import { I18nProvider, useTranslation } from "./i18n/I18nProvider";
+import { RouterProvider } from "./router/RouterProvider";
 import { LoginScreen } from "./screens/login/LoginScreen";
-import { AppShell } from "./screens/shell/AppShell";
+import { MailScreen } from "./screens/mail/MailScreen";
 import { applyTheme, loadThemePreference } from "./theme/theme";
 import styles from "./App.module.css";
 
 /**
  * The application root.
  *
- * # The "router"
+ * # The router, in two layers
  *
- * W-A3 calls for a light router. P1 does not have routes yet — it has two
- * mutually exclusive screens selected by authentication state — so the router
- * here is that switch, and nothing more. Introducing a URL router before there
- * is a second destination would be scaffolding without a building.
+ * P1 left this as an auth-state switch and named it the seam a URL router
+ * would plug into. P2 plugs it in, and the two layers stay separate on
+ * purpose:
  *
- * What P2 adds (a mailbox in the path, a message id) plugs in below `AppShell`,
- * which is why the authenticated branch is a single component rather than a
- * tree spread through this file.
+ *   - THIS switch chooses between "signed out" and "signed in". It is not a
+ *     URL question: no path should render the mail UI without a session, and
+ *     no path should hide it with one.
+ *   - The URL router (`RouterProvider`) lives INSIDE the authenticated branch,
+ *     because every route it knows about — a mailbox, a message, a search — is
+ *     meaningless without an account to resolve it against.
+ *
+ * Nesting it this way means an unauthenticated visit to `/mail/inbox/e42`
+ * shows the login screen and, once signed in, lands exactly there: the URL was
+ * never discarded, only deferred.
  */
 
 function Router(): React.JSX.Element {
@@ -49,7 +56,11 @@ function Router(): React.JSX.Element {
       return <LoginScreen />;
 
     case "authenticated":
-      return <AppShell />;
+      return (
+        <RouterProvider>
+          <MailScreen />
+        </RouterProvider>
+      );
   }
 }
 

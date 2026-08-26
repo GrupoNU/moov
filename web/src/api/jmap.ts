@@ -127,6 +127,47 @@ export function encodeBasicCredentials({ username, password }: BasicCredentials)
   return `Basic ${btoa(binary)}`;
 }
 
+/**
+ * Reduces a server-advertised URL to a same-origin path.
+ *
+ * # Why the Session's own URLs cannot be used verbatim
+ *
+ * RFC 8620 §2 lets the Session object advertise absolute URLs, and ours does:
+ * `https://moov.atmosfera.cloud/jmap/api`. Using that string directly works in
+ * production — where the app is served from that very origin — and breaks
+ * everywhere else, because the browser then makes a CROSS-origin request that
+ * needs CORS. In development the app runs on `localhost:5173` behind a proxy
+ * whose entire purpose (see vite.config.ts) is to reproduce production's
+ * same-origin topology; an absolute URL steps around the proxy and is refused
+ * by the preflight, which is exactly the class of bug that configuration was
+ * written to design out.
+ *
+ * So the PATH the server advertises is honoured — it is the server's own
+ * routing decision and may change — while the ORIGIN is always ours. A URL on
+ * a different origin than the page is deliberately reduced to its path rather
+ * than followed, because a JMAP client that follows an origin handed to it by
+ * a response is one redirect away from sending Basic credentials somewhere
+ * else.
+ */
+function sameOrigin(advertised: string | undefined, fallback: string): string {
+  if (advertised === undefined || advertised === "") return fallback;
+  if (advertised.startsWith("/")) return advertised;
+  try {
+    const parsed = new URL(advertised);
+    /*
+     * `pathname` percent-encodes the braces of a URI Template — `{accountId}`
+     * comes back as `%7BaccountId%7D` — so a later `.replace("{accountId}", …)`
+     * silently matches nothing and the placeholder ships to the server
+     * unexpanded. Decoding restores the template. It is safe here because the
+     * only thing being decoded is a path we are about to substitute into, and
+     * the VALUES are encoded individually at substitution time.
+     */
+    return decodeURIComponent(`${parsed.pathname}${parsed.search}`);
+  } catch {
+    return fallback;
+  }
+}
+
 /** Options for constructing a {@link JmapClient}. */
 export interface JmapClientOptions {
   /**
@@ -190,7 +231,7 @@ export class JmapClient {
     using: readonly string[] = [CAP_CORE, CAP_MAIL],
     signal?: AbortSignal,
   ): Promise<JmapResponse> {
-    const apiUrl = this.session?.apiUrl ?? `${this.baseUrl}/jmap/api`;
+    const apiUrl = sameOrigin(this.session?.apiUrl, `${this.baseUrl}/jmap/api`);
     const response = await this.request(
       apiUrl,
       {
@@ -201,6 +242,62 @@ export class JmapClient {
       signal,
     );
     return (await response.json()) as JmapResponse;
+  }
+
+  /**
+   * Downloads a blob's bytes.
+   *
+   * # Why this exists rather than an `<a download href>`
+   *
+   * The download route authenticates with HTTP Basic, and a browser navigation
+   * — an anchor click, an `<img src>`, a `window.open` — sends no Authorization
+   * header. Against the live pilot that produces a 401 with
+   * `WWW-Authenticate: Basic`, which a browser answers by showing its own
+   * credential prompt: the user is asked to log in again, into a native dialog,
+   * to download their own attachment.
+   *
+   * So the bytes come through `fetch` with the header attached, and the caller
+   * turns the Blob into an object URL. The cost is that the whole blob is
+   * buffered in memory; with `maxSizeUpload` at 50 MB that is bounded and
+   * acceptable, and it is the only correct option until the server grows
+   * pre-signed download tokens.
+   */
+  async downloadBlob(
+    accountId: string,
+    blobId: string,
+    name: string,
+    type: string,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    const url = this.downloadUrlFor(accountId, blobId, name, type);
+    const response = await this.request(url, { method: "GET" }, signal);
+    return await response.blob();
+  }
+
+  /**
+   * Expands the Session's `downloadUrl` template (RFC 8620 §2).
+   *
+   * NOTE the deliberate correction: the server advertises the template with
+   * `?accept={type}`, but its handler reads the `type` query parameter. Passing
+   * `accept=` therefore yields `application/octet-stream` for everything. We
+   * emit `type=` so an allowlisted content type is honoured, and the mismatch
+   * is recorded as a server gap rather than silently worked around forever.
+   */
+  downloadUrlFor(accountId: string, blobId: string, name: string, type: string): string {
+    // Same-origin for the same reason as apiUrl: the advertised URL is
+    // absolute, and following it would be a cross-origin request carrying
+    // Basic credentials.
+    const base = sameOrigin(
+      this.session?.downloadUrl,
+      `${this.baseUrl}/jmap/download/{accountId}/{blobId}/{name}`,
+    );
+    const expanded = base
+      .replace("{accountId}", encodeURIComponent(accountId))
+      .replace("{blobId}", encodeURIComponent(blobId))
+      .replace("{name}", encodeURIComponent(name));
+    // Drop whatever query the template carried and set the one the server reads.
+    const withoutQuery = expanded.split("?")[0] ?? expanded;
+    return `${withoutQuery}?type=${encodeURIComponent(type)}`;
   }
 
   /**
