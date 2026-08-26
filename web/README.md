@@ -1,13 +1,13 @@
 # Moov Mail — the PWA
 
 The product's own face: a React + TypeScript progressive web app that speaks
-JMAP to Moov's server. Epics **P1** (foundations, branding, login) and **P2**
-(reading: routing, folders, the virtualized list, threads, search and the
-reading pane) of [`docs/specs/L2-pwa.md`][spec] have landed.
+JMAP to Moov's server. Epics **P1** (foundations, branding, login), **P2**
+(reading), **P2b** (the secure HTML renderer) and **P3** (writing and sending)
+of [`docs/specs/L2-pwa.md`][spec] have landed.
 
-The reading pane renders **plain text only**. The secure HTML renderer is a
-separate epic on a stronger model (W-A4); its seam and contract are documented
-under [The HTML-renderer seam](#the-html-renderer-seam) below.
+The reading pane renders HTML through the three-layer pipeline in
+`src/mail/html/`. P3 adds optimistic actions with rollback, multi-select, the
+composer, drafts, attachments, send-with-undo and the identity signature.
 
 [spec]: ../docs/specs/L2-pwa.md
 
@@ -618,18 +618,328 @@ and the two browser-caught bugs above.
   `textBody`/`htmlBody` and is already handled with its own notice plus the
   download — do not treat it as an error state.
 
-### For P3 (writing and sending)
 
-- `e`, `#`, `Shift+I` and `s` are **bound and documented but deliberately
-  inert**: they raise a toast saying the action arrives next release. Wiring
-  them means replacing that branch of `runAction` in `MailScreen.tsx` — the
-  keyboard layer needs no change.
-- Optimistic updates have a natural home: `MailScreen` owns `emails` state and
-  `groupByThread` is pure, so an optimistic keyword change is a local edit plus
-  a rollback on failure.
-- `maxConcurrentRequests` is 8 and enforced with a 429; keep in-flight requests
-  bounded when firing per-row actions.
-- `EmailSubmission/query` is still unregistered — P3 will need it, or will need
-  to work from `EmailSubmission/get` by id.
-- The composer is a `contentEditable`; `isTypingTarget` already covers it, so
-  shortcuts will not fire inside it.
+---
+
+## What P3 contains
+
+| Area | Where |
+|---|---|
+| Optimistic patches + rollback (pure) | `src/mail/actions.ts` |
+| The optimistic controller (effects) | `src/screens/mail/useMessageActions.ts` |
+| Multi-select with shift/ctrl ranges | `src/mail/selection.ts` |
+| Address parsing, validation, chips | `src/mail/addresses.ts` |
+| Reply/reply-all/forward + quoting | `src/mail/quoting.ts` |
+| Composer initial state per intent | `src/screens/compose/composerState.ts` |
+| The write API (`/set`, upload, submission, identity) | `src/mail/write.ts` |
+| Rich-text commands | `src/mail/richtext.ts` |
+| Autosave debounce + undo countdown | `src/mail/drafts.ts` |
+| The composer UI | `src/screens/compose/` |
+| The bulk action bar and move menu | `src/screens/mail/ActionBar.tsx` |
+| Shared folder labels | `src/screens/mail/mailboxLabels.ts` |
+
+## Design rationale (P3)
+
+### Optimistic updates: a patch overlay, never a snapshot
+
+ADR §6 asks for actions under 100 ms *perceived*. The server is fast — W1
+measured flags at 19-44 ms — but the pilot is served across the Atlantic,
+where the round trip alone is ~530 ms (P2's `Core/echo` baseline). No server
+can win that. Only the client can, by painting first.
+
+That makes **rollback** the load-bearing part, and rollback is where optimistic
+UIs fail. Two designs were rejected:
+
+- **Snapshot the list, restore it on failure.** This also undoes everything
+  that landed in between — a message that arrived by SSE, another action that
+  succeeded. Wrong by construction.
+- **Flip the patch back.** Restoring `seen: false` is only correct if the
+  message was genuinely unread before. Marking an already-read message as read
+  and then failing would leave it *unread*, corrupting state the user never
+  touched.
+
+So `planAction` captures, from ONE snapshot, both the forward patch and the
+**inverse derived from each message's actual prior state**. `MailScreen` keeps
+the server's list as the single source of truth and overlays a
+`Map<id, patch>`; `applyOverlay` is pure and unit-tested, including the
+ordering properties.
+
+On success the patch is **dropped**, not kept — the server's data now says what
+the patch was pretending, and holding it would mask a later legitimate change
+arriving by SSE. The exception is a removal, which stays until the refetch so
+an archived row does not flash back for a moment.
+
+Because RFC 8620 §5.3 gives per-record errors, a batch can half succeed: the
+half that worked is left alone and only the failed ids are restored, each
+reported with **the server's own `description`**. Never a silent revert.
+
+**Measured in a real browser with the network delayed to 600 ms** (roughly the
+pilot's real round trip): flagging three messages painted in **10 ms**, and
+archiving — which removes the row — in **11 ms**. Both clear the ADR §6 bar
+with two orders of magnitude to spare, and both would be ~600 ms without the
+overlay.
+
+### Delete says which of the two things it is about to do
+
+Server arbitration W-A2 makes `Email/set destroy` a **move to Trash** unless
+the message is already in Trash, in which case it is a real expunge. The client
+does **not** re-implement that rule — it would drift — but it does have to say
+which one is happening: the button reads *"Move to Trash"* or *"Delete
+permanently"*, and only the irreversible case is styled as destructive and
+asks for confirmation. A confirm on every delete trains people to dismiss it,
+which is how the one that mattered gets dismissed too.
+
+### The composer's HTML: no editor framework, and why
+
+**No dependency was added.** The bundle is 314 kB (102 kB gzipped) and the only
+runtime dependencies remain React and DOMPurify.
+
+The bar the composer has to clear is bold, italic, underline, lists and links —
+five commands, all implemented natively by `document.execCommand`. The
+alternatives each cost more than they are worth:
+
+- **ProseMirror/TipTap** (~130 kB) model a document as a schema-validated tree
+  and re-render the DOM from it. That is right for a collaborative editor and
+  wrong for mail, whose output must be *mail HTML* — inline styles,
+  `<blockquote type="cite">`, and whatever markup the quoted original brought.
+  All schema-foreign, so a quoted reply is either normalised (destroying the
+  original) or needs a custom schema plus node views — more bespoke code than
+  what is written here, on top of the 130 kB.
+- **Quill** (~110 kB) owns its own Delta format; round-tripping a quoted
+  message through it is lossy by construction.
+- **Slate/Lexical** are frameworks for *building* editors. The work would still
+  have to be written, in their idiom.
+
+`execCommand` is deprecated on paper and has **no successor** — the Editing API
+meant to replace it was abandoned, and every browser still implements it. The
+lint exemption is scoped to `src/mail/richtext.ts` alone and argued in the
+file, not switched off globally. `styleWithCSS` is turned **off** so commands
+emit `<b>` rather than `<span style="font-weight:bold">`: semantic tags survive
+other clients' sanitizers, and Outlook in particular strips enough CSS that a
+styled-span "bold" arrives as plain text. Verified in a real browser: bolding a
+selection produced `Cuerpo <b>en negrita</b>`.
+
+### Compose output is untrusted input to the next reader
+
+A reply quotes the original message's HTML, and that HTML came off the wire. So
+the rich surface sanitizes through the **P2b pipeline twice**:
+
+- **In**, before the quoted HTML is ever assigned to `innerHTML`. Assigning
+  unsanitized markup to a live `contentEditable` in the app's own origin is a
+  stored XSS with full session access — strictly *worse* than the reading
+  pane's iframe, which at least has an opaque origin and `default-src 'none'`.
+- **Out**, on every change. The surface is a live DOM the user edits and the
+  browser mutates; what comes out is not what went in.
+
+**Paste is intercepted** and re-inserted as plain text: a native paste inserts
+the clipboard's HTML flavour, which is whatever the source page put there.
+Losing formatting on paste is a real cost; authoring attacker-chosen markup
+into a message the user sends under their own name is a worse one. Link URLs
+are validated to http/https/mailto **before** insertion rather than relying on
+the sanitizer downstream — a composer that authors hostile markup and trusts
+the next layer to remove it is building a defect on purpose. Attribution lines
+are escaped, so a display name of `<img onerror=...>` cannot inject markup
+(pinned by a test).
+
+### Sending: one request, and one message
+
+The draft creation and the submission ride in **one** request, per RFC 8621
+§7.5's canonical flow (`emailId: "#draft"`). That means the draft cannot exist
+without its submission, the move to Sent is the server's atomic business via
+`onSuccessUpdateEmail`, and the whole send costs one round trip.
+
+**The double-send guard is a `ref`, not state.** `setState` is asynchronous, so
+two clicks in the same tick both read the old value — which is exactly how
+double-send bugs ship. Verified in a real browser: a genuine double-click
+produced **exactly one `EmailSubmission/set create` and one draft create**.
+
+The undo countdown is derived from the server's own `sendAt`, never a hardcoded
+10 — the server clamps its window to 5-30 s per account, so a hardcoded number
+would either offer undo after the mail left (a lie) or stop offering it while
+the server still would. Verified in a browser: the banner opened at
+`Enviando en 10s` and ticked to `8s` over 2.2 s.
+
+**`cannotUnsend` is surfaced, not swallowed.** It is a true statement — the
+mail is going out — and a user who believes a send was canceled and later finds
+it in Sent has been lied to. Cancel sends the RFC's own spelling, verified on
+the wire: `{"sub1": {"undoStatus": "canceled"}}`.
+
+### Drafts: create-then-destroy, because a message is immutable
+
+RFC 8621 §4.6 makes every Email property except `keywords` and `mailboxIds`
+immutable — a message IS its bytes. Editing a draft is therefore a new message
+plus removal of the old one, in **one request, create first**, so a failed
+create leaves the previous revision intact.
+
+Autosave is a debounce **with a maximum wait**. A pure debounce never fires
+during continuous typing: someone composing for four minutes has nothing saved
+when the tab crashes. The max-wait converts it into a "save at least every 30 s"
+guarantee. Closing the composer — by button or by Escape — **flushes** first:
+closing must never lose a draft. An empty composer saves nothing, so opening
+and closing does not litter Drafts.
+
+### Attachments: XHR, because fetch reports no upload progress
+
+`fetch` has no upload-progress event; the Streams workaround needs HTTP/2 and
+is unsupported in Safari. For a 20 MB attachment a progress bar is the
+difference between "working" and "frozen", so this one call uses
+`XMLHttpRequest` and everything else in the app uses fetch.
+
+The size gate reads **`maxSizeUpload` from the session** (J1's declared ==
+applied rule), never a hardcoded 50 MB — a hardcoded client breaks the day an
+operator lowers the limit and refuses files the server would take the day one
+raises it. A **failed attachment stays visible**, marked, carrying the server's
+own problem detail; dropping it would let the user click Send believing it was
+attached.
+
+### Accessibility
+
+- The composer is a real `<dialog>` opened with `showModal()`, so the browser
+  owns the focus trap and the top-layer stacking. Verified in a browser:
+  `dialog.open === true` and `:modal` matches, with focus landing inside.
+- `autoFocus` is used in exactly three places, each a WAI-ARIA APG requirement
+  (dialog and menu patterns must move focus inside on open) rather than the
+  load-time focus theft the lint rule exists to prevent. Each is disabled
+  individually with its reason.
+- Chips are a real list with a per-chip `<button>` whose accessible name says
+  **which** address it removes, not a bare "Remove" repeated five times.
+  Backspace on an empty input removes the last chip.
+- **A real a11y bug was caught by a test**: the chip `<ul>` carried the same
+  `aria-label` as its input, making "the To field" ambiguous to a screen reader
+  (and to any test looking it up by name). The list's label was removed; the
+  `<label>` names the input and the count is announced by a live region.
+- The row checkbox and the row itself are separate controls with separate
+  names; a click on the box does not also open the message.
+- Toolbar buttons carry `aria-pressed` for their active state, and the
+  select-all box uses `indeterminate` for "some but not all" — a plain
+  unchecked box would claim nothing is selected.
+- Live regions are always in the DOM, so their content is announced when it
+  changes rather than being inserted alongside its own text.
+- Disabled bulk actions use the real `disabled` attribute, not `aria-disabled`:
+  an inert control should also be unfocusable.
+
+### Keyboard
+
+The four keys P2 left **bound but deliberately inert** (`e`, `#`, `Shift+I`,
+`s`) are now real, and P3 adds Gmail's `c` (compose), `r` (reply), `Shift+A`
+(reply-all), `f` (forward) and `x` (toggle row selection). With a selection an
+action is a bulk action; with none it applies to the focused row — Gmail's rule,
+which is what makes `e` archive "the message I am looking at" with no selection
+ceremony.
+
+While the composer is open the global handler does not act on the list behind
+it: `e` must not archive a message the user cannot see.
+
+**The discoverability test was strengthened and it mattered.** It previously
+iterated a hand-kept list of keys, so a *new* binding could never fail it —
+exactly the regression it exists to prevent. It now sweeps the printable-ASCII
+keyspace, asks the resolver what it binds, and requires each to appear in the
+help sheet. Confirmed by deliberately removing one entry and watching it go red.
+
+## Bugs this epic's own tests caught
+
+Worth recording, because each was silent:
+
+1. **`delete` was a complete no-op.** `patchFor` routed it through the move
+   branch, which returns `{}` when no `mailboxId` is given — and a delete
+   carries none on purpose, since the server owns W-A2. `planAction` skips
+   empty patches, so the key painted nothing *and never issued the request*.
+   Fixed, and pinned by two regression tests.
+2. **A dangling selection anchor.** `pruneSelection` returned early when the
+   selected set had not shrunk, leaving an anchor pointing at a message that
+   was gone; the next shift-click would silently fall back to a plain click and
+   lose the selection being built.
+3. **The ambiguous `aria-label`** described under Accessibility above.
+
+## Testing
+
+**478 unit tests** (24 files). P3 adds coverage for the optimistic reducer and
+its rollback orderings, the selection ranges (including the anchor rule that is
+invisible until it is wrong), address parsing against header-injection and
+Outlook's `"Last, First"` paste, quoting and attribution, the draft's exact
+wire shape against `email_create.go`'s rules, the autosave debounce and
+max-wait on an injected clock, the undo timer, the attachment size gate, and
+the composer's own wiring — including that a double-click sends once and that
+`cannotUnsend` reaches the screen.
+
+### Live verification, and its honest limit
+
+**The live send/undo against the pilot was NOT performed.** The credentials for
+`moov-test@atmosfera.cloud` are supplied through `MOOV_TEST_USER` /
+`MOOV_TEST_PASSWORD`, and **neither variable was present in this agent's
+environment** (verified in both shells). Per the standing rule, no credentials
+file was opened. The pilot was confirmed reachable and correctly challenging
+(`401` on `/.well-known/jmap`), but nothing was signed into and **nothing was
+deployed**.
+
+What WAS verified in a real browser (Chromium via Playwright, against the dev
+server with a stubbed JMAP layer — no credentials involved):
+
+- the action bar, per-row checkboxes and Spanish strings render;
+- **shift-click range selection** across three rows, announcing
+  "3 seleccionados" and enabling every bulk action;
+- **perceived latency under a 600 ms simulated round trip: flag 10 ms,
+  archive 11 ms** (the ADR §6 bar is 100 ms);
+- `c` opens the composer as a true `:modal` dialog with focus inside;
+- rich text produces semantic `<b>` with `aria-pressed` tracking;
+- a **double-click on Send produced exactly one submission**;
+- the undo countdown opened at the server's 10 s and ticked to 8 s;
+- **cancel sent `{undoStatus: "canceled"}`** and announced
+  "Envío cancelado — el mensaje no se transmitió".
+
+Console is free of errors from this app; the only two are the pre-existing
+`/branding` 404s (server gap 2 above), which predate P3.
+
+Screenshots: `docs/evidence/P3/`.
+
+**The director should schedule the live pilot run** — send to `moov-test`
+itself, prove undo cancels within the window, prove a completed send lands in
+Sent exactly once — with credentials supplied and with the owner's approval.
+Every server contract that run would exercise is pinned by a unit test against
+the exact wire shape, so the residual risk is in the environment, not in the
+shapes.
+
+## Server and deployment gaps (P3's additions)
+
+The P2 list above stands unchanged. P3 found:
+
+7. **`npm run typecheck` is broken at HEAD and predates this epic.** The script
+   passes `--noEmit false --emitDeclarationOnly false`, which conflicts with
+   `allowImportingTsExtensions` in both `tsconfig.app.json` and
+   `tsconfig.node.json` (`TS5096`), so it fails with two errors on a clean
+   checkout — and, worse, *emits `.js` files next to every source* when it gets
+   far enough. Confirmed by stashing all P3 work and re-running on a clean
+   tree. **`npx tsc -b` is the correct invocation** and is what `npm run build`
+   uses; the script should simply be `tsc -b`. Not fixed here because the
+   director may want it as its own commit.
+
+8. **`EmailSubmission/query` is still unregistered.** P3 does not need it: the
+   composer holds the submission id it just created and cancels by that id, so
+   nothing enumerates submissions. It will be needed by any future outbox view.
+
+9. **Per-part `blobId` is still `null`** (P2 gap 5), so a **forward does not
+   carry the original's attachments**. The composer says nothing about
+   attachments it cannot re-attach rather than silently dropping files the user
+   could see listed in the reading pane. Closing gap 5 server-side closes this.
+
+## Notes for P4 (offline, PWA install, Bulwark replacement)
+
+- **The optimistic overlay is the natural seam for offline queueing.** It
+  already models "the UI shows X while the server has not confirmed X", with a
+  per-message inverse for undo. An offline queue is the same structure with a
+  durable backing store and a replay on reconnect; `useMessageActions` is the
+  one file to extend.
+- **SSE is still blocked client-side** (P2 gap 4): `EventSource` cannot send an
+  Authorization header, and the pilot answers 401. P3's `refresh()` after every
+  write is the interim mechanism. P4 needs the server to grow either a
+  short-lived pre-signed token in the URL or a cookie for that route — or the
+  client needs a fetch-stream reader, which is a rewrite.
+- **Drafts are the offline case that matters most.** `createAutosaveScheduler`
+  already separates *when* to save from *how*, so an IndexedDB-first save with
+  a background flush to the server slots in without touching the composer.
+- **`refreshToken` in `MailScreen` is a blunt refetch.** With SSE working it
+  should become a targeted `Email/changes`; the write path already returns
+  `newState` from every `/set` for exactly that.
+- **Before replacing Bulwark**, the live run described above must pass, and the
+  `/branding` routing gap (2) should be fixed or every install silently shows
+  Moov's default brand.

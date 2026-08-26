@@ -21,17 +21,42 @@ import {
   MailApiError,
   type MailFilter,
 } from "../../mail/api";
+import { deleteIsPermanent, resolveToggle, type MessageAction } from "../../mail/actions";
 import { mailboxSegment, resolveMailbox } from "../../mail/mailboxes";
 import { isSearchable, normalizeQuery, refusalFor } from "../../mail/search";
+import {
+  actionTargets,
+  EMPTY_SELECTION,
+  isAllSelected,
+  pruneSelection,
+  selectionAfterClick,
+  selectionAfterSelectAll,
+  type SelectionState,
+} from "../../mail/selection";
 import { groupByThread, type ThreadGroup } from "../../mail/threading";
-import type { Email, Mailbox, Thread } from "../../mail/types";
+import { KEYWORD_FLAGGED, KEYWORD_SEEN, type Email, type Mailbox, type Thread } from "../../mail/types";
+import { fetchIdentities, type Identity } from "../../mail/write";
+import { encodeBasicCredentials } from "../../api/jmap";
 import { useRouter } from "../../router/RouterProvider";
 import { withMessage, type Route } from "../../router/routes";
+import { Composer } from "../compose/Composer";
+import {
+  forwardDraft,
+  newDraft,
+  replyDraft,
+  resumeDraft,
+  type ComposerDraft,
+  type QuotingStrings,
+} from "../compose/composerState";
+import { ActionBar } from "./ActionBar";
 import { MailboxList } from "./MailboxList";
+import { mailboxLabel } from "./mailboxLabels";
 import { MessageList } from "./MessageList";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { useMessageActions } from "./useMessageActions";
+import { formatFullDate } from "../../mail/format";
 import styles from "./MailScreen.module.css";
 
 /**
@@ -46,11 +71,12 @@ import styles from "./MailScreen.module.css";
 export function MailScreen(): React.JSX.Element {
   const { state, signOut } = useAuth();
   const branding = useBranding();
-  const { t, format } = useTranslation();
+  const { t, format, locale } = useTranslation();
   const { route, navigate, replace } = useRouter();
 
   const session = state.status === "authenticated" ? state.session : undefined;
   const accountId = session?.primaryAccounts["urn:ietf:params:jmap:mail"] ?? "";
+  const username = state.status === "authenticated" ? state.username : "";
 
   /*
    * The client is rebuilt only when the credential changes, which is what makes
@@ -67,6 +93,18 @@ export function MailScreen(): React.JSX.Element {
     // templates rather than from a guess.
     void built.fetchSession().catch(() => undefined);
     return built;
+  }, [state.status]);
+
+  /*
+   * The Authorization header value, for the ONE request the JmapClient cannot
+   * make on the caller's behalf: the attachment upload, which needs XHR for
+   * its progress events (see `uploadBlob`). It is derived from the same stored
+   * credential the client uses and never leaves this component tree.
+   */
+  const authorization = useMemo<string>(() => {
+    if (state.status !== "authenticated") return "";
+    const stored: BasicCredentials | undefined = loadSession();
+    return stored === undefined ? "" : encodeBasicCredentials(stored);
   }, [state.status]);
 
   const [mailboxes, setMailboxes] = useState<readonly Mailbox[]>([]);
@@ -90,6 +128,13 @@ export function MailScreen(): React.JSX.Element {
   );
   const [helpOpen, setHelpOpen] = useState(false);
   const [toast, setToast] = useState<string | undefined>(undefined);
+
+  // --- P3 state ------------------------------------------------------------
+  const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
+  const [composerDraft, setComposerDraft] = useState<ComposerDraft | undefined>(undefined);
+  const [identity, setIdentity] = useState<Identity | undefined>(undefined);
+  /** A refetch trigger: bumped after a write so the list re-reads the truth. */
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -204,9 +249,51 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId, filter, route.kind, t]);
+  }, [client, accountId, filter, route.kind, t, refreshToken]);
 
-  const groups = useMemo(() => groupByThread(emails), [emails]);
+  // --- P3: identity (the signature and the sending address) ----------------
+
+  useEffect(() => {
+    if (client === undefined || accountId === "") return undefined;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const identities = await fetchIdentities(client, accountId, controller.signal);
+        if (!controller.signal.aborted) setIdentity(identities[0]);
+      } catch {
+        // A missing identity does not break reading; it disables SENDING, and
+        // the composer says so rather than the whole screen failing.
+        if (!controller.signal.aborted) setIdentity(undefined);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [client, accountId]);
+
+  // --- P3: optimistic actions ----------------------------------------------
+
+  const actions = useMessageActions({
+    client,
+    accountId,
+    currentMailboxId: activeMailbox?.id,
+  });
+
+  /*
+   * The list the UI renders: the server's data with the optimistic overlay on
+   * top. Every consumer below — the grouping, the selection, the keyboard —
+   * reads THIS, so an optimistic change is visible everywhere at once and
+   * there is no second source of truth to keep in step.
+   */
+  const projected = useMemo(() => actions.project(emails), [actions, emails]);
+
+  const groups = useMemo(() => groupByThread(projected), [projected]);
+
+  /** Refetches the list from the server after a write. */
+  const refresh = useCallback((): void => {
+    actions.reset();
+    setRefreshToken((token) => token + 1);
+  }, [actions]);
 
   // Keep the selection valid as the list changes underneath it.
   useEffect(() => {
@@ -256,6 +343,182 @@ export function MailScreen(): React.JSX.Element {
     };
   }, [client, accountId, openMessageId]);
 
+  // --- P3: multi-select ----------------------------------------------------
+
+  const orderedIds = useMemo(() => groups.map((group) => group.id), [groups]);
+
+  /*
+   * A stale selection must not survive a refresh: it would make a bulk action
+   * target messages that are gone and keep the "3 selected" badge lying.
+   */
+  useEffect(() => {
+    setSelection((current) => pruneSelection(current, orderedIds));
+  }, [orderedIds]);
+
+  const toggleSelect = useCallback(
+    (
+      group: ThreadGroup,
+      modifiers: { readonly toggle: boolean; readonly range: boolean },
+    ): void => {
+      setSelection((current) => selectionAfterClick(current, group.id, orderedIds, modifiers));
+    },
+    [orderedIds],
+  );
+
+  const selectAll = useCallback(
+    (all: boolean): void => {
+      setSelection(selectionAfterSelectAll(orderedIds, all));
+    },
+    [orderedIds],
+  );
+
+  /**
+   * The MESSAGE ids an action applies to.
+   *
+   * The list is grouped into threads, and a thread row stands for every
+   * message in it — so archiving a conversation archives the conversation, not
+   * just its newest message, which is what "archive" means in every mail
+   * client and what a user who selects one row expects.
+   */
+  const targetMessageIds = useCallback(
+    (): readonly string[] => {
+      const groupIds = actionTargets(selection, selectedId);
+      const wanted = new Set(groupIds);
+      const out: string[] = [];
+      for (const group of groups) {
+        if (!wanted.has(group.id)) continue;
+        for (const message of group.messages) out.push(message.id);
+      }
+      return out;
+    },
+    [selection, selectedId, groups],
+  );
+
+  // --- P3: running an action ------------------------------------------------
+
+  const roleMailboxId = useCallback(
+    (role: string): string | undefined =>
+      mailboxes.find((mailbox) => mailbox.role === role)?.id,
+    [mailboxes],
+  );
+
+  const trashMailboxId = roleMailboxId("trash");
+
+  /** True when `delete` on the current targets ERASES rather than moves (W-A2). */
+  const willDeletePermanently = useMemo(() => {
+    if (trashMailboxId === undefined) return false;
+    const ids = new Set(targetMessageIds());
+    const targets = projected.filter((email) => ids.has(email.id));
+    // Only claim "permanent" when EVERY target is already in Trash; a mixed
+    // selection gets the softer, and truthful, wording.
+    return targets.length > 0 && targets.every((email) => deleteIsPermanent(email, trashMailboxId));
+  }, [projected, targetMessageIds, trashMailboxId]);
+
+  /**
+   * Dispatches an action and reports its outcome.
+   *
+   * The failure path is the point: it names WHAT failed with the server's own
+   * sentence, and the hook has already restored the prior state. A silent
+   * revert — the thing this must never be — would leave the user believing
+   * they mis-clicked.
+   */
+  const dispatchAction = useCallback(
+    async (action: MessageAction, successMessage: string): Promise<void> => {
+      if (action.ids.length === 0) return;
+      const result = await actions.run(action, projected);
+
+      if (result.failed.length > 0) {
+        setToast(
+          result.succeeded.length > 0
+            ? `${format("action.partialFailure", result.succeeded.length, result.failed.length)} ${result.failureMessage ?? ""}`.trim()
+            : `${t("action.failedTitle")}: ${result.failureMessage ?? t("action.failedRestored")}`,
+        );
+        // Even a total failure refetches: the server's truth is the only thing
+        // that resolves a disagreement about what actually happened.
+        refresh();
+        return;
+      }
+      if (result.succeeded.length === 0) return;
+
+      setToast(successMessage);
+      setSelection(EMPTY_SELECTION);
+      refresh();
+    },
+    [actions, projected, refresh, t, format],
+  );
+
+  const runArchive = useCallback((): void => {
+    const archiveId = roleMailboxId("archive");
+    const ids = targetMessageIds();
+    if (archiveId === undefined) {
+      setToast(t("action.failedTitle"));
+      return;
+    }
+    void dispatchAction(
+      { kind: "archive", ids, mailboxId: archiveId },
+      format("action.doneArchived", ids.length),
+    );
+  }, [roleMailboxId, targetMessageIds, dispatchAction, format, t]);
+
+  const runDelete = useCallback((): void => {
+    const ids = targetMessageIds();
+    if (ids.length === 0) return;
+    /*
+     * Confirmation is asked for ONLY when the delete is irreversible (W-A2:
+     * already in Trash). A confirm on every delete trains people to dismiss
+     * it, which is how the one that mattered gets dismissed too.
+     */
+    if (willDeletePermanently && !window.confirm(format("action.confirmDeleteForever", ids.length))) {
+      return;
+    }
+    void dispatchAction(
+      { kind: "delete", ids },
+      willDeletePermanently
+        ? format("action.doneDeletedForever", ids.length)
+        : format("action.doneDeleted", ids.length),
+    );
+  }, [targetMessageIds, willDeletePermanently, dispatchAction, format]);
+
+  const runMove = useCallback(
+    (mailboxId: string): void => {
+      const ids = targetMessageIds();
+      const target = mailboxes.find((mailbox) => mailbox.id === mailboxId);
+      void dispatchAction(
+        { kind: "move", ids, mailboxId },
+        format(
+          "action.doneMoved",
+          target === undefined ? "" : mailboxLabel(target, t),
+        ),
+      );
+    },
+    [targetMessageIds, mailboxes, dispatchAction, format, t],
+  );
+
+  const runToggleRead = useCallback(
+    (force?: boolean): void => {
+      const ids = targetMessageIds();
+      const idSet = new Set(ids);
+      const targets = projected.filter((email) => idSet.has(email.id));
+      const value = force ?? resolveToggle(targets, KEYWORD_SEEN).value;
+      void dispatchAction(
+        { kind: value ? "markRead" : "markUnread", ids },
+        value ? t("action.markRead") : t("action.markUnread"),
+      );
+    },
+    [targetMessageIds, projected, dispatchAction, t],
+  );
+
+  const runToggleFlag = useCallback((): void => {
+    const ids = targetMessageIds();
+    const idSet = new Set(ids);
+    const targets = projected.filter((email) => idSet.has(email.id));
+    const value = resolveToggle(targets, KEYWORD_FLAGGED).value;
+    void dispatchAction(
+      { kind: value ? "flag" : "unflag", ids },
+      value ? t("action.flag") : t("action.unflag"),
+    );
+  }, [targetMessageIds, projected, dispatchAction, t]);
+
   // --- navigation ----------------------------------------------------------
 
   const openGroup = useCallback(
@@ -290,6 +553,102 @@ export function MailScreen(): React.JSX.Element {
     },
     [replace],
   );
+
+  // --- P3: opening the composer --------------------------------------------
+
+  /** The wording the quoting module needs, resolved from the string table. */
+  const quotingStrings = useMemo<QuotingStrings>(
+    () => ({
+      attributionLine: (date, sender) => format("compose.attributionLine", date, sender),
+      forwardedHeader: t("compose.forwardedHeader"),
+      from: t("compose.forwardedFrom"),
+      date: t("compose.forwardedDate"),
+      subject: t("compose.forwardedSubject"),
+      to: t("compose.forwardedTo"),
+      formatDate: (isoDate) => formatFullDate(isoDate, locale),
+    }),
+    [t, format, locale],
+  );
+
+  /**
+   * The message a reply/forward is about.
+   *
+   * The OPEN message when the reading pane has one, because that is what the
+   * user is looking at; otherwise the newest message of the focused row. A
+   * reply that quotes a different message from the one on screen is a bug
+   * nobody reports and everybody notices.
+   */
+  const composeSubject = useCallback((): Email | undefined => {
+    if (detail.email !== undefined) return detail.email;
+    const group = groups.find((candidate) => candidate.id === selectedId);
+    return group?.latest;
+  }, [detail.email, groups, selectedId]);
+
+  const openCompose = useCallback((): void => {
+    setComposerDraft(newDraft(true));
+  }, []);
+
+  const openReply = useCallback(
+    (all: boolean): void => {
+      const original = composeSubject();
+      if (original === undefined) return;
+      /*
+       * A reply needs the message BODY, and a list row does not carry one
+       * (LIST_PROPERTIES omits bodyValues deliberately — asking for it would
+       * make the server re-parse every message to paint a list). When the
+       * reading pane is open the detail is already loaded; otherwise the
+       * message is opened first, and the user replies from there. Quoting an
+       * empty body would silently produce a reply with no quote.
+       */
+      if (original.bodyValues === undefined) {
+        navigate(withMessage(route, original.id));
+        return;
+      }
+      setComposerDraft(replyDraft(original, username, all, quotingStrings));
+    },
+    [composeSubject, username, quotingStrings, navigate, route],
+  );
+
+  const openForward = useCallback((): void => {
+    const original = composeSubject();
+    if (original === undefined) return;
+    if (original.bodyValues === undefined) {
+      navigate(withMessage(route, original.id));
+      return;
+    }
+    setComposerDraft(forwardDraft(original, quotingStrings));
+  }, [composeSubject, quotingStrings, navigate, route]);
+
+  /**
+   * Opening a message in Drafts RESUMES it rather than reading it.
+   *
+   * A draft is unfinished writing, not mail; showing it in a reading pane with
+   * a Reply button would be nonsense. The composer carries the draft's server
+   * id so the next save destroys this revision instead of accumulating one
+   * message per edit (RFC 8621 §4.6's immutability, handled in `saveDraft`).
+   */
+  /*
+   * `navigate` and the current `route` are read through a ref rather than
+   * named as dependencies. Listing them would re-run this effect on every
+   * navigation — harmless, because the guards below make it a no-op, but it
+   * would make the effect's real trigger (the detail arriving for a message in
+   * Drafts) impossible to see. A ref states "read the latest, do not re-run"
+   * honestly, where suppressing the lint rule would only hide the question.
+   */
+  const closeReadingPane = useRef<() => void>(() => undefined);
+  closeReadingPane.current = () => {
+    navigate(withMessage(route, undefined));
+  };
+
+  useEffect(() => {
+    if (activeMailbox?.role !== "drafts") return;
+    const open = detail.email;
+    if (open?.bodyValues === undefined) return;
+    if (composerDraft !== undefined) return;
+    setComposerDraft(resumeDraft(open));
+    // The reading pane must not stay open behind the composer.
+    closeReadingPane.current();
+  }, [activeMailbox?.role, detail.email, composerDraft]);
 
   // --- the keyboard --------------------------------------------------------
 
@@ -332,19 +691,65 @@ export function MailScreen(): React.JSX.Element {
           break;
         case "closeOverlay":
           if (helpOpen) setHelpOpen(false);
+          // The composer owns its own Escape (it must flush the draft first),
+          // so the global handler must not close it out from under that.
+          else if (composerDraft !== undefined) break;
+          else if (selection.selected.size > 0) setSelection(EMPTY_SELECTION);
           else if (openMessageId !== undefined) closeMessage();
           break;
-        // P3 wires these. Announcing the fact is more honest than a key that
-        // silently does nothing and reads as a bug.
+
+        // P3: the keys P2 left bound but inert are now real.
         case "archive":
-        case "delete":
-        case "toggleRead":
-        case "toggleFlag":
-          setToast(t("action.notYet"));
+          runArchive();
           break;
+        case "delete":
+          runDelete();
+          break;
+        case "toggleRead":
+          runToggleRead();
+          break;
+        case "toggleFlag":
+          runToggleFlag();
+          break;
+        case "compose":
+          openCompose();
+          break;
+        case "reply":
+          openReply(false);
+          break;
+        case "replyAll":
+          openReply(true);
+          break;
+        case "forward":
+          openForward();
+          break;
+        case "selectRow": {
+          const current = groups[index];
+          if (current !== undefined) toggleSelect(current, { toggle: true, range: false });
+          break;
+        }
       }
     },
-    [groups, selectedId, openGroup, closeMessage, mailboxes, goToMailbox, helpOpen, openMessageId, t],
+    [
+      groups,
+      selectedId,
+      openGroup,
+      closeMessage,
+      mailboxes,
+      goToMailbox,
+      helpOpen,
+      openMessageId,
+      composerDraft,
+      selection,
+      runArchive,
+      runDelete,
+      runToggleRead,
+      runToggleFlag,
+      openCompose,
+      openReply,
+      openForward,
+      toggleSelect,
+    ],
   );
 
   useEffect(() => {
@@ -360,6 +765,14 @@ export function MailScreen(): React.JSX.Element {
         },
         keyboardRef.current,
       );
+
+      /*
+       * While the composer is open the list behind it is not the user's
+       * context: `e` must not archive a message they cannot see. The dialog's
+       * own Escape handling still runs, because the dialog element gets the
+       * event first.
+       */
+      if (composerDraft !== undefined) return;
 
       keyboardRef.current = nextState;
 
@@ -384,7 +797,7 @@ export function MailScreen(): React.JSX.Element {
       window.removeEventListener("keydown", onKeyDown);
       if (chordTimer.current !== undefined) clearTimeout(chordTimer.current);
     };
-  }, [runAction]);
+  }, [runAction, composerDraft]);
 
   // Toasts clear themselves.
   useEffect(() => {
@@ -399,7 +812,6 @@ export function MailScreen(): React.JSX.Element {
 
   // --- render --------------------------------------------------------------
 
-  const username = state.status === "authenticated" ? state.username : "";
   const isReading = openMessageId !== undefined;
 
   return (
@@ -459,10 +871,33 @@ export function MailScreen(): React.JSX.Element {
         </nav>
 
         <main className={styles.listColumn} id="main">
+          <ActionBar
+            selectedCount={selection.selected.size}
+            totalCount={groups.length}
+            allSelected={isAllSelected(selection, orderedIds)}
+            onSelectAll={selectAll}
+            onMarkRead={() => {
+              runToggleRead(true);
+            }}
+            onMarkUnread={() => {
+              runToggleRead(false);
+            }}
+            onFlag={runToggleFlag}
+            onArchive={runArchive}
+            onDelete={runDelete}
+            onMove={runMove}
+            mailboxes={mailboxes}
+            currentMailboxId={activeMailbox?.id}
+            deleteIsPermanent={willDeletePermanently}
+            onCompose={openCompose}
+            isBusy={actions.isBusy}
+          />
           <MessageList
             listKey={listKey}
             groups={groups}
             selectedId={selectedId}
+            selectedIds={selection.selected}
+            onToggleSelect={toggleSelect}
             onSelect={(group) => {
               setSelectedId(group.id);
             }}
@@ -498,6 +933,16 @@ export function MailScreen(): React.JSX.Element {
               onClose={closeMessage}
               client={client}
               accountId={accountId}
+              onReply={() => {
+                openReply(false);
+              }}
+              onReplyAll={() => {
+                openReply(true);
+              }}
+              onForward={openForward}
+              onArchive={runArchive}
+              onDelete={runDelete}
+              deleteIsPermanent={willDeletePermanently}
             />
           </aside>
         )}
@@ -509,6 +954,29 @@ export function MailScreen(): React.JSX.Element {
           setHelpOpen(false);
         }}
       />
+
+      {composerDraft !== undefined && client !== undefined && (
+        <Composer
+          /* Keyed by the draft's seed so switching from a reply to a forward
+             mounts a FRESH composer rather than reusing one whose local state
+             belongs to the previous message. */
+          key={composerDraft.seedKey}
+          draft={composerDraft}
+          client={client}
+          accountId={accountId}
+          identity={identity}
+          draftsMailboxId={roleMailboxId("drafts")}
+          sentMailboxId={roleMailboxId("sent")}
+          sessionCapabilities={session?.capabilities}
+          uploadUrlTemplate={session?.uploadUrl}
+          authorization={authorization}
+          onClose={() => {
+            setComposerDraft(undefined);
+          }}
+          onNotify={setToast}
+          onChanged={refresh}
+        />
+      )}
 
       {/* A single always-present live region: messages announced when they
           appear, rather than a region inserted together with its own text. */}

@@ -1,0 +1,145 @@
+/*
+ * The address-chip field.
+ *
+ * Every value resolves through the token layers (W-A2): a customer's accent
+ * moves the chip colour, the focus ring and the invalid treatment together,
+ * and nothing here hardcodes a colour.
+ */
+
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.label {
+  padding-top: calc(var(--space-2) + 1px);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.field {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: text;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 2px var(--space-1) 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--surface-default));
+  color: var(--text-default);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/*
+ * An invalid chip is marked by a border and a strikethrough-free but clearly
+ * different treatment as well as colour — colour alone would be invisible to a
+ * colour-blind user and in forced-colors mode.
+ */
+.invalid {
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--surface-default));
+  border: 1px dashed var(--color-danger);
+  color: var(--text-default);
+}
+
+.chipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.62;
+}
+
+.chipRemove:hover,
+.chipRemove:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.chipRemove svg {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.inputItem {
+  flex: 1 1 8rem;
+  min-width: 6rem;
+  display: flex;
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.input:focus {
+  /* The field's own ring is drawn by the container's focus-within, so the bare
+     input must not paint a second one inside it. */
+  outline: none;
+}
+
+.field:focus-within {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.error {
+  grid-column: 2;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+}
+
+@media (forced-colors: active) {
+  .chip {
+    border: 1px solid CanvasText;
+  }
+  .invalid {
+    border: 2px dashed Highlight;
+  }
+}

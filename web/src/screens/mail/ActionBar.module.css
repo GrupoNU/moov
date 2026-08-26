@@ -1,0 +1,153 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-default);
+}
+
+.compose {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.compose:hover {
+  background: var(--color-accent-hover);
+}
+
+.compose svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.divider {
+  width: 1px;
+  height: 1.4rem;
+  margin: 0 var(--space-1);
+  background: var(--border-subtle);
+}
+
+.selectAll {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2);
+  cursor: pointer;
+}
+
+.selectAll input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled),
+.action:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+}
+
+/*
+ * Disabled, not aria-disabled: an inert control should also be unfocusable.
+ * The opacity is paired with the real `disabled` attribute so assistive
+ * technology and sighted users learn the same fact.
+ */
+.action:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.destructive:hover:not(:disabled),
+.destructive:focus-visible:not(:disabled) {
+  color: var(--color-danger);
+  background: var(--color-danger-tint);
+}
+
+.action svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding-right: var(--space-2);
+}
+
+.menuWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 20;
+  min-width: 13rem;
+  max-height: 20rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-lg);
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--color-accent-tint);
+}
+
+.menuEmpty {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}

@@ -1,0 +1,135 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modeGroup {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.modeButton {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.modeActive {
+  background: var(--surface-default);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.commands {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.commandButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.commandButton:hover {
+  background: var(--surface-sunken);
+  color: var(--text-default);
+}
+
+/*
+ * The active state carries a BORDER as well as a background, so it survives
+ * forced-colors mode where background-color is overridden. aria-pressed
+ * carries it for assistive technology.
+ */
+.commandActive {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+  color: var(--text-strong);
+}
+
+.commandButton svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.linkError {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+}
+
+/*
+ * The editing surfaces. Both are capped at a comfortable measure — the same
+ * reasoning as the reading pane's 68ch — rather than running the full width
+ * of a desktop window, which produces lines nobody can track back from.
+ */
+.editable,
+.textarea {
+  flex: 1 1 auto;
+  min-height: 12rem;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-default);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  resize: none;
+}
+
+.editable:focus-visible,
+.textarea:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.editable :global(blockquote) {
+  margin: var(--space-3) 0 var(--space-3) var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-default);
+  color: var(--text-muted);
+}
+
+.editable :global(a) {
+  color: var(--color-accent);
+}
+
+.editable :global(img) {
+  max-width: 100%;
+  height: auto;
+}
+
+/* A long unbroken URL in a quoted message must not push the composer wide. */
+.editable {
+  overflow-wrap: anywhere;
+}

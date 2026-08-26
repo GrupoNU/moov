@@ -223,6 +223,11 @@ export const en = {
   "shortcuts.archive": "Archive",
   "shortcuts.delete": "Delete",
   "shortcuts.flag": "Star",
+  "shortcuts.selectRow": "Select this conversation",
+  "shortcuts.compose": "Write a new message",
+  "shortcuts.reply": "Reply",
+  "shortcuts.replyAll": "Reply to everyone",
+  "shortcuts.forward": "Forward",
   "shortcuts.toggleRead": "Mark read or unread",
   "shortcuts.goInbox": "Go to Inbox",
   "shortcuts.goSent": "Go to Sent",
@@ -237,6 +242,125 @@ export const en = {
   // shortcut that silently does nothing.
   "shortcuts.comingSoon": "Arriving in the next release",
   "action.notYet": "This action arrives in the next release",
+
+  // --- P3: actions on messages ---
+  //
+  // The wording of delete is load-bearing. Server arbitration W-A2 makes
+  // `destroy` a MOVE to Trash unless the message is already there, in which
+  // case it really is erased. One word for both promises would be a lie in one
+  // of the two cases, so the UI asks which one it is (see deleteIsPermanent).
+  "action.markRead": "Mark as read",
+  "action.markUnread": "Mark as unread",
+  "action.flag": "Star",
+  "action.unflag": "Remove star",
+  "action.archive": "Archive",
+  "action.delete": "Move to Trash",
+  "action.deleteForever": "Delete permanently",
+  "action.move": "Move to",
+  "action.moveTo": "Move to folder",
+  "action.reply": "Reply",
+  "action.replyAll": "Reply all",
+  "action.forward": "Forward",
+  "action.more": "More actions",
+  "action.selectAll": "Select all",
+  "action.clearSelection": "Clear the selection",
+  "action.selected": (count: number): string => `${count} selected`,
+  "action.selectRow": "Select this conversation",
+  "action.undo": "Undo",
+  "action.confirmDeleteForever": (count: number): string =>
+    count === 1
+      ? "Delete this message permanently? This cannot be undone."
+      : `Delete these ${count} messages permanently? This cannot be undone.`,
+  "action.confirm": "Delete permanently",
+  "action.cancel": "Cancel",
+  // Every failure names what failed AND restores the prior state â never a
+  // silent revert.
+  "action.failedTitle": "That action did not go through",
+  "action.failedRestored": "Nothing changed on the server; the list has been put back.",
+  "action.partialFailure": (done: number, failed: number): string =>
+    `${done} succeeded, ${failed} failed. The failed ones have been put back.`,
+  "action.doneArchived": (count: number): string =>
+    count === 1 ? "Archived" : `${count} archived`,
+  "action.doneDeleted": (count: number): string =>
+    count === 1 ? "Moved to Trash" : `${count} moved to Trash`,
+  "action.doneDeletedForever": (count: number): string =>
+    count === 1 ? "Deleted permanently" : `${count} deleted permanently`,
+  "action.doneMoved": (folder: string): string => `Moved to ${folder}`,
+
+  // --- P3: the composer ---
+  "compose.new": "Write",
+  "compose.title": "New message",
+  "compose.titleReply": "Reply",
+  "compose.titleForward": "Forward",
+  "compose.titleDraft": "Draft",
+  "compose.from": "From",
+  "compose.to": "To",
+  "compose.cc": "Cc",
+  "compose.bcc": "Bcc",
+  "compose.showCc": "Add Cc",
+  "compose.showBcc": "Add Bcc",
+  "compose.subject": "Subject",
+  "compose.subjectPlaceholder": "Subject",
+  "compose.body": "Message",
+  "compose.send": "Send",
+  "compose.sending": "Sending…",
+  "compose.discard": "Discard",
+  "compose.close": "Close the composer",
+  "compose.attach": "Attach a file",
+  "compose.attachments": (count: number): string =>
+    count === 1 ? "1 attachment" : `${count} attachments`,
+  "compose.removeAttachment": (name: string): string => `Remove ${name}`,
+  "compose.removeRecipient": (address: string): string => `Remove ${address}`,
+  "compose.recipientCount": (count: number): string =>
+    count === 1 ? "1 recipient" : `${count} recipients`,
+  "compose.uploading": (percent: number): string => `Uploading… ${percent}%`,
+  "compose.uploadFailed": "This file could not be attached",
+  "compose.plainText": "Plain text",
+  "compose.richText": "Formatting",
+  "compose.bold": "Bold",
+  "compose.italic": "Italic",
+  "compose.underline": "Underline",
+  "compose.bulletList": "Bulleted list",
+  "compose.orderedList": "Numbered list",
+  "compose.link": "Insert a link",
+  "compose.linkPrompt": "Address of the link",
+  "compose.linkInvalid": "A link must be a web address (http, https) or an email address.",
+  "compose.addressInvalid": (address: string): string =>
+    `${address} is not a complete email address.`,
+  "compose.noRecipients": "Add at least one recipient before sending.",
+  "compose.attributionLine": (date: string, sender: string): string =>
+    `On ${date}, ${sender} wrote:`,
+  "compose.forwardedHeader": "---------- Forwarded message ----------",
+  "compose.forwardedFrom": "From",
+  "compose.forwardedDate": "Date",
+  "compose.forwardedSubject": "Subject",
+  "compose.forwardedTo": "To",
+
+  // --- P3: drafts ---
+  "draft.saving": "Saving…",
+  "draft.saved": "Draft saved",
+  "draft.unsaved": "Unsaved changes",
+  "draft.saveFailed": "The draft could not be saved",
+  "draft.discardConfirm": "Discard this draft? What you wrote will be lost.",
+  "draft.discarded": "Draft discarded",
+  "draft.discardFailed": "The draft could not be discarded",
+
+  // --- P3: sending, with undo ---
+  "send.undoWindow": (seconds: number): string => `Sending in ${seconds}s`,
+  "send.undo": "Undo",
+  "send.sent": "Message sent",
+  "send.canceled": "Send canceled — the message was not transmitted",
+  "send.failedTitle": "The message was not sent",
+  "send.cannotUnsend": "Too late to undo — the message has already gone out.",
+  "send.sizeExceeded": (limit: string): string =>
+    `This file is larger than the ${limit} this server accepts.`,
+  "send.attachmentsExceeded": (limit: string): string =>
+    `The attachments add up to more than the ${limit} one message may carry.`,
+
+  // --- P3: folders ---
+  "folder.create": "New folder",
+  "folder.name": "Folder name",
+  "folder.createFailed": "The folder could not be created",
 } as const;
 
 /**
@@ -428,6 +552,11 @@ export const es: Strings = {
   "shortcuts.archive": "Archivar",
   "shortcuts.delete": "Eliminar",
   "shortcuts.flag": "Destacar",
+  "shortcuts.selectRow": "Seleccionar esta conversación",
+  "shortcuts.compose": "Escribir un mensaje nuevo",
+  "shortcuts.reply": "Responder",
+  "shortcuts.replyAll": "Responder a todos",
+  "shortcuts.forward": "Reenviar",
   "shortcuts.toggleRead": "Marcar como leído o sin leer",
   "shortcuts.goInbox": "Ir a la Bandeja de entrada",
   "shortcuts.goSent": "Ir a Enviados",
@@ -440,6 +569,120 @@ export const es: Strings = {
   "shortcuts.sectionJump": "Saltar a una carpeta",
   "shortcuts.comingSoon": "Llega en la próxima versión",
   "action.notYet": "Esta acción llega en la próxima versión",
+
+  // --- P3: acciones sobre mensajes ---
+  "action.markRead": "Marcar como leído",
+  "action.markUnread": "Marcar como no leído",
+  "action.flag": "Destacar",
+  "action.unflag": "Quitar el destaque",
+  "action.archive": "Archivar",
+  "action.delete": "Mover a la Papelera",
+  "action.deleteForever": "Eliminar definitivamente",
+  "action.move": "Mover a",
+  "action.moveTo": "Mover a una carpeta",
+  "action.reply": "Responder",
+  "action.replyAll": "Responder a todos",
+  "action.forward": "Reenviar",
+  "action.more": "Más acciones",
+  "action.selectAll": "Seleccionar todo",
+  "action.clearSelection": "Limpiar la selección",
+  "action.selected": (count: number): string =>
+    count === 1 ? "1 seleccionado" : `${count} seleccionados`,
+  "action.selectRow": "Seleccionar esta conversación",
+  "action.undo": "Deshacer",
+  "action.confirmDeleteForever": (count: number): string =>
+    count === 1
+      ? "¿Eliminar este mensaje definitivamente? No se puede deshacer."
+      : `¿Eliminar estos ${count} mensajes definitivamente? No se puede deshacer.`,
+  "action.confirm": "Eliminar definitivamente",
+  "action.cancel": "Cancelar",
+  "action.failedTitle": "Esa acción no se aplicó",
+  "action.failedRestored": "No cambió nada en el servidor; la lista quedó como estaba.",
+  "action.partialFailure": (done: number, failed: number): string =>
+    `${done} se aplicaron y ${failed} fallaron. Los que fallaron quedaron como estaban.`,
+  "action.doneArchived": (count: number): string =>
+    count === 1 ? "Archivado" : `${count} archivados`,
+  "action.doneDeleted": (count: number): string =>
+    count === 1 ? "Movido a la Papelera" : `${count} movidos a la Papelera`,
+  "action.doneDeletedForever": (count: number): string =>
+    count === 1 ? "Eliminado definitivamente" : `${count} eliminados definitivamente`,
+  "action.doneMoved": (folder: string): string => `Movido a ${folder}`,
+
+  // --- P3: el compositor ---
+  "compose.new": "Escribir",
+  "compose.title": "Mensaje nuevo",
+  "compose.titleReply": "Responder",
+  "compose.titleForward": "Reenviar",
+  "compose.titleDraft": "Borrador",
+  "compose.from": "De",
+  "compose.to": "Para",
+  "compose.cc": "Cc",
+  "compose.bcc": "Cco",
+  "compose.showCc": "Agregar Cc",
+  "compose.showBcc": "Agregar Cco",
+  "compose.subject": "Asunto",
+  "compose.subjectPlaceholder": "Asunto",
+  "compose.body": "Mensaje",
+  "compose.send": "Enviar",
+  "compose.sending": "Enviando…",
+  "compose.discard": "Descartar",
+  "compose.close": "Cerrar el compositor",
+  "compose.attach": "Adjuntar un archivo",
+  "compose.attachments": (count: number): string =>
+    count === 1 ? "1 adjunto" : `${count} adjuntos`,
+  "compose.removeAttachment": (name: string): string => `Quitar ${name}`,
+  "compose.removeRecipient": (address: string): string => `Quitar ${address}`,
+  "compose.recipientCount": (count: number): string =>
+    count === 1 ? "1 destinatario" : `${count} destinatarios`,
+  "compose.uploading": (percent: number): string => `Subiendo… ${percent}%`,
+  "compose.uploadFailed": "Este archivo no se pudo adjuntar",
+  "compose.plainText": "Texto plano",
+  "compose.richText": "Formato",
+  "compose.bold": "Negrita",
+  "compose.italic": "Cursiva",
+  "compose.underline": "Subrayado",
+  "compose.bulletList": "Lista con viñetas",
+  "compose.orderedList": "Lista numerada",
+  "compose.link": "Insertar un enlace",
+  "compose.linkPrompt": "Dirección del enlace",
+  "compose.linkInvalid":
+    "Un enlace tiene que ser una dirección web (http, https) o una dirección de correo.",
+  "compose.addressInvalid": (address: string): string =>
+    `${address} no es una dirección de correo completa.`,
+  "compose.noRecipients": "Agregá al menos un destinatario antes de enviar.",
+  "compose.attributionLine": (date: string, sender: string): string =>
+    `El ${date}, ${sender} escribió:`,
+  "compose.forwardedHeader": "---------- Mensaje reenviado ----------",
+  "compose.forwardedFrom": "De",
+  "compose.forwardedDate": "Fecha",
+  "compose.forwardedSubject": "Asunto",
+  "compose.forwardedTo": "Para",
+
+  // --- P3: borradores ---
+  "draft.saving": "Guardando…",
+  "draft.saved": "Borrador guardado",
+  "draft.unsaved": "Cambios sin guardar",
+  "draft.saveFailed": "El borrador no se pudo guardar",
+  "draft.discardConfirm": "¿Descartar este borrador? Se pierde lo que escribiste.",
+  "draft.discarded": "Borrador descartado",
+  "draft.discardFailed": "El borrador no se pudo descartar",
+
+  // --- P3: envío, con deshacer ---
+  "send.undoWindow": (seconds: number): string => `Enviando en ${seconds}s`,
+  "send.undo": "Deshacer",
+  "send.sent": "Mensaje enviado",
+  "send.canceled": "Envío cancelado — el mensaje no se transmitió",
+  "send.failedTitle": "El mensaje no se envió",
+  "send.cannotUnsend": "Ya es tarde para deshacer: el mensaje ya salió.",
+  "send.sizeExceeded": (limit: string): string =>
+    `Este archivo supera los ${limit} que acepta este servidor.`,
+  "send.attachmentsExceeded": (limit: string): string =>
+    `Los adjuntos suman más de los ${limit} que puede llevar un mensaje.`,
+
+  // --- P3: carpetas ---
+  "folder.create": "Carpeta nueva",
+  "folder.name": "Nombre de la carpeta",
+  "folder.createFailed": "La carpeta no se pudo crear",
 };
 
 /** The locales the app ships with. */

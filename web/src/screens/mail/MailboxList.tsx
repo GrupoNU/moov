@@ -8,6 +8,7 @@ import {
   type MailboxNode,
 } from "../../mail/mailboxes";
 import type { Mailbox, MailboxRole } from "../../mail/types";
+import { mailboxLabel } from "./mailboxLabels";
 import styles from "./MailboxList.module.css";
 
 /**
@@ -36,38 +37,15 @@ export interface MailboxListProps {
   readonly isLoading?: boolean;
 }
 
-/** Localised names for the folders whose names Dovecot supplies in English. */
+/**
+ * Localised names for the folders whose names Dovecot supplies in English.
+ *
+ * The mapping itself lives in `mailboxLabels.ts` because P3's move menu needs
+ * the same one, and two copies would drift the first time a role is added.
+ */
 function useRoleName(): (mailbox: Mailbox) => string {
   const { t } = useTranslation();
-  return (mailbox: Mailbox): string => {
-    /*
-     * A roled folder is shown under its LOCALISED name — "Bandeja de entrada"
-     * rather than Dovecot's "INBOX". The role is a stable, server-independent
-     * identity, so translating it is safe; translating a custom folder's name
-     * would be renaming the user's own folder, which is why only roles are
-     * mapped and everything else renders verbatim.
-     */
-    switch (mailbox.role) {
-      case "inbox":
-        return t("mailbox.inbox");
-      case "drafts":
-        return t("mailbox.drafts");
-      case "sent":
-        return t("mailbox.sent");
-      case "archive":
-        return t("mailbox.archive");
-      case "junk":
-        return t("mailbox.junk");
-      case "trash":
-        return t("mailbox.trash");
-      case "all":
-        return t("mailbox.all");
-      case "flagged":
-        return t("mailbox.flagged");
-      default:
-        return mailbox.name;
-    }
-  };
+  return (mailbox: Mailbox): string => mailboxLabel(mailbox, t);
 }
 
 /** An inline icon per role, so folders are recognisable before they are read. */

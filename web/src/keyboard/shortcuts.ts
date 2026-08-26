@@ -29,7 +29,14 @@ export type ShortcutAction =
   | { readonly kind: "toggleFlag" }
   | { readonly kind: "goToMailbox"; readonly role: string }
   | { readonly kind: "help" }
-  | { readonly kind: "closeOverlay" };
+  | { readonly kind: "closeOverlay" }
+  // P3: composition. `c` is Gmail's compose key; `r`, `a` and `f` are its
+  // reply, reply-all and forward — copied verbatim, per ADR §6.
+  | { readonly kind: "compose" }
+  | { readonly kind: "reply" }
+  | { readonly kind: "replyAll" }
+  | { readonly kind: "forward" }
+  | { readonly kind: "selectRow" };
 
 /** The chord state: `g` has been pressed and the app is awaiting its second key. */
 export interface KeyboardState {
@@ -150,6 +157,24 @@ export function resolveShortcut(
     case "s":
       return { action: { kind: "toggleFlag" }, nextState: INITIAL_KEYBOARD_STATE };
 
+    case "c":
+      return { action: { kind: "compose" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    case "r":
+      return { action: { kind: "reply" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    // Gmail's reply-all. Capital A, so it cannot be confused with the `g a`
+    // chord's second key, which is a lowercase `a`.
+    case "A":
+      return { action: { kind: "replyAll" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    case "f":
+      return { action: { kind: "forward" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    // Gmail toggles a row's checkbox with `x`.
+    case "x":
+      return { action: { kind: "selectRow" }, nextState: INITIAL_KEYBOARD_STATE };
+
     case "?":
       return { action: { kind: "help" }, nextState: INITIAL_KEYBOARD_STATE };
 
@@ -191,6 +216,11 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["e"], descriptionKey: "shortcuts.archive" },
   { keys: ["#"], descriptionKey: "shortcuts.delete" },
   { keys: ["s"], descriptionKey: "shortcuts.flag" },
+  { keys: ["x"], descriptionKey: "shortcuts.selectRow" },
+  { keys: ["c"], descriptionKey: "shortcuts.compose" },
+  { keys: ["r"], descriptionKey: "shortcuts.reply" },
+  { keys: ["Shift", "A"], descriptionKey: "shortcuts.replyAll" },
+  { keys: ["f"], descriptionKey: "shortcuts.forward" },
   { keys: ["Shift", "I"], descriptionKey: "shortcuts.toggleRead" },
   { keys: ["g", "i"], descriptionKey: "shortcuts.goInbox" },
   { keys: ["g", "s"], descriptionKey: "shortcuts.goSent" },

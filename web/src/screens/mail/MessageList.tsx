@@ -55,6 +55,13 @@ export interface MessageListProps {
   readonly notice?: React.ReactNode;
   /** Identifies the current list, so a folder change resets the scroll. */
   readonly listKey: string;
+  /** P3: the multi-selected rows (independent of the focused row). */
+  readonly selectedIds?: ReadonlySet<string>;
+  /** P3: a click on a row's checkbox, or on the row with a modifier held. */
+  readonly onToggleSelect?: (
+    group: ThreadGroup,
+    modifiers: { readonly toggle: boolean; readonly range: boolean },
+  ) => void;
 }
 
 export function MessageList({
@@ -66,6 +73,8 @@ export function MessageList({
   empty,
   notice,
   listKey,
+  selectedIds,
+  onToggleSelect,
 }: MessageListProps): React.JSX.Element {
   const { t, locale } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -189,6 +198,8 @@ export function MessageList({
                   now={now}
                   onSelect={onSelect}
                   onOpen={onOpen}
+                  isChecked={selectedIds?.has(group.id) === true}
+                  onToggleSelect={onToggleSelect}
                 />
               );
             })}
@@ -211,6 +222,13 @@ interface MessageRowProps {
   readonly now: Date;
   readonly onSelect: (group: ThreadGroup) => void;
   readonly onOpen: (group: ThreadGroup) => void;
+  readonly isChecked: boolean;
+  readonly onToggleSelect:
+    | ((
+        group: ThreadGroup,
+        modifiers: { readonly toggle: boolean; readonly range: boolean },
+      ) => void)
+    | undefined;
 }
 
 function MessageRow({
@@ -223,6 +241,8 @@ function MessageRow({
   now,
   onSelect,
   onOpen,
+  isChecked,
+  onToggleSelect,
 }: MessageRowProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -259,12 +279,28 @@ function MessageRow({
       className={[
         styles.row,
         isSelected ? styles.selected : "",
+        isChecked ? styles.checked : "",
         group.hasUnread ? styles.unread : "",
       ]
         .filter(Boolean)
         .join(" ")}
       style={{ transform: `translateY(${top}px)` }}
-      onClick={() => {
+      onClick={(event) => {
+        /*
+         * A modified click is a SELECTION gesture, not a navigation one:
+         * ctrl/cmd toggles the row and shift extends the range from the
+         * anchor. Opening the message as well would replace the reading pane
+         * on every click of a multi-select, which is exactly what makes
+         * "select five and archive them" impossible in a client that gets
+         * this wrong.
+         */
+        const toggle = event.ctrlKey || event.metaKey;
+        const range = event.shiftKey;
+        if ((toggle || range) && onToggleSelect !== undefined) {
+          event.preventDefault();
+          onToggleSelect(group, { toggle, range });
+          return;
+        }
         onSelect(group);
         onOpen(group);
       }}
@@ -283,6 +319,34 @@ function MessageRow({
         if (!isSelected) onSelect(group);
       }}
     >
+      {onToggleSelect !== undefined && (
+        <span role="gridcell" className={styles.checkboxCell}>
+          <input
+            type="checkbox"
+            className={styles.checkbox}
+            checked={isChecked}
+            aria-label={t("action.selectRow")}
+            /* The checkbox is its own control with its own accessible name;
+               stopping propagation keeps a click on it from ALSO opening the
+               message, which would make the box unusable. */
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+            onChange={(event) => {
+              onToggleSelect(group, {
+                toggle: true,
+                range: (event.nativeEvent as MouseEvent).shiftKey,
+              });
+            }}
+            /* Enter/Space on the row must not reach the checkbox and vice
+               versa; the row handles its own keys. */
+            onKeyDown={(event) => {
+              event.stopPropagation();
+            }}
+          />
+        </span>
+      )}
+
       <span className={styles.avatar} aria-hidden="true">
         {initialsFor(senderLabel(latest))}
       </span>

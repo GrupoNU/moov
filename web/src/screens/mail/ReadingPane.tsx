@@ -28,6 +28,14 @@ export interface ReadingPaneProps {
   /** Used for attachment and raw-message downloads, which need auth headers. */
   readonly client: JmapClient;
   readonly accountId: string;
+  // --- P3: acting on the open message --------------------------------------
+  readonly onReply: () => void;
+  readonly onReplyAll: () => void;
+  readonly onForward: () => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
+  /** True when delete ERASES rather than moves to Trash (server rule W-A2). */
+  readonly deleteIsPermanent: boolean;
 }
 
 export function ReadingPane({
@@ -38,6 +46,12 @@ export function ReadingPane({
   onClose,
   client,
   accountId,
+  onReply,
+  onReplyAll,
+  onForward,
+  onArchive,
+  onDelete,
+  deleteIsPermanent,
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
 
@@ -107,6 +121,39 @@ export function ReadingPane({
             <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
               <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
             </svg>
+          </button>
+        </div>
+
+        {/*
+          The action row. Reply is the primary action of a mail client and is
+          styled as such; the rest are equal-weight secondary actions. Each is
+          a real <button> with a text label, not an icon alone — this pane has
+          the room, and an icon-only toolbar is a guessing game the first time
+          someone uses it.
+        */}
+        <div className={styles.actions} role="group" aria-label={t("action.more")}>
+          <button type="button" className={styles.primaryAction} onClick={onReply}>
+            {t("action.reply")}
+          </button>
+          <button type="button" className={styles.secondaryAction} onClick={onReplyAll}>
+            {t("action.replyAll")}
+          </button>
+          <button type="button" className={styles.secondaryAction} onClick={onForward}>
+            {t("action.forward")}
+          </button>
+          <span className={styles.actionSpacer} />
+          <button type="button" className={styles.secondaryAction} onClick={onArchive}>
+            {t("action.archive")}
+          </button>
+          {/* The LABEL states which of the two semantics applies (W-A2). */}
+          <button
+            type="button"
+            className={[styles.secondaryAction, deleteIsPermanent ? styles.dangerAction : ""]
+              .filter(Boolean)
+              .join(" ")}
+            onClick={onDelete}
+          >
+            {deleteIsPermanent ? t("action.deleteForever") : t("action.delete")}
           </button>
         </div>
 

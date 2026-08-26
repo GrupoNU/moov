@@ -40,8 +40,8 @@
   right: 0;
   height: var(--row-height);
   display: grid;
-  /* avatar | sender | subject+preview | meta */
-  grid-template-columns: auto minmax(9rem, 15rem) 1fr auto;
+  /* checkbox | avatar | sender | subject+preview | meta */
+  grid-template-columns: auto auto minmax(9rem, 15rem) 1fr auto;
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-4);
@@ -65,6 +65,33 @@
 
 .selected:hover {
   background: var(--color-accent-tint-strong);
+}
+
+/*
+ * P3: a CHECKED row (multi-select) is a different state from the FOCUSED row
+ * (the one the reading pane shows), and the two are shown differently on
+ * purpose — a user who has selected five messages and is reading one of them
+ * must be able to see both facts at once.
+ */
+.checked {
+  background: var(--color-accent-tint);
+}
+
+.checked:hover {
+  background: var(--color-accent-tint-strong);
+}
+
+.checkboxCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.checkbox {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 /* The selected row carries an accent spine so the state does not depend on a

@@ -134,14 +134,44 @@ describe("discoverability", () => {
    * A shortcut that exists but is not in the help sheet is one only its author
    * uses. This pins the two together.
    */
+  /*
+   * DERIVED from the resolver rather than from a hand-kept list.
+   *
+   * The previous version of this test iterated a literal array of keys, which
+   * meant a NEW binding could never fail it — exactly the regression the test
+   * exists to prevent. Sweeping the printable-ASCII keyspace plus the named
+   * keys and asking the resolver what it binds makes the check real: add a
+   * shortcut and forget the help sheet, and this goes red.
+   */
   it("documents every key the resolver binds", () => {
     const documented = new Set(SHORTCUT_HELP.flatMap((entry) => entry.keys));
-    for (const k of ["j", "k", "Enter", "u", "/", "e", "#", "s", "?", "g"]) {
-      const shown = k === "Enter" ? "Enter" : k;
-      expect(
-        documented.has(shown),
-        `"${k}" is bound but missing from SHORTCUT_HELP`,
-      ).toBe(true);
+
+    const candidates: string[] = ["Enter", "ArrowUp", "ArrowDown"];
+    for (let code = 0x21; code <= 0x7e; code += 1) {
+      candidates.push(String.fromCharCode(code));
+    }
+
+    const bound: string[] = [];
+    for (const candidate of candidates) {
+      const { action, nextState } = resolveShortcut(key(candidate));
+      // `g` binds no action of its own; it opens the chord, and its targets
+      // are documented as the two-key entries.
+      if (action !== undefined || nextState.pendingG) bound.push(candidate);
+    }
+
+    // Sanity: the sweep must actually find the vocabulary, or a broken sweep
+    // would make this test vacuously pass.
+    expect(bound).toEqual(expect.arrayContaining(["j", "k", "e", "#", "c", "r", "f", "x"]));
+
+    /*
+     * ArrowUp/ArrowDown are aliases of k/j and o is an alias of Enter; a help
+     * sheet listing every alias is noise, so the aliases are exempt and the
+     * canonical key of each pair must be documented.
+     */
+    const aliases = new Set(["ArrowUp", "ArrowDown", "o"]);
+    for (const k of bound) {
+      if (aliases.has(k)) continue;
+      expect(documented.has(k), `"${k}" is bound but missing from SHORTCUT_HELP`).toBe(true);
     }
   });
 
