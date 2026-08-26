@@ -103,6 +103,18 @@ type SubmissionStateSource interface {
 	EmailSubmissionState(ctx context.Context, accountID int64) (string, error)
 }
 
+// IdentityStateSource is the OPTIONAL fifth type (RFC 8621 §6), on the same
+// terms as SubmissionStateSource above.
+//
+// Identity state changes rarely — a signature save, a display-name change —
+// but it changes for a reason a user notices immediately: they saved a
+// signature in one tab and expect the composer in another to use it. Pushing
+// the state is what turns that into "it just updated" rather than "reload and
+// hope".
+type IdentityStateSource interface {
+	IdentityState(ctx context.Context, accountID int64) (string, error)
+}
+
 // StateNotifier is the transport's view of internal/sync's Broker: subscribe
 // to one account's change notifications, and cancel when done.
 //
@@ -444,6 +456,13 @@ func (s *Server) readStates(ctx context.Context, accountID int64, types typeFilt
 		}
 		out["EmailSubmission"] = st
 	}
+	if ident, ok := s.state.(IdentityStateSource); ok && types.wants("Identity") {
+		st, err := ident.IdentityState(ctx, accountID)
+		if err != nil {
+			return nil, fmt.Errorf("identity state: %w", err)
+		}
+		out["Identity"] = st
+	}
 	return out, nil
 }
 
@@ -456,7 +475,7 @@ func (s *Server) readStates(ctx context.Context, accountID int64, types typeFilt
 // the id exists for.
 func stateEventID(states map[string]string) string {
 	var b strings.Builder
-	for _, t := range []string{"Mailbox", "Email", "Thread", "EmailSubmission"} {
+	for _, t := range []string{"Mailbox", "Email", "Thread", "EmailSubmission", "Identity"} {
 		st, ok := states[t]
 		if !ok {
 			continue

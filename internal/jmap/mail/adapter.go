@@ -45,6 +45,15 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 	if err != nil {
 		return nil, err
 	}
+	// The identity surface (RFC 8621 §6) is its own adapter rather than another
+	// face of `a`, because it is the one reader that also WRITES (Identity/set
+	// stores a signature) and so takes a change notifier. Constructed without
+	// one here; cmd/moovd builds its own with the broker attached so a save
+	// pushes an SSE StateChange.
+	identities, err := NewIdentityAdapter(st, nil)
+	if err != nil {
+		return nil, err
+	}
 	return &Deps{
 		Mailboxes: a,
 		Emails:    a,
@@ -53,9 +62,10 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 		State:     a,
 		// J3's readers are the same adapter: Search goes through the store's
 		// typed repertoire and Changes through the sync_log/message_state feed.
-		Search:  a,
-		Changes: a,
-		Limits:  limits,
+		Search:     a,
+		Changes:    a,
+		Identities: identities,
+		Limits:     limits,
 	}, nil
 }
 

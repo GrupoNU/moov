@@ -49,6 +49,11 @@ type Deps struct {
 	// unused elsewhere.
 	Submissions SubmissionStore
 
+	// Identities is the RFC 8621 §6 surface. Required by
+	// RegisterSubmissionMethods alongside Submissions: an identity is what a
+	// submission sends AS, so the two are mounted together or not at all.
+	Identities IdentityStore
+
 	// UndoWindow is the undo-send window (W-A3): a submission's not_before is
 	// its creation time plus this. RegisterSubmissionMethods clamps it to the
 	// [5s, 30s] range the config contract states; zero means the 10s default.

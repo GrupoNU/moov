@@ -138,6 +138,7 @@ func submissionDeps(t *testing.T) (*fakeReaders, *fakeSubmissions, *Deps) {
 	subs := newFakeSubmissions()
 	deps := f.deps()
 	deps.Submissions = subs
+	deps.Identities = newFakeIdentities("user@example.com")
 	deps.UndoWindow = clampUndoWindow(0)
 	return f, subs, deps
 }
@@ -626,70 +627,6 @@ func TestSubmissionChangesClassifies(t *testing.T) {
 	ch = mustBe[*changesResponse](t, res)
 	if len(ch.Created) != 0 || len(ch.Destroyed) != 0 || len(ch.Updated) != 0 {
 		t.Errorf("created-and-destroyed within the window must be omitted (§5.2): %+v", ch)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Identity (§6)
-// ---------------------------------------------------------------------------
-
-func TestIdentityGetServesTheAccountIdentity(t *testing.T) {
-	_, _, deps := submissionDeps(t)
-	res, merr := deps.handleIdentityGet(callerCtx(), jsonArgs(t, map[string]any{
-		"accountId": testAccountJMAPID(),
-	}))
-	if merr != nil {
-		t.Fatal(merr)
-	}
-	get := mustBe[*getResponse](t, res)
-	if len(get.List) != 1 {
-		t.Fatalf("list = %v", get.List)
-	}
-	id := mustBe[map[string]any](t, get.List[0])
-	if id["id"] != identityID || id["email"] != "user@example.com" || id["mayDelete"] != false {
-		t.Errorf("identity = %+v", id)
-	}
-
-	// Unknown ids land in notFound, the known one in the list.
-	res, merr = deps.handleIdentityGet(callerCtx(), jsonArgs(t, map[string]any{
-		"accountId": testAccountJMAPID(), "ids": []string{identityID, "ghost"},
-	}))
-	if merr != nil {
-		t.Fatal(merr)
-	}
-	get = mustBe[*getResponse](t, res)
-	if len(get.List) != 1 || len(get.NotFound) != 1 || get.NotFound[0] != "ghost" {
-		t.Errorf("list=%v notFound=%v", get.List, get.NotFound)
-	}
-}
-
-func TestIdentitySetIsForbidden(t *testing.T) {
-	_, _, deps := submissionDeps(t)
-	_, merr := deps.handleIdentitySet(callerCtx(), jsonArgs(t, map[string]any{
-		"accountId": testAccountJMAPID(),
-		"create":    map[string]any{"i2": map[string]any{"email": "alias@example.com"}},
-	}))
-	if merr == nil || merr.Code != jmap.CodeForbidden {
-		t.Errorf("Identity/set = %v, want forbidden (§6.3 permits the refusal)", merr)
-	}
-}
-
-func TestIdentityChangesIsConstant(t *testing.T) {
-	_, _, deps := submissionDeps(t)
-	res, merr := deps.handleIdentityChanges(callerCtx(), jsonArgs(t, map[string]any{
-		"accountId": testAccountJMAPID(), "sinceState": identityState,
-	}))
-	if merr != nil {
-		t.Fatal(merr)
-	}
-	ch := mustBe[*changesResponse](t, res)
-	if len(ch.Created)+len(ch.Updated)+len(ch.Destroyed) != 0 || ch.NewState != identityState {
-		t.Errorf("identity changes = %+v", ch)
-	}
-	if _, merr := deps.handleIdentityChanges(callerCtx(), jsonArgs(t, map[string]any{
-		"accountId": testAccountJMAPID(), "sinceState": "1234-5",
-	})); merr == nil || merr.Code != jmap.CodeCannotCalculateChanges {
-		t.Errorf("foreign identity cursor = %v, want cannotCalculateChanges", merr)
 	}
 }
 

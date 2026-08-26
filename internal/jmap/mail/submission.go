@@ -49,11 +49,11 @@ import (
 //
 // # Identity (§6)
 //
-// One identity per account: the mailbox owner's own address. Mailcow accounts
-// send as themselves (the app password is scoped to the mailbox), so a single
-// server-defined identity is the truthful set, id and email immutable.
-// Identity/set is refused with forbidden — §6.3: "servers MAY support this",
-// and this one does not.
+// Identities live in identity.go, over stored rows (migration 0006). This file
+// consumes them: a submission names an identityId, and §9.6 makes the server
+// responsible for the correspondence between that identity and the message's
+// From ("servers SHOULD reject submissions where the From header field of the
+// message does not correspond to the associated Identity").
 
 // The wire id prefix for EmailSubmission ids, in id.go's scheme
 // (e-mail m-ailbox t-hread a-ccount s-ubmission).
@@ -66,9 +66,6 @@ func EncodeSubmissionID(id int64) string { return encodeID(submissionIDPrefix, i
 func DecodeSubmissionID(s string) (int64, error) {
 	return decodeID(submissionIDPrefix, "submission", s)
 }
-
-// identityID is the account's single identity's id.
-const identityID = "primary"
 
 // ---------------------------------------------------------------------------
 // contracts
@@ -186,6 +183,13 @@ func RegisterSubmissionMethods(registry *jmap.Registry, deps *Deps) {
 	if deps.Submissions == nil || deps.Emails == nil || deps.State == nil {
 		panic("mail: RegisterSubmissionMethods requires Submissions, Emails and State")
 	}
+	if deps.Identities == nil {
+		// §7.1 makes identityId a required property of every submission, and
+		// §9.6 makes the identity the authority on what the account may send
+		// as. A submission surface without an identity surface could answer
+		// neither, so this is a startup failure rather than a first-send one.
+		panic("mail: RegisterSubmissionMethods requires Identities")
+	}
 	if deps.Writer == nil {
 		// The §7.5 implicit Email/set applies through the same writer the
 		// explicit one uses; submission without it would enqueue mail it can
@@ -197,9 +201,9 @@ func RegisterSubmissionMethods(registry *jmap.Registry, deps *Deps) {
 	registry.Register("EmailSubmission/get", jmap.CapSubmission, deps.handleSubmissionGet)
 	registry.RegisterMulti("EmailSubmission/set", jmap.CapSubmission, deps.handleSubmissionSet)
 	registry.Register("EmailSubmission/changes", jmap.CapSubmission, deps.handleSubmissionChanges)
-	registry.Register("Identity/get", jmap.CapSubmission, deps.handleIdentityGet)
-	registry.Register("Identity/changes", jmap.CapSubmission, deps.handleIdentityChanges)
-	registry.Register("Identity/set", jmap.CapSubmission, deps.handleIdentitySet)
+	// The §6 methods, mounted by their own registrar so identities can also be
+	// served without the outbox (identity.go).
+	RegisterIdentityMethods(registry, deps)
 }
 
 // ---------------------------------------------------------------------------
@@ -600,10 +604,21 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 			Description: "a create must be an EmailSubmission object (RFC 8621 §7.5)"}
 	}
 
-	// identityId: required (§7.1), and it must be the account's one identity.
-	if obj.IdentityID == nil || *obj.IdentityID != identityID {
+	// identityId: required (§7.1), and it must name an identity of this
+	// account. §7.5: "If the Email or Identity id given cannot be found, the
+	// submission creation is rejected with a standard 'invalidProperties'
+	// SetError."
+	//
+	// Resolved against the STORE rather than compared to a constant, because
+	// identities are stored rows now (identity.go) and the identity is what
+	// §9.6 makes the authority on the permitted sender.
+	if obj.IdentityID == nil {
 		return zero, &setError{Type: setErrInvalidProperties, Properties: []string{"identityId"},
-			Description: fmt.Sprintf("identityId must be this account's identity (%q; Identity/get lists it)", identityID)}
+			Description: "identityId is required (RFC 8621 §7.1)"}
+	}
+	identity, serr := d.resolveIdentity(ctx, caller.AccountID, *obj.IdentityID)
+	if serr != nil {
+		return zero, serr
 	}
 	// undoStatus on create may only ask for what the server does anyway.
 	if obj.UndoStatus != nil && *obj.UndoStatus != "pending" && *obj.UndoStatus != "final" {
@@ -639,19 +654,25 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 	email := rows[0]
 
 	// forbiddenFrom (§7.5): "The From address of the Email is not allowed" —
-	// every From must be the authenticated mailbox, because the app password
-	// authorizes exactly that sender and Postfix will reject or rewrite
-	// anything else after DKIM signing as the account.
+	// checked against the IDENTITY's address, which §9.6 makes the authority:
+	// "servers SHOULD reject submissions where the From header field of the
+	// message does not correspond to the associated Identity."
+	//
+	// That address is still the authenticated mailbox today (the default
+	// identity's email is immutable and equals the account's), so this is the
+	// same check it always was — expressed against the object the RFC points
+	// at, so it stays correct when alias identities land instead of silently
+	// becoming wrong.
 	for _, from := range email.Addresses["from"] {
-		if !strings.EqualFold(strings.TrimSpace(from.Email), caller.Email) {
+		if !strings.EqualFold(strings.TrimSpace(from.Email), identity.Email) {
 			return zero, &setError{Type: setErrForbiddenFrom,
-				Description: fmt.Sprintf("the message's From (%s) is not the authenticated account (%s)", from.Email, caller.Email)}
+				Description: fmt.Sprintf("the message's From (%s) is not the identity's address (%s)", from.Email, identity.Email)}
 		}
 	}
 
 	spec := SubmissionSpec{
 		EmailID:    emailID,
-		IdentityID: identityID,
+		IdentityID: identity.WireID(),
 		UndoWindow: d.UndoWindow,
 	}
 
@@ -659,31 +680,56 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 	// is null or omitted ... the server MUST generate this: mailFrom MUST be
 	// the email in the From header ... rcptTo MUST be the deduplicated set of
 	// email addresses in the To, Cc and Bcc headers".
+	//
+	// The identity's own bcc (§6: "The Bcc value the client SHOULD set when
+	// creating a new Email from this Identity") joins the DERIVED rcptTo, and
+	// only the derived one. Two reasons it is confined to that branch:
+	//
+	//   - §6 addresses the CLIENT ("SHOULD set when creating a new Email"), so
+	//     a client that composed the draft has already had its chance to apply
+	//     the default. Applying it again to an envelope the client wrote out
+	//     in full would send a copy the client explicitly did not ask for.
+	//   - An explicit envelope is the client stating the recipient set
+	//     exactly. §7.1.2's rcptTo is "the recipients to send to"; silently
+	//     enlarging it is the one change to a submission a user can neither
+	//     see nor undo.
+	//
+	// In the derived branch the client supplied no envelope at all, so the
+	// server is composing the recipient set from the identity's configuration
+	// and the message's headers — which is precisely where the identity's
+	// default belongs.
 	if obj.Envelope != nil {
 		spec.MailFrom = strings.TrimSpace(obj.Envelope.MailFrom.Email)
 		for _, r := range obj.Envelope.RcptTo {
 			spec.RcptTo = append(spec.RcptTo, strings.TrimSpace(r.Email))
 		}
 	} else {
-		spec.MailFrom = caller.Email
+		spec.MailFrom = identity.Email
 		seen := map[string]bool{}
+		add := func(addr string) {
+			addr = strings.TrimSpace(addr)
+			key := strings.ToLower(addr)
+			if addr == "" || seen[key] {
+				return
+			}
+			seen[key] = true
+			spec.RcptTo = append(spec.RcptTo, addr)
+		}
 		for _, field := range []string{"to", "cc", "bcc"} {
 			for _, a := range email.Addresses[field] {
-				addr := strings.TrimSpace(a.Email)
-				key := strings.ToLower(addr)
-				if addr == "" || seen[key] {
-					continue
-				}
-				seen[key] = true
-				spec.RcptTo = append(spec.RcptTo, addr)
+				add(a.Email)
 			}
+		}
+		for _, a := range identity.Bcc {
+			add(a.Email)
 		}
 	}
 
-	// forbiddenMailFrom (§7.5): the envelope sender must be the account.
-	if !strings.EqualFold(spec.MailFrom, caller.Email) {
+	// forbiddenMailFrom (§7.5): the envelope sender must be the identity's
+	// address — the same §9.6 authority the From check uses.
+	if !strings.EqualFold(spec.MailFrom, identity.Email) {
 		return zero, &setError{Type: setErrForbiddenMailFrom,
-			Description: fmt.Sprintf("the envelope mailFrom (%s) is not the authenticated account (%s)", spec.MailFrom, caller.Email)}
+			Description: fmt.Sprintf("the envelope mailFrom (%s) is not the identity's address (%s)", spec.MailFrom, identity.Email)}
 	}
 	if len(spec.RcptTo) == 0 {
 		// §7.5: "noRecipients: The envelope [or generated envelope] does not
@@ -913,78 +959,4 @@ func (d *Deps) handleSubmissionChanges(ctx context.Context, args json.RawMessage
 		resp.NewState = state
 	}
 	return resp, nil
-}
-
-// ---------------------------------------------------------------------------
-// Identity (§6)
-// ---------------------------------------------------------------------------
-
-// identityState is the constant Identity state: the set never changes while
-// the account exists, and a constant is the honest cursor for /changes.
-const identityState = "0-identity"
-
-// handleIdentityGet implements Identity/get (§6.1): the one server-defined
-// identity, the account's own address.
-func (d *Deps) handleIdentityGet(ctx context.Context, args json.RawMessage) (any, *jmap.MethodError) {
-	req, caller, merr := parseGet(ctx, args, d.Limits)
-	if merr != nil {
-		return nil, merr
-	}
-
-	resp := newGetResponse(req.AccountID, identityState)
-	include := req.IDs == nil
-	if req.IDs != nil {
-		for _, wire := range *req.IDs {
-			if wire == identityID {
-				include = true
-			} else {
-				resp.NotFound = append(resp.NotFound, wire)
-			}
-		}
-	}
-	if include {
-		resp.List = append(resp.List, map[string]any{
-			"id":    identityID,
-			"name":  caller.Email,
-			"email": caller.Email,
-			// §6.1: null means "the client SHOULD use the value of email";
-			// explicit empties would claim configured values that do not exist.
-			"replyTo":       nil,
-			"bcc":           nil,
-			"textSignature": "",
-			"htmlSignature": "",
-			// The identity cannot be deleted: it IS the account.
-			"mayDelete": false,
-		})
-	}
-	sort.Strings(resp.NotFound)
-	return resp, nil
-}
-
-// handleIdentityChanges implements Identity/changes: nothing ever changes, so
-// a matching cursor yields the empty delta and anything else is a state this
-// server never issued (§5.2 cannotCalculateChanges).
-func (d *Deps) handleIdentityChanges(ctx context.Context, args json.RawMessage) (any, *jmap.MethodError) {
-	req, _, merr := parseChanges(ctx, args)
-	if merr != nil {
-		return nil, merr
-	}
-	if req.SinceState != identityState {
-		return nil, jmap.NewMethodError(jmap.CodeCannotCalculateChanges).
-			WithDescription("the given state was not issued by this server")
-	}
-	resp := newChangesResponse(req.AccountID, req.SinceState)
-	resp.NewState = identityState
-	return resp, nil
-}
-
-// handleIdentitySet refuses every mutation: §6.3 makes server support for
-// Identity/set optional, and this server's one identity is derived from the
-// account itself — there is nothing a client could truthfully change.
-func (d *Deps) handleIdentitySet(ctx context.Context, args json.RawMessage) (any, *jmap.MethodError) {
-	if _, _, merr := parseSet(ctx, args, d.Limits); merr != nil {
-		return nil, merr
-	}
-	return nil, jmap.NewMethodError(jmap.CodeForbidden).
-		WithDescription("identities on this server are derived from the account and cannot be created, updated or destroyed (RFC 8621 §6.3 permits this refusal)")
 }
