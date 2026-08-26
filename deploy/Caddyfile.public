@@ -85,12 +85,12 @@
 # Bound to the second IP explicitly. Caddy answers the HTTP-01 challenge on this
 # listener automatically (it is handled before any route below), and everything
 # else is redirected to HTTPS. No application traffic is served in plaintext.
-http://moov.atmosfera.cloud:80 {
+http://moov.atmosfera.cloud:80, http://mail.gruponu.com:80, http://mail.areacorp.com.ar:80, http://mail.nannini.com.ar:80 {
 	redir https://{host}{uri} permanent
 }
 
 # --- :443 — the application ---------------------------------------------------
-https://moov.atmosfera.cloud:443 {
+https://moov.atmosfera.cloud:443, https://mail.gruponu.com:443, https://mail.areacorp.com.ar:443, https://mail.nannini.com.ar:443 {
 	# --- Security headers ---
 	#
 	# Applied to every response. The set is deliberately the one that hardens a
@@ -149,18 +149,75 @@ https://moov.atmosfera.cloud:443 {
 		}
 	}
 
-	# --- Everything else -> Bulwark ---
+	# --- Everything else -> Moov's own PWA ---
+	#
+	# The PWA replaced Bulwark on the branded hosts (owner's decision,
+	# 2026-08-26). Bulwark stays reachable at its own vhost below, against
+	# the same backend, so the two clients can be compared side by side.
+	#
+	# try_files with the index fallback is what makes a client-side route
+	# like /mail/inbox survive a reload: the file does not exist, so the SPA
+	# shell is served and the router resolves the path.
 	handle {
-		reverse_proxy moov-bulwark-spike:3000
+		root * /srv/moov-pwa
+		try_files {path} /index.html
+		file_server
 	}
 
 	# Access log, so the exposure can be audited: who reached which route, from
 	# which address, with which user agent.
+	# Access log with the query string DROPPED: SSE and blob tokens travel as
+	# query parameters (they must - EventSource and <img> cannot send a
+	# header), and a token written to disk outlives its 10-minute TTL in
+	# whatever backup copies the log.
 	log {
 		output file /var/log/caddy/public-access.log {
 			roll_size 50MiB
 			roll_keep 10
 		}
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace access_token REDACTED
+					replace t REDACTED
+				}
+			}
+		}
+	}
+}
+
+# --- Bulwark, kept for comparison ------------------------------------------
+#
+# The third-party client that carried the pilot through phases 1 and 2 stays
+# reachable on its own hostname, talking to the same moovd. It is the
+# reference the PWA is measured against, and the fallback if the PWA ever
+# needs to be bypassed.
+http://bulwark.atmosfera.cloud:80 {
+	redir https://{host}{uri} permanent
+}
+
+https://bulwark.atmosfera.cloud:443 {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource*
+	handle @jmap {
+		reverse_proxy moovd:8620 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy moov-bulwark-spike:3000
 	}
 }
