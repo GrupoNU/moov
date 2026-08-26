@@ -86,8 +86,12 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		"apiUrl":          base + PathAPI,
 		// URI Templates (level 1) with the variables §2 REQUIRES for each
 		// endpoint; {type} rides the query string as §2 recommends ("due to
-		// potential encoding issues with slashes in content types").
-		"downloadUrl":    base + "/jmap/download/{accountId}/{blobId}/{name}?accept={type}",
+		// potential encoding issues with slashes in content types"). The
+		// query parameter is named "type" because that is what handleDownload
+		// READS — the template advertised "accept=" for a while, which made a
+		// literal substitution yield application/octet-stream for everything
+		// (web/README.md gap 3); declared == applied covers URLs too.
+		"downloadUrl":    base + "/jmap/download/{accountId}/{blobId}/{name}?type={type}",
 		"uploadUrl":      base + "/jmap/upload/{accountId}",
 		"eventSourceUrl": base + "/jmap/eventsource?types={types}&closeafter={closeafter}&ping={ping}",
 		"state":          s.sessionState0(base, id),

@@ -316,7 +316,19 @@ docker compose logs moovd | grep '"level":"ERROR"'
 ```
 
 The JMAP request log records the path but never the query string and never a
-header — the `Authorization` header passing through this server is a password.
+header — the `Authorization` header passing through this server is a password,
+and since the scoped-token change the query string can carry an
+`access_token` (a short-lived, single-scope capability for EventSource and
+downloads; `internal/jmaphttp/token.go`). A test pins the redaction
+(`TestLogMiddlewareNeverLogsQueryString`).
+
+**The fronting Caddy must observe the same rule.** Caddy's access log, when
+enabled, records the full URI including the query. Either keep access logging
+off for `/jmap/*` (the pilot's default vhost has no `log` directive, which is
+Caddy's default: no access log), or accept that a VPN-only log briefly holds
+capabilities that expire in 10 minutes and grant one scope each. Do not ship
+a public deployment that writes `access_token` values to a log shipped
+anywhere.
 
 ### Upgrading
 
@@ -341,6 +353,12 @@ Migrations apply on start. `moovd` drains in-flight requests within
 - Phase 1 serves **raw HTML** in `bodyValues` over the authenticated API. The
   three-layer sanitization (ADR §5) is a requirement of Moov's own PWA in phase
   2; a third-party client does its own. See `SECURITY.md`.
+- Scoped access tokens (`/jmap/token`, `internal/jmaphttp/token.go`) need **no
+  deployment work**: no new environment variable, no migration, no new route in
+  the fronting proxy (they ride the existing `/jmap/*` paths). The signing key
+  is random per process, so **restarting `moovd` invalidates every outstanding
+  token** — by design; the PWA re-mints on its refresh cycle. The only operator
+  concern is the access-log rule under *Logs* above.
 
 ---
 

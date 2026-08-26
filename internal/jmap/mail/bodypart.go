@@ -364,14 +364,25 @@ func partID(p StructurePart) string { return strconv.Itoa(p.Index) }
 // octets of the contents of the part... This may be used to download the raw
 // contents".
 //
-// Phase 1 stores blobs per MESSAGE, not per part: internal/sync's
-// encodeStructure deliberately keeps part content out of the database, and the
-// blob store holds the whole raw message. There is therefore no per-part blob
-// to name, and inventing an id that download cannot serve would be worse than
-// null — a client would offer a download that 404s.
+// The store still holds one blob per MESSAGE (internal/sync's encodeStructure
+// keeps part content out of the database on purpose), so a part's blobId is a
+// DERIVED id: the message blob's hash plus the part index (partblob.go), which
+// Adapter.OpenBlob serves by re-parsing the raw message on demand — the same
+// re-parse, under the same limits, that already serves bodyValues. JMAP blobIds
+// are opaque to clients (RFC 8620 §6), so a composite id is as valid as a hash.
 //
-// So part blobIds are null in phase 1, the message's own blobId serves the
-// whole raw message, and per-part blobs are recorded in the J2 report as a
-// store gap for the epic that adds a part-addressed blob (blob_refs already
-// has the 'part' owner_kind reserved for exactly this).
-func partBlobID() any { return nil }
+// Two part kinds keep a null blobId, per §4.1.4's own rule and one honest
+// limitation:
+//
+//   - a multipart/* container ("null if, and only if, the part is of type
+//     multipart/*" applies to partId; a container has no octets to serve);
+//   - a message/rfc822 part: the parser descends into it rather than keeping
+//     its raw bytes, so there is no content to serve, and advertising an id
+//     that downloads nothing would be the 404-button this function's earlier
+//     version existed to avoid.
+func partBlobID(messageBlobID string, p StructurePart) any {
+	if messageBlobID == "" || p.IsMultipart || p.IsRFC822 {
+		return nil
+	}
+	return partBlobIDFor(messageBlobID, p.Index)
+}

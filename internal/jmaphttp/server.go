@@ -184,6 +184,10 @@ type Server struct {
 
 	// Remote-image proxy (ADR §5, the PWA's W-A4 epic). See imgproxy.go.
 	imgproxy *imageProxy
+
+	// Scoped short-lived tokens for the header-less browser contexts
+	// (EventSource, <a download>, <img>). See token.go.
+	tokens *tokenAuthority
 }
 
 // New builds a Server over an Authenticator.
@@ -230,6 +234,14 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		return nil, err
 	}
 
+	// The token authority follows the image proxy's model exactly: per-process
+	// random key, no configuration, constructed for every server so the PWA
+	// can rely on the routes existing. See token.go for the design.
+	tokens, err := newTokenAuthority()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
 		cfg:              cfg,
 		auth:             auth,
@@ -247,6 +259,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		maxSSEPerAccount: maxSSE,
 		branding:         newBrandingStore(cfg.BrandingDir, nil),
 		imgproxy:         imgproxy,
+		tokens:           tokens,
 	}, nil
 }
 

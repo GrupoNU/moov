@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { JmapClient, type BasicCredentials } from "../../api/jmap";
+import { JmapClient, withAccessToken, type BasicCredentials } from "../../api/jmap";
+import { TokenManager } from "../../api/tokens";
+import { connectPush } from "../../mail/push";
 import { useAuth } from "../../auth/AuthProvider";
 import { loadSession } from "../../auth/session";
 import { useBranding } from "../../branding/BrandingProvider";
@@ -138,6 +140,71 @@ export function MailScreen(): React.JSX.Element {
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
+  // --- scoped tokens + real-time push (closes P2 gap 4) ---------------------
+
+  /*
+   * The scoped tokens the header-less browser primitives need: `push` opens
+   * the EventSource, `blob` signs attachment hrefs. TokenManager mints them
+   * on session start, refreshes ahead of expiry, and — in this effect's
+   * cleanup, which runs on sign-out while the client's credential is still
+   * in memory — revokes them server-side. They are NOT credentials: the
+   * server refuses them everywhere except the one route each scope names.
+   */
+  const [pushToken, setPushToken] = useState<string | undefined>(undefined);
+  const [blobToken, setBlobToken] = useState<string | undefined>(undefined);
+  const tokenManagerRef = useRef<TokenManager | undefined>(undefined);
+
+  useEffect(() => {
+    if (client === undefined) return undefined;
+    const manager = new TokenManager(client, {
+      onTokens: (tokens) => {
+        setPushToken(tokens.push?.token);
+        setBlobToken(tokens.blob?.token);
+      },
+    });
+    tokenManagerRef.current = manager;
+    void manager.start();
+    return () => {
+      tokenManagerRef.current = undefined;
+      setPushToken(undefined);
+      setBlobToken(undefined);
+      void manager.stop();
+    };
+  }, [client]);
+
+  /*
+   * One push connection per token: when the manager refreshes the token this
+   * effect re-runs, closing the old stream and opening a new one — so a
+   * stream never outlives the token that authenticated it, and a server
+   * restart (which invalidates every token at once) heals through the same
+   * path. A burst of state events collapses into one refetch via a short
+   * trailing debounce; the refetch itself is the ordinary refresh cycle, so
+   * pushed changes and manual refreshes render through identical code.
+   */
+  useEffect(() => {
+    if (client === undefined || pushToken === undefined) return undefined;
+    if (typeof EventSource === "undefined") return undefined;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const handle = connectPush({
+      url: withAccessToken(client.eventSourceUrlFor(), pushToken),
+      onStateChange: () => {
+        if (debounce !== undefined) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          setRefreshToken((token) => token + 1);
+        }, 300);
+      },
+      onDead: () => {
+        // The browser gave up on the stream — with this server that means
+        // the token died (restart or revocation). A fresh mint reconnects.
+        void tokenManagerRef.current?.refreshNow();
+      },
+    });
+    return () => {
+      if (debounce !== undefined) clearTimeout(debounce);
+      handle.close();
+    };
+  }, [client, pushToken]);
+
   // --- mailboxes -----------------------------------------------------------
 
   useEffect(() => {
@@ -162,7 +229,12 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId]);
+    /*
+     * refreshToken is here on purpose: a pushed StateChange (or a completed
+     * write) bumps it, and the sidebar's unread counts are exactly what push
+     * exists to keep live.
+     */
+  }, [client, accountId, refreshToken]);
 
   /** The mailbox the route names, once the list has loaded. */
   const activeMailbox = useMemo<Mailbox | undefined>(() => {
@@ -943,6 +1015,7 @@ export function MailScreen(): React.JSX.Element {
               onArchive={runArchive}
               onDelete={runDelete}
               deleteIsPermanent={willDeletePermanently}
+              blobToken={blobToken}
             />
           </aside>
         )}

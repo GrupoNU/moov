@@ -121,9 +121,10 @@ describe("downloadUrlFor", () => {
   });
 
   /*
-   * The server advertises `?accept={type}` but its handler reads the `type`
-   * query parameter. Emitting `accept=` would make every download
-   * application/octet-stream. Recorded as a server gap; corrected here.
+   * The server's template now advertises `?type={type}` (the `accept=`
+   * mismatch was gap 3, fixed server-side). The fixture here still says
+   * `accept=` ON PURPOSE: the client normalises the query itself, so it must
+   * keep working against an older server whose template carries the old name.
    */
   it("emits the `type` parameter the server actually reads, not `accept`", async () => {
     const fetchImpl = recordingFetch([]);

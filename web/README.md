@@ -364,9 +364,11 @@ Two facts the renderer will need:
 - `bodyValues` is keyed by **`partId`, which is a decimal index as a string**
   (`"0"`, `"2"`) — not a content id. `MessageBody`'s `valueFor` already does
   this lookup.
-- **Every body part's `blobId` is `null`** on this server, so `cid:` inline
-  images cannot be fetched individually. They must either be dropped or the
-  server must grow per-part blobs first (see the gaps below).
+- **Per-part `blobId` is real now** (gap 5 closed server-side, 2026-08-26):
+  every leaf part advertises a derived id (`<messageBlob>-<partIndex>`) the
+  download route serves, so `cid:` inline images can be fetched individually —
+  with a `blob`-scoped token in the query string, since an `<img>` carries no
+  header (`src/api/tokens.ts` holds the token, `withAccessToken` attaches it).
 
 ---
 
@@ -529,26 +531,29 @@ server-side with a test, never worked around with a client hack.
    not a code one. P1's design degrades correctly, which is why it presents as
    two console 404s rather than a broken page.
 
-3. **The Session's `downloadUrl` template names the wrong query parameter.** It
-   advertises `?accept={type}` while the handler reads `type`
-   (`internal/jmaphttp/server.go`). Substituting the template literally yields
-   `application/octet-stream` for everything. `downloadUrlFor` emits `type=` and
-   a test pins it; the template should be corrected server-side.
+3. **CLOSED (2026-08-26): the Session's `downloadUrl` template names the
+   parameter the handler reads.** It advertised `?accept={type}` while the
+   handler read `type`; the template now says `?type={type}`
+   (`internal/jmaphttp/session.go`). `downloadUrlFor` still normalises the
+   query client-side, so it also works against an older server.
 
-4. **Downloads and SSE cannot be used by a browser's native primitives.** Both
-   routes require HTTP Basic, and neither an `<a download>` navigation nor
-   `EventSource` can send an `Authorization` header — verified live: both answer
-   401 with `WWW-Authenticate: Basic`, which pops a native credential dialog at
-   the user. Downloads therefore go through `fetch` + `objectURL` (implemented).
-   **SSE has no client-side workaround that is not a rewrite** (a fetch-stream
-   reader), so P4's push story needs either a short-lived pre-signed token in
-   the URL or a cookie for these two routes.
+4. **CLOSED (2026-08-26): scoped short-lived tokens open both routes to the
+   browser's native primitives.** The server mints single-scope, account-bound
+   tokens at `POST /jmap/token` (10-minute TTL, revoked at sign-out via
+   `POST /jmap/token/revoke`, refused everywhere but their own route — a push
+   token at `/jmap/api` is a 401, pinned by test). `EventSource` connects with
+   `?access_token=` (scope `push`); `<a download>` uses the same form with
+   scope `blob`. Client side: `src/api/tokens.ts` (mint/refresh/revoke
+   lifecycle), `src/mail/push.ts` (the stream), wired in `MailScreen`. The
+   full threat model is in `internal/jmaphttp/token.go`.
 
-5. **Per-attachment download is impossible: every body part's `blobId` is
-   `null`.** Phase 1 stores one blob per message. The reading pane therefore
-   lists attachments with real names, types and sizes — which is genuinely
-   useful — and offers the download that works: the whole original message. This
-   also blocks inline `cid:` images for the HTML renderer epic.
+5. **CLOSED (2026-08-26): per-part `blobId` is served.** Every leaf part now
+   advertises a derived id (`<messageBlobSha256>-<partIndex>`,
+   `internal/jmap/mail/partblob.go`) that the download route serves by
+   re-parsing the message blob on demand — same ownership rule, same parser
+   limits as `bodyValues`. The reading pane renders each attachment as a
+   native `<a download>` with a `blob` token. Residual: `message/rfc822`
+   parts keep a null `blobId` (the parser does not retain their raw bytes).
 
 6. **Expunges are not reconciled into the store (observed, unresolved).** After
    moving the 620 seeded messages out of INBOX and expunging them, IMAP reports
@@ -903,24 +908,21 @@ shapes.
 
 The P2 list above stands unchanged. P3 found:
 
-7. **`npm run typecheck` is broken at HEAD and predates this epic.** The script
-   passes `--noEmit false --emitDeclarationOnly false`, which conflicts with
-   `allowImportingTsExtensions` in both `tsconfig.app.json` and
-   `tsconfig.node.json` (`TS5096`), so it fails with two errors on a clean
-   checkout — and, worse, *emits `.js` files next to every source* when it gets
-   far enough. Confirmed by stashing all P3 work and re-running on a clean
-   tree. **`npx tsc -b` is the correct invocation** and is what `npm run build`
-   uses; the script should simply be `tsc -b`. Not fixed here because the
-   director may want it as its own commit.
+7. **CLOSED (2026-08-26): `npm run typecheck` works.** The script is now
+   `tsc -b --pretty` — the invocation `npm run build` already used — instead
+   of the `--noEmit false` flags that conflicted with
+   `allowImportingTsExtensions` (`TS5096`) and emitted `.js` files next to
+   sources.
 
 8. **`EmailSubmission/query` is still unregistered.** P3 does not need it: the
    composer holds the submission id it just created and cancels by that id, so
    nothing enumerates submissions. It will be needed by any future outbox view.
 
-9. **Per-part `blobId` is still `null`** (P2 gap 5), so a **forward does not
-   carry the original's attachments**. The composer says nothing about
-   attachments it cannot re-attach rather than silently dropping files the user
-   could see listed in the reading pane. Closing gap 5 server-side closes this.
+9. **CLOSED server-side (2026-08-26) with P2 gap 5:** part blobIds are real,
+   and `Email/set create` reads attachment blobIds through the same
+   `OpenBlob`, so a forward CAN now re-attach the original's parts. The
+   composer wiring for that is still pending (it needs to seed the draft's
+   attachment list from the original message).
 
 ## Notes for P4 (offline, PWA install, Bulwark replacement)
 
@@ -929,11 +931,10 @@ The P2 list above stands unchanged. P3 found:
   per-message inverse for undo. An offline queue is the same structure with a
   durable backing store and a replay on reconnect; `useMessageActions` is the
   one file to extend.
-- **SSE is still blocked client-side** (P2 gap 4): `EventSource` cannot send an
-  Authorization header, and the pilot answers 401. P3's `refresh()` after every
-  write is the interim mechanism. P4 needs the server to grow either a
-  short-lived pre-signed token in the URL or a cookie for that route — or the
-  client needs a fetch-stream reader, which is a rewrite.
+- **SSE works now** (P2 gap 4 closed, 2026-08-26): `MailScreen` opens an
+  `EventSource` with a `push`-scoped token, and a pushed `StateChange` bumps
+  the same refresh cycle writes use (with a short debounce). The next step
+  P4 owns is turning that blunt refetch into a targeted `Email/changes`.
 - **Drafts are the offline case that matters most.** `createAutosaveScheduler`
   already separates *when* to save from *how*, so an IndexedDB-first save with
   a background flush to the server slots in without touching the composer.

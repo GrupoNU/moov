@@ -109,6 +109,10 @@ that is a vulnerability, even if nothing else looks wrong:
   with no script execution.
 - **Remote content in mail is proxied**, never fetched directly by the browser,
   with HMAC-signed URLs and SSRF protection on the proxy.
+- **Access tokens are not credentials.** The short-lived tokens that let
+  header-less browser contexts (EventSource, downloads) authenticate are
+  single-scope and account-bound, expire in minutes, are revocable and die
+  with the process; presenting one at the API endpoint must always fail.
 - **Certificate verification is always on.** There is no global switch to
   disable it.
 - **Mailcow's mail store is never touched directly.** Everything goes through

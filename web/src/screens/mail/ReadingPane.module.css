@@ -230,6 +230,17 @@
   color: var(--text-default);
 }
 
+/* The name is a real download link when the server gave the part a blobId
+   and a blob token is held; it reads like the plain name until pointed at. */
+a.attachmentName {
+  text-decoration: none;
+}
+
+a.attachmentName:hover,
+a.attachmentName:focus-visible {
+  text-decoration: underline;
+}
+
 .attachmentMeta {
   flex: none;
   font-size: var(--text-xs);

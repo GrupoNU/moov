@@ -12,7 +12,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false --pretty",
+    "typecheck": "tsc -b --pretty",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest"

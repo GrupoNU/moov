@@ -98,6 +98,34 @@ export function backRef(
 }
 
 /**
+ * The scopes a token can carry (server: internal/jmaphttp/token.go).
+ *
+ *  - `push`: GET /jmap/eventsource — an EventSource cannot set headers.
+ *  - `blob`: GET /jmap/download/... — an `<a download>` or `<img>` cannot
+ *    either.
+ */
+export type TokenScope = "push" | "blob";
+
+/** One minted token: the value and its lifetime in seconds. */
+export interface MintedToken {
+  readonly token: string;
+  readonly expiresIn: number;
+}
+
+/** What POST /jmap/token returns: scope → token. */
+export type MintedTokens = Partial<Record<TokenScope, MintedToken>>;
+
+/**
+ * Appends a scoped token to an already-expanded same-origin URL (a download
+ * href, the eventsource URL). Exists so the query-parameter name lives in ONE
+ * place, and so the token is always encoded.
+ */
+export function withAccessToken(url: string, token: string): string {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}access_token=${encodeURIComponent(token)}`;
+}
+
+/**
  * Credentials for HTTP Basic (arbitration J-A1).
  *
  * Basic is what the server implements today. It is held in memory only — see
@@ -306,11 +334,10 @@ export class JmapClient {
   /**
    * Expands the Session's `downloadUrl` template (RFC 8620 §2).
    *
-   * NOTE the deliberate correction: the server advertises the template with
-   * `?accept={type}`, but its handler reads the `type` query parameter. Passing
-   * `accept=` therefore yields `application/octet-stream` for everything. We
-   * emit `type=` so an allowlisted content type is honoured, and the mismatch
-   * is recorded as a server gap rather than silently worked around forever.
+   * The server now advertises `?type={type}` — the parameter its handler
+   * actually reads (the `?accept=` mismatch was gap 3 and is fixed
+   * server-side). The client still normalises the query itself, so it keeps
+   * working against an older server whose template says `accept=`.
    */
   downloadUrlFor(accountId: string, blobId: string, name: string, type: string): string {
     // Same-origin for the same reason as apiUrl: the advertised URL is
@@ -327,6 +354,78 @@ export class JmapClient {
     // Drop whatever query the template carried and set the one the server reads.
     const withoutQuery = expanded.split("?")[0] ?? expanded;
     return `${withoutQuery}?type=${encodeURIComponent(type)}`;
+  }
+
+  /**
+   * Expands the Session's `eventSourceUrl` template (RFC 8620 §7.3).
+   *
+   * Same-origin for the same reason as every other advertised URL; the three
+   * §7.3 variables are substituted rather than left for the server to treat
+   * as unexpanded-template defaults. The caller appends the push token with
+   * {@link withAccessToken} — EventSource can send no header, which is the
+   * entire reason the token exists.
+   */
+  eventSourceUrlFor(
+    options: { readonly types?: string; readonly closeafter?: "no" | "state"; readonly ping?: number } = {},
+  ): string {
+    const { types = "*", closeafter = "no", ping = 30 } = options;
+    const base = sameOrigin(
+      this.session?.eventSourceUrl,
+      `${this.baseUrl}/jmap/eventsource?types={types}&closeafter={closeafter}&ping={ping}`,
+    );
+    const withoutQuery = base.split("?")[0] ?? base;
+    return (
+      `${withoutQuery}?types=${encodeURIComponent(types)}` +
+      `&closeafter=${encodeURIComponent(closeafter)}&ping=${encodeURIComponent(String(ping))}`
+    );
+  }
+
+  /**
+   * Mints scoped short-lived tokens (server: internal/jmaphttp/token.go).
+   *
+   * An auxiliary REST endpoint like `/jmap/imgproxy/sign` — RFC 8620 has no
+   * vocabulary for "mint me a capability". The tokens exist for the two
+   * browser contexts that cannot attach an Authorization header: EventSource
+   * (scope `push`) and `<a download>`/`<img>` (scope `blob`). Each token is
+   * account-bound, single-scope, expires server-side in `expiresIn` seconds,
+   * and is REFUSED at `/jmap/api` — it is not a session credential, so
+   * holding one grants none of what the password grants.
+   */
+  async mintTokens(
+    scopes: readonly TokenScope[],
+    signal?: AbortSignal,
+  ): Promise<MintedTokens> {
+    const response = await this.request(
+      "/jmap/token",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scopes }),
+      },
+      signal,
+    );
+    const body = (await response.json()) as { tokens?: MintedTokens };
+    return body.tokens ?? {};
+  }
+
+  /**
+   * Revokes tokens server-side — the sign-out path. The server deletes them
+   * from its registry immediately instead of waiting out the TTL. Errors are
+   * NOT swallowed here: the caller decides whether a failed revocation is
+   * worth surfacing (sign-out treats it as best-effort, because the TTL
+   * bounds the residual exposure to minutes).
+   */
+  async revokeTokens(tokens: readonly string[], signal?: AbortSignal): Promise<void> {
+    if (tokens.length === 0) return;
+    await this.request(
+      "/jmap/token/revoke",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokens }),
+      },
+      signal,
+    );
   }
 
   /**

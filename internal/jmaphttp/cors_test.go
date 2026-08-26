@@ -26,6 +26,10 @@ var corsRoutes = []struct{ method, path string }{
 	// it too gets a preflight like any endpoint the app calls cross-origin.
 	{http.MethodPost, "/jmap/imgproxy/sign"},
 	{http.MethodGet, "/jmap/imgproxy"},
+	// Scoped tokens (token.go): mint and revoke are ordinary authenticated
+	// POSTs the PWA calls with fetch, so they preflight like /jmap/api.
+	{http.MethodPost, "/jmap/token"},
+	{http.MethodPost, "/jmap/token/revoke"},
 }
 
 func TestPreflightCoversEveryRoute(t *testing.T) {

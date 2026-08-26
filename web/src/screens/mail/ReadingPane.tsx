@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
-import type { JmapClient } from "../../api/jmap";
+import { withAccessToken, type JmapClient } from "../../api/jmap";
 import { signImageProxyUrls } from "../../mail/api";
 import { formatBytes, formatFullDate, initialsFor, machineDate } from "../../mail/format";
 import { displaySubject, senderLabel } from "../../mail/threading";
@@ -28,6 +28,14 @@ export interface ReadingPaneProps {
   /** Used for attachment and raw-message downloads, which need auth headers. */
   readonly client: JmapClient;
   readonly accountId: string;
+  /**
+   * The current `blob`-scoped download token, when one is held. It turns each
+   * attachment into a NATIVE `<a download>` — the browser streams the bytes
+   * itself instead of the app buffering them through fetch+objectURL. Absent
+   * (still minting, or the feature failed), the per-attachment links simply
+   * do not render and the whole-message download below still works.
+   */
+  readonly blobToken?: string | undefined;
   // --- P3: acting on the open message --------------------------------------
   readonly onReply: () => void;
   readonly onReplyAll: () => void;
@@ -52,6 +60,7 @@ export function ReadingPane({
   onArchive,
   onDelete,
   deleteIsPermanent,
+  blobToken,
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
 
@@ -199,6 +208,7 @@ export function ReadingPane({
           email={email}
           client={client}
           accountId={accountId}
+          blobToken={blobToken}
         />
       )}
 
@@ -238,52 +248,79 @@ function AddressRow({
 /**
  * The attachment list.
  *
- * # The server gap this works around HONESTLY
+ * Per-attachment download is real now: the server advertises a derived
+ * per-part `blobId` (P2 gap 5, closed), and a `blob`-scoped token turns each
+ * attachment into a native `<a download>` — the browser streams the bytes,
+ * nothing is buffered in the page. The token rides the query string because
+ * a navigation can carry no header; it is single-scope, account-bound and
+ * expires in minutes (see the server's token.go for the full threat model).
  *
- * Every body part's `blobId` is `null` on this server (phase 1 stores one blob
- * per MESSAGE, not per part), so an individual attachment cannot be fetched.
- * Rather than render dead buttons, each attachment is listed with its real
- * name, type and size — which IS useful — and the download offered is the one
- * that actually works: the whole original message. When per-part blobs land
- * server-side, only the `href`/handler below changes.
+ * When either half is missing — an old message row without part ids, or the
+ * token not yet minted — the attachment is listed without a link, exactly as
+ * before, and the whole-message download below still always works.
  */
 function AttachmentList({
   attachments,
   email,
   client,
   accountId,
+  blobToken,
 }: {
   readonly attachments: readonly EmailBodyPart[];
   readonly email: Email;
   readonly client: JmapClient;
   readonly accountId: string;
+  readonly blobToken?: string | undefined;
 }): React.JSX.Element {
-  const { format, locale } = useTranslation();
+  const { t, format, locale } = useTranslation();
+
+  const hrefFor = (part: EmailBodyPart): string | undefined => {
+    if (part.blobId === null || blobToken === undefined) return undefined;
+    const name = part.name ?? "attachment";
+    return withAccessToken(
+      client.downloadUrlFor(accountId, part.blobId, name, part.type),
+      blobToken,
+    );
+  };
 
   return (
     <section className={styles.attachments} aria-label={format("reader.attachments", attachments.length)}>
       <p className={styles.attachmentsTitle}>{format("reader.attachments", attachments.length)}</p>
       <ul className={styles.attachmentList}>
-        {attachments.map((part, index) => (
-          <li key={part.partId ?? index} className={styles.attachment}>
-            <svg
-              className={styles.attachmentIcon}
-              viewBox="0 0 20 20"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M11.5 2.5H5.8a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h8.4a1 1 0 0 0 1-1V6.2z" />
-              <path d="M11.5 2.5v3.7h3.7" />
-            </svg>
-            <span className={styles.attachmentName}>{part.name ?? part.type}</span>
-            <span className={styles.attachmentMeta}>
-              {formatBytes(part.size, locale)}
-            </span>
-          </li>
-        ))}
+        {attachments.map((part, index) => {
+          const href = hrefFor(part);
+          return (
+            <li key={part.partId ?? index} className={styles.attachment}>
+              <svg
+                className={styles.attachmentIcon}
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M11.5 2.5H5.8a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h8.4a1 1 0 0 0 1-1V6.2z" />
+                <path d="M11.5 2.5v3.7h3.7" />
+              </svg>
+              {href !== undefined ? (
+                <a
+                  className={styles.attachmentName}
+                  href={href}
+                  download={part.name ?? "attachment"}
+                  title={t("reader.download")}
+                >
+                  {part.name ?? part.type}
+                </a>
+              ) : (
+                <span className={styles.attachmentName}>{part.name ?? part.type}</span>
+              )}
+              <span className={styles.attachmentMeta}>
+                {formatBytes(part.size, locale)}
+              </span>
+            </li>
+          );
+        })}
       </ul>
       <DownloadOriginalButton email={email} client={client} accountId={accountId} />
     </section>

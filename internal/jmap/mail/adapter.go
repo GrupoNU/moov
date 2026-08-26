@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/GrupoNU/moov/internal/blob"
 	"github.com/GrupoNU/moov/internal/jmap"
+	"github.com/GrupoNU/moov/internal/parser"
 	"github.com/GrupoNU/moov/internal/store"
 )
 
@@ -25,6 +27,12 @@ import (
 type Adapter struct {
 	store *store.Store
 	blobs *blob.Store
+
+	// parserLimits bound the on-demand re-parse a PART download performs
+	// (partblob.go). The defaults here are the same defaults register.go
+	// gives Deps.ParserLimits, so a part download and a bodyValues read of
+	// the same message parse under the same budget.
+	parserLimits parser.Limits
 }
 
 // NewAdapter builds the store-backed readers.
@@ -35,7 +43,7 @@ func NewAdapter(st *store.Store, blobs *blob.Store) (*Adapter, error) {
 	if blobs == nil {
 		return nil, errors.New("mail: a blob store is required")
 	}
-	return &Adapter{store: st, blobs: blobs}, nil
+	return &Adapter{store: st, blobs: blobs, parserLimits: parser.DefaultLimits()}, nil
 }
 
 // NewDeps builds the full dependency set for RegisterGetMethods over a real
@@ -506,6 +514,14 @@ func (a *Adapter) ThreadsByID(ctx context.Context, accountID int64, ids []string
 // detached part later) is downloadable, and one it does not reference is
 // indistinguishable from one that does not exist.
 func (a *Adapter) OpenBlob(ctx context.Context, accountID int64, blobID string) (io.ReadCloser, int64, error) {
+	// The composite part form (<hash>-<index>, partblob.go) serves one part's
+	// decoded content out of the message blob. It goes through the SAME
+	// ownership rule as the whole message: the account must reference the
+	// underlying blob, and every refusal is the same ErrNotFound.
+	if msgHash, partIndex, ok := parsePartBlobID(blobID); ok {
+		return a.openPartBlob(ctx, accountID, msgHash, partIndex)
+	}
+
 	h, err := blob.ParseHash(blobID)
 	if err != nil {
 		// A malformed blobId cannot name anything; it is not found, not a
@@ -537,6 +553,39 @@ func (a *Adapter) OpenBlob(ctx context.Context, accountID int64, blobID string) 
 		return nil, 0, err
 	}
 	return rc, size, nil
+}
+
+// openPartBlob serves one part's decoded content from its message blob: the
+// ownership check on the MESSAGE blob (a part grants nothing the message did
+// not), then a bounded re-parse and the part's Content — the same derivation,
+// under the same parser limits, that bodyValues performs for the same part.
+func (a *Adapter) openPartBlob(ctx context.Context, accountID int64, msgHash string, partIndex int) (io.ReadCloser, int64, error) {
+	h, err := blob.ParseHash(msgHash)
+	if err != nil {
+		return nil, 0, ErrNotFound
+	}
+	owned, err := a.accountReferencesBlob(ctx, accountID, h)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !owned {
+		return nil, 0, ErrNotFound
+	}
+
+	rc, err := a.blobs.Open(h)
+	if err != nil {
+		if errors.Is(err, blob.ErrNotFound) {
+			return nil, 0, ErrNotFound
+		}
+		return nil, 0, err
+	}
+	defer func() { _ = rc.Close() }()
+
+	content, err := extractPartContent(rc, partIndex, a.parserLimits)
+	if err != nil {
+		return nil, 0, err
+	}
+	return io.NopCloser(bytes.NewReader(content)), int64(len(content)), nil
 }
 
 // ---------------------------------------------------------------------------

@@ -310,16 +310,16 @@ func (d *Deps) renderEmail(
 	textBody, htmlBody, attachments := bodyStructureLists(root)
 
 	if props["bodyStructure"] {
-		out["bodyStructure"] = renderBodyPart(root, bodyProps, true)
+		out["bodyStructure"] = renderBodyPart(root, row.BlobID, bodyProps, true)
 	}
 	if props["textBody"] {
-		out["textBody"] = renderBodyPartList(textBody, bodyProps)
+		out["textBody"] = renderBodyPartList(textBody, row.BlobID, bodyProps)
 	}
 	if props["htmlBody"] {
-		out["htmlBody"] = renderBodyPartList(htmlBody, bodyProps)
+		out["htmlBody"] = renderBodyPartList(htmlBody, row.BlobID, bodyProps)
 	}
 	if props["attachments"] {
-		out["attachments"] = renderBodyPartList(attachments, bodyProps)
+		out["attachments"] = renderBodyPartList(attachments, row.BlobID, bodyProps)
 	}
 
 	if !props["bodyValues"] {
@@ -430,10 +430,12 @@ func (d *Deps) bodyValuesFor(
 }
 
 // renderBodyPartList renders a list of parts, always as an array.
-func renderBodyPartList(nodes []*bodyPartNode, bodyProps []string) []any {
+// messageBlobID is the owning message's blob hash, from which each leaf
+// part's derived blobId is built (partblob.go).
+func renderBodyPartList(nodes []*bodyPartNode, messageBlobID string, bodyProps []string) []any {
 	out := make([]any, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, renderBodyPart(n, bodyProps, false))
+		out = append(out, renderBodyPart(n, messageBlobID, bodyProps, false))
 	}
 	return out
 }
@@ -444,7 +446,7 @@ func renderBodyPartList(nodes []*bodyPartNode, bodyProps []string) []any {
 // The flat lists (textBody/htmlBody/attachments) are defined by §4.1.4 as
 // lists of leaf parts, so rendering subParts inside them would duplicate the
 // tree into every list.
-func renderBodyPart(n *bodyPartNode, bodyProps []string, withSubParts bool) map[string]any {
+func renderBodyPart(n *bodyPartNode, messageBlobID string, bodyProps []string, withSubParts bool) map[string]any {
 	if n == nil {
 		return nil
 	}
@@ -464,7 +466,13 @@ func renderBodyPart(n *bodyPartNode, bodyProps []string, withSubParts bool) map[
 		}
 	}
 	if want["blobId"] {
-		out["blobId"] = partBlobID()
+		// §4.1.4: null for a container; a derived, downloadable id for a leaf
+		// (partblob.go — served by re-parsing the message blob on demand).
+		if n.isMultipart() {
+			out["blobId"] = nil
+		} else {
+			out["blobId"] = partBlobID(messageBlobID, n.part)
+		}
 	}
 	if want["size"] {
 		// §4.1.4: "The size, in octets, of the raw data after content transfer
@@ -522,7 +530,7 @@ func renderBodyPart(n *bodyPartNode, bodyProps []string, withSubParts bool) map[
 		if n.isMultipart() {
 			subs := make([]any, 0, len(n.children))
 			for _, c := range n.children {
-				subs = append(subs, renderBodyPart(c, bodyProps, withSubParts))
+				subs = append(subs, renderBodyPart(c, messageBlobID, bodyProps, withSubParts))
 			}
 			out["subParts"] = subs
 		} else {

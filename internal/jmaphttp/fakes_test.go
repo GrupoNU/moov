@@ -73,6 +73,20 @@ func (d *fakeDirectory) GetAccountByEmail(_ context.Context, email string) (stor
 	return a, nil
 }
 
+func (d *fakeDirectory) GetAccount(_ context.Context, id int64) (store.Account, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.err != nil {
+		return store.Account{}, d.err
+	}
+	for _, a := range d.accounts {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return store.Account{}, fmt.Errorf("account %d: %w", id, store.ErrNotFound)
+}
+
 func (d *fakeDirectory) put(a store.Account) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

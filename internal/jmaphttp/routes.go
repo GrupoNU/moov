@@ -49,6 +49,14 @@ type route struct {
 	// to collect. A test pins the public set so a third one cannot appear
 	// unnoticed.
 	public bool
+
+	// tokenScope, when set, additionally lets the route accept a scoped
+	// short-lived token in the query string (token.go) — for the browser
+	// contexts that cannot attach an Authorization header. The zero value
+	// keeps a route Basic-only, so /jmap/api and every other route refuse a
+	// token by CONSTRUCTION, not by a check someone must remember. A test
+	// pins the token-accepting set exactly as one pins the public set.
+	tokenScope TokenScope
 }
 
 // routes returns the complete route table. Every route gets a CORS preflight
@@ -59,9 +67,18 @@ func (s *Server) routes() []route {
 	return []route{
 		{method: http.MethodGet, pattern: PathWellKnown, handler: s.handleSession},
 		{method: http.MethodPost, pattern: PathAPI, handler: s.handleAPI},
-		{method: http.MethodGet, pattern: PathDownload, handler: s.handleDownload},
+		// Download and EventSource additionally accept a scoped token in the
+		// query string: an <a download>, an <img> and an EventSource cannot
+		// attach an Authorization header (verified against the live pilot —
+		// web/README.md gap 4). Each route accepts ONLY its own scope.
+		{method: http.MethodGet, pattern: PathDownload, handler: s.handleDownload, tokenScope: ScopeBlob},
 		{method: http.MethodPost, pattern: PathUpload, handler: s.handleUpload},
-		{method: http.MethodGet, pattern: PathEventSource, handler: s.handleEventSource},
+		{method: http.MethodGet, pattern: PathEventSource, handler: s.handleEventSource, tokenScope: ScopePush},
+
+		// Token minting and revocation (token.go). Basic-authenticated like
+		// any other route — minting rides the same cache/lockout/budget path.
+		{method: http.MethodPost, pattern: PathToken, handler: s.handleTokenMint},
+		{method: http.MethodPost, pattern: PathTokenRevoke, handler: s.handleTokenRevoke},
 
 		// Branding (W-A1): public by design, see branding.go.
 		{method: http.MethodGet, pattern: PathBranding, handler: s.handleBranding, public: true},
@@ -87,7 +104,12 @@ func (s *Server) Handler() http.Handler {
 	methodsByPattern := make(map[string][]string)
 	for _, rt := range s.routes() {
 		h := rt.handler
-		if !rt.public {
+		switch {
+		case rt.public:
+			// Served without authentication; the set is pinned by test.
+		case rt.tokenScope != "":
+			h = s.requireAuthOrToken(rt.tokenScope, h)
+		default:
 			h = s.requireAuth(h)
 		}
 		mux.Handle(rt.method+" "+rt.pattern, h)

@@ -42,8 +42,13 @@ type CredentialValidator interface {
 // AccountDirectory is the slice of the store the auth layer needs:
 // "is this authenticated user provisioned, and in what state". Satisfied by
 // *store.Store.
+//
+// GetAccount (by id) exists for the token path: a minted token names the
+// account by its stable row id, and its identity is resolved with the same
+// per-request store consultation the Basic path does by email.
 type AccountDirectory interface {
 	GetAccountByEmail(ctx context.Context, email string) (store.Account, error)
+	GetAccount(ctx context.Context, id int64) (store.Account, error)
 }
 
 // Identity is an authenticated, provisioned caller.
