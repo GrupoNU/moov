@@ -12,9 +12,23 @@ export type ThemePreference = "light" | "dark" | "system";
 
 const STORAGE_KEY = "moov.theme.v1";
 
-/** The default. "system" is the only honest default: the user already told the
- * OS what they want, and overriding that would be presumptuous. */
-export const DEFAULT_THEME: ThemePreference = "system";
+/**
+ * The default, for a visitor who has never chosen.
+ *
+ * LIGHT, not "system". A branded product's first contact is the one paint it
+ * does not get to redo: the customer's accent, splash and logo are authored
+ * against a light ground (that is the palette layer 2 derives from the seeds
+ * by default), and a dark OS silently re-deriving them means the first thing a
+ * new user sees is not the thing the brand was designed as. The reference
+ * clients in this market make the same call — Gmail on the web has no "follow
+ * system" state at all and opens Light regardless of the OS, and that is the
+ * behaviour our pilot users compare us against.
+ *
+ * "system" remains a first-class CHOICE, one click away in Settings, and it is
+ * honoured for the whole session and every session after. What it is not is
+ * the answer we assume on someone's behalf before they have told us anything.
+ */
+export const DEFAULT_THEME: ThemePreference = "light";
 
 export function isThemePreference(value: unknown): value is ThemePreference {
   return value === "light" || value === "dark" || value === "system";

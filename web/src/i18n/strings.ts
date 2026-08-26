@@ -88,9 +88,13 @@ export const en = {
   "shell.mailboxes": "Mailboxes",
   "shell.signOut": "Sign out",
   "shell.signedInAs": (email: string): string => `Signed in as ${email}`,
-  "shell.comingSoon": "Your mail is on the way",
-  "shell.comingSoonBody":
-    "You are signed in. The message list arrives in the next release.",
+
+  // --- settings ---
+  "settings.title": "Settings",
+  "settings.open": "Settings",
+  "settings.close": "Close",
+  "settings.section.appearance": "Appearance",
+  "settings.theme.description": "Choose how Moov looks, or follow your system.",
 
   // --- theme control ---
   "theme.label": "Theme",
@@ -440,9 +444,12 @@ export const es: Strings = {
   "shell.mailboxes": "Carpetas",
   "shell.signOut": "Cerrar sesión",
   "shell.signedInAs": (email: string): string => `Sesión iniciada como ${email}`,
-  "shell.comingSoon": "Tu correo está en camino",
-  "shell.comingSoonBody":
-    "Ya iniciaste sesión. La lista de mensajes llega en la próxima versión.",
+
+  "settings.title": "Configuración",
+  "settings.open": "Configuración",
+  "settings.close": "Cerrar",
+  "settings.section.appearance": "Apariencia",
+  "settings.theme.description": "Elegí cómo se ve Moov, o seguí el sistema.",
 
   "theme.label": "Tema",
   "theme.light": "Claro",

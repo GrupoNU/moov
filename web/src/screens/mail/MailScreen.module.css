@@ -110,12 +110,69 @@
   border-right: 1px solid var(--border-subtle);
   overflow-y: auto;
   min-height: 0;
+  /* A flex column so the settings footer can claim the leftover space with
+   * `margin-top: auto` and sit at the bottom of a short folder list — while
+   * still being pushed below the fold, and scrolled to, on a long one. A
+   * separately positioned footer would have needed a second scroll container
+   * and would overlap the last folder. */
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebarError {
   padding: var(--space-4) var(--space-3);
   font-size: var(--text-sm);
   color: var(--color-danger);
+}
+
+/* --- the settings entry point, bottom-left --- */
+
+.sidebarFooter {
+  /* This is what pins the gear to the bottom. */
+  margin-top: auto;
+  padding-top: var(--space-3);
+  /* A rule rather than a gap: it says "below this line, the app itself"
+   * instead of leaving the gear looking like a folder that drifted. */
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settingsButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  /* --text-default, not --text-muted: this is a control, and muted grey on
+   * the sidebar surface is the pairing that fails AA at this size. */
+  color: var(--text-default);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.settingsButton:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+/* The gear turns a little on hover — enough to read as "this opens the
+ * machinery" without becoming a spinner. base.css neutralises the transition
+ * for prefers-reduced-motion users. */
+.settingsIcon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.settingsButton:hover .settingsIcon {
+  transform: rotate(25deg);
 }
 
 .listColumn {

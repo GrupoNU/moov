@@ -1,0 +1,139 @@
+/*
+ * The settings sheet.
+ *
+ * Deliberately the same geometry vocabulary as ShortcutsDialog — same
+ * backdrop, same raised card, same close affordance — because they are the two
+ * modal sheets in the app and a user should not have to learn two. What
+ * differs is the body: rows rather than a definition list.
+ */
+
+.dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 4rem);
+  /* The dialog element centres itself with margin:auto in the top layer. */
+  margin: auto;
+  overflow: visible;
+}
+
+.dialog::backdrop {
+  background: var(--surface-overlay);
+  backdrop-filter: blur(2px);
+}
+
+.content {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  max-height: calc(100dvh - 4rem);
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.title {
+  font-size: var(--text-lg);
+  color: var(--text-strong);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+
+.close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.close:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  border-color: var(--border-subtle);
+}
+
+/* --- sections and rows --- */
+
+.section + .section {
+  margin-top: var(--space-6);
+}
+
+.sectionTitle {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.row:last-child {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowLabel {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+}
+
+.rowDescription {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.rowControl {
+  flex: none;
+}
+
+/* On a narrow sheet the control drops under its label rather than squeezing
+ * the description into a column two words wide. */
+@media (max-width: 30rem) {
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .rowControl {
+    align-self: flex-start;
+  }
+}

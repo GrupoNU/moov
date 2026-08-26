@@ -7,7 +7,6 @@ import { useAuth } from "../../auth/AuthProvider";
 import { loadSession } from "../../auth/session";
 import { useBranding } from "../../branding/BrandingProvider";
 import { BrandMark } from "../../components/BrandMark";
-import { ThemeToggle } from "../../components/ThemeToggle";
 import { useTranslation } from "../../i18n/I18nProvider";
 import {
   INITIAL_KEYBOARD_STATE,
@@ -56,6 +55,7 @@ import { mailboxLabel } from "./mailboxLabels";
 import { MessageList } from "./MessageList";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
+import { SettingsDialog } from "../settings/SettingsDialog";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useMessageActions } from "./useMessageActions";
 import { formatFullDate } from "../../mail/format";
@@ -129,6 +129,7 @@ export function MailScreen(): React.JSX.Element {
     route.kind === "search" ? route.query : "",
   );
   const [helpOpen, setHelpOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | undefined>(undefined);
 
   // --- P3 state ------------------------------------------------------------
@@ -762,7 +763,19 @@ export function MailScreen(): React.JSX.Element {
           setHelpOpen(true);
           break;
         case "closeOverlay":
-          if (helpOpen) setHelpOpen(false);
+          /*
+           * The overlays are closed in STACKING order, topmost first.
+           *
+           * This branch exists because the global handler calls
+           * preventDefault() once it owns a key, which means a <dialog>'s own
+           * native Escape never fires while this listener is bound. Any modal
+           * added to this screen must therefore be listed here or it becomes
+           * un-dismissable by keyboard — a real defect, and the reason the
+           * settings sheet is named explicitly rather than assumed to handle
+           * its own Escape the way an unmounted dialog would.
+           */
+          if (settingsOpen) setSettingsOpen(false);
+          else if (helpOpen) setHelpOpen(false);
           // The composer owns its own Escape (it must flush the draft first),
           // so the global handler must not close it out from under that.
           else if (composerDraft !== undefined) break;
@@ -810,6 +823,7 @@ export function MailScreen(): React.JSX.Element {
       mailboxes,
       goToMailbox,
       helpOpen,
+      settingsOpen,
       openMessageId,
       composerDraft,
       selection,
@@ -916,7 +930,6 @@ export function MailScreen(): React.JSX.Element {
               <path d="M7.8 7.7a2.2 2.2 0 1 1 2.9 2.1c-.5.2-.8.6-.8 1.1v.4M10 14.2v.1" />
             </svg>
           </button>
-          <ThemeToggle />
           <span className={styles.account} title={username}>
             {format("shell.signedInAs", username)}
           </span>
@@ -940,6 +953,36 @@ export function MailScreen(): React.JSX.Element {
               isLoading={isLoadingMailboxes}
             />
           )}
+
+          {/*
+            The settings entry point.
+
+            BOTTOM-LEFT, inside the sidebar but after the folder tree and
+            visually separated from it — which is the convention (Slack,
+            Linear, VS Code, Gmail's own bottom-left rail) for "this acts on
+            the APPLICATION, not on the thing the column above lists". Putting
+            it in the header instead would have made it a peer of search and
+            sign-out; putting it in the tree would have made it look like a
+            folder you can open mail in.
+
+            `margin-top: auto` in the stylesheet is what pins it to the bottom
+            of the column no matter how few folders the account has, without a
+            second scroll container.
+          */}
+          <div className={styles.sidebarFooter}>
+            <button
+              type="button"
+              className={styles.settingsButton}
+              onClick={() => {
+                setSettingsOpen(true);
+              }}
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
+            >
+              <GearIcon />
+              <span>{t("settings.open")}</span>
+            </button>
+          </div>
         </nav>
 
         <main className={styles.listColumn} id="main">
@@ -1021,6 +1064,13 @@ export function MailScreen(): React.JSX.Element {
         )}
       </div>
 
+      <SettingsDialog
+        isOpen={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+        }}
+      />
+
       <ShortcutsDialog
         isOpen={helpOpen}
         onClose={() => {
@@ -1061,6 +1111,33 @@ export function MailScreen(): React.JSX.Element {
 }
 
 /** The banner above the list: a refusal, a truncation warning, or a count. */
+/**
+ * The gear.
+ *
+ * Same 20x20 grid, 1.6 stroke and `currentColor` as every other icon in this
+ * screen, so it inherits the row's colour and sits at the same optical weight
+ * as the folder icons above it. `aria-hidden` because the button already has
+ * a visible text label — announcing the icon too would say "settings settings".
+ */
+function GearIcon(): React.JSX.Element {
+  return (
+    <svg
+      className={styles.settingsIcon}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="10" cy="10" r="2.6" />
+      <path d="M10 2.2l1.1 1.9a6.6 6.6 0 0 1 1.7.7l2.1-.5 1.4 2.4-1.5 1.6a6.6 6.6 0 0 1 0 1.4l1.5 1.6-1.4 2.4-2.1-.5a6.6 6.6 0 0 1-1.7.7L10 17.8l-1.1-1.9a6.6 6.6 0 0 1-1.7-.7l-2.1.5-1.4-2.4 1.5-1.6a6.6 6.6 0 0 1 0-1.4L3.7 8.7l1.4-2.4 2.1.5a6.6 6.6 0 0 1 1.7-.7z" />
+    </svg>
+  );
+}
+
 function ListNotice({
   refusal,
   truncated,

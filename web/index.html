@@ -32,18 +32,35 @@
        * selected would see a white flash on every load. Inline and synchronous
        * in <head> is the only placement that prevents it.
        *
-       * It mirrors theme.ts exactly — three states, and "system" removes the
-       * attribute so prefers-color-scheme decides. Wrapped in try/catch
-       * because a blocked localStorage must not stop the page from loading.
+       * It mirrors theme.ts exactly, INCLUDING the default: three states, and
+       * "system" removes the attribute so prefers-color-scheme decides. Any
+       * other value — including no stored value at all — is the DEFAULT_THEME
+       * of theme.ts, which is "light".
+       *
+       * That last clause is the whole point. If this script fell through to
+       * "stamp nothing" when nothing is stored, a first-time visitor on a dark
+       * OS would be painted dark by the media query and then corrected to
+       * light once the bundle ran — a flash of the wrong theme, which is
+       * precisely what this script exists to prevent. Stamping the default
+       * explicitly makes the pre-paint answer and the React answer identical.
+       *
+       * Wrapped in try/catch because a blocked localStorage must not stop the
+       * page from loading; the catch falls back to the same default.
        */
       (function () {
+        var stored = null;
         try {
-          var stored = localStorage.getItem("moov.theme.v1");
-          if (stored === "light" || stored === "dark") {
-            document.documentElement.setAttribute("data-theme", stored);
-          }
+          stored = localStorage.getItem("moov.theme.v1");
         } catch (error) {
-          /* No stored preference is available; the media query decides. */
+          /* Storage is blocked; the default below applies. */
+        }
+        if (stored === "system") {
+          document.documentElement.removeAttribute("data-theme");
+        } else {
+          document.documentElement.setAttribute(
+            "data-theme",
+            stored === "dark" ? "dark" : "light",
+          );
         }
       })();
     </script>
