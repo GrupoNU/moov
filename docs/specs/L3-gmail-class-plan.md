@@ -110,6 +110,23 @@ Cada fase termina con **comparación explícita contra Bulwark** (G1) y con el d
 
 Si alguno resulta indispensable para la comparación, entra por decisión del dueño, no por deriva del plan.
 
+## 5 bis. Decidido y descartado: avatares de remitente con logo (2026-08-27)
+
+El dueño observó que Bulwark muestra logos de marca donde Moov muestra iniciales, y pidió analizarlo antes de decidir. **Resultado: se descarta; las iniciales se mantienen.**
+
+Lo que la investigación estableció, verificado contra el código de Bulwark y la documentación de los referentes:
+
+- **BIMI queda refutado como explicación.** Bulwark no lo implementa (cero ocurrencias en su árbol). Lo que hace es pedir el **favicon del dominio del remitente a DuckDuckGo** desde su propio servidor.
+- **Gmail y Fastmail no rascan favicons.** Ambos muestran logo solo vía BIMI, con DMARC en enforcement; Gmail además exige certificado VMC/CMC. Los logos "de más" que muestra Bulwark son **exactamente los que Gmail decidió no mostrar**.
+- **Un favicon lo controla el dueño del dominio del From.** Un lookalike (`paypa1.com`) pasa su propia autenticación y sirve el logo copiado: la imagen presta credibilidad justo donde no la hay. El gating por autenticación no lo evita.
+- **BIMI depende de un trámite del remitente** (DMARC estricto + SVG Tiny PS + registro DNS + certificado pagado para Gmail) que la enorme mayoría de los corresponsales reales del piloto nunca va a hacer, y **Outlook —dominante en el mercado corporativo local— no lo soporta**. La inversión compra cobertura baja.
+
+**Decisión del dueño:** no se invierte en logos de remitente; se prioriza seguridad y confiabilidad, que es además la posición de Gmail. Las iniciales coloreadas son el comportamiento definitivo, no un placeholder.
+
+**Consecuencia para G1 (comparación por fase):** Bulwark mostrará más logos que Moov y eso **no cuenta como brecha** — es una diferencia deliberada de política, documentada acá para que ninguna comparación futura la reabra como defecto.
+
+**Lo que sí queda vivo, en otro carril:** configurar DMARC estricto (y opcionalmente BIMI) en los dominios propios del grupo es trabajo de infraestructura de VPS_Mail, no de Moov. Vale por deliverabilidad y por protección contra suplantación; el logo es un extra que solo algunos clientes honran.
+
 ## 6. Riesgos
 
 1. **La superficie crece más rápido que la calidad.** Mitigación: G1 — cada fase se compara contra Bulwark antes de cerrarse, y el dueño la usa.
