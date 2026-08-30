@@ -81,8 +81,15 @@ export function firstFailureMessage(outcome: SetOutcome): string | undefined {
   return undefined;
 }
 
-/** Reads a `/set` response object into a {@link SetOutcome}. */
-function readSetResponse(args: Record<string, unknown>): SetOutcome {
+/**
+ * Reads a `/set` response object into a {@link SetOutcome}.
+ *
+ * Exported since E4: `mail/triage.ts` speaks the same `/set` grammar to the
+ * vendor triage methods (`Snooze/set`, `Mute/set`), and re-deriving
+ * created/notCreated/destroyed/notDestroyed there would be a second reading of
+ * RFC 8620 §5.3 that could drift from this one.
+ */
+export function readSetResponse(args: Record<string, unknown>): SetOutcome {
   const failed: Record<string, SetError> = {};
   for (const key of ["notUpdated", "notDestroyed", "notCreated"] as const) {
     const map = args[key];
@@ -635,10 +642,30 @@ export async function sendDraft(
     readonly identityId: string;
     readonly sentMailboxId: string | undefined;
     readonly previousDraftId?: string | undefined;
+    /**
+     * E4: a future release instant (RFC 8621 §7.1's `sendAt` on create,
+     * canon §2.3's schedule send).
+     *
+     * Its presence changes TWO things, and the second is the subtle one:
+     *
+     *   - `sendAt` goes on the creation object, gated server-side by the
+     *     advertised `maxDelayedSend` (30 days) and by the cap of 100
+     *     simultaneously scheduled sends, refused with `overQuota`.
+     *   - `onSuccessUpdateEmail` is OMITTED. The server already suppresses it
+     *     for a scheduled submission (`holdsItsDraft` in submission.go — a
+     *     message scheduled for Friday must not sit in Sent from Tuesday, and
+     *     must stay a DRAFT the user can still edit), so sending it would be
+     *     harmless; it is omitted anyway because sending an instruction the
+     *     server is required to ignore states an intent this client does not
+     *     have, and the next reader of this code would have to go find the
+     *     suppression to know it was safe.
+     */
+    readonly sendAt?: string | undefined;
     readonly signal?: AbortSignal;
   },
 ): Promise<SendResult> {
-  const { identityId, sentMailboxId, previousDraftId, signal } = options;
+  const { identityId, sentMailboxId, previousDraftId, sendAt, signal } = options;
+  const isScheduled = sendAt !== undefined && sendAt !== "";
 
   const createArgs: Record<string, unknown> = {
     accountId,
@@ -646,17 +673,18 @@ export async function sendDraft(
   };
   if (previousDraftId !== undefined) createArgs.destroy = [previousDraftId];
 
+  const submissionCreate: Record<string, unknown> = {
+    identityId,
+    // §7.5: "may be a creation id reference, prefixed with #".
+    emailId: `#${DRAFT_CREATION_ID}`,
+  };
+  if (isScheduled) submissionCreate.sendAt = sendAt;
+
   const submissionArgs: Record<string, unknown> = {
     accountId,
-    create: {
-      sendIt: {
-        identityId,
-        // §7.5: "may be a creation id reference, prefixed with #".
-        emailId: `#${DRAFT_CREATION_ID}`,
-      },
-    },
+    create: { sendIt: submissionCreate },
   };
-  if (sentMailboxId !== undefined) {
+  if (!isScheduled && sentMailboxId !== undefined) {
     // §7.5's implicit Email/set: file the message in Sent and stop calling it
     // a draft, atomically with the submission succeeding.
     submissionArgs.onSuccessUpdateEmail = {
@@ -732,6 +760,74 @@ export async function cancelSubmission(
     signal,
   );
   return readSetResponse(responseFor(response.methodResponses, "s"));
+}
+
+/**
+ * Sends a scheduled message NOW (L3 E4, canon §2.3's Scheduled view).
+ *
+ * # Why this is cancel-then-resubmit and not an update
+ *
+ * The obvious implementation is `update: {id: {sendAt: <now>}}`. The server
+ * refuses it, and its refusal is deliberate: `applySubmissionUpdate` accepts
+ * "only undoStatus [...] and only to 'canceled'" (RFC 8621 §7.5 defines exactly
+ * that one transition; §7.1 makes `sendAt` immutable on an existing
+ * submission). So "send now" is two operations, and they are ordered:
+ *
+ *   1. cancel the scheduled submission. The draft SURVIVES — the server never
+ *      filed it into Sent (`holdsItsDraft`) and never retires it for a
+ *      cancellation, so the message is still a draft with its id intact;
+ *   2. submit that same draft again, with no `sendAt`, which gives it the
+ *      ordinary undo window.
+ *
+ * Both ride ONE request, in that order, because §3.2 processes method calls
+ * sequentially: if the cancel fails (`cannotUnsend` — the mail is already
+ * going out) the create still runs, which would send the message TWICE. So the
+ * cancel is checked first and the resubmit is a second request, deliberately
+ * paying a round trip to make a double send impossible.
+ *
+ * The `onSuccessUpdateEmail` returns here, unlike the scheduled create: this
+ * submission is an ordinary immediate one, so the message SHOULD move to Sent
+ * and stop being a draft on success.
+ */
+export async function sendScheduledNow(
+  client: JmapClient,
+  accountId: string,
+  submissionId: string,
+  emailId: string,
+  options: {
+    readonly identityId: string;
+    readonly sentMailboxId: string | undefined;
+    readonly signal?: AbortSignal;
+  },
+): Promise<{ readonly canceled: SetOutcome; readonly resubmitted: SetOutcome | undefined }> {
+  const canceled = await cancelSubmission(client, accountId, submissionId, options.signal);
+  if (hasFailures(canceled)) {
+    // The schedule could not be lifted, so the message is going out on the
+    // server's own terms. Resubmitting would send it twice.
+    return { canceled, resubmitted: undefined };
+  }
+
+  const submissionArgs: Record<string, unknown> = {
+    accountId,
+    create: { sendNow: { identityId: options.identityId, emailId } },
+  };
+  if (options.sentMailboxId !== undefined) {
+    submissionArgs.onSuccessUpdateEmail = {
+      "#sendNow": {
+        mailboxIds: { [options.sentMailboxId]: true },
+        "keywords/$draft": null,
+      },
+    };
+  }
+  const response = await client.call(
+    [["EmailSubmission/set", submissionArgs, "s"]],
+    WRITE_CAPS,
+    options.signal,
+  );
+  return {
+    canceled,
+    resubmitted: readSetResponse(responseFor(response.methodResponses, "s")),
+  };
 }
 
 // ---------------------------------------------------------------------------
