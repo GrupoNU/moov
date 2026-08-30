@@ -72,6 +72,7 @@ import {
   type QuotingStrings,
 } from "../compose/composerState";
 import { ActionBar } from "./ActionBar";
+import type { ConversationControls } from "./ConversationView";
 import { MailboxList } from "./MailboxList";
 import { mailboxLabel } from "./mailboxLabels";
 import { MessageList } from "./MessageList";
@@ -855,6 +856,52 @@ export function MailScreen(): React.JSX.Element {
     );
   }, [targetMessageIds, projected, dispatchAction, t]);
 
+  // --- E1: the conversation reader ------------------------------------------
+
+  /**
+   * Marks the messages that were EXPANDED read (canon §2.1).
+   *
+   * It goes through `actions.run` rather than `dispatchAction` for two
+   * reasons, both about NOISE: this fires as a side effect of reading rather
+   * than of a gesture, so it must not raise a toast ("Marked as read" on every
+   * message you open would be unbearable), and it must not clear the selection
+   * or trigger auto-advance — the user did not act, they read.
+   *
+   * A failure is deliberately silent HERE and only here: the messages stay
+   * unread, the next open retries, and there is no user intent to report back
+   * on. Every other write in this screen reports its failures.
+   */
+  const markMessagesRead = useCallback(
+    (ids: readonly string[]): void => {
+      if (ids.length === 0) return;
+      void (async () => {
+        const result = await actions.run({ kind: "markRead", ids }, projected);
+        // Refresh only when something actually changed, so the sidebar's unread
+        // counts follow — but never on a no-op, which would refetch the list
+        // every time a collapsed message was expanded and found already read.
+        if (result.succeeded.length > 0) setRefreshToken((token) => token + 1);
+      })();
+    },
+    [actions, projected],
+  );
+
+  /**
+   * The open conversation's keyboard controls, published by ConversationView.
+   *
+   * A ref rather than state: the controls object is rebuilt on every render of
+   * the conversation (it closes over the message list), and holding it in
+   * state would re-render this whole screen each time. Nothing here reads it
+   * during render — only the keyboard handler does, and that runs on an event.
+   */
+  const conversationControls = useRef<ConversationControls | undefined>(undefined);
+  const setConversationControls = useCallback(
+    (controls: ConversationControls | undefined): void => {
+      conversationControls.current = controls;
+    },
+    [],
+  );
+
+
   // --- E2: undo (`z`) -------------------------------------------------------
 
   /**
@@ -1179,6 +1226,37 @@ export function MailScreen(): React.JSX.Element {
     [composeSubject, username, quotingStrings, navigate, route],
   );
 
+  /**
+   * E1: reply/forward to ONE message of a conversation (canon §2.1).
+   *
+   * `openReply` above acts on "the message the reader is showing", which in a
+   * conversation is ambiguous — there are twelve. These take the message
+   * explicitly, so a reply quotes the message whose Reply button was pressed
+   * rather than whichever one the route happens to name.
+   *
+   * They do NOT navigate when the body is missing, which is the one behavioural
+   * difference from `openReply`: in a conversation only an EXPANDED message
+   * shows these buttons and expanding is what fetches the body, so a missing
+   * body means a fetch still in flight. Navigating away mid-fetch would move
+   * the user somewhere they did not ask to go; doing nothing lets them press
+   * again a moment later.
+   */
+  const replyToMessage = useCallback(
+    (original: Email, all: boolean): void => {
+      if (original.bodyValues === undefined) return;
+      setComposerDraft(replyDraft(original, username, all, quotingStrings));
+    },
+    [username, quotingStrings],
+  );
+
+  const forwardMessage = useCallback(
+    (original: Email): void => {
+      if (original.bodyValues === undefined) return;
+      setComposerDraft(forwardDraft(original, quotingStrings));
+    },
+    [quotingStrings],
+  );
+
   const openForward = useCallback((): void => {
     const original = composeSubject();
     if (original === undefined) return;
@@ -1401,6 +1479,26 @@ export function MailScreen(): React.JSX.Element {
           break;
         case "selectBy":
           runSelectBy(action.scope);
+          break;
+
+        /*
+         * E1: the conversation keys (canon §2.1).
+         *
+         * They act ONLY on an open conversation, and they no-op silently
+         * otherwise — `;` pressed in the list has nothing to expand, and
+         * inventing a meaning for it there (expand the focused row?) would be
+         * a key that does two different things depending on where you stand.
+         *
+         * `conversationControls.current` is undefined when the reader is
+         * closed OR when conversation view is off, so the preference gates
+         * these keys without this switch having to know about it.
+         */
+        case "expandConversation":
+          if (action.expand) conversationControls.current?.expandAll();
+          else conversationControls.current?.collapseAll();
+          break;
+        case "conversationMessage":
+          conversationControls.current?.goToMessage(action.direction);
           break;
       }
     },
@@ -1813,6 +1911,22 @@ export function MailScreen(): React.JSX.Element {
               onPreviousMessage={siblingGroup("previous") === undefined ? undefined : () => {
                 goToSibling("previous");
               }}
+              /*
+               * E1 / canon §2.1 — the conversation reader, gated by the E5
+               * preference. With it off the pane is exactly the single-message
+               * reader that shipped before, on the same code path.
+               *
+               * The toolbar props above (archive, delete, spam, move, star)
+               * are UNCHANGED and act on the whole conversation either way:
+               * `targetMessageIds()` already expands the focused thread row to
+               * every message id in it, which is what canon §2.1 asks for
+               * ("toolbar archive/delete/label act on the conversation").
+               */
+              conversationView={prefs.conversationView}
+              onReplyToMessage={replyToMessage}
+              onForwardMessage={forwardMessage}
+              onMarkMessagesRead={markMessagesRead}
+              onConversationControls={setConversationControls}
             />
           </aside>
         )}

@@ -125,6 +125,17 @@ function renderPane(overrides: Partial<ReadingPaneProps> = {}) {
     inJunk: false,
     onNextMessage: vi.fn(),
     onPreviousMessage: vi.fn(),
+    /*
+     * E1: these cases exercise the SINGLE-MESSAGE reader, so conversation view
+     * is off by default here. The conversation path has its own suite
+     * (ConversationView.test.tsx); leaving it on would make every assertion
+     * below depend on a thread fetch this suite does not stub.
+     */
+    conversationView: false,
+    onReplyToMessage: vi.fn(),
+    onForwardMessage: vi.fn(),
+    onMarkMessagesRead: vi.fn(),
+    onConversationControls: vi.fn(),
     ...overrides,
   };
   /*

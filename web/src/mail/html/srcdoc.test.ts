@@ -89,3 +89,65 @@ describe("the document shell", () => {
     expect(doc).toContain("<p>hello</p>");
   });
 });
+
+/**
+ * The quoted tail (L3 epic E1). The mechanism has to add ZERO capability to
+ * the frame — no script, no same-origin — so the only thing it can do is
+ * build a different document. These pin that it does exactly that.
+ */
+describe("the quoted tail", () => {
+  const origin = "https://mail.example.com";
+  const visible = "<p>the reply</p>";
+  const quoted = "<blockquote><p>the quoted original</p></blockquote>";
+
+  it("omits the tail entirely when it is not shown", () => {
+    const doc = buildSrcDoc(visible, origin, { quotedHtml: quoted, showQuoted: false });
+    expect(doc).toContain("the reply");
+    // NOT merely hidden with CSS: the bytes are absent, so a select-all inside
+    // the frame cannot copy text the reader was told was trimmed away.
+    expect(doc).not.toContain("the quoted original");
+    expect(doc).not.toContain("moov-quoted");
+  });
+
+  it("emits the tail in its own wrapper when shown", () => {
+    const doc = buildSrcDoc(visible, origin, { quotedHtml: quoted, showQuoted: true });
+    expect(doc).toContain("the reply");
+    expect(doc).toContain('<div class="moov-quoted">');
+    expect(doc).toContain("the quoted original");
+    // The order is the message's own order: reply first, quote after.
+    expect(doc.indexOf("the reply")).toBeLessThan(doc.indexOf("the quoted original"));
+  });
+
+  it("shown or not, it never changes the isolation properties", () => {
+    for (const showQuoted of [true, false]) {
+      const doc = buildSrcDoc(visible, origin, { quotedHtml: quoted, showQuoted });
+      expect(doc).toContain("default-src 'none'");
+      expect(doc).not.toContain("script-src");
+      expect(doc).toContain("form-action 'none'");
+    }
+  });
+
+  it("adds no quote styling to a message that has no tail", () => {
+    const doc = buildSrcDoc(visible, origin, { quotedHtml: "", showQuoted: true });
+    expect(doc).not.toContain("moov-quoted");
+  });
+
+  it("is identical to the two-argument form when no tail is given", () => {
+    // Backwards compatibility as a test, not a promise: every pre-E1 call site
+    // keeps producing exactly the document it produced before.
+    expect(buildSrcDoc(visible, origin, {})).toBe(buildSrcDoc(visible, origin));
+  });
+
+  it("reproduces the sanitizer's output exactly when the tail is shown", () => {
+    /*
+     * The whole-pipeline invariant: split + reassemble is the identity, so a
+     * shown quote renders precisely the markup the sanitizer approved —
+     * nothing added between the halves, nothing dropped.
+     */
+    const doc = buildSrcDoc(visible, origin, { quotedHtml: quoted, showQuoted: true });
+    const body = doc.slice(doc.indexOf("<body>") + "<body>".length, doc.indexOf("</body>"));
+    expect(body.replace('<div class="moov-quoted">', "").replace(/<\/div>$/, "")).toBe(
+      visible + quoted,
+    );
+  });
+});

@@ -1,0 +1,213 @@
+/*
+ * One message inside a conversation (E1, canon §2.1).
+ *
+ * The visual job is to make a stack of messages read as ONE conversation
+ * rather than as a list of separate mails: hairline separators instead of
+ * cards, the sender line carrying the weight, and the expanded body indented
+ * to the same left edge as the collapsed rows' text so the eye tracks a single
+ * column down the thread.
+ */
+
+.message {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.message:last-child {
+  border-bottom: none;
+}
+
+/* The current message for `p`/`n`. A left rule rather than a background tint:
+ * a tint on an expanded message would sit behind the body and fight with the
+ * message's own colours (which are the sender's, not ours). */
+.current {
+  box-shadow: inset 2px 0 0 0 var(--color-accent);
+}
+
+/* --- collapsed ---------------------------------------------------------- */
+
+.collapsedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-6);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  /* The row is one line: the preview absorbs whatever width is left and
+   * truncates, so a long snippet cannot push the date off the edge. */
+  min-width: 0;
+}
+
+.collapsedRow:hover {
+  background: var(--surface-raised);
+}
+
+.collapsedSender {
+  flex: none;
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+  font-size: var(--text-sm);
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsedPreview {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsedStar {
+  flex: none;
+  color: var(--color-warning, #d99b20);
+  font-size: var(--text-sm);
+}
+
+.collapsedDate {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.avatarSmall {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* --- expanded ----------------------------------------------------------- */
+
+.expanded {
+  padding-bottom: var(--space-4);
+}
+
+.messageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6) var(--space-2);
+  flex-wrap: wrap;
+}
+
+.expandedRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: 1 1 20rem;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.identityText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fromLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.fromName {
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.fromAddress {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.recipientLine {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 32rem;
+}
+
+.expandedDate {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.messageActions {
+  display: flex;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.messageAction {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.messageAction:hover,
+.messageAction:focus-visible {
+  background: var(--surface-raised);
+  color: var(--text-strong);
+}
+
+.messageBody {
+  display: flex;
+  flex-direction: column;
+  /* The body aligns with the sender's NAME, not with the avatar: a thread
+   * reads as one column of text with the avatars as a gutter beside it. */
+  padding: 0 var(--space-6) 0 calc(var(--space-6) + 2rem + var(--space-3));
+  min-height: 0;
+}
+
+.bodyLoading {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  padding: var(--space-3) 0;
+}

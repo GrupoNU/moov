@@ -5,6 +5,7 @@ import {
   sanitizeEmailHtml,
   type SanitizedEmailHtml,
 } from "../../mail/html/sanitize";
+import { splitQuotedTail } from "../../mail/html/quotedTail";
 import { buildSrcDoc, MESSAGE_SANDBOX } from "../../mail/html/srcdoc";
 import styles from "./SecureHtmlBody.module.css";
 
@@ -42,6 +43,22 @@ import styles from "./SecureHtmlBody.module.css";
  * so the guarantee wins over the feature. The trade also means hostile
  * content cannot grow the frame to cover app UI, and scroll-jacking stays
  * inside a box the user can scroll past.
+ *
+ * # Quoted-text trimming (L3 epic E1, canon §2.1)
+ *
+ * The same refusal shapes the "Show trimmed content" toggle. The quote cannot
+ * be collapsed by a script inside the frame (no allow-scripts) nor by the
+ * parent reaching into it (no allow-same-origin), and it cannot be MARKED
+ * before sanitization because `class` is dropped by the policy (policy.ts:
+ * DOM-clobbering surface). So the tail is located in the SANITIZED STRING by
+ * `mail/html/quotedTail.ts` — a pure substring split whose halves reassemble
+ * byte-for-byte — and both halves go to `buildSrcDoc`, which emits the tail or
+ * omits it. The toggle itself is a real button in the APP's chrome above the
+ * frame; pressing it re-renders the srcdoc.
+ *
+ * No capability is added to the frame, the sanitizer's output is never
+ * re-parsed, and a trimmed quote is genuinely ABSENT from the document rather
+ * than hidden by a style rule that a select-all would happily copy anyway.
  */
 
 /** Signs remote image URLs, returning canonical URL → signed proxy path.
@@ -108,6 +125,12 @@ export function SecureHtmlBody({
     undefined,
   );
   const [signState, setSignState] = useState<SignState>("idle");
+  /*
+   * E1: whether the trimmed quote is expanded. Starts collapsed — that IS the
+   * feature. The component is keyed by message id upstream, so this can never
+   * carry over from one message to the next.
+   */
+  const [showQuoted, setShowQuoted] = useState(false);
 
   // The blocked-first pass. Its remoteImageUrls list is also the signing
   // request, so the set of URLs we might ever fetch is fixed by this pass —
@@ -149,10 +172,30 @@ export function SecureHtmlBody({
     return blockedPass;
   }, [html, wantsImages, proxied, blockedPass]);
 
+  /*
+   * E1: the quoted tail, split off the SANITIZED markup.
+   *
+   * Recomputed whenever the sanitized output changes (an image unblock
+   * re-sanitizes from the original), because the offsets belong to that exact
+   * string. `splitQuotedTail` is a substring operation, so this costs a scan
+   * and allocates two slices — no parse, no tree, nothing to leak.
+   */
+  const split = useMemo(
+    () => (rendered === undefined ? undefined : splitQuotedTail(rendered.html)),
+    [rendered],
+  );
+  const hasQuotedTail = split !== undefined && split.quoted !== "";
+
   const srcDoc = useMemo(() => {
-    if (rendered === undefined || rendered.html.trim() === "") return undefined;
-    return buildSrcDoc(rendered.html, window.location.origin);
-  }, [rendered]);
+    if (rendered === undefined || split === undefined) return undefined;
+    // Emptiness is judged on the VISIBLE half: a message whose entire body is
+    // a quote would otherwise render an empty frame with a toggle under it.
+    if (rendered.html.trim() === "") return undefined;
+    return buildSrcDoc(split.visible, window.location.origin, {
+      quotedHtml: split.quoted,
+      showQuoted: showQuoted,
+    });
+  }, [rendered, split, showQuoted]);
 
   // Sanitization failed, or stripped the message down to nothing: say so and
   // show the plain-text alternative if the caller has one. Never render an
@@ -226,6 +269,40 @@ export function SecureHtmlBody({
          * the app's URL crosses into the frame's requests. */
         referrerPolicy="no-referrer"
       />
+
+      {/*
+        E1 / canon §2.1: "Show trimmed content".
+
+        The control is Gmail's "⋯" — a small, quiet affordance rather than a
+        banner, because a quoted tail is the NORMAL state of a reply and a
+        loud notice about it would shout on every message in a thread.
+
+        It lives OUT here in the app's chrome rather than in the frame, which
+        is the whole mechanism: the frame has no script to run a toggle with,
+        so the button re-renders the srcdoc with the tail emitted or omitted.
+        `aria-expanded` states which it is, so a screen-reader user knows
+        there is more before deciding to press it.
+      */}
+      {hasQuotedTail && (
+        <div className={styles.trimRow}>
+          <button
+            type="button"
+            className={styles.trimToggle}
+            onClick={() => {
+              setShowQuoted((current) => !current);
+            }}
+            aria-expanded={showQuoted}
+            title={showQuoted ? t("reader.hideTrimmed") : t("reader.showTrimmed")}
+          >
+            <span className={styles.trimDots} aria-hidden="true">
+              •••
+            </span>
+            <span className={styles.trimLabel}>
+              {showQuoted ? t("reader.hideTrimmed") : t("reader.showTrimmed")}
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

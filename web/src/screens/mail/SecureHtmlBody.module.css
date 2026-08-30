@@ -104,3 +104,47 @@
   color: var(--text-default);
   text-wrap: pretty;
 }
+
+/*
+ * "Show trimmed content" (E1, canon §2.1).
+ *
+ * Gmail's affordance is a small grey pill with three dots — deliberately
+ * quiet, because a quoted tail is the normal state of a reply and a banner
+ * would shout on every message of a thread. It sits BELOW the frame because
+ * that is where the trimmed content would appear.
+ */
+.trimRow {
+  flex: none;
+  display: flex;
+}
+
+.trimToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.trimToggle:hover {
+  color: var(--text-default);
+  border-color: var(--border-default);
+}
+
+.trimDots {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+/* The label is for pointer users and screen readers alike; at the narrowest
+ * widths the dots alone carry the affordance, and the accessible name still
+ * comes from the label text rather than from the decoration. */
+.trimLabel {
+  white-space: nowrap;
+}

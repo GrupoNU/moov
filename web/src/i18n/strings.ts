@@ -289,8 +289,12 @@ export const en = {
   "reader.downloadFailed": "The download did not start. Try again.",
   "reader.threadContext": (count: number): string =>
     `Conversation with ${count} messages`,
-  "reader.showThread": "Show the whole conversation",
-  "reader.hideThread": "Hide the conversation",
+  // E1 / canon §2.1: the `;` and `:` pair, and the control that drives them.
+  // "Collapse" keeps the newest message open — see collapseAll's rationale.
+  "reader.expandAll": "Expand all",
+  "reader.collapseAll": "Collapse all",
+  "reader.threadLoadFailed":
+    "The rest of this conversation could not be loaded. The message you opened is shown below.",
   "reader.emptyBody": "This message has no text content.",
   "reader.bodyTruncated":
     "This message is long and has been shortened. Download the original to read all of it.",
@@ -307,6 +311,11 @@ export const en = {
       ? "1 remote image is hidden to protect your privacy."
       : `${count} remote images are hidden to protect your privacy.`,
   "reader.showImages": "Show images",
+  // E1 / canon §2.1: Gmail's "Show trimmed content". The wording says CONTENT
+  // rather than "quote", because what is hidden is often a forwarded header
+  // block or an Outlook divider, not a quotation.
+  "reader.showTrimmed": "Show trimmed content",
+  "reader.hideTrimmed": "Hide trimmed content",
   "reader.imagesLoading": "Loading images through the privacy proxy…",
   "reader.imagesFailed":
     "The images could not be loaded through the privacy proxy, so they stay hidden. Try again later.",
@@ -329,8 +338,14 @@ export const en = {
   "shortcuts.disabled":
     "Keyboard shortcuts are off in Settings. Escape and / still work, so you can close this and reach search.",
   "shortcuts.open": "Open the message",
-  "shortcuts.next": "Next message",
-  "shortcuts.previous": "Previous message",
+  // E1: j/k and n/p are two different axes and the help has to say so, or the
+  // second pair looks like a duplicate of the first.
+  "shortcuts.next": "Next conversation",
+  "shortcuts.previous": "Previous conversation",
+  "shortcuts.conversationNext": "Next message in this conversation",
+  "shortcuts.conversationPrevious": "Previous message in this conversation",
+  "shortcuts.expandAll": "Expand every message in the conversation",
+  "shortcuts.collapseAll": "Collapse the conversation",
   "shortcuts.back": "Back to the list",
   "shortcuts.search": "Search",
   "shortcuts.archive": "Archive",
@@ -801,8 +816,10 @@ export const es: Strings = {
   "reader.downloadFailed": "La descarga no se inició. Intentá de nuevo.",
   "reader.threadContext": (count: number): string =>
     `Conversación con ${count} mensajes`,
-  "reader.showThread": "Ver toda la conversación",
-  "reader.hideThread": "Ocultar la conversación",
+  "reader.expandAll": "Expandir todo",
+  "reader.collapseAll": "Contraer todo",
+  "reader.threadLoadFailed":
+    "No se pudo cargar el resto de esta conversación. Abajo se muestra el mensaje que abriste.",
   "reader.emptyBody": "Este mensaje no tiene contenido de texto.",
   "reader.bodyTruncated":
     "Este mensaje es largo y se acortó. Descargá el original para leerlo completo.",
@@ -812,6 +829,8 @@ export const es: Strings = {
       ? "1 imagen remota está oculta para proteger tu privacidad."
       : `${count} imágenes remotas están ocultas para proteger tu privacidad.`,
   "reader.showImages": "Mostrar imágenes",
+  "reader.showTrimmed": "Mostrar el contenido recortado",
+  "reader.hideTrimmed": "Ocultar el contenido recortado",
   "reader.imagesLoading": "Cargando imágenes a través del proxy de privacidad…",
   "reader.imagesFailed":
     "Las imágenes no se pudieron cargar a través del proxy de privacidad, así que siguen ocultas. Probá más tarde.",
@@ -831,8 +850,12 @@ export const es: Strings = {
   "shortcuts.disabled":
     "Los atajos de teclado están desactivados en Configuración. Escape y / siguen andando, así podés cerrar esto y llegar a la búsqueda.",
   "shortcuts.open": "Abrir el mensaje",
-  "shortcuts.next": "Mensaje siguiente",
-  "shortcuts.previous": "Mensaje anterior",
+  "shortcuts.next": "Conversación siguiente",
+  "shortcuts.previous": "Conversación anterior",
+  "shortcuts.conversationNext": "Mensaje siguiente de esta conversación",
+  "shortcuts.conversationPrevious": "Mensaje anterior de esta conversación",
+  "shortcuts.expandAll": "Expandir todos los mensajes de la conversación",
+  "shortcuts.collapseAll": "Contraer la conversación",
   "shortcuts.back": "Volver a la lista",
   "shortcuts.search": "Buscar",
   "shortcuts.archive": "Archivar",

@@ -103,6 +103,49 @@ const BASE_STYLES = `
 `;
 
 /**
+ * How a quoted tail is rendered inside the frame (L3 epic E1).
+ *
+ * The frame has no script and no same-origin access, so the tail cannot be
+ * toggled from inside it or reached from outside it. What CAN be done without
+ * granting a single new capability is to build a DIFFERENT document: the tail
+ * is either present in the body or absent from it, and the parent re-renders
+ * the srcdoc when the user presses the toggle. The button itself lives in the
+ * APP's chrome, above the frame, where it is a real focusable control under
+ * the app's own CSS and keyboard handling.
+ *
+ * The wrapper below is markup THIS FUNCTION authors — trusted by construction,
+ * appended after sanitization, never fed back through a parser. The sanitized
+ * halves are embedded verbatim, exactly as the single-argument form embeds the
+ * whole string.
+ */
+export interface SrcDocOptions {
+  /**
+   * The quoted tail, already split off the sanitized markup by
+   * `mail/html/quotedTail.ts`. Concatenating `sanitizedHtml + quotedHtml`
+   * reproduces the sanitizer's output byte for byte.
+   */
+  readonly quotedHtml?: string;
+  /** Whether the tail is rendered. False hides it by simply not emitting it. */
+  readonly showQuoted?: boolean;
+}
+
+/**
+ * The quoted tail's own styling: Gmail's grey, indented treatment, so a
+ * revealed quote reads as quoted material rather than as more of the reply.
+ *
+ * Emitted only when there IS a tail, so a message without one carries no extra
+ * bytes and no extra selector.
+ */
+const QUOTED_STYLES = `
+  .moov-quoted {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid #e4e8ec;
+    color: #57606a;
+  }
+`;
+
+/**
  * Builds the complete srcdoc document around sanitized markup.
  *
  * `sanitizedHtml` MUST be the output of sanitizeEmailHtml — this function
@@ -110,8 +153,18 @@ const BASE_STYLES = `
  * (window.location.origin), which the CSP needs spelled out because a
  * sandboxed srcdoc document has an opaque origin: 'self' would match
  * nothing.
+ *
+ * `options.quotedHtml` is the trimmed tail (canon §2.1). When it is present
+ * and `showQuoted` is false, the tail is simply NOT EMITTED — hiding it with
+ * CSS would still ship the sender's quoted bytes into the document, where a
+ * "select all, copy" would silently pick up text the reader was told was
+ * hidden. Not emitting it is both the smaller document and the honest one.
  */
-export function buildSrcDoc(sanitizedHtml: string, appOrigin: string): string {
+export function buildSrcDoc(
+  sanitizedHtml: string,
+  appOrigin: string,
+  options: SrcDocOptions = {},
+): string {
   const imgSources = isUsableOrigin(appOrigin)
     ? `data: ${appOrigin}/jmap/imgproxy`
     : "data:";
@@ -123,13 +176,24 @@ export function buildSrcDoc(sanitizedHtml: string, appOrigin: string): string {
     "base-uri 'none'",
   ].join("; ");
 
+  /*
+   * The tail is emitted only when it is BOTH present and shown — and its
+   * stylesheet rides with it. A hidden quote leaves no trace in the document:
+   * not the markup, not the selector that would style it. That is what makes
+   * "hidden" mean hidden rather than "present but transparent", which a
+   * select-all inside the frame would cheerfully copy.
+   */
+  const quoted = options.quotedHtml ?? "";
+  const showQuoted = quoted !== "" && options.showQuoted === true;
+
   return (
     "<!doctype html><html><head>" +
     '<meta charset="utf-8">' +
     `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
-    `<style>${BASE_STYLES}</style>` +
+    `<style>${BASE_STYLES}${showQuoted ? QUOTED_STYLES : ""}</style>` +
     "</head><body>" +
     sanitizedHtml +
+    (showQuoted ? `<div class="moov-quoted">${quoted}</div>` : "") +
     "</body></html>"
   );
 }

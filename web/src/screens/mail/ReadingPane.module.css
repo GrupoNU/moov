@@ -593,3 +593,16 @@ a.attachmentName:focus-visible {
     max-height: none;
   }
 }
+
+/*
+ * E1: the unsubscribe control when the per-message identity block is not
+ * rendered (conversation view).
+ *
+ * It survives the move because it is a statement about the SENDER of the mail
+ * that brought you here (canon §2.2), not an action on one message — so it
+ * belongs to the pane's header rather than to any single row of the thread.
+ */
+.conversationUnsubscribe {
+  display: flex;
+  margin-top: var(--space-3);
+}

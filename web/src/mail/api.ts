@@ -321,6 +321,72 @@ export async function fetchEmailsByIds(
 }
 
 /**
+ * Stage 1 of the conversation reader (L3 epic E1): a thread's ROWS.
+ *
+ * The narrow property set — the one a list row uses — for every message in the
+ * thread. It is what makes the collapsed rows renderable (sender, preview,
+ * date, keywords) at the cost of ONE request, and it deliberately carries no
+ * `bodyValues`: the pilot's largest real thread has 24 messages, and fetching
+ * 24 bodies to render the one the user opened is the most expensive possible
+ * way to be wrong about this feature.
+ *
+ * This is `fetchEmailsByIds` with a name that says which stage it is; they
+ * share a body because they ask the same question. The alias exists so the
+ * call site reads as the two-stage design rather than as a generic fetch, and
+ * so a future change to the row set for conversations does not silently change
+ * every other caller.
+ */
+export async function fetchThreadRows(
+  client: JmapClient,
+  accountId: string,
+  ids: readonly string[],
+  signal?: AbortSignal,
+): Promise<readonly Email[]> {
+  return fetchEmailsByIds(client, accountId, ids, signal);
+}
+
+/**
+ * Stage 2 of the conversation reader: FULL messages for the expanded ones.
+ *
+ * The same properties and body-value switches `fetchMessageDetail` uses for a
+ * single open message, but for a batch of ids and WITHOUT the `Thread/get` —
+ * the caller already has the thread, which is how it knew to ask for these.
+ *
+ * The batch size is the caller's (ConversationView caps it), which is Bulwark's
+ * `batched()` lesson: a request whose size is a function of someone else's data
+ * is a request that eventually arrives too large.
+ */
+export async function fetchConversationMessages(
+  client: JmapClient,
+  accountId: string,
+  ids: readonly string[],
+  signal?: AbortSignal,
+  maxBodyValueBytes = 512 * 1024,
+): Promise<readonly Email[]> {
+  if (ids.length === 0) return [];
+  const response = await client.call(
+    [
+      [
+        "Email/get",
+        {
+          accountId,
+          ids,
+          properties: DETAIL_PROPERTIES,
+          fetchTextBodyValues: true,
+          fetchHTMLBodyValues: true,
+          maxBodyValueBytes,
+        },
+        "g",
+      ],
+    ],
+    [CAP_CORE, CAP_MAIL],
+    signal,
+  );
+  const args = responseFor(response.methodResponses, "g");
+  return (args.list ?? []) as readonly Email[];
+}
+
+/**
  * Signs remote-image URLs for the proxy, re-validating what comes back.
  *
  * The map's VALUES are re-checked client-side (the same paranoia the

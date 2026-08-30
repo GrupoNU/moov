@@ -45,7 +45,19 @@ export type ShortcutAction =
   /** `_`: mark unread from the focused row downward. */
   | { readonly kind: "markUnreadFromHere" }
   /** `* a` and friends: bulk selection over the whole visible list. */
-  | { readonly kind: "selectBy"; readonly scope: SelectionScope };
+  | { readonly kind: "selectBy"; readonly scope: SelectionScope }
+  // E1: the conversation keys (canon §2.1, /mail/answer/6594).
+  /** `;` expands every message of the open conversation; `:` collapses them. */
+  | { readonly kind: "expandConversation"; readonly expand: boolean }
+  /**
+   * `p` / `n`: move between messages INSIDE the open conversation.
+   *
+   * Deliberately distinct from `next`/`previous` (`j`/`k`), which move between
+   * CONVERSATIONS. Gmail draws that line and it is the reason both pairs
+   * exist: in a 24-message thread you need to walk the thread without leaving
+   * it, and to leave it without walking it.
+   */
+  | { readonly kind: "conversationMessage"; readonly direction: "next" | "previous" };
 
 /**
  * The six selection scopes Gmail's `*` chord offers, verbatim (canon §2.4):
@@ -280,6 +292,45 @@ export function resolveShortcut(
     case "_":
       return { action: { kind: "markUnreadFromHere" }, nextState: INITIAL_KEYBOARD_STATE };
 
+    /*
+     * E1 — the conversation keys (canon §2.1).
+     *
+     * `;` and `:` are the same physical key with and without Shift on a US
+     * layout, and Gmail gives them opposite meanings: expand all, collapse
+     * all. They are matched on the CHARACTER rather than the physical key, so
+     * a layout that puts `:` elsewhere still resolves it correctly.
+     */
+    case ";":
+      return {
+        action: { kind: "expandConversation", expand: true },
+        nextState: INITIAL_KEYBOARD_STATE,
+      };
+
+    case ":":
+      return {
+        action: { kind: "expandConversation", expand: false },
+        nextState: INITIAL_KEYBOARD_STATE,
+      };
+
+    /*
+     * `n` / `p` — the NEXT and PREVIOUS message inside the open conversation.
+     *
+     * They do not shadow `j`/`k`: those move between conversations and keep
+     * doing so. The two pairs coexist because a conversation view needs both
+     * axes, which is why Gmail binds four keys rather than two.
+     */
+    case "n":
+      return {
+        action: { kind: "conversationMessage", direction: "next" },
+        nextState: INITIAL_KEYBOARD_STATE,
+      };
+
+    case "p":
+      return {
+        action: { kind: "conversationMessage", direction: "previous" },
+        nextState: INITIAL_KEYBOARD_STATE,
+      };
+
     // Gmail's read/unread toggles are the `Shift`-less pair on the same keys
     // as the chord targets, which is why they are only reachable with no
     // pending `g`.
@@ -360,6 +411,13 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["k"], descriptionKey: "shortcuts.previous" },
   { keys: ["Enter"], descriptionKey: "shortcuts.open" },
   { keys: ["u"], descriptionKey: "shortcuts.back" },
+  // E1: the conversation keys. They sit next to j/k precisely because the
+  // distinction between them is the thing a reader has to learn — j/k move
+  // between conversations, n/p move inside one.
+  { keys: ["n"], descriptionKey: "shortcuts.conversationNext" },
+  { keys: ["p"], descriptionKey: "shortcuts.conversationPrevious" },
+  { keys: [";"], descriptionKey: "shortcuts.expandAll" },
+  { keys: [":"], descriptionKey: "shortcuts.collapseAll" },
   { keys: ["/"], descriptionKey: "shortcuts.search" },
   { keys: ["e"], descriptionKey: "shortcuts.archive" },
   { keys: ["#"], descriptionKey: "shortcuts.delete" },

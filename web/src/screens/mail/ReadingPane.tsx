@@ -1,32 +1,41 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
-import { withAccessToken, type JmapClient } from "../../api/jmap";
+import type { JmapClient } from "../../api/jmap";
 import { signImageProxyUrls } from "../../mail/api";
-import { formatBytes, formatFullDate, initialsFor, machineDate } from "../../mail/format";
+import { formatFullDate, initialsFor, machineDate } from "../../mail/format";
 import { headerSection, unfoldHeaders } from "../../mail/rawMessage";
 import { displaySubject, senderLabel } from "../../mail/threading";
 import {
   isFlagged,
   type Email,
   type EmailAddress,
-  type EmailBodyPart,
   type Mailbox,
   type Thread,
 } from "../../mail/types";
 import { listIdLabel, unsubscribeInfo, type UnsubscribeInfo } from "../../mail/unsubscribe";
+import { ConversationView, type ConversationControls } from "./ConversationView";
+import { AttachmentList, DownloadOriginalButton } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
 import { MoveMenu } from "./MoveMenu";
 import styles from "./ReadingPane.module.css";
 
 /**
- * The reading pane (P2 deliverable 6, partial — the body renderer is a seam).
+ * The reading pane.
  *
- * Everything except the body is finished here: metadata, the attachment list
- * with sizes and working downloads, thread context, and the keyboard path back
- * to the list. The body goes through {@link MessageBody}, which is the single
- * documented seam the HTML epic replaces — see its header comment for the
- * contract.
+ * Everything except the body is here: the subject, the conversation-wide
+ * toolbar, the spam banner, and the keyboard path back to the list. What it
+ * shows BELOW that depends on one preference:
+ *
+ *   - `conversationView` ON (the default, canon §2.1's defining behavior) —
+ *     {@link ConversationView} renders the WHOLE thread, each message with its
+ *     own sender line, body, attachments and per-message reply actions.
+ *   - OFF — the single-message reader this pane shipped with: one sender
+ *     block, one recipient list, one attachment list, one body.
+ *
+ * The toolbar at the top acts on the CONVERSATION in both cases (canon §2.1:
+ * "toolbar archive/delete/label act on the conversation"), because MailScreen
+ * already expands a selected row to every message id in its thread.
  */
 
 export interface ReadingPaneProps {
@@ -85,6 +94,30 @@ export interface ReadingPaneProps {
   /** Goes to the next/previous message in the list; absent when there is none. */
   readonly onNextMessage: (() => void) | undefined;
   readonly onPreviousMessage: (() => void) | undefined;
+
+  // --- E1: conversation view (canon §2.1) ----------------------------------
+  /**
+   * Whether the reading pane shows the WHOLE conversation.
+   *
+   * The `conversationView` preference (E5), which gates the entire feature.
+   * False restores exactly the single-message reader that shipped before E1 —
+   * not a degraded version of the new one, the same code path.
+   */
+  readonly conversationView: boolean;
+  /**
+   * Per-message composition inside a conversation (canon §2.1).
+   *
+   * A reply replies to ONE message — the one whose text it quotes — while the
+   * toolbar above acts on the thread. These carry the message so the caller
+   * quotes the right one; the propless `onReply`/`onForward` above stay for
+   * the single-message reader and for the toolbar.
+   */
+  readonly onReplyToMessage: (email: Email, all: boolean) => void;
+  readonly onForwardMessage: (email: Email) => void;
+  /** Marks the messages that were EXPANDED read — never the whole thread. */
+  readonly onMarkMessagesRead: (ids: readonly string[]) => void;
+  /** Publishes the conversation's keyboard controls (`;`, `:`, `p`, `n`). */
+  readonly onConversationControls: (controls: ConversationControls | undefined) => void;
 }
 
 export function ReadingPane({
@@ -113,6 +146,11 @@ export function ReadingPane({
   autoLoadImages = false,
   onNextMessage,
   onPreviousMessage,
+  conversationView,
+  onReplyToMessage,
+  onForwardMessage,
+  onMarkMessagesRead,
+  onConversationControls,
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const [originalOpen, setOriginalOpen] = useState(false);
@@ -343,53 +381,90 @@ export function ReadingPane({
           </button>
         </div>
 
-        {threadSize > 1 && (
-          <p className={styles.threadContext}>{format("reader.threadContext", threadSize)}</p>
-        )}
-
-        <div className={styles.identity}>
-          <span className={styles.avatar} aria-hidden="true">
-            {initialsFor(senderLabel(email))}
-          </span>
-          <div className={styles.identityText}>
-            <p className={styles.fromLine}>
-              <span className={styles.fromName}>{senderLabel(email) ?? t("list.unknownSender")}</span>
-              {email.from?.[0]?.name !== null && email.from?.[0] !== undefined && (
-                <span className={styles.fromAddress}>{`<${email.from[0].email}>`}</span>
-              )}
-            </p>
-            {isoDate !== undefined && (
-              <time className={styles.date} dateTime={isoDate}>
-                {formatFullDate(email.receivedAt, locale)}
-              </time>
-            )}
-          </div>
-          {/* Canon §2.2: the control sits NEXT TO THE SENDER, not in the
-              toolbar — it is a statement about who is writing, not an action
-              on this one message. */}
-          {unsubscribe !== undefined && (
-            <UnsubscribeButton
-              info={unsubscribe}
-              listName={listIdLabel(email)}
-              onUnsubscribeByMail={onUnsubscribeByMail}
-            />
-          )}
-        </div>
-
         {/*
-          Recipients as a description list: each label is programmatically tied
-          to its addresses, which is what lets a screen reader say "To: Ana,
-          Carlos" instead of reading five names with no idea which field they
-          belong to.
+          E1: the sender block belongs to ONE message, and in conversation view
+          every message renders its own (ConversationMessage). Repeating the
+          opened message's sender above the thread would state it twice and,
+          worse, would keep naming the message the route happened to open while
+          the reader scrolled through six others.
+
+          The count line goes too: the conversation has its own bar with the
+          count AND the expand/collapse control.
+
+          The unsubscribe button is the one thing that has to survive, because
+          it is a statement about the SENDER of the mail that brought you here
+          (canon §2.2) — so it moves up beside the subject when the per-message
+          identity block is not rendered.
         */}
-        <dl className={styles.recipients}>
-          <AddressRow label={t("reader.to")} addresses={email.to} />
-          <AddressRow label={t("reader.cc")} addresses={email.cc} />
-          <AddressRow label={t("reader.bcc")} addresses={email.bcc} />
-        </dl>
+        {conversationView ? (
+          unsubscribe !== undefined && (
+            <div className={styles.conversationUnsubscribe}>
+              <UnsubscribeButton
+                info={unsubscribe}
+                listName={listIdLabel(email)}
+                onUnsubscribeByMail={onUnsubscribeByMail}
+              />
+            </div>
+          )
+        ) : (
+          <>
+            {threadSize > 1 && (
+              <p className={styles.threadContext}>{format("reader.threadContext", threadSize)}</p>
+            )}
+
+            <div className={styles.identity}>
+              <span className={styles.avatar} aria-hidden="true">
+                {initialsFor(senderLabel(email))}
+              </span>
+              <div className={styles.identityText}>
+                <p className={styles.fromLine}>
+                  <span className={styles.fromName}>
+                    {senderLabel(email) ?? t("list.unknownSender")}
+                  </span>
+                  {email.from?.[0]?.name !== null && email.from?.[0] !== undefined && (
+                    <span className={styles.fromAddress}>{`<${email.from[0].email}>`}</span>
+                  )}
+                </p>
+                {isoDate !== undefined && (
+                  <time className={styles.date} dateTime={isoDate}>
+                    {formatFullDate(email.receivedAt, locale)}
+                  </time>
+                )}
+              </div>
+              {/* Canon §2.2: the control sits NEXT TO THE SENDER, not in the
+                  toolbar — it is a statement about who is writing, not an
+                  action on this one message. */}
+              {unsubscribe !== undefined && (
+                <UnsubscribeButton
+                  info={unsubscribe}
+                  listName={listIdLabel(email)}
+                  onUnsubscribeByMail={onUnsubscribeByMail}
+                />
+              )}
+            </div>
+
+            {/*
+              Recipients as a description list: each label is programmatically
+              tied to its addresses, which is what lets a screen reader say
+              "To: Ana, Carlos" instead of reading five names with no idea
+              which field they belong to.
+            */}
+            <dl className={styles.recipients}>
+              <AddressRow label={t("reader.to")} addresses={email.to} />
+              <AddressRow label={t("reader.cc")} addresses={email.cc} />
+              <AddressRow label={t("reader.bcc")} addresses={email.bcc} />
+            </dl>
+          </>
+        )}
       </header>
 
-      {attachments.length > 0 && (
+      {/*
+        The attachment list belongs to ONE message, so in conversation view it
+        is rendered by each expanded message (ConversationMessage) rather than
+        hoisted here — hoisting the opened message's files above six others
+        would attribute them to the wrong sender.
+      */}
+      {!conversationView && attachments.length > 0 && (
         <AttachmentList
           attachments={attachments}
           email={email}
@@ -400,22 +475,50 @@ export function ReadingPane({
       )}
 
       <div className={styles.bodyRegion}>
-        {/* Keyed by message id so per-message state — the remote-images
-            opt-in above all — can never leak from one message to the next.
+        {/*
+          E1 / canon §2.1: the conversation, or the single message.
 
-            Canon §4.1.9: in Spam the images are not merely blocked-with-an-
-            offer, they are UNLOADABLE. `allowRemoteImages={false}` removes the
-            unblock control entirely rather than disabling it, because a
-            disabled "Show images" invites the click that the policy exists to
-            prevent, and a remote fetch from a message in Spam is a delivery
-            receipt to a spammer. */}
-        <MessageBody
-          key={email.id}
-          email={email}
-          signImageUrls={signImages}
-          allowRemoteImages={!inJunk}
-          autoLoadImages={autoLoadImages}
-        />
+          The `conversationView` preference chooses between two REAL code
+          paths, not between a feature and a crippled version of it: with it
+          off, this is exactly the reader that shipped before E1.
+
+          Canon §4.1.9 applies identically to both: in Spam the images are not
+          merely blocked-with-an-offer, they are UNLOADABLE.
+          `allowRemoteImages={false}` removes the unblock control entirely
+          rather than disabling it, because a disabled "Show images" invites
+          the click that the policy exists to prevent, and a remote fetch from
+          a message in Spam is a delivery receipt to a spammer.
+        */}
+        {conversationView ? (
+          <ConversationView
+            /* Keyed by the THREAD so moving between conversations remounts —
+               and moving inside one (p/n, a click on a collapsed row) does
+               not, which is what preserves the expansion the user built. */
+            key={thread?.id ?? email.id}
+            openEmail={email}
+            thread={thread}
+            client={client}
+            accountId={accountId}
+            blobToken={blobToken}
+            signImageUrls={signImages}
+            allowRemoteImages={!inJunk}
+            autoLoadImages={autoLoadImages}
+            onReply={onReplyToMessage}
+            onForward={onForwardMessage}
+            onMarkRead={onMarkMessagesRead}
+            onControls={onConversationControls}
+          />
+        ) : (
+          /* Keyed by message id so per-message state — the remote-images
+             opt-in above all — can never leak from one message to the next. */
+          <MessageBody
+            key={email.id}
+            email={email}
+            signImageUrls={signImages}
+            allowRemoteImages={!inJunk}
+            autoLoadImages={autoLoadImages}
+          />
+        )}
         {inJunk && (
           <p className={styles.spamImagesNote} role="note">
             {t("reader.spamImagesBlocked")}
@@ -680,171 +783,6 @@ function AddressRow({
       <dd className={styles.recipientValue}>
         {addresses.map((address) => address.name ?? address.email).join(", ")}
       </dd>
-    </div>
-  );
-}
-
-/**
- * The attachment list.
- *
- * Per-attachment download is real now: the server advertises a derived
- * per-part `blobId` (P2 gap 5, closed), and a `blob`-scoped token turns each
- * attachment into a native `<a download>` — the browser streams the bytes,
- * nothing is buffered in the page. The token rides the query string because
- * a navigation can carry no header; it is single-scope, account-bound and
- * expires in minutes (see the server's token.go for the full threat model).
- *
- * When either half is missing — an old message row without part ids, or the
- * token not yet minted — the attachment is listed without a link, exactly as
- * before, and the whole-message download below still always works.
- */
-function AttachmentList({
-  attachments,
-  email,
-  client,
-  accountId,
-  blobToken,
-}: {
-  readonly attachments: readonly EmailBodyPart[];
-  readonly email: Email;
-  readonly client: JmapClient;
-  readonly accountId: string;
-  readonly blobToken?: string | undefined;
-}): React.JSX.Element {
-  const { t, format, locale } = useTranslation();
-
-  const hrefFor = (part: EmailBodyPart): string | undefined => {
-    if (part.blobId === null || blobToken === undefined) return undefined;
-    const name = part.name ?? "attachment";
-    return withAccessToken(
-      client.downloadUrlFor(accountId, part.blobId, name, part.type),
-      blobToken,
-    );
-  };
-
-  return (
-    <section className={styles.attachments} aria-label={format("reader.attachments", attachments.length)}>
-      <p className={styles.attachmentsTitle}>{format("reader.attachments", attachments.length)}</p>
-      <ul className={styles.attachmentList}>
-        {attachments.map((part, index) => {
-          const href = hrefFor(part);
-          return (
-            <li key={part.partId ?? index} className={styles.attachment}>
-              <svg
-                className={styles.attachmentIcon}
-                viewBox="0 0 20 20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                aria-hidden="true"
-                focusable="false"
-              >
-                <path d="M11.5 2.5H5.8a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h8.4a1 1 0 0 0 1-1V6.2z" />
-                <path d="M11.5 2.5v3.7h3.7" />
-              </svg>
-              {href !== undefined ? (
-                <a
-                  className={styles.attachmentName}
-                  href={href}
-                  download={part.name ?? "attachment"}
-                  title={t("reader.download")}
-                >
-                  {part.name ?? part.type}
-                </a>
-              ) : (
-                <span className={styles.attachmentName}>{part.name ?? part.type}</span>
-              )}
-              <span className={styles.attachmentMeta}>
-                {formatBytes(part.size, locale)}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      <DownloadOriginalButton email={email} client={client} accountId={accountId} />
-    </section>
-  );
-}
-
-/**
- * Downloads the original message.
- *
- * This CANNOT be a plain `<a download href>`: the download route requires HTTP
- * Basic and a browser navigation sends no Authorization header — the live
- * pilot answers 401 with `WWW-Authenticate: Basic`, which makes the browser
- * pop its own credential dialog at the user. So the bytes are fetched with the
- * header attached, handed to a temporary anchor as a blob: URL, and the URL is
- * revoked immediately afterwards so the message does not stay in memory.
- */
-function DownloadOriginalButton({
-  email,
-  client,
-  accountId,
-}: {
-  readonly email: Email;
-  readonly client: JmapClient;
-  readonly accountId: string;
-}): React.JSX.Element | null {
-  const { t } = useTranslation();
-  const [state, setState] = useState<"idle" | "working" | "failed">("idle");
-
-  const filename = `${(displaySubject(email.subject) ?? "message")
-    .replace(/[^\p{L}\p{N} ._-]/gu, "")
-    .slice(0, 60)
-    .trim()}.eml`;
-
-  const download = useCallback(async (): Promise<void> => {
-    if (email.blobId === undefined) return;
-    setState("working");
-    let url: string | undefined;
-    try {
-      const blob = await client.downloadBlob(
-        accountId,
-        email.blobId,
-        filename,
-        "application/octet-stream",
-      );
-      url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setState("idle");
-    } catch {
-      setState("failed");
-    } finally {
-      // Revoked on a macrotask so the click has certainly been dispatched;
-      // revoking synchronously cancels the download in some browsers.
-      if (url !== undefined) {
-        const toRevoke = url;
-        setTimeout(() => {
-          URL.revokeObjectURL(toRevoke);
-        }, 30_000);
-      }
-    }
-  }, [client, accountId, email.blobId, filename]);
-
-  if (email.blobId === undefined) return null;
-
-  return (
-    <div className={styles.downloadRow}>
-      <button
-        type="button"
-        className={styles.downloadButton}
-        onClick={() => {
-          void download();
-        }}
-        disabled={state === "working"}
-      >
-        {state === "working" ? t("reader.downloading") : t("reader.downloadMessage")}
-      </button>
-      {/* The live region is always present, so its message is announced when
-          it appears rather than being inserted alongside its own text. */}
-      <span role="status" aria-live="polite" className={styles.downloadStatus}>
-        {state === "failed" ? t("reader.downloadFailed") : ""}
-      </span>
     </div>
   );
 }

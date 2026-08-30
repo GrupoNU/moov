@@ -43,6 +43,59 @@ describe("the Gmail vocabulary", () => {
   });
 });
 
+/**
+ * E1: the conversation keys (canon §2.1).
+ *
+ * The point of these tests is the DISTINCTION. `j`/`k` and `n`/`p` look like
+ * duplicates and are not: one pair moves between conversations, the other
+ * inside one. If a refactor ever collapses them, these go red.
+ */
+describe("the conversation keys", () => {
+  it("maps ; to expand-all and : to collapse-all", () => {
+    expect(resolveShortcut(key(";")).action).toEqual({
+      kind: "expandConversation",
+      expand: true,
+    });
+    expect(resolveShortcut(key(":")).action).toEqual({
+      kind: "expandConversation",
+      expand: false,
+    });
+  });
+
+  it("maps n and p to movement INSIDE the conversation", () => {
+    expect(resolveShortcut(key("n")).action).toEqual({
+      kind: "conversationMessage",
+      direction: "next",
+    });
+    expect(resolveShortcut(key("p")).action).toEqual({
+      kind: "conversationMessage",
+      direction: "previous",
+    });
+  });
+
+  it("keeps j/k on conversations — the two pairs are different axes", () => {
+    expect(resolveShortcut(key("j")).action?.kind).toBe("next");
+    expect(resolveShortcut(key("k")).action?.kind).toBe("previous");
+    expect(resolveShortcut(key("n")).action?.kind).not.toBe("next");
+    expect(resolveShortcut(key("p")).action?.kind).not.toBe("previous");
+  });
+
+  it("does not fire n/p or ;/: while typing", () => {
+    // `n` and `p` are ordinary letters: firing them in the composer would eat
+    // characters, which is the defect the typing guard exists for.
+    const target = { tagName: "INPUT" } as unknown as EventTarget;
+    for (const k of ["n", "p", ";", ":"]) {
+      expect(resolveShortcut(key(k, { target })).action).toBeUndefined();
+    }
+  });
+
+  it("obeys the shortcuts-off preference", () => {
+    for (const k of ["n", "p", ";", ":"]) {
+      expect(resolveShortcut(key(k), undefined, { enabled: false }).action).toBeUndefined();
+    }
+  });
+});
+
 describe("the g chord", () => {
   it("does not act on g alone, but arms the prefix", () => {
     const result = resolveShortcut(key("g"));
