@@ -36,15 +36,45 @@ export type ShortcutAction =
   | { readonly kind: "reply" }
   | { readonly kind: "replyAll" }
   | { readonly kind: "forward" }
-  | { readonly kind: "selectRow" };
+  | { readonly kind: "selectRow" }
+  // E2: the triage verbs Gmail binds that P3 left unbound.
+  | { readonly kind: "toggleSpam" }
+  | { readonly kind: "undo" }
+  /** `]` / `[`: archive, then move to the next/previous conversation. */
+  | { readonly kind: "archiveAndAdvance"; readonly direction: "next" | "previous" }
+  /** `_`: mark unread from the focused row downward. */
+  | { readonly kind: "markUnreadFromHere" }
+  /** `* a` and friends: bulk selection over the whole visible list. */
+  | { readonly kind: "selectBy"; readonly scope: SelectionScope };
 
-/** The chord state: `g` has been pressed and the app is awaiting its second key. */
+/**
+ * The six selection scopes Gmail's `*` chord offers, verbatim (canon §2.4):
+ * all, none, read, unread, starred, unstarred.
+ */
+export type SelectionScope = "all" | "none" | "read" | "unread" | "starred" | "unstarred";
+
+/**
+ * The chord state.
+ *
+ * Two independent prefixes, not one enum: `g` (go to a folder) and `*`
+ * (select by). They are mutually exclusive in practice — the resolver clears
+ * both on every resolution — but modelling them as separate booleans keeps
+ * each branch's condition readable, and makes "is any chord live" a plain OR
+ * rather than a comparison against a sentinel.
+ */
 export interface KeyboardState {
   /** True while a `g` prefix is live. */
   readonly pendingG: boolean;
+  /** True while a `*` prefix is live. */
+  readonly pendingStar: boolean;
 }
 
-export const INITIAL_KEYBOARD_STATE: KeyboardState = { pendingG: false };
+export const INITIAL_KEYBOARD_STATE: KeyboardState = { pendingG: false, pendingStar: false };
+
+/** True when any chord prefix is awaiting its second key. */
+export function hasPendingChord(state: KeyboardState): boolean {
+  return state.pendingG || state.pendingStar;
+}
 
 /**
  * How long a `g` prefix stays live.
@@ -120,9 +150,29 @@ export function resolveShortcut(
     };
   }
 
+  /*
+   * The `*` chord's second key, same precedence rule as `g`.
+   *
+   * Note that `a`, `r`, `s` and `u` all have single-key meanings of their own
+   * (reply-all is `A`, reply is `r`, star is `s`, back is `u`). Resolving the
+   * chord BEFORE the single-key switch is what keeps `* u` from being read as
+   * "select-by prefix, then go back to the list" — which would both leave the
+   * reader and select nothing.
+   */
+  if (state.pendingStar) {
+    const scope = STAR_CHORD_TARGETS[event.key.toLowerCase()];
+    return {
+      action: scope !== undefined ? { kind: "selectBy", scope } : undefined,
+      nextState: INITIAL_KEYBOARD_STATE,
+    };
+  }
+
   switch (event.key) {
     case "g":
-      return { action: undefined, nextState: { pendingG: true } };
+      return { action: undefined, nextState: { ...INITIAL_KEYBOARD_STATE, pendingG: true } };
+
+    case "*":
+      return { action: undefined, nextState: { ...INITIAL_KEYBOARD_STATE, pendingStar: true } };
 
     case "j":
     case "ArrowDown":
@@ -147,6 +197,36 @@ export function resolveShortcut(
 
     case "#":
       return { action: { kind: "delete" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    // Gmail's report-spam key. It TOGGLES: pressing it on a message already in
+    // Junk is "not spam", which is the only sensible reading of "!" in that
+    // folder and what Gmail does.
+    case "!":
+      return { action: { kind: "toggleSpam" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    case "z":
+      return { action: { kind: "undo" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    // Archive-and-advance. `]` goes newer, `[` goes older — Gmail's own
+    // direction, which is the opposite of what the bracket shapes suggest and
+    // therefore the exact thing to copy rather than to reason about.
+    case "]":
+      return {
+        action: { kind: "archiveAndAdvance", direction: "next" },
+        nextState: INITIAL_KEYBOARD_STATE,
+      };
+
+    case "[":
+      return {
+        action: { kind: "archiveAndAdvance", direction: "previous" },
+        nextState: INITIAL_KEYBOARD_STATE,
+      };
+
+    // Gmail's `_`: mark unread from the focused conversation downward. It is
+    // the "I'll deal with the rest later" key, and there is no other way to
+    // express it without selecting every row by hand.
+    case "_":
+      return { action: { kind: "markUnreadFromHere" }, nextState: INITIAL_KEYBOARD_STATE };
 
     // Gmail's read/unread toggles are the `Shift`-less pair on the same keys
     // as the chord targets, which is why they are only reachable with no
@@ -192,6 +272,22 @@ const CHORD_TARGETS: Readonly<Record<string, string>> = {
   t: "trash",
 };
 
+/**
+ * The second key of a `*` chord, mapped to a selection scope (canon §2.4).
+ *
+ * `t` is Gmail's "starred" and `s` its "unstarred", which reads backwards
+ * until you know that `t` is for "s*t*arred" — the mnemonic is not ours to
+ * fix. Copied verbatim, per ADR §6: a power user's fingers already know it.
+ */
+const STAR_CHORD_TARGETS: Readonly<Record<string, SelectionScope>> = {
+  a: "all",
+  n: "none",
+  r: "read",
+  u: "unread",
+  s: "unstarred",
+  t: "starred",
+};
+
 /** One row of the shortcuts help, for rendering and for a completeness test. */
 export interface ShortcutHelpEntry {
   /** The keys, already formatted for display. */
@@ -215,6 +311,11 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["/"], descriptionKey: "shortcuts.search" },
   { keys: ["e"], descriptionKey: "shortcuts.archive" },
   { keys: ["#"], descriptionKey: "shortcuts.delete" },
+  { keys: ["!"], descriptionKey: "shortcuts.spam" },
+  { keys: ["z"], descriptionKey: "shortcuts.undo" },
+  { keys: ["]"], descriptionKey: "shortcuts.archiveNext" },
+  { keys: ["["], descriptionKey: "shortcuts.archivePrevious" },
+  { keys: ["_"], descriptionKey: "shortcuts.markUnreadFromHere" },
   { keys: ["s"], descriptionKey: "shortcuts.flag" },
   { keys: ["x"], descriptionKey: "shortcuts.selectRow" },
   { keys: ["c"], descriptionKey: "shortcuts.compose" },
@@ -227,6 +328,12 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["g", "d"], descriptionKey: "shortcuts.goDrafts" },
   { keys: ["g", "a"], descriptionKey: "shortcuts.goArchive" },
   { keys: ["g", "t"], descriptionKey: "shortcuts.goTrash" },
+  { keys: ["*", "a"], descriptionKey: "shortcuts.selectAll" },
+  { keys: ["*", "n"], descriptionKey: "shortcuts.selectNone" },
+  { keys: ["*", "r"], descriptionKey: "shortcuts.selectRead" },
+  { keys: ["*", "u"], descriptionKey: "shortcuts.selectUnread" },
+  { keys: ["*", "t"], descriptionKey: "shortcuts.selectStarred" },
+  { keys: ["*", "s"], descriptionKey: "shortcuts.selectUnstarred" },
   { keys: ["?"], descriptionKey: "shortcuts.help" },
   { keys: ["Esc"], descriptionKey: "shortcuts.close" },
 ];

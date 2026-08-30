@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasPendingChord,
   INITIAL_KEYBOARD_STATE,
   isTypingTarget,
   resolveShortcut,
@@ -63,7 +64,7 @@ describe("the g chord", () => {
 
   it("clears the prefix on an unbound second key rather than leaving it armed", () => {
     const armed = resolveShortcut(key("g")).nextState;
-    const result = resolveShortcut(key("z"), armed);
+    const result = resolveShortcut(key("q"), armed);
     expect(result.action).toBeUndefined();
     expect(result.nextState.pendingG).toBe(false);
   });
@@ -154,9 +155,9 @@ describe("discoverability", () => {
     const bound: string[] = [];
     for (const candidate of candidates) {
       const { action, nextState } = resolveShortcut(key(candidate));
-      // `g` binds no action of its own; it opens the chord, and its targets
-      // are documented as the two-key entries.
-      if (action !== undefined || nextState.pendingG) bound.push(candidate);
+      // `g` and `*` bind no action of their own; they open a chord, and their
+      // targets are documented as the two-key entries.
+      if (action !== undefined || hasPendingChord(nextState)) bound.push(candidate);
     }
 
     // Sanity: the sweep must actually find the vocabulary, or a broken sweep
@@ -186,5 +187,87 @@ describe("discoverability", () => {
 describe("initial state", () => {
   it("starts with no pending chord", () => {
     expect(INITIAL_KEYBOARD_STATE.pendingG).toBe(false);
+  });
+});
+
+describe("E2: the rest of Gmail's triage vocabulary", () => {
+  it.each([
+    ["!", "toggleSpam"],
+    ["z", "undo"],
+    ["_", "markUnreadFromHere"],
+  ])("binds %s to %s", (k, kind) => {
+    expect(resolveShortcut(key(k)).action?.kind).toBe(kind);
+  });
+
+  /*
+   * Gmail's own direction, which is the OPPOSITE of what the bracket shapes
+   * suggest — copied rather than reasoned about, per ADR §6.
+   */
+  it("archives and advances with ] and retreats with [", () => {
+    expect(resolveShortcut(key("]")).action).toEqual({
+      kind: "archiveAndAdvance",
+      direction: "next",
+    });
+    expect(resolveShortcut(key("[")).action).toEqual({
+      kind: "archiveAndAdvance",
+      direction: "previous",
+    });
+  });
+});
+
+describe("E2: the * selection chord", () => {
+  it("arms on * without acting", () => {
+    const result = resolveShortcut(key("*"));
+    expect(result.action).toBeUndefined();
+    expect(result.nextState.pendingStar).toBe(true);
+    expect(result.nextState.pendingG).toBe(false);
+  });
+
+  it.each([
+    ["a", "all"],
+    ["n", "none"],
+    ["r", "read"],
+    ["u", "unread"],
+    ["s", "unstarred"],
+    ["t", "starred"],
+  ])("resolves * %s to the %s scope", (k, scope) => {
+    const armed = resolveShortcut(key("*")).nextState;
+    const result = resolveShortcut(key(k), armed);
+    expect(result.action).toEqual({ kind: "selectBy", scope });
+    expect(hasPendingChord(result.nextState)).toBe(false);
+  });
+
+  /*
+   * The precedence that makes the chord usable at all: `u` alone leaves the
+   * reader and `r` alone replies, so a `*` prefix that did not shadow them
+   * would make `* u` and `* r` unreachable.
+   */
+  it("shadows the single-key meanings of its target letters", () => {
+    const armed = resolveShortcut(key("*")).nextState;
+    expect(resolveShortcut(key("u"), armed).action?.kind).toBe("selectBy");
+    expect(resolveShortcut(key("u")).action?.kind).toBe("back");
+    expect(resolveShortcut(key("r"), armed).action?.kind).toBe("selectBy");
+    expect(resolveShortcut(key("r")).action?.kind).toBe("reply");
+  });
+
+  it("clears on an unbound second key rather than staying armed", () => {
+    const armed = resolveShortcut(key("*")).nextState;
+    const result = resolveShortcut(key("q"), armed);
+    expect(result.action).toBeUndefined();
+    expect(hasPendingChord(result.nextState)).toBe(false);
+  });
+
+  it("does not let the two chords be armed at once", () => {
+    const starred = resolveShortcut(key("*")).nextState;
+    // `g` while `*` is armed is read as the chord's second key (unbound) and
+    // clears everything — it must NOT leave both prefixes live.
+    const after = resolveShortcut(key("g"), starred).nextState;
+    expect(hasPendingChord(after)).toBe(false);
+  });
+
+  it("clears the * prefix when focus moves into a text field", () => {
+    const armed = resolveShortcut(key("*")).nextState;
+    const target = { tagName: "INPUT" } as unknown as EventTarget;
+    expect(hasPendingChord(resolveShortcut(key("a", { target }), armed).nextState)).toBe(false);
   });
 });

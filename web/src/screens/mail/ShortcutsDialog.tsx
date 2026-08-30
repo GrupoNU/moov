@@ -130,7 +130,13 @@ export function ShortcutsDialog({ isOpen, onClose }: ShortcutsDialogProps): Reac
           ))}
         </dl>
 
-        <p className={styles.footnote}>{t("shortcuts.comingSoon")}: e, #</p>
+        {/*
+          The "coming soon: e, #" footnote that used to live here was removed
+          in E2: both keys have been wired since P3, and a help sheet that
+          disclaims a working shortcut is worse than one that says nothing —
+          it teaches the user not to try. `shortcuts.comingSoon` stays in the
+          string table for the next real deferral.
+        */}
       </div>
     </dialog>
   );
