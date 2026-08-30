@@ -21,10 +21,14 @@ import {
   type Identity,
 } from "../../mail/write";
 import { htmlToText, textToHtml } from "../../mail/quoting";
+import type { IndexedAddress } from "../../mail/addressIndex";
+import { isBlockedAttachment } from "../../mail/blockedExtensions";
+import { loadBodyMode, saveBodyMode } from "../../mail/composePrefs";
 import { AddressField } from "./AddressField";
 import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
 import { BodyEditor } from "./BodyEditor";
 import type { ComposerDraft } from "./composerState";
+import { PopupMenu } from "../mail/PopupMenu";
 import { ScheduleMenu } from "./ScheduleMenu";
 import styles from "./Composer.module.css";
 
@@ -88,6 +92,45 @@ export interface ComposerProps {
    * offering a date the server will refuse is the client half of breaking it.
    */
   readonly maxDelayedSendSeconds?: number | undefined;
+  /**
+   * E7: the address index the recipient fields complete from (canon §2.3).
+   *
+   * Absent means no autocomplete at all — the user opted out, or nothing has
+   * been indexed yet. See `AddressField`: an empty index does not produce an
+   * empty popup, it produces the field exactly as it was before E7.
+   */
+  readonly addressSuggestions?: readonly IndexedAddress[];
+  /**
+   * E7: records the addresses this message was sent to.
+   *
+   * Called on a SUCCESSFUL send only, which is the whole difference between
+   * this and indexing what was typed: an address that failed to send is not one
+   * you corresponded with, and it should not be promoted in a list you will
+   * pick from tomorrow. Absent when the user has opted out.
+   */
+  readonly onRecordAddresses?: (addresses: readonly { name: string | null; email: string }[]) => void;
+  /**
+   * E7: archives the conversation this is a reply to (canon §2.3, "Send &
+   * Archive").
+   *
+   * Present only for a reply that HAS a conversation to archive; its absence is
+   * what removes the button. Resolves false when the archive failed, which the
+   * composer surfaces — the message still went out, and saying only "sent"
+   * would hide half of what the button promised.
+   */
+  readonly onSendAndArchive?: () => Promise<boolean>;
+  /**
+   * E7: undoes that archive when the send is cancelled inside the undo window.
+   *
+   * The archive happens IMMEDIATELY on send, Gmail-style, so the conversation
+   * leaves the inbox while the undo window is still open. If the user then
+   * undoes, the message never goes out — and a conversation archived for a
+   * message that was never sent is a conversation the user has to go find. This
+   * is the inverse, and it is why the archive is allowed to be immediate.
+   */
+  readonly onUndoArchive?: () => Promise<void>;
+  /** E7: attachments the composer opens with — a forwarded `.eml`, say. */
+  readonly initialAttachments?: readonly ComposerAttachment[];
 }
 
 export function Composer({
@@ -106,6 +149,11 @@ export function Composer({
   onQueueOffline,
   isOnline = true,
   maxDelayedSendSeconds,
+  addressSuggestions,
+  onRecordAddresses,
+  onSendAndArchive,
+  onUndoArchive,
+  initialAttachments,
 }: ComposerProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -119,15 +167,35 @@ export function Composer({
   const [subject, setSubject] = useState(draft.subject);
   const [text, setText] = useState(draft.text);
   const [html, setHtml] = useState(draft.html ?? "");
-  const [isRich, setRich] = useState(draft.html !== undefined);
-  const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>([]);
+  /*
+   * E7: the body mode.
+   *
+   * The stored preference applies ONLY to a composition that has no HTML of its
+   * own — a brand-new message. A reply, a forward or a resumed draft arrives
+   * carrying formatted content, and letting a remembered "plain" flatten it
+   * would destroy the quoted material the user is replying to. The preference
+   * is a default for new writing, never a filter over existing content.
+   */
+  const [isRich, setRich] = useState(
+    draft.html !== undefined && (draft.html !== "" || loadBodyMode() === "rich"),
+  );
+  const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>(
+    initialAttachments ?? [],
+  );
+  /** E7: the honest refusal shown when a file is blocked outright. */
+  const [blockedNotice, setBlockedNotice] = useState<string | undefined>(undefined);
 
   const [draftId, setDraftId] = useState<string | undefined>(draft.existingDraftId);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
   const [sendError, setSendError] = useState<string | undefined>(undefined);
   const [pending, setPending] = useState<
-    { readonly submissionId: string; readonly sendAt: number } | undefined
+    {
+      readonly submissionId: string;
+      readonly sendAt: number;
+      /** E7: this send also archived the conversation, so an undo must restore it. */
+      readonly archived: boolean;
+    } | undefined
   >(undefined);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [isSending, setSending] = useState(false);
@@ -283,6 +351,21 @@ export function Composer({
         const key = `att-${String(Date.now())}-${file.name}-${String(Math.random()).slice(2, 8)}`;
 
         /*
+         * E7: the executable-extension block (canon §2.3, /mail/answer/6590).
+         *
+         * FIRST, before the size gates and before any byte is uploaded. This
+         * is a hard refusal, not a warning: the file is not attached, does not
+         * appear in the list even as "failed", and nothing is sent to the
+         * server. A "failed" row would leave a blocked executable's NAME
+         * sitting in the composer, which invites the user to try renaming it —
+         * exactly the behaviour the block exists to prevent.
+         */
+        if (isBlockedAttachment(file.name)) {
+          setBlockedNotice(format("compose.blockedExtension", file.name));
+          continue;
+        }
+
+        /*
          * The client-side gate reads the SERVER's advertised maxSizeUpload
          * (declared == applied, J1's rule). Refusing here is a courtesy —
          * the server enforces it regardless — but it saves the user
@@ -411,7 +494,24 @@ export function Composer({
     spec !== undefined &&
     identity !== undefined;
 
-  const send = useCallback(async (): Promise<void> => {
+  /**
+   * Sends the message, optionally archiving the conversation it replies to.
+   *
+   * # Why the archive happens immediately (E7, canon §2.3)
+   *
+   * Gmail's Send & Archive archives the moment you press it — the conversation
+   * leaves the inbox while the undo window is still counting down. That looks
+   * wrong until you consider the alternative: deferring the archive until the
+   * window closes means the button's second promise is invisible for up to
+   * thirty seconds, and the user, seeing the thread still in their inbox,
+   * concludes the button did not work and archives it by hand.
+   *
+   * What makes immediacy safe is that the inverse exists. An undo inside the
+   * window cancels the send AND restores the conversation, so the pair is
+   * atomic from the user's point of view. That inverse is `onUndoArchive`, and
+   * the test for it is the one that matters in this file.
+   */
+  const send = useCallback(async (alsoArchive = false): Promise<void> => {
     // The double-send guard: a REF, set before any await. Two clicks in one
     // tick both read stale state, which is how double-send bugs ship.
     if (sendingRef.current) return;
@@ -471,15 +571,39 @@ export function Composer({
       draftIdRef.current = undefined;
       setDraftId(undefined);
 
+      /*
+       * E7: feed the address index from what was actually SENT.
+       *
+       * After the submission succeeded, never before: an address the server
+       * refused is not one you corresponded with, and indexing it would promote
+       * a typo into tomorrow's suggestions. Bcc is deliberately excluded here
+       * too — see `addressesFromMessage` for that reasoning.
+       */
+      onRecordAddresses?.([...current.to, ...current.cc]);
+
+      /*
+       * The archive, immediate and before the undo window opens. See this
+       * callback's header for why immediacy is the correct behaviour, and
+       * `undo` below for the inverse that makes it safe.
+       *
+       * A failed archive does NOT fail the send: the message is gone, and the
+       * only honest thing left is to say that the archive did not happen.
+       */
+      let archived = false;
+      if (alsoArchive && onSendAndArchive !== undefined) {
+        archived = await onSendAndArchive();
+        if (!archived) setSendError(t("send.archiveFailed"));
+      }
+
       const sendAt = parseSendAt(result.submission.sendAt);
       if (sendAt === undefined || secondsUntil(sendAt, Date.now()) === 0) {
         // No window (or one already elapsed): the message is on its way.
-        onNotify(t("send.sent"));
+        onNotify(archived ? t("send.sentAndArchived") : t("send.sent"));
         onChanged();
         onClose();
         return;
       }
-      setPending({ submissionId: result.submission.id, sendAt });
+      setPending({ submissionId: result.submission.id, sendAt, archived });
       setSecondsLeft(secondsUntil(sendAt, Date.now()));
     } catch (error) {
       setSendError(error instanceof Error ? error.message : String(error));
@@ -499,6 +623,8 @@ export function Composer({
     onClose,
     isOnline,
     onQueueOffline,
+    onRecordAddresses,
+    onSendAndArchive,
   ]);
 
   /**
@@ -578,9 +704,10 @@ export function Composer({
       const left = secondsUntil(pending.sendAt, Date.now());
       setSecondsLeft(left);
       if (left === 0) {
-        // The window closed: the server is transmitting. Nothing to undo.
+        // The window closed: the server is transmitting. Nothing to undo, and
+        // the archive that rode along is now permanent too.
         setPending(undefined);
-        onNotify(t("send.sent"));
+        onNotify(pending.archived ? t("send.sentAndArchived") : t("send.sent"));
         onChanged();
         onClose();
       }
@@ -593,7 +720,7 @@ export function Composer({
 
   const undo = useCallback(async (): Promise<void> => {
     if (pending === undefined) return;
-    const { submissionId } = pending;
+    const { submissionId, archived } = pending;
     setPending(undefined);
     try {
       const outcome = await cancelSubmission(client, accountId, submissionId);
@@ -602,18 +729,44 @@ export function Composer({
          * `cannotUnsend` is a TRUE statement: the mail is going out. A user
          * who believes a send was canceled and later finds it in Sent has been
          * lied to, so the refusal is surfaced rather than swallowed.
+         *
+         * The archive is deliberately NOT undone here. The message is being
+         * delivered, so the conversation genuinely has been replied to and
+         * archived — restoring it would contradict what actually happened.
          */
         setSendError(firstFailureMessage(outcome) ?? t("send.cannotUnsend"));
         onChanged();
         return;
       }
-      onNotify(t("send.canceled"));
+
+      /*
+       * E7: the inverse of Send & Archive.
+       *
+       * The cancel SUCCEEDED, which means the message provably never went out
+       * (that is exactly what `canceled` means on this server — W3's undo is
+       * proven by an empty Sent). A conversation archived on behalf of a
+       * message that was never sent has to come back, or the user is left
+       * hunting for a thread that left their inbox for no reason.
+       *
+       * Failures here are swallowed on purpose: `onChanged()` refetches, so a
+       * conversation that failed to un-archive shows its true state
+       * immediately, and the toast that matters is the one about the send.
+       */
+      if (archived && onUndoArchive !== undefined) {
+        try {
+          await onUndoArchive();
+        } catch {
+          // The refresh below tells the truth about where the thread is.
+        }
+      }
+
+      onNotify(archived ? t("send.canceledUnarchived") : t("send.canceled"));
       onChanged();
       onClose();
     } catch (error) {
       setSendError(error instanceof Error ? error.message : String(error));
     }
-  }, [pending, client, accountId, t, onNotify, onChanged, onClose]);
+  }, [pending, client, accountId, t, onNotify, onChanged, onClose, onUndoArchive]);
 
   // --- discard and close ---------------------------------------------------
 
@@ -637,6 +790,30 @@ export function Composer({
     onChanged();
     onClose();
   }, [client, accountId, scheduler, t, onNotify, onChanged, onClose]);
+
+  /**
+   * Switches the body between the rich surface and the textarea.
+   *
+   * Extracted in E7 because there are now TWO controls that do it — the
+   * editor's own mode buttons and the ⋯ menu's "Plain text mode" — and two
+   * copies of the conversion would be two chances to drop the user's words.
+   *
+   * The conversion itself is unchanged from P3: going rich turns the text into
+   * paragraphs, going plain renders the HTML down. Either way the words
+   * survive, which is the only acceptable behaviour for a toggle sitting next
+   * to a message someone wrote. What E7 adds is the persistence, so the choice
+   * outlives this composer.
+   */
+  const toggleRich = useCallback(
+    (next: boolean): void => {
+      if (next && html === "") setHtml(textToHtml(text));
+      if (!next && text.trim() === "" && html !== "") setText(htmlToText(html));
+      setRich(next);
+      saveBodyMode(next ? "rich" : "plain");
+      touched();
+    },
+    [html, text, touched],
+  );
 
   /** Closing flushes the autosave first — closing must never lose a draft. */
   const closeWithSave = useCallback((): void => {
@@ -674,7 +851,7 @@ export function Composer({
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault();
-          void send();
+          void send(false);
         }}
       >
         <header className={styles.header}>
@@ -706,6 +883,7 @@ export function Composer({
             setTo(next);
             touched();
           }}
+          {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
           autoFocusField={draft.focusField === "to"}
           trailing={
             <div className={styles.ccToggles}>
@@ -743,6 +921,7 @@ export function Composer({
               setCc(next);
               touched();
             }}
+            {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
           />
         )}
         {showBcc && (
@@ -753,6 +932,11 @@ export function Composer({
               setBcc(next);
               touched();
             }}
+            /* Bcc completes from the index like the others: the index is never
+               FED from Bcc (that would surface a hidden recipient), but
+               completing INTO it is just the user picking someone they already
+               know — the asymmetry is deliberate. */
+            {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
           />
         )}
 
@@ -780,18 +964,7 @@ export function Composer({
 
         <BodyEditor
           isRich={isRich}
-          onToggleRich={(next) => {
-            /*
-             * Switching modes CONVERTS rather than discards. Going rich turns
-             * the text into paragraphs; going plain renders the HTML down.
-             * Either way the user's words survive, which is the only
-             * acceptable behaviour for a toggle next to a message they wrote.
-             */
-            if (next && html === "") setHtml(textToHtml(text));
-            if (!next && text.trim() === "" && html !== "") setText(htmlToText(html));
-            setRich(next);
-            touched();
-          }}
+          onToggleRich={toggleRich}
           text={text}
           onTextChange={(next) => {
             setText(next);
@@ -806,6 +979,22 @@ export function Composer({
         />
 
         <AttachmentList attachments={attachments} onRemove={removeAttachment} />
+
+        {/*
+          E7: the refusal for a blocked file.
+
+          `role="alert"` because it IS an event — the user just did something
+          and this is the answer to it — and because the file silently not
+          appearing in the list is otherwise indistinguishable from a bug. It
+          names the file and says why, then says what to do instead, which is
+          the same shape every error in this app takes.
+        */}
+        {blockedNotice !== undefined && (
+          <div className={styles.errorBanner} role="alert">
+            <strong>{blockedNotice}</strong>
+            <span>{t("compose.blockedExtensionHint")}</span>
+          </div>
+        )}
 
         {(sendError !== undefined || saveError !== undefined) && (
           <div className={styles.errorBanner} role="alert">
@@ -824,6 +1013,42 @@ export function Composer({
             >
               {isSending ? t("compose.sending") : t("compose.send")}
             </button>
+
+            {/*
+              E7: Send & Archive (canon §2.3, /a/users/answer/9282734).
+
+              # The named gap, stated where it lives
+
+              Gmail gates this button behind a setting ("Show 'Send & Archive'
+              button in reply"). Our prefs v1 has no key for it, and inventing
+              one client-side is exactly what `labelStore` explains we do not
+              do — the server refuses unknown keys, and the wire shape is the
+              server's business.
+
+              So the button is SHOWN, always, in a reply that has something to
+              archive. That is the honest end of the trade: a visible, working,
+              useful control is not a dead one, whereas hiding it behind a
+              preference we cannot persist would mean either a setting that
+              forgets itself or a feature nobody can reach. The hiding
+              preference arrives with prefs v2, named in the deliverable.
+
+              It renders only for a reply (`onSendAndArchive` is absent
+              otherwise), because archiving is about the conversation being
+              replied to and a new message has none.
+            */}
+            {onSendAndArchive !== undefined && (
+              <button
+                type="button"
+                className={styles.sendAndArchive}
+                disabled={!canSend || isSending || pending !== undefined}
+                title={t("send.andArchiveHint")}
+                onClick={() => {
+                  void send(true);
+                }}
+              >
+                {t("send.andArchive")}
+              </button>
+            )}
 
             {/*
               E4: "Schedule send" — a SECONDARY action beside Send, not a
@@ -881,6 +1106,46 @@ export function Composer({
                 <path d="M14.5 9.2l-5 5a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 1 1 3 3l-6 6a1.1 1.1 0 0 1-1.5-1.5l5.3-5.3" />
               </svg>
             </button>
+
+            {/*
+              E7: the composer's ⋯ menu, holding the plain-text toggle
+              (canon §2.3 — behaviourally real in Gmail, UNSOURCED as a
+              documented row, which is recorded in `composePrefs.ts`).
+
+              A `menuitemcheckbox` rather than two items or a switch: it is one
+              mode with two states, and `aria-checked` is what tells a screen
+              reader which one is active right now. The menu closes on choice,
+              because unlike the label menu there is nothing else in it to tick.
+            */}
+            <PopupMenu
+              label={t("compose.more")}
+              disabled={false}
+              triggerClassName={styles.iconButton}
+              triggerContent={
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="currentColor">
+                  <circle cx="4.5" cy="10" r="1.4" />
+                  <circle cx="10" cy="10" r="1.4" />
+                  <circle cx="15.5" cy="10" r="1.4" />
+                </svg>
+              }
+            >
+              {(close) => (
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={!isRich}
+                    className={styles.menuItem}
+                    onClick={() => {
+                      toggleRich(isRich ? false : true);
+                      close();
+                    }}
+                  >
+                    {t("compose.plainTextMode")}
+                  </button>
+                </li>
+              )}
+            </PopupMenu>
 
             <button type="button" className={styles.discard} onClick={() => void discard()}>
               {t("compose.discard")}

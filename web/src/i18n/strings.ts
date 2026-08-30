@@ -242,6 +242,27 @@ export const en = {
   "settings.signature.saved": "Signature saved",
   "settings.signature.failed": "The signature could not be saved",
 
+  // --- E7: the address autocomplete row (canon §2.3) ---
+  "settings.addressAutocomplete.label": "Address autocomplete",
+  /*
+   * The description carries the privacy statement, not a tooltip: where the
+   * index lives is the first thing someone deciding about this row wants to
+   * know, and burying it costs the row its trustworthiness.
+   */
+  "settings.addressAutocomplete.description":
+    "Addresses are saved as you send and read mail, and suggested when you write. The index lives only in this browser — it is never uploaded, and it does not roam to your other devices.",
+  "settings.addressAutocomplete.on": "Save addresses automatically",
+  /* Gmail's own wording for the opt-out (/contacts/answer/1069522). */
+  "settings.addressAutocomplete.off": "I'll add contacts myself",
+  "settings.addressAutocomplete.count": (count: number): string =>
+    count === 1 ? "1 saved address" : `${count} saved addresses`,
+  "settings.addressAutocomplete.clear": "Delete saved addresses",
+  "settings.addressAutocomplete.clearConfirm":
+    "Delete every address saved in this browser? Autocomplete starts over from nothing.",
+  "settings.addressAutocomplete.cleared": "Saved addresses deleted",
+  "settings.addressAutocomplete.localOnly":
+    "This choice applies to this browser only, until preferences can carry it.",
+
   "settings.filters.soon": "Filters arrive with the Sieve work",
   "settings.filters.soonBody":
     "Rules that label, archive, star or delete mail as it arrives — built on Dovecot's own Sieve, so they keep running when Moov is closed.",
@@ -580,6 +601,36 @@ export const en = {
   "compose.forwardedDate": "Date",
   "compose.forwardedSubject": "Subject",
   "compose.forwardedTo": "To",
+
+  // --- E7: identity and daily sending (canon §2.3) ---
+  "compose.suggestions.label": "Suggested addresses",
+  "compose.more": "More options",
+  "compose.plainTextMode": "Plain text mode",
+  "compose.plainTextWarning":
+    "Switching to plain text removes the formatting from this message. The text stays.",
+  "send.andArchive": "Send & archive",
+  "send.andArchiveHint": "Sends this reply and archives the conversation",
+  "send.sentAndArchived": "Message sent — conversation archived",
+  "send.archiveFailed": "The message was sent, but the conversation could not be archived",
+  "send.canceledUnarchived": "Send canceled — the conversation is back in your inbox",
+  /*
+   * Gmail's own wording, adapted (/mail/answer/6584). It says WHY rather than
+   * "not allowed", because a user who does not know the reason assumes a bug
+   * and tries again with the same file.
+   */
+  "compose.blockedExtension": (name: string): string =>
+    `${name} was not attached: this kind of file is blocked because it presents a security risk.`,
+  "compose.blockedExtensionHint":
+    "To send it, put it in a .zip first, or share it with a link.",
+
+  // Forward as attachment (canon §2.3, /mail/answer/9337672).
+  "action.forwardAsAttachment": "Forward as attachment",
+  "forwardAttachment.preparing": "Preparing the message…",
+  "forwardAttachment.failed": "The message could not be attached",
+  "forwardAttachment.tooLarge": (limit: string): string =>
+    `These messages exceed the ${limit} limit and were not attached.`,
+  "forwardAttachment.subject": (count: number): string =>
+    count === 1 ? "Forwarded message" : `${count} forwarded messages`,
 
   // --- P3: drafts ---
   "draft.saving": "Saving…",
@@ -1036,6 +1087,21 @@ export const es: Strings = {
   "settings.signature.saved": "Firma guardada",
   "settings.signature.failed": "La firma no se pudo guardar",
 
+  // --- E7: autocompletado de direcciones (canon §2.3) ---
+  "settings.addressAutocomplete.label": "Autocompletado de direcciones",
+  "settings.addressAutocomplete.description":
+    "Las direcciones se guardan a medida que enviás y leés correo, y se sugieren cuando escribís. El índice vive solo en este navegador — nunca se sube a ningún lado, y no viaja a tus otros dispositivos.",
+  "settings.addressAutocomplete.on": "Guardar direcciones automáticamente",
+  "settings.addressAutocomplete.off": "Yo agrego mis contactos",
+  "settings.addressAutocomplete.count": (count: number): string =>
+    count === 1 ? "1 dirección guardada" : `${count} direcciones guardadas`,
+  "settings.addressAutocomplete.clear": "Borrar direcciones guardadas",
+  "settings.addressAutocomplete.clearConfirm":
+    "¿Borrar todas las direcciones guardadas en este navegador? El autocompletado arranca de cero.",
+  "settings.addressAutocomplete.cleared": "Direcciones guardadas borradas",
+  "settings.addressAutocomplete.localOnly":
+    "Esta opción vale solo para este navegador, hasta que las preferencias puedan llevarla.",
+
   "settings.filters.soon": "Los filtros llegan con la épica de Sieve",
   "settings.filters.soonBody":
     "Reglas que etiquetan, archivan, destacan o borran el correo cuando llega — sobre el Sieve del propio Dovecot, así siguen corriendo con Moov cerrado.",
@@ -1331,6 +1397,30 @@ export const es: Strings = {
   "compose.forwardedDate": "Fecha",
   "compose.forwardedSubject": "Asunto",
   "compose.forwardedTo": "Para",
+
+  // --- E7: identidad y envío diario (canon §2.3) ---
+  "compose.suggestions.label": "Direcciones sugeridas",
+  "compose.more": "Más opciones",
+  "compose.plainTextMode": "Modo texto sin formato",
+  "compose.plainTextWarning":
+    "Pasar a texto sin formato le saca el formato a este mensaje. El texto queda.",
+  "send.andArchive": "Enviar y archivar",
+  "send.andArchiveHint": "Envía esta respuesta y archiva la conversación",
+  "send.sentAndArchived": "Mensaje enviado — conversación archivada",
+  "send.archiveFailed": "El mensaje se envió, pero la conversación no se pudo archivar",
+  "send.canceledUnarchived": "Envío cancelado — la conversación volvió a tu bandeja",
+  "compose.blockedExtension": (name: string): string =>
+    `${name} no se adjuntó: este tipo de archivo está bloqueado por presentar un riesgo de seguridad.`,
+  "compose.blockedExtensionHint":
+    "Para mandarlo, ponelo en un .zip primero, o compartilo con un enlace.",
+
+  "action.forwardAsAttachment": "Reenviar como adjunto",
+  "forwardAttachment.preparing": "Preparando el mensaje…",
+  "forwardAttachment.failed": "El mensaje no se pudo adjuntar",
+  "forwardAttachment.tooLarge": (limit: string): string =>
+    `Estos mensajes superan el límite de ${limit} y no se adjuntaron.`,
+  "forwardAttachment.subject": (count: number): string =>
+    count === 1 ? "Mensaje reenviado" : `${count} mensajes reenviados`,
 
   // --- P3: borradores ---
   "draft.saving": "Guardando…",

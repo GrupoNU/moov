@@ -188,6 +188,76 @@
   cursor: not-allowed;
 }
 
+/*
+ * E7: Send & Archive — a SECONDARY action beside Send, never a variant of it.
+ *
+ * The same reasoning `ScheduleMenu` records: Send must stay one unambiguous
+ * click. Splitting it into a caret means a user aiming for "send" can open a
+ * menu instead, and this is the one screen where a mis-click is expensive. So
+ * this is its own outlined button — clearly related, clearly not the same
+ * button.
+ */
+.sendAndArchive {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium, 500);
+  cursor: pointer;
+}
+
+.sendAndArchive:hover:not(:disabled),
+.sendAndArchive:focus-visible:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-tint);
+}
+
+.sendAndArchive:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* E7: a row of the composer's ⋯ menu. */
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--color-accent-tint);
+}
+
+/*
+ * The tick for the checked state. A pseudo-element driven by `aria-checked`,
+ * so the visual state and the announced state are the same attribute and
+ * cannot drift — the rule the label chips and the suggestion rows follow too.
+ */
+.menuItem[aria-checked="true"]::before {
+  content: "✓";
+  color: var(--color-accent);
+}
+
+.menuItem[aria-checked="false"]::before {
+  content: "";
+  /* Reserves the tick's width so the label does not shift when it appears. */
+  width: 0.8em;
+}
+
 .discard {
   padding: var(--space-2) var(--space-3);
   border: 0;

@@ -29,6 +29,10 @@
   gap: var(--space-2);
   min-width: 0;
   cursor: text;
+  /* E7: the anchor for the suggestion popup, which is absolutely positioned
+     against this box so it lines up with the field rather than with the row's
+     label column. */
+  position: relative;
 }
 
 .chips {
@@ -135,11 +139,90 @@
   color: var(--color-danger);
 }
 
+/* --- E7: the address suggestions (canon §2.3) --- */
+
+/*
+ * The popup hangs below the field. `z-index` is high enough to clear the
+ * composer's own chrome: this list renders inside a `<dialog>` in the top
+ * layer, so it competes only with the dialog's contents, not with the page.
+ */
+.suggestions {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(15, 18, 34, 0.18));
+  /* The source list is capped at six, so this is a backstop rather than a
+     scrollbar anyone should meet. */
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.suggestions[hidden] {
+  display: none;
+}
+
+.suggestion {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  cursor: pointer;
+}
+
+/*
+ * Styled from `aria-selected` rather than from a class, so the visual
+ * highlight and the state a screen reader announces cannot drift apart — they
+ * are the same attribute.
+ */
+.suggestion[aria-selected="true"],
+.suggestion:hover {
+  background: var(--color-accent-tint);
+}
+
+.suggestionActive {
+  /* A hook for tests and for a future non-pointer treatment; the visual truth
+     lives on the aria-selected rule above. */
+  font-weight: 500;
+}
+
+.suggestionName {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestionEmail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--text-xs, 0.75rem);
+}
+
 @media (forced-colors: active) {
   .chip {
     border: 1px solid CanvasText;
   }
   .invalid {
     border: 2px dashed Highlight;
+  }
+  .suggestion[aria-selected="true"] {
+    /* `color-mix` backgrounds are dropped in forced-colors; the active option
+       must still be distinguishable, so it gets a system-colour outline. */
+    outline: 2px solid Highlight;
   }
 }
