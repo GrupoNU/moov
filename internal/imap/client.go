@@ -185,6 +185,12 @@ type Client interface {
 	// created mailbox was assigned.
 	StatusMailbox(ctx context.Context, name string) (MailboxInfo, error)
 
+	// GetQuota reads the quota roots governing INBOX (RFC 9208 GETQUOTAROOT),
+	// with STORAGE converted to bytes. A server without QUOTA, or an account
+	// without limits, returns an empty slice and no error — "no quota" is a
+	// state, not a failure (quota.go).
+	GetQuota(ctx context.Context) ([]QuotaResource, error)
+
 	// Metadata returns the METADATA operations for label definitions (A6).
 	// The returned value borrows the connection and must not outlive it.
 	Metadata() MetadataOps

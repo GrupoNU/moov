@@ -404,6 +404,8 @@ func (c *fakeClient) StoreFlags(_ context.Context, uids []imap.UID, delta imap.F
 
 func (c *fakeClient) Metadata() imap.MetadataOps { return nil }
 
+func (c *fakeClient) GetQuota(context.Context) ([]imap.QuotaResource, error) { return nil, nil }
+
 func (c *fakeClient) Close() error {
 	c.closed = true
 	return nil
