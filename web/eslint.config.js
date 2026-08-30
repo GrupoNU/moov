@@ -132,4 +132,26 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  {
+    /*
+     * The service worker runs in a ServiceWorkerGlobalScope, not a window:
+     * `self`, `caches`, `clients` and `skipWaiting` exist there and nowhere
+     * else in this project. Declaring the right environment is what lets the
+     * `no-undef` rule keep catching real typos in that file — switching the
+     * rule off would have silenced the typos along with the false positives.
+     */
+    files: ["public/sw.js"],
+    languageOptions: {
+      globals: globals.serviceworker,
+    },
+  },
+  {
+    // Build-time tooling runs in Node, not a browser. `tools/` is not part of
+    // the app bundle and is not in a tsconfig project, so the type-checked
+    // rule sets above (scoped to .ts/.tsx) correctly do not apply here.
+    files: ["tools/**/*.{js,mjs}"],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 );

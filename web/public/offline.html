@@ -1,0 +1,173 @@
+<!doctype html>
+<!--
+  The offline fallback, served by sw.js when a navigation cannot reach the
+  network.
+
+  It is deliberately standalone: no bundle, no fonts, no images beyond the
+  inline mark. It is precached at worker install and must render from that copy
+  alone, so anything it referenced by URL would be the one thing missing
+  exactly when it is needed.
+
+  The colours are literals rather than the app's custom properties for the same
+  reason — tokens.css is not loaded here. They are the same values, and the
+  same three-state theme handling the artifact rules describe: a light palette
+  on :root, redefined under prefers-color-scheme so a dark OS is not blinded.
+-->
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Sin conexión · Moov Mail</title>
+    <meta name="theme-color" content="#5b5bd6" />
+    <meta name="robots" content="noindex, nofollow" />
+    <style>
+      :root {
+        --surface-canvas: #f6f7fb;
+        --surface-default: #ffffff;
+        --text-strong: #12141f;
+        --text-muted: #5a6072;
+        --border: #dfe3ec;
+        --brand: #5b5bd6;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --surface-canvas: #0d0f17;
+          --surface-default: #151824;
+          --text-strong: #f2f4fa;
+          --text-muted: #a3abbf;
+          --border: #2a3044;
+        }
+      }
+
+      :root[data-theme="dark"] {
+        --surface-canvas: #0d0f17;
+        --surface-default: #151824;
+        --text-strong: #f2f4fa;
+        --text-muted: #a3abbf;
+        --border: #2a3044;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        background: var(--surface-canvas);
+        color: var(--text-strong);
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        max-width: 26rem;
+        width: 100%;
+        text-align: center;
+        background: var(--surface-default);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 2.5rem 1.75rem;
+      }
+
+      svg {
+        width: 56px;
+        height: 56px;
+      }
+
+      h1 {
+        margin: 1.25rem 0 0.5rem;
+        font-size: 1.25rem;
+        letter-spacing: -0.01em;
+      }
+
+      p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+      }
+
+      button {
+        margin-top: 1.75rem;
+        padding: 0.6rem 1.4rem;
+        font: inherit;
+        font-weight: 600;
+        color: #ffffff;
+        background: var(--brand);
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      button:focus-visible {
+        outline: 2px solid var(--brand);
+        outline-offset: 2px;
+      }
+    </style>
+    <script>
+      /*
+       * The same pre-paint theme script index.html carries, and for the same
+       * reason: without it a user with dark mode chosen gets a white flash on
+       * the one screen that appears when things are already going wrong.
+       * It mirrors theme.ts, INCLUDING the "light" default.
+       */
+      (function () {
+        var stored = null;
+        try {
+          stored = localStorage.getItem("moov.theme.v1");
+        } catch (error) {
+          /* Storage is blocked; the default below applies. */
+        }
+        if (stored === "system") {
+          document.documentElement.removeAttribute("data-theme");
+        } else {
+          document.documentElement.setAttribute(
+            "data-theme",
+            stored === "dark" ? "dark" : "light",
+          );
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <main>
+      <svg viewBox="0 0 32 32" role="img" aria-label="Moov Mail">
+        <rect width="32" height="32" rx="8.5" fill="#5b5bd6" />
+        <path
+          d="M9 22V11.4c0-.5.6-.7.9-.3l5.4 6.6c.35.43 1 .43 1.35 0l5.4-6.6c.32-.4.95-.17.95.33V22"
+          fill="none"
+          stroke="#ffffff"
+          stroke-width="2.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+
+      <!--
+        Both languages, deliberately. This page cannot read the app's locale:
+        it is a static file served by the worker before any bundle runs, and
+        guessing from navigator.language would be wrong for exactly the pilot
+        users most likely to see it.
+      -->
+      <h1>Estás sin conexión</h1>
+      <p>
+        Moov necesita conexión hasta que llegue el modo sin conexión.
+        <br />
+        <span lang="en">Moov needs a connection until offline mode lands.</span>
+      </p>
+
+      <button type="button" onclick="location.reload()">
+        Reintentar / Retry
+      </button>
+    </main>
+  </body>
+</html>

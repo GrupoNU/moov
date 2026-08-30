@@ -15,6 +15,21 @@
     <meta name="description" content="Moov Mail" />
 
     <!--
+      E9 / decision D-1: Moov is an installable PWA. The manifest is what makes
+      the browser offer installation, what names and paints the installed
+      window, and what registers `mailto:` so the OS can hand a compose to us
+      (see src/pwa/mailto.ts for the receiving half).
+
+      `apple-touch-icon` is separate because iOS still does not read the
+      manifest's icons for a home-screen bookmark; without this line an
+      installed Moov on iOS gets a screenshot of the page as its icon. It is a
+      PNG with opaque corners on purpose — iOS discards alpha and would
+      otherwise composite the rounded plate onto black.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+    <!--
       A login page must never be indexed or previewed by a crawler: it is a
       credential prompt, and a cached copy of a customer's branded login screen
       is a phishing template someone else did not have to build.

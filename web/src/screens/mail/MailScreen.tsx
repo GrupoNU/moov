@@ -53,8 +53,10 @@ import { fetchIdentities, type Identity } from "../../mail/write";
 import { encodeBasicCredentials } from "../../api/jmap";
 import { useRouter } from "../../router/RouterProvider";
 import { withMessage, type Route } from "../../router/routes";
+import { parseComposeRequest, urlWithoutCompose } from "../../pwa/mailto";
 import { Composer } from "../compose/Composer";
 import {
+  draftTo,
   forwardDraft,
   newDraft,
   replyDraft,
@@ -946,6 +948,50 @@ export function MailScreen(): React.JSX.Element {
   const openCompose = useCallback((): void => {
     setComposerDraft(newDraft(true));
   }, []);
+
+  /*
+   * E9: a `mailto:` the OS handed us through the manifest's protocol handler.
+   *
+   * The browser does not deliver the URI directly — it percent-encodes the
+   * whole thing into the registered template's `%s` and navigates. So this is
+   * an ordinary URL to read, and `parseComposeRequest` is a pure function over
+   * it (src/pwa/mailto.ts explains the shape and why only `mailto:` is
+   * accepted).
+   *
+   * The parameter is stripped from the URL as soon as the composer opens. A
+   * reload must not resurrect a composer the user dismissed, and a
+   * correspondent's address does not belong in an address bar, a history
+   * entry, or a screenshot of either.
+   *
+   * `window.location.search` is read directly rather than through the route:
+   * `compose` is not part of the route model and should not become part of it
+   * — it is a one-shot instruction, not a destination.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // One composer at a time; an arriving mailto must not replace whatever the
+    // user is already in the middle of writing.
+    if (composerDraft !== undefined) return;
+
+    const current = `${window.location.pathname}${window.location.search}`;
+    const request = parseComposeRequest(current);
+    if (request === undefined) return;
+
+    const base = draftTo(request.to, true);
+    setComposerDraft({
+      ...base,
+      subject: request.subject ?? base.subject,
+      text: request.body ?? base.text,
+      // A prefilled body arrives as plain text; keeping the rich seed as well
+      // would let the editor seed from an empty HTML string and drop it.
+      html: request.body === undefined ? base.html : undefined,
+      // Straight to the subject when the sender named a recipient but no
+      // subject, and to the body when both came prefilled.
+      focusField: request.subject === undefined ? "subject" : "body",
+    });
+
+    window.history.replaceState(null, "", urlWithoutCompose(current));
+  }, [composerDraft]);
 
   /**
    * E2 item 6: the `mailto:` unsubscribe.
