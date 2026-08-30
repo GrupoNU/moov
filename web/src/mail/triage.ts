@@ -81,8 +81,16 @@ export function sessionHasTriage(
 ): boolean {
   if (session === undefined) return false;
   if (CAP_TRIAGE in session.capabilities) return true;
-  const account = session.accounts[accountId];
-  return account !== undefined && CAP_TRIAGE in account.accountCapabilities;
+  /*
+   * `accountCapabilities` is REQUIRED by RFC 8620 §2, and our own server always
+   * sends it — but a capability probe must not be able to take down the whole
+   * shell if a server omits it. Before this guard the bare `in` threw
+   * "Cannot use 'in' operator ... in undefined" during render, which surfaces
+   * as a blank app rather than as a missing feature. Absent capabilities mean
+   * the feature is absent; that is the only reading, and it is a safe one.
+   */
+  const capabilities = session.accounts[accountId]?.accountCapabilities;
+  return capabilities !== undefined && CAP_TRIAGE in capabilities;
 }
 
 /**

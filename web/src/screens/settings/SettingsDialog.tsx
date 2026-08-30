@@ -1,4 +1,4 @@
-import { useConfirm } from "../../components/ModalDialog";
+import { useConfirm } from "../../components/useConfirm";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ThemeToggle } from "../../components/ThemeToggle";

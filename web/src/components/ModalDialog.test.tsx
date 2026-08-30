@@ -4,7 +4,8 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { I18nProvider } from "../i18n/I18nProvider";
-import { ConfirmDialog, PromptDialog, useConfirm } from "./ModalDialog";
+import { ConfirmDialog, PromptDialog } from "./ModalDialog";
+import { useConfirm } from "./useConfirm";
 
 /*
  * jsdom implements <dialog> but not the top layer; `showModal` exists and

@@ -7,7 +7,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { loadSession } from "../../auth/session";
 import { useBranding } from "../../branding/BrandingProvider";
 import { BrandMark } from "../../components/BrandMark";
-import { useConfirm } from "../../components/ModalDialog";
+import { useConfirm } from "../../components/useConfirm";
 import { useTranslation } from "../../i18n/I18nProvider";
 import {
   INITIAL_KEYBOARD_STATE,
@@ -1845,7 +1845,7 @@ export function MailScreen(): React.JSX.Element {
       onAbortMigration: labelsApi.isMigrating ? labelsApi.abort : undefined,
       onCreateFolder: undefined,
     }),
-    [labelsApi, reportMigration, format],
+    [labelsApi, reportMigration, format, confirm],
   );
 
   /**

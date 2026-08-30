@@ -24,7 +24,7 @@ import { htmlToText, textToHtml } from "../../mail/quoting";
 import type { IndexedAddress } from "../../mail/addressIndex";
 import { isBlockedAttachment } from "../../mail/blockedExtensions";
 import { loadBodyMode, saveBodyMode } from "../../mail/composePrefs";
-import { useConfirm } from "../../components/ModalDialog";
+import { useConfirm } from "../../components/useConfirm";
 import { AddressField } from "./AddressField";
 import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
 import { BodyEditor } from "./BodyEditor";
@@ -850,7 +850,7 @@ export function Composer({
    * with a browser default worth keeping inside a modal composer.
    */
   const onComposerKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLFormElement>): void => {
+    (event: KeyboardEvent): void => {
       const accel = event.ctrlKey || event.metaKey;
       if (!accel || event.altKey) return;
 
@@ -894,6 +894,24 @@ export function Composer({
    * in the DOM yet — `setShowCc(true)` in the same handler is what puts it
    * there, and focusing before React commits would hit nothing.
    */
+  /*
+   * Bound to the <dialog> element, not to the <form>.
+   *
+   * A `<form>` is not an interactive element, so a React `onKeyDown` on it is
+   * a jsx-a11y error and the rule is right: the handler would be describing
+   * behaviour on a node that cannot be focused. The dialog is the composer's
+   * actual boundary — every key pressed inside it bubbles here, and nothing
+   * outside it can reach this listener.
+   */
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog === null) return undefined;
+    dialog.addEventListener("keydown", onComposerKeyDown);
+    return () => {
+      dialog.removeEventListener("keydown", onComposerKeyDown);
+    };
+  }, [onComposerKeyDown]);
+
   const [focusField, setFocusField] = useState<"cc" | "bcc" | undefined>(undefined);
   const ccInputRef = useRef<HTMLInputElement | null>(null);
   const bccInputRef = useRef<HTMLInputElement | null>(null);
@@ -922,7 +940,6 @@ export function Composer({
     >
       <form
         className={styles.form}
-        onKeyDown={onComposerKeyDown}
         onSubmit={(event) => {
           event.preventDefault();
           void send(false);
