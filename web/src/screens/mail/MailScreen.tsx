@@ -11,8 +11,10 @@ import { useTranslation } from "../../i18n/I18nProvider";
 import {
   INITIAL_KEYBOARD_STATE,
   CHORD_TIMEOUT_MS,
+  hasPendingChord,
   resolveShortcut,
   type KeyboardState,
+  type SelectionScope,
   type ShortcutAction,
 } from "../../keyboard/shortcuts";
 import {
@@ -28,12 +30,23 @@ import { isSearchable, normalizeQuery, refusalFor } from "../../mail/search";
 import {
   actionTargets,
   EMPTY_SELECTION,
+  idsFromHere,
   isAllSelected,
   pruneSelection,
   selectionAfterClick,
   selectionAfterSelectAll,
+  selectionByScope,
   type SelectionState,
 } from "../../mail/selection";
+import {
+  isUndoable,
+  makeUndoEntry,
+  UNDO_WINDOW_MS,
+  type UndoEntry,
+} from "../../mail/undo";
+import { MAX_EMPTY_ROUNDS, shouldContinue, summarize, type EmptyRound } from "../../mail/emptyTrash";
+import { destroyMessages, firstFailureMessage } from "../../mail/write";
+import { makeChip } from "../../mail/addresses";
 import { groupByThread, type ThreadGroup } from "../../mail/threading";
 import { KEYWORD_FLAGGED, KEYWORD_SEEN, type Email, type Mailbox, type Thread } from "../../mail/types";
 import { fetchIdentities, type Identity } from "../../mail/write";
@@ -138,6 +151,20 @@ export function MailScreen(): React.JSX.Element {
   const [identity, setIdentity] = useState<Identity | undefined>(undefined);
   /** A refetch trigger: bumped after a write so the list re-reads the truth. */
   const [refreshToken, setRefreshToken] = useState(0);
+
+  /*
+   * E2: the single undo slot (Gmail's `z`).
+   *
+   * ONE entry, not a stack — Gmail's `z` is "undo last action", and offering to
+   * undo an action whose toast is long gone (and whose messages may have moved
+   * twice since) is worse than not offering it. The entry carries both halves:
+   * inverse patches for the instant repaint, and an inverse ACTION that is
+   * genuinely re-issued to the server. See `mail/undo.ts` on why the patch
+   * alone would be a lie.
+   */
+  const [undoEntry, setUndoEntry] = useState<UndoEntry | undefined>(undefined);
+  const undoCounter = useRef(0);
+  const [isEmptyingTrash, setEmptyingTrash] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -496,8 +523,25 @@ export function MailScreen(): React.JSX.Element {
    * they mis-clicked.
    */
   const dispatchAction = useCallback(
-    async (action: MessageAction, successMessage: string): Promise<void> => {
+    async (
+      action: MessageAction,
+      successMessage: string,
+      options: {
+        /**
+         * E2: record an undo offer for this action. Carries the mailbox the
+         * messages came FROM, which the inverse move needs and which the
+         * action itself does not know.
+         */
+        readonly undoOrigin?: string | undefined;
+        readonly wasPermanent?: boolean;
+        /** E2 item 8: close the reader when the OPEN message was the target. */
+        readonly autoAdvance?: boolean;
+      } = {},
+    ): Promise<void> => {
       if (action.ids.length === 0) return;
+      const targetedOpenMessage =
+        openMessageId !== undefined && action.ids.includes(openMessageId);
+
       const result = await actions.run(action, projected);
 
       if (result.failed.length > 0) {
@@ -513,11 +557,42 @@ export function MailScreen(): React.JSX.Element {
       }
       if (result.succeeded.length === 0) return;
 
+      /*
+       * The undo offer is recorded for the ids that actually SUCCEEDED. Using
+       * the requested ids would offer to un-archive a message the server
+       * refused to archive, which would move it somewhere it never left.
+       */
+      if (options.undoOrigin !== undefined) {
+        undoCounter.current += 1;
+        setUndoEntry(
+          makeUndoEntry({
+            id: undoCounter.current,
+            action: { ...action, ids: result.succeeded },
+            inverses: new Map(),
+            originMailboxId: options.undoOrigin,
+            now: Date.now(),
+            ...(options.wasPermanent !== undefined ? { wasPermanent: options.wasPermanent } : {}),
+          }),
+        );
+      }
+
       setToast(successMessage);
       setSelection(EMPTY_SELECTION);
+
+      /*
+       * E2 item 8 — auto-advance's DEFAULT, which in Gmail is "back to the
+       * conversation list". Archiving or deleting the message you are reading
+       * must not leave its reading pane open showing a message that is no
+       * longer in this folder. The opt-in that picks the next/previous message
+       * instead arrives with the settings epic; this is only the default.
+       */
+      if (options.autoAdvance === true && targetedOpenMessage) {
+        navigate(withMessage(route, undefined));
+      }
+
       refresh();
     },
-    [actions, projected, refresh, t, format],
+    [actions, projected, refresh, t, format, openMessageId, navigate, route],
   );
 
   const runArchive = useCallback((): void => {
@@ -530,8 +605,9 @@ export function MailScreen(): React.JSX.Element {
     void dispatchAction(
       { kind: "archive", ids, mailboxId: archiveId },
       format("action.doneArchived", ids.length),
+      { undoOrigin: activeMailbox?.id, autoAdvance: true },
     );
-  }, [roleMailboxId, targetMessageIds, dispatchAction, format, t]);
+  }, [roleMailboxId, targetMessageIds, dispatchAction, format, t, activeMailbox?.id]);
 
   const runDelete = useCallback((): void => {
     const ids = targetMessageIds();
@@ -549,8 +625,15 @@ export function MailScreen(): React.JSX.Element {
       willDeletePermanently
         ? format("action.doneDeletedForever", ids.length)
         : format("action.doneDeleted", ids.length),
+      {
+        undoOrigin: activeMailbox?.id,
+        // A permanent delete has no reverse; `makeUndoEntry` refuses it and no
+        // undo is offered, rather than one that would quietly fail.
+        wasPermanent: willDeletePermanently,
+        autoAdvance: true,
+      },
     );
-  }, [targetMessageIds, willDeletePermanently, dispatchAction, format]);
+  }, [targetMessageIds, willDeletePermanently, dispatchAction, format, activeMailbox?.id]);
 
   const runMove = useCallback(
     (mailboxId: string): void => {
@@ -562,10 +645,53 @@ export function MailScreen(): React.JSX.Element {
           "action.doneMoved",
           target === undefined ? "" : mailboxLabel(target, t),
         ),
+        { undoOrigin: activeMailbox?.id, autoAdvance: true },
       );
     },
-    [targetMessageIds, mailboxes, dispatchAction, format, t],
+    [targetMessageIds, mailboxes, dispatchAction, format, t, activeMailbox?.id],
   );
+
+  // --- E2: spam and not-spam ------------------------------------------------
+
+  const junkMailboxId = roleMailboxId("junk");
+  const inboxMailboxId = roleMailboxId("inbox");
+  /** True when the folder on screen IS Junk, which flips every spam control. */
+  const inJunk = activeMailbox?.role === "junk";
+  /** True when the folder on screen is Trash, which reveals "Empty trash now". */
+  const inTrash = activeMailbox?.role === "trash";
+
+  /**
+   * Reports spam, or — inside Junk — takes the message back out.
+   *
+   * One function for both directions because the user's gesture is one
+   * gesture: `!` and the button both mean "this classification is wrong".
+   * Which way it goes is a property of where they are standing.
+   */
+  const runToggleSpam = useCallback((): void => {
+    const ids = targetMessageIds();
+    if (ids.length === 0) return;
+    const destination = inJunk ? inboxMailboxId : junkMailboxId;
+    if (destination === undefined) {
+      // No Junk folder (or no Inbox): say so rather than silently doing
+      // nothing, which would read as a broken button.
+      setToast(t("action.failedTitle"));
+      return;
+    }
+    void dispatchAction(
+      { kind: inJunk ? "notSpam" : "spam", ids, mailboxId: destination },
+      inJunk ? format("action.doneNotSpam", ids.length) : format("action.doneSpam", ids.length),
+      { undoOrigin: activeMailbox?.id, autoAdvance: true },
+    );
+  }, [
+    targetMessageIds,
+    inJunk,
+    inboxMailboxId,
+    junkMailboxId,
+    dispatchAction,
+    format,
+    t,
+    activeMailbox?.id,
+  ]);
 
   const runToggleRead = useCallback(
     (force?: boolean): void => {
@@ -592,6 +718,128 @@ export function MailScreen(): React.JSX.Element {
     );
   }, [targetMessageIds, projected, dispatchAction, t]);
 
+  // --- E2: undo (`z`) -------------------------------------------------------
+
+  /**
+   * Takes back the last undoable action.
+   *
+   * This re-issues the INVERSE MUTATION to the server. Repainting the client
+   * from the inverse patches alone would put the row back in the list while
+   * Dovecot still had the message where the action left it — a lie that
+   * survives exactly until the next refresh, which is the worst kind because
+   * the user believes the undo worked.
+   */
+  const runUndo = useCallback((): void => {
+    const entry = undoEntry;
+    if (!isUndoable(entry, Date.now()) || entry?.inverseAction === undefined) {
+      setToast(t("action.undoExpired"));
+      return;
+    }
+    // Consumed immediately: a second `z` must not re-issue the same move, and
+    // the toast's button must not stay live while the request is in flight.
+    setUndoEntry(undefined);
+    const inverse = entry.inverseAction;
+    void (async () => {
+      const result = await actions.run(inverse, projected);
+      if (result.failed.length > 0 || result.succeeded.length === 0) {
+        setToast(`${t("action.undoFailed")}: ${result.failureMessage ?? ""}`.trim());
+      } else {
+        setToast(t("action.undoDone"));
+      }
+      refresh();
+    })();
+  }, [undoEntry, actions, projected, refresh, t]);
+
+  // The offer expires on its own, so a toast that has scrolled out of the
+  // user's attention cannot be triggered by a stray `z` minutes later.
+  useEffect(() => {
+    if (undoEntry === undefined) return undefined;
+    const remaining = Math.max(0, undoEntry.expiresAt - Date.now());
+    const timer = setTimeout(() => {
+      setUndoEntry((current) => (current?.id === undoEntry.id ? undefined : current));
+    }, remaining);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [undoEntry]);
+
+  // --- E2: emptying the Trash ----------------------------------------------
+
+  /**
+   * Destroys everything in Trash, in windows.
+   *
+   * It cannot be one call: `Email/query` answers within a 200-row window, so a
+   * Trash of 4,000 messages would delete 200 and report success. The loop
+   * re-queries rather than paging, because every destroy shifts the list under
+   * any offset — "the first 200 still there" is the only stable cursor over a
+   * shrinking set. `mail/emptyTrash.ts` owns the stopping rules.
+   */
+  const runEmptyTrash = useCallback(
+    (trashId: string): void => {
+      if (client === undefined || accountId === "" || isEmptyingTrash) return;
+      void (async () => {
+        setEmptyingTrash(true);
+        setToast(t("action.emptyTrashWorking"));
+        const rounds: EmptyRound[] = [];
+        let failureMessage: string | undefined;
+        try {
+          for (let round = 0; round < MAX_EMPTY_ROUNDS; round += 1) {
+            const page = await queryEmails(client, accountId, {
+              kind: "mailbox",
+              mailboxId: trashId,
+            });
+            const ids = page.ids;
+            if (ids.length === 0) {
+              rounds.push({ attempted: 0, destroyed: 0 });
+              break;
+            }
+            const outcome = await destroyMessages(client, accountId, ids);
+            failureMessage ??= firstFailureMessage(outcome);
+            const done: EmptyRound = {
+              attempted: ids.length,
+              destroyed: outcome.destroyed.length,
+            };
+            rounds.push(done);
+            if (!shouldContinue(done, rounds.length)) break;
+          }
+          const result = summarize(rounds, failureMessage);
+          setToast(
+            result.destroyed === 0
+              ? (result.failureMessage ?? t("action.emptyTrashEmpty"))
+              : format("action.emptyTrashDone", result.destroyed),
+          );
+        } catch (error) {
+          setToast(
+            `${t("action.failedTitle")}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        } finally {
+          setEmptyingTrash(false);
+          refresh();
+        }
+      })();
+    },
+    [client, accountId, isEmptyingTrash, t, format, refresh],
+  );
+
+  /**
+   * The sidebar's "Empty trash now", with its confirmation.
+   *
+   * The count in the prompt comes from the mailbox's own `totalEmails` — the
+   * user must be told HOW MANY messages they are about to erase, because
+   * "empty the trash" reads very differently at 3 messages and at 4,000.
+   */
+  const confirmEmptyTrash = useCallback(
+    (trash: Mailbox): void => {
+      if (trash.totalEmails === 0) {
+        setToast(t("action.emptyTrashEmpty"));
+        return;
+      }
+      if (!window.confirm(format("action.emptyTrashConfirm", trash.totalEmails))) return;
+      runEmptyTrash(trash.id);
+    },
+    [format, t, runEmptyTrash],
+  );
+
   // --- navigation ----------------------------------------------------------
 
   const openGroup = useCallback(
@@ -604,6 +852,44 @@ export function MailScreen(): React.JSX.Element {
   const closeMessage = useCallback((): void => {
     navigate(withMessage(route, undefined));
   }, [navigate, route]);
+
+  /*
+   * E2 item 3: moving between messages WITH the reader open.
+   *
+   * `j`/`k` keep their list-only meaning when nothing is open (they move the
+   * focused row without opening it — the Gmail behaviour P2 shipped). Once a
+   * message is open they navigate the route, which is also Gmail's: the
+   * reading pane is the cursor at that point, and moving the row behind an
+   * open message would leave the two disagreeing about "current".
+   *
+   * The index is taken from the GROUP whose message is open rather than from
+   * `selectedId`, so a message reached by URL — or by a `[`/`]` that already
+   * moved the selection — still advances from where the user actually is.
+   */
+  const openGroupIndex = useMemo((): number => {
+    if (openMessageId === undefined) return -1;
+    return groups.findIndex((group) =>
+      group.messages.some((message) => message.id === openMessageId),
+    );
+  }, [groups, openMessageId]);
+
+  const siblingGroup = useCallback(
+    (direction: "next" | "previous"): ThreadGroup | undefined => {
+      if (openGroupIndex < 0) return undefined;
+      return groups[openGroupIndex + (direction === "next" ? 1 : -1)];
+    },
+    [groups, openGroupIndex],
+  );
+
+  const goToSibling = useCallback(
+    (direction: "next" | "previous"): void => {
+      const target = siblingGroup(direction);
+      if (target === undefined) return;
+      setSelectedId(target.id);
+      navigate(withMessage(route, target.latest.id));
+    },
+    [siblingGroup, navigate, route],
+  );
 
   const goToMailbox = useCallback(
     (mailbox: Mailbox): void => {
@@ -660,6 +946,32 @@ export function MailScreen(): React.JSX.Element {
   const openCompose = useCallback((): void => {
     setComposerDraft(newDraft(true));
   }, []);
+
+  /**
+   * E2 item 6: the `mailto:` unsubscribe.
+   *
+   * It opens OUR composer prefilled rather than handing the URI to the OS.
+   * The user sees exactly what is about to leave their address, from the
+   * account they are signed into, and can cancel — where a `mailto:` handoff
+   * would either open an unrelated desktop client or do nothing visible at
+   * all, depending on a browser setting they have never seen.
+   *
+   * The caret opens in the BODY: the recipient and subject came from the
+   * sender and there is nothing to fix about them.
+   */
+  const openUnsubscribeMail = useCallback(
+    (to: string, subject: string | undefined, body: string | undefined): void => {
+      const base = newDraft(false);
+      setComposerDraft({
+        ...base,
+        to: [makeChip(to)],
+        subject: subject ?? t("action.unsubscribe"),
+        text: body ?? "",
+        focusField: "body",
+      });
+    },
+    [t],
+  );
 
   const openReply = useCallback(
     (all: boolean): void => {
@@ -723,6 +1035,67 @@ export function MailScreen(): React.JSX.Element {
     closeReadingPane.current();
   }, [activeMailbox?.role, detail.email, composerDraft]);
 
+  // --- E2: the remaining triage verbs --------------------------------------
+
+  /**
+   * `]` / `[`: archive, then land on the next/previous conversation.
+   *
+   * The move is decided BEFORE the archive, from the list as it stands. Doing
+   * it afterwards would read an index into a list the archived row has already
+   * left, which lands one row too far — the classic off-by-one that makes this
+   * key feel unreliable in clients that get it wrong.
+   */
+  const runArchiveAndAdvance = useCallback(
+    (direction: "next" | "previous"): void => {
+      const index = groups.findIndex((group) => group.id === selectedId);
+      const target = index < 0 ? undefined : groups[index + (direction === "next" ? 1 : -1)];
+      const wasReading = openMessageId !== undefined;
+      runArchive();
+      if (target === undefined) return;
+      setSelectedId(target.id);
+      // Only follow into the reader when the user was already reading; from
+      // the list, `]` advances the cursor without opening anything.
+      if (wasReading) navigate(withMessage(route, target.latest.id));
+    },
+    [groups, selectedId, runArchive, openMessageId, navigate, route],
+  );
+
+  /**
+   * Gmail's `_`: mark unread from the focused row DOWNWARD.
+   *
+   * Deliberately ignores the checkbox selection — `_` is a positional verb
+   * ("I'll deal with the rest later"), not a bulk one, and applying it to a
+   * selection somewhere else in the list would be a different action wearing
+   * the same key.
+   */
+  const runMarkUnreadFromHere = useCallback((): void => {
+    const groupIds = idsFromHere(orderedIds, selectedId);
+    if (groupIds.length === 0) return;
+    const wanted = new Set(groupIds);
+    const ids = groups
+      .filter((group) => wanted.has(group.id))
+      .flatMap((group) => group.messages.map((message) => message.id));
+    void dispatchAction({ kind: "markUnread", ids }, t("action.markUnread"));
+  }, [orderedIds, selectedId, groups, dispatchAction, t]);
+
+  /** The `* a`/`* n`/`* r`/`* u`/`* s`/`* t` chords. */
+  const runSelectBy = useCallback(
+    (scope: SelectionScope): void => {
+      /*
+       * A thread row counts as READ only when every message in it is read, and
+       * as STARRED when any message is — the same asymmetry the row's own dot
+       * and star use, so `* u` selects exactly the rows that look unread.
+       */
+      const rows = groups.map((group) => ({
+        id: group.id,
+        isRead: !group.hasUnread,
+        isStarred: group.hasFlagged,
+      }));
+      setSelection(selectionByScope(rows, scope));
+    },
+    [groups],
+  );
+
   // --- the keyboard --------------------------------------------------------
 
   const keyboardRef = useRef<KeyboardState>(INITIAL_KEYBOARD_STATE);
@@ -732,12 +1105,26 @@ export function MailScreen(): React.JSX.Element {
     (action: ShortcutAction): void => {
       const index = groups.findIndex((group) => group.id === selectedId);
       switch (action.kind) {
+        /*
+         * E2: with a message OPEN, `j`/`k` navigate the reader (Gmail's own
+         * semantics); with nothing open they move the list cursor exactly as
+         * P2 shipped. One key, two contexts — because "current message" means
+         * the open one when there is one.
+         */
         case "next": {
+          if (openMessageId !== undefined) {
+            goToSibling("next");
+            break;
+          }
           const next = groups[Math.min(index + 1, groups.length - 1)];
           if (next !== undefined) setSelectedId(next.id);
           break;
         }
         case "previous": {
+          if (openMessageId !== undefined) {
+            goToSibling("previous");
+            break;
+          }
           const previous = groups[Math.max(index - 1, 0)];
           if (previous !== undefined) setSelectedId(previous.id);
           break;
@@ -813,6 +1200,23 @@ export function MailScreen(): React.JSX.Element {
           if (current !== undefined) toggleSelect(current, { toggle: true, range: false });
           break;
         }
+
+        // --- E2 ---
+        case "toggleSpam":
+          runToggleSpam();
+          break;
+        case "undo":
+          runUndo();
+          break;
+        case "archiveAndAdvance":
+          runArchiveAndAdvance(action.direction);
+          break;
+        case "markUnreadFromHere":
+          runMarkUnreadFromHere();
+          break;
+        case "selectBy":
+          runSelectBy(action.scope);
+          break;
       }
     },
     [
@@ -835,6 +1239,12 @@ export function MailScreen(): React.JSX.Element {
       openReply,
       openForward,
       toggleSelect,
+      goToSibling,
+      runToggleSpam,
+      runUndo,
+      runArchiveAndAdvance,
+      runMarkUnreadFromHere,
+      runSelectBy,
     ],
   );
 
@@ -862,10 +1272,10 @@ export function MailScreen(): React.JSX.Element {
 
       keyboardRef.current = nextState;
 
-      // A `g` prefix expires, so a stray press cannot swallow the next real
-      // keystroke indefinitely.
+      // A `g` or `*` prefix expires, so a stray press cannot swallow the next
+      // real keystroke indefinitely.
       if (chordTimer.current !== undefined) clearTimeout(chordTimer.current);
-      if (nextState.pendingG) {
+      if (hasPendingChord(nextState)) {
         chordTimer.current = setTimeout(() => {
           keyboardRef.current = INITIAL_KEYBOARD_STATE;
         }, CHORD_TIMEOUT_MS);
@@ -885,16 +1295,24 @@ export function MailScreen(): React.JSX.Element {
     };
   }, [runAction, composerDraft]);
 
-  // Toasts clear themselves.
+  /*
+   * Toasts clear themselves — but a toast carrying an UNDO offer must outlive
+   * the offer, not the other way round. A bubble that vanished at 2.6 s while
+   * `z` still worked for another 5.4 s would make the undo window a secret
+   * only the keyboard knew about.
+   */
   useEffect(() => {
     if (toast === undefined) return undefined;
-    const timer = setTimeout(() => {
-      setToast(undefined);
-    }, 2600);
+    const timer = setTimeout(
+      () => {
+        setToast(undefined);
+      },
+      undoEntry === undefined ? 2600 : UNDO_WINDOW_MS,
+    );
     return () => {
       clearTimeout(timer);
     };
-  }, [toast]);
+  }, [toast, undoEntry]);
 
   // --- render --------------------------------------------------------------
 
@@ -951,6 +1369,17 @@ export function MailScreen(): React.JSX.Element {
               selectedId={activeMailbox?.id}
               onSelect={goToMailbox}
               isLoading={isLoadingMailboxes}
+              /*
+               * E2 item 7. The affordance appears on the Trash row and ONLY
+               * while Trash is the folder on screen: it is an irreversible
+               * bulk destroy, and a permanently visible button for it in a
+               * sidebar is a mis-click waiting to happen.
+               *
+               * 30-day retention is Dovecot's/Mailcow's expunge policy, not a
+               * timer of ours (spec E2) — this is the manual "now".
+               */
+              onEmptyTrash={inTrash ? confirmEmptyTrash : undefined}
+              isEmptyingTrash={isEmptyingTrash}
             />
           )}
 
@@ -1006,6 +1435,8 @@ export function MailScreen(): React.JSX.Element {
             deleteIsPermanent={willDeletePermanently}
             onCompose={openCompose}
             isBusy={actions.isBusy}
+            onToggleSpam={runToggleSpam}
+            inJunk={inJunk}
           />
           <MessageList
             listKey={listKey}
@@ -1018,6 +1449,58 @@ export function MailScreen(): React.JSX.Element {
             }}
             onOpen={openGroup}
             isLoading={isLoadingList}
+            /*
+             * E2 item 5: the per-row hover actions.
+             *
+             * Each acts on THAT row regardless of the current selection or
+             * focus — the pointer already named its target, and routing them
+             * through `targetMessageIds()` would archive whatever happened to
+             * be selected elsewhere in the list, which is the bug that makes
+             * hover actions feel dangerous.
+             */
+            onRowArchive={(group) => {
+              const archiveId = roleMailboxId("archive");
+              if (archiveId === undefined) {
+                setToast(t("action.failedTitle"));
+                return;
+              }
+              const ids = group.messages.map((message) => message.id);
+              void dispatchAction(
+                { kind: "archive", ids, mailboxId: archiveId },
+                format("action.doneArchived", ids.length),
+                { undoOrigin: activeMailbox?.id, autoAdvance: true },
+              );
+            }}
+            onRowDelete={(group) => {
+              const ids = group.messages.map((message) => message.id);
+              const permanent =
+                trashMailboxId !== undefined &&
+                group.messages.every((message) => deleteIsPermanent(message, trashMailboxId));
+              if (permanent && !window.confirm(format("action.confirmDeleteForever", ids.length))) {
+                return;
+              }
+              void dispatchAction(
+                { kind: "delete", ids },
+                permanent
+                  ? format("action.doneDeletedForever", ids.length)
+                  : format("action.doneDeleted", ids.length),
+                {
+                  undoOrigin: activeMailbox?.id,
+                  wasPermanent: permanent,
+                  autoAdvance: true,
+                },
+              );
+            }}
+            onRowToggleRead={(group) => {
+              const ids = group.messages.map((message) => message.id);
+              // The row's own state decides the direction, so the icon and
+              // what the click does can never disagree.
+              const value = group.hasUnread;
+              void dispatchAction(
+                { kind: value ? "markRead" : "markUnread", ids },
+                value ? t("action.markRead") : t("action.markUnread"),
+              );
+            }}
             notice={
               <ListNotice
                 refusal={refusal}
@@ -1059,6 +1542,26 @@ export function MailScreen(): React.JSX.Element {
               onDelete={runDelete}
               deleteIsPermanent={willDeletePermanently}
               blobToken={blobToken}
+              onToggleFlag={runToggleFlag}
+              onMove={runMove}
+              onMarkUnread={() => {
+                runToggleRead(false);
+                // Back to the list: leaving the message open would have the
+                // reader immediately re-mark it read, so the button would
+                // appear to do nothing at all.
+                closeMessage();
+              }}
+              onToggleSpam={runToggleSpam}
+              onUnsubscribeByMail={openUnsubscribeMail}
+              mailboxes={mailboxes}
+              currentMailboxId={activeMailbox?.id}
+              inJunk={inJunk}
+              onNextMessage={siblingGroup("next") === undefined ? undefined : () => {
+                goToSibling("next");
+              }}
+              onPreviousMessage={siblingGroup("previous") === undefined ? undefined : () => {
+                goToSibling("previous");
+              }}
             />
           </aside>
         )}
@@ -1102,9 +1605,23 @@ export function MailScreen(): React.JSX.Element {
       )}
 
       {/* A single always-present live region: messages announced when they
-          appear, rather than a region inserted together with its own text. */}
+          appear, rather than a region inserted together with its own text.
+
+          E2: the Undo button lives INSIDE the same bubble rather than in a
+          second toast. Two stacked toasts would fight for the same corner, and
+          the undo offer is not a separate message — it is what this message
+          lets you do about what just happened. */}
       <div className={styles.toast} role="status" aria-live="polite">
-        {toast !== undefined && <span className={styles.toastBubble}>{toast}</span>}
+        {toast !== undefined && (
+          <span className={styles.toastBubble}>
+            {toast}
+            {undoEntry !== undefined && (
+              <button type="button" className={styles.toastUndo} onClick={runUndo}>
+                {`${t("action.undo")} (z)`}
+              </button>
+            )}
+          </span>
+        )}
       </div>
     </div>
   );

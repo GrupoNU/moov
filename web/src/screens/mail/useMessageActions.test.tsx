@@ -305,3 +305,77 @@ describe("the calls it makes", () => {
     });
   });
 });
+
+describe("E2: spam and not-spam ride the move machinery", () => {
+  /** Captures every Email/set the hook sends. */
+  function recordingClient() {
+    const requests: { methodCalls: [string, Record<string, unknown>, string][] }[] = [];
+    const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+      requests.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            methodResponses: [["Email/set", { updated: { e1: null } }, "s"]],
+            sessionState: "s",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }) as unknown as typeof fetch;
+    return {
+      client: new JmapClient({ username: "u", password: "p" }, { fetchImpl }),
+      setCall: () =>
+        requests
+          .flatMap((request) => request.methodCalls)
+          .find((invocation) => invocation[0] === "Email/set"),
+    };
+  }
+
+  /*
+   * The transport MUST be the same MOVE as archive: the Rspamd learning that
+   * Mailcow wires through imapsieve fires on the IMAP MOVE into Junk. A
+   * separate call — a keyword, a custom method — would leave the classifier
+   * untrained and make the whole action cosmetic.
+   */
+  it("sends a mailbox patch, exactly like a move", async () => {
+    const { client, setCall } = recordingClient();
+    const { result } = renderHook(() =>
+      useMessageActions({ client, accountId: "a1", currentMailboxId: "inbox" }),
+    );
+    await act(async () => {
+      await result.current.run(
+        { kind: "spam", ids: ["e1"], mailboxId: "mbJunk" },
+        [email("e1")],
+      );
+    });
+    const update = setCall()?.[1].update as Record<string, Record<string, unknown>> | undefined;
+    expect(update?.e1).toMatchObject({ mailboxIds: { mbJunk: true } });
+  });
+
+  it("takes a message back to the inbox for not-spam", async () => {
+    const { client, setCall } = recordingClient();
+    const { result } = renderHook(() =>
+      useMessageActions({ client, accountId: "a1", currentMailboxId: "mbJunk" }),
+    );
+    await act(async () => {
+      await result.current.run(
+        { kind: "notSpam", ids: ["e1"], mailboxId: "mbInbox" },
+        [email("e1", { mailboxIds: { mbJunk: true } })],
+      );
+    });
+    const update = setCall()?.[1].update as Record<string, Record<string, unknown>> | undefined;
+    expect(update?.e1).toMatchObject({ mailboxIds: { mbInbox: true } });
+  });
+
+  it("removes the row from the folder it is leaving, optimistically", async () => {
+    const { client } = recordingClient();
+    const emails = [email("e1"), email("e2")];
+    const { result } = renderHook(() =>
+      useMessageActions({ client, accountId: "a1", currentMailboxId: "inbox" }),
+    );
+    await act(async () => {
+      await result.current.run({ kind: "spam", ids: ["e1"], mailboxId: "mbJunk" }, emails);
+    });
+    expect(result.current.project(emails).map((message) => message.id)).toEqual(["e2"]);
+  });
+});

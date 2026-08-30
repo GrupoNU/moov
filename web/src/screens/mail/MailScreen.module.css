@@ -326,3 +326,29 @@
     display: none;
   }
 }
+
+/*
+ * E2: the Undo button inside the toast.
+ *
+ * Inside the same bubble rather than as a second toast: two would fight for
+ * the same corner, and the offer is not a separate message — it is what this
+ * message lets you do about what just happened. Styled as a link on the
+ * bubble's inverted surface so it reads as an offer, not as a dismissal.
+ */
+.toastUndo {
+  margin-left: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.toastUndo:hover,
+.toastUndo:focus-visible {
+  opacity: 0.85;
+}

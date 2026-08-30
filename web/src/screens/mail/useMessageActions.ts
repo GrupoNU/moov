@@ -196,6 +196,14 @@ function callFor(
        * (`deleteIsPermanent`), not to decide it.
        */
       return destroyMessages(client, accountId, action.ids);
+    /*
+     * E2: spam/not-spam ride the SAME `moveMessages` call as archive and move.
+     * That is not a shortcut — the classifier training Mailcow wires through
+     * imapsieve fires on the IMAP MOVE into (or out of) Junk, so inventing a
+     * separate transport would break the very thing the action exists for.
+     */
+    case "spam":
+    case "notSpam":
     case "archive":
     case "move": {
       const mailboxId = action.mailboxId;
