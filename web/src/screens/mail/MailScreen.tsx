@@ -308,6 +308,18 @@ export function MailScreen(): React.JSX.Element {
    */
   const [undoEntry, setUndoEntry] = useState<UndoEntry | undefined>(undefined);
   const undoCounter = useRef(0);
+
+  /**
+   * E4: the muted conversations, cached as the server's own header says to.
+   *
+   * Declared HERE, well above the rest of the E4 block, because `is:muted`
+   * narrows the row list — and the row list is computed near the top, before
+   * the selection, the keyboard and every action that reads it. The fetch that
+   * fills it lives with the rest of E4; only the state has to be this early.
+   */
+  const [mutedThreadIds, setMutedThreadIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const [isEmptyingTrash, setEmptyingTrash] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -858,10 +870,40 @@ export function MailScreen(): React.JSX.Element {
    * downstream — the selection, the keyboard and the actions never have to ask
    * which query produced the list.
    */
-  const groups = useMemo(
+  const serverGroups = useMemo(
     () => groupByThread(projected, listThreads),
     [projected, listThreads],
   );
+
+  /**
+   * E4: `is:muted`, applied to the rows that came back.
+   *
+   * This is the one narrowing in the app that is NOT a filter condition, and
+   * the reason is the server's, stated in `internal/jmap/mail/triage.go`: a
+   * vendor `inMutedThread` "would make every mail search join against the mute
+   * table for a predicate whose whole result set is, in practice, a few dozen
+   * ids a client can cache". So the client caches the ids and narrows here.
+   *
+   * It replaces `groups` rather than sitting beside it, deliberately. Every
+   * consumer downstream — the list, the selection, `j`/`k`, `x`, the action
+   * targets — has to see the SAME rows, or the keyboard would walk over rows
+   * that are not on screen and a bulk action would touch messages the user
+   * cannot see. A second name would be a second answer to "what is in the
+   * list", and one of them would eventually be wrong.
+   *
+   * The honest consequence, which `ListNotice` states rather than hiding: this
+   * narrows the PAGE, not the search. A muted conversation outside the server's
+   * 200-row window is not reached by `is:muted`.
+   */
+  const mutedFilter = searchPlan?.mutedOnly;
+  const groups = useMemo((): readonly ThreadGroup[] => {
+    if (mutedFilter === undefined) return serverGroups;
+    return serverGroups.filter((group) => {
+      const threadId = group.latest.threadId;
+      const isMuted = threadId !== undefined && mutedThreadIds.has(threadId);
+      return isMuted === mutedFilter;
+    });
+  }, [serverGroups, mutedFilter, mutedThreadIds]);
 
   /*
    * E3: the snippets for the rows on screen (RFC 8621 §5).
@@ -2111,10 +2153,6 @@ export function MailScreen(): React.JSX.Element {
   const inSnoozed =
     snoozedMailbox !== undefined && activeMailbox?.id === snoozedMailbox.id;
 
-  /** E4: the muted conversations, cached as the server's own header says to. */
-  const [mutedThreadIds, setMutedThreadIds] = useState<ReadonlySet<string>>(
-    () => new Set<string>(),
-  );
   /** E4: pending snoozes, by message id — only ever read in the Snoozed view. */
   const [snoozeUntilById, setSnoozeUntilById] = useState<ReadonlyMap<string, string>>(
     () => new Map<string, string>(),
@@ -3755,6 +3793,31 @@ function ListNotice({
    * result from reading as a bug.
    */
   const folded = plan?.approximations.find((item) => item.code === "fieldsFoldedIntoText");
+
+  /*
+   * E4: `is:muted` narrowed the PAGE, not the search — and says so.
+   *
+   * This is the only predicate in the app that the server does not answer, and
+   * the difference is user-visible: a muted conversation past the 200-row
+   * window is not found. Stating it here is the same discipline the truncation
+   * banner and the folded-fields row already apply — the alternative is a
+   * result count the user has no way to reconcile with what they asked for.
+   *
+   * It comes BEFORE the truncation branch precisely because the two together
+   * are the worst case, and the mute caveat is the one the user cannot guess.
+   */
+  if (plan?.mutedOnly !== undefined) {
+    return (
+      <div className={styles.noticeInfo} role="status">
+        <span>{t("mute.clientSideNotice")}</span>
+        {truncated && (
+          <span>
+            {isSearch ? format("list.truncatedSearch", shown) : format("list.truncated", shown)}
+          </span>
+        )}
+      </div>
+    );
+  }
 
   if (truncated) {
     return (

@@ -8,6 +8,7 @@ import {
   makeUndoEntry,
   undoDescriptionKey,
   UNDO_WINDOW_MS,
+  type UndoEntry,
 } from "./undo";
 
 const NO_PATCHES: ReadonlyMap<string, MessagePatch> = new Map();
@@ -129,5 +130,68 @@ describe("the toast's wording", () => {
     ["move" as const, "action.doneMoved"],
   ])("names %s with its own string", (kind, key) => {
     expect(undoDescriptionKey(action(kind, "box"))).toBe(key);
+  });
+});
+
+/**
+ * E4 — a snoozed conversation's undo (canon §2.2).
+ *
+ * A snooze is the one undoable action whose reverse is NOT a `MessageAction`,
+ * and the tests below pin why: a `move` back into the inbox would restore the
+ * row while leaving the server's wake time in place, so the message would
+ * return and then vanish again at the appointed hour. The only honest reverse
+ * is `Snooze/set destroy`, so the entry carries the ids for it instead.
+ */
+describe("the snooze entry (E4)", () => {
+  const NOW = 1_000_000;
+
+  function snoozeEntry(overrides: Partial<UndoEntry> = {}): UndoEntry {
+    return {
+      id: 1,
+      action: { kind: "move", ids: ["e1", "e2"], mailboxId: "snoozed" },
+      // No inverse ACTION by construction — see the block comment above.
+      inverseAction: undefined,
+      inverses: new Map(),
+      expiresAt: NOW + UNDO_WINDOW_MS,
+      unsnoozeIds: ["e1", "e2"],
+      ...overrides,
+    };
+  }
+
+  it("is undoable on its unsnoozeIds alone, with no inverse action", () => {
+    expect(isUndoable(snoozeEntry(), NOW)).toBe(true);
+  });
+
+  it("expires on the same boundary as every other entry", () => {
+    const entry = snoozeEntry();
+    expect(isUndoable(entry, entry.expiresAt - 1)).toBe(true);
+    // Strictly less-than: at exactly expiresAt the window has closed.
+    expect(isUndoable(entry, entry.expiresAt)).toBe(false);
+  });
+
+  it("is NOT undoable when it carries neither an action nor ids", () => {
+    // The guard that keeps an entry with nothing to re-issue from offering an
+    // undo button that would do nothing.
+    expect(isUndoable(snoozeEntry({ unsnoozeIds: [] }), NOW)).toBe(false);
+    // The absent case, spelled by OMITTING the key: `exactOptionalPropertyTypes`
+    // is on, so `undefined` is not a value an optional property may hold — and
+    // the distinction is real, since the whole point is that the field may not
+    // be there at all.
+    const { unsnoozeIds: _omitted, ...withoutIds } = snoozeEntry();
+    expect(isUndoable(withoutIds, NOW)).toBe(false);
+  });
+
+  it("leaves an ordinary entry's rules untouched", () => {
+    // The E4 branch must widen the condition, never weaken the existing one: a
+    // move with a real inverse is still undoable, and one with neither is not.
+    const ordinary: UndoEntry = {
+      id: 2,
+      action: { kind: "archive", ids: ["e3"], mailboxId: "archive" },
+      inverseAction: { kind: "move", ids: ["e3"], mailboxId: "inbox" },
+      inverses: new Map(),
+      expiresAt: NOW + UNDO_WINDOW_MS,
+    };
+    expect(isUndoable(ordinary, NOW)).toBe(true);
+    expect(isUndoable({ ...ordinary, inverseAction: undefined }, NOW)).toBe(false);
   });
 });

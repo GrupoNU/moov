@@ -427,3 +427,65 @@ describe("unsupported terms travel with the plan", () => {
     expect(plan("").filter).not.toBeNull();
   });
 });
+
+/**
+ * E4 — `is:muted`: the one predicate the server deliberately does not answer.
+ *
+ * `internal/jmap/mail/triage.go` refused a vendor `inMutedThread` filter
+ * condition, and named the reason: it "would make every mail search join
+ * against the mute table for a predicate whose whole result set is, in
+ * practice, a few dozen ids a client can cache". So the term is honoured over
+ * the returned page instead — and these tests pin the two things that makes
+ * true: it never reaches the wire, and it is never silently dropped.
+ */
+describe("is:muted — the client-side narrowing", () => {
+  it("never appears in the filter", () => {
+    const result = plan("is:muted informe");
+    expect(result.filter).toEqual({ text: "informe" });
+    expect(JSON.stringify(result.filter)).not.toContain("muted");
+  });
+
+  it("is carried on the plan instead, so the caller can apply it", () => {
+    expect(plan("is:muted informe").mutedOnly).toBe(true);
+    expect(plan("-is:muted informe").mutedOnly).toBe(false);
+  });
+
+  it("is absent from the plan when the term was not typed", () => {
+    expect(plan("informe").mutedOnly).toBeUndefined();
+  });
+
+  it("does not make an otherwise unanswerable query answerable", () => {
+    // `is:muted` alone is exactly `is:starred` alone: a real term that no
+    // filter can stand on. The server's `answerable()` needs a text or a
+    // folder, and saying so before the request is the whole point of RULE 3.
+    const result = plan("is:muted");
+    expect(result.filter).toBeUndefined();
+    expect(result.problems).toEqual([{ code: "needsTextOrFolder" }]);
+  });
+
+  it("combines with a real condition rather than replacing it", () => {
+    const result = plan("is:muted is:unread informe");
+    expect(result.filter).toEqual({
+      operator: "AND",
+      conditions: [{ text: "informe" }, { notKeyword: KEYWORD_SEEN }],
+    });
+    expect(result.mutedOnly).toBe(true);
+  });
+
+  it("is REFUSED BY NAME across an OR rather than applied to the wrong set", () => {
+    /*
+     * A post-filter runs over the merged result set, so it cannot belong to one
+     * branch: `is:muted informe OR from:ana` would become "muted AND (…)",
+     * which is a different search than the one typed. Refusing it by name is
+     * the honest answer; dropping it silently is the failure mode the whole
+     * module exists to prevent.
+     */
+    const result = plan("is:muted informe OR from:ana");
+    expect(result.mutedOnly).toBeUndefined();
+    expect(result.unsupported).toContainEqual({
+      operator: "is",
+      raw: "is:muted",
+      reason: "deferredOperator",
+    });
+  });
+});

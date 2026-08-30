@@ -74,11 +74,16 @@ export type TextField = (typeof TEXT_FIELDS)[number];
 /**
  * The `is:` values this grammar understands.
  *
- * Gmail's list is longer (`is:muted is:important`), and those two arrive with
- * epic E4 and the IA phase respectively. Until then they are unsupported terms
- * by name rather than silently-ignored words.
+ * Three of them become §4.4.1 filter conditions. `muted` (E4) does NOT and is
+ * still accepted: the server refused a vendor filter condition for it on
+ * measured grounds — the whole muted set is "a few dozen ids a client can
+ * cache" — so the term is honoured over the returned window instead, and the
+ * UI says so. See `QueryGroup.muted`.
+ *
+ * `is:important` remains unsupported by name; it needs the classifier the IA
+ * phase brings.
  */
-export const IS_VALUES = ["unread", "read", "starred"] as const;
+export const IS_VALUES = ["unread", "read", "starred", "muted"] as const;
 export type IsValue = (typeof IS_VALUES)[number];
 
 /**
@@ -154,6 +159,25 @@ export interface QueryGroup {
   readonly unread?: boolean;
   /** `is:starred` / `-is:starred`. */
   readonly starred?: boolean;
+  /**
+   * E4 — `is:muted` / `-is:muted`: a CLIENT-SIDE narrowing, not a wire filter.
+   *
+   * Every other member of this group becomes a §4.4.1 FilterCondition. This one
+   * cannot, and the server says why in `internal/jmap/mail/triage.go`: it
+   * refused a vendor `inMutedThread` condition because it "would make every
+   * mail search join against the mute table for a predicate whose whole result
+   * set is, in practice, a few dozen ids a client can cache". The honest
+   * surface it offers instead is `Mute/get`.
+   *
+   * So the operator is ACCEPTED (Gmail has it, canon §2.5 lists it) and applied
+   * where the data lives — over the window the search returned, against the
+   * cached set of muted thread ids. `mail/searchFilter.ts` deliberately does
+   * NOT map it, and the UI says out loud that this term narrowed the results
+   * shown rather than the search itself. The alternative — refusing it by name,
+   * which is what the E3 parser did — would have been a refusal of a feature
+   * that is fully available, just not through the filter.
+   */
+  readonly muted?: boolean;
   /** `in:<name>`, lowercased. `anywhere` is the canon's own scope keyword. */
   readonly inMailbox?: string;
   /** `label:<name>`, verbatim — `encodeLabelKeyword` is api.ts's job. */
@@ -360,6 +384,8 @@ interface GroupDraft {
   hasAttachment?: boolean;
   unread?: boolean;
   starred?: boolean;
+  /** E4: `is:muted` — a client-side narrowing, never a wire condition. */
+  muted?: boolean;
   inMailbox?: string;
   label?: string;
   after?: string;
@@ -379,6 +405,7 @@ function sealDraft(draft: GroupDraft): QueryGroup {
     ...(draft.hasAttachment !== undefined ? { hasAttachment: draft.hasAttachment } : {}),
     ...(draft.unread !== undefined ? { unread: draft.unread } : {}),
     ...(draft.starred !== undefined ? { starred: draft.starred } : {}),
+    ...(draft.muted !== undefined ? { muted: draft.muted } : {}),
     ...(draft.inMailbox !== undefined ? { inMailbox: draft.inMailbox } : {}),
     ...(draft.label !== undefined ? { label: draft.label } : {}),
     ...(draft.after !== undefined ? { after: draft.after } : {}),
@@ -396,6 +423,11 @@ export function isEmptyGroup(group: QueryGroup): boolean {
     group.hasAttachment === undefined &&
     group.unread === undefined &&
     group.starred === undefined &&
+    // E4: `is:muted` alone is not an empty group — it is a real term the user
+    // typed. It cannot be SENT (the mapper drops it into `mutedOnly`), so a
+    // query of nothing but `is:muted` still fails `needsTextOrFolder`, which is
+    // exactly what `is:starred` alone does and for the same reason.
+    group.muted === undefined &&
     group.inMailbox === undefined &&
     group.label === undefined &&
     group.after === undefined &&
@@ -517,6 +549,8 @@ export function parseSearchQuery(input: string, now: Date = new Date()): ParsedQ
         if (v === "unread") draft.unread = !negated;
         else if (v === "read") draft.unread = negated;
         else if (v === "starred") draft.starred = !negated;
+        // E4: accepted, and applied client-side — see `QueryGroup.muted`.
+        else if (v === "muted") draft.muted = !negated;
         else refuse(token, `is:${value}`, "deferredOperator");
         break;
       }
@@ -644,6 +678,16 @@ function formatGroup(group: QueryGroup): string {
   if (group.unread === false) parts.push("is:read");
   if (group.starred === true) parts.push("is:starred");
   if (group.starred === false) parts.push("-is:starred");
+  /*
+   * E4: `is:muted` round-trips like every other accepted term, and that is the
+   * point of accepting it rather than refusing it. An unsupported term is NOT
+   * re-emitted (see below) because putting it back would make the box promise
+   * something the search did not do — but this term IS honoured, just after the
+   * results arrive rather than before, so dropping it here would make a chip
+   * toggle lose it.
+   */
+  if (group.muted === true) parts.push("is:muted");
+  if (group.muted === false) parts.push("-is:muted");
   if (group.inMailbox !== undefined) parts.push(`in:${quoteIfNeeded(group.inMailbox)}`);
   if (group.label !== undefined) parts.push(`label:${quoteIfNeeded(group.label)}`);
   if (group.after !== undefined) parts.push(`after:${formatDateValue(group.after)}`);

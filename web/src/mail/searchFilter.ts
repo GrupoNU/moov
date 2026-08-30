@@ -114,6 +114,22 @@ export interface FilterPlan {
   readonly includesEverything: boolean;
   /** The mailbox the query scoped itself to, when it named one. */
   readonly scopedMailboxId?: string;
+  /**
+   * E4: `is:muted` / `-is:muted` — a narrowing applied AFTER the results
+   * arrive, not part of the filter.
+   *
+   * `true` keeps only muted conversations, `false` keeps only unmuted ones,
+   * `undefined` means the term was not used. It is on the plan rather than
+   * inside `filter` because it is deliberately not a wire condition: the server
+   * refused a vendor `inMutedThread` on measured grounds and offers `Mute/get`
+   * instead, so the predicate is answered against the cached set of thread ids.
+   *
+   * The consequence is real and must be SAID, not hidden: the term narrows the
+   * page that came back, not the search. A muted conversation outside the
+   * server's 200-row window is not found by `is:muted` — which is why the UI
+   * labels the result as a view over what was loaded.
+   */
+  readonly mutedOnly?: boolean;
 }
 
 /**
@@ -368,6 +384,23 @@ export function planFilter(
   const scopedMailboxId = plans.length === 1 ? plans[0]?.mailboxId : undefined;
 
   /*
+   * E4: `is:muted`, taken off the groups and carried on the plan.
+   *
+   * Only a SINGLE-branch query can honour it. Across an OR the term belongs to
+   * ONE branch, and a post-filter runs over the merged result set — so
+   * `is:muted OR from:ana` would become "muted AND (muted or from ana)", a
+   * different search than the one typed. It is therefore REFUSED by name in
+   * that case rather than dropped: a term that silently does nothing is the
+   * failure mode this whole module exists to prevent.
+   */
+  const mutedOnly = groups.length === 1 ? groups[0]?.muted : undefined;
+  const mutedAcrossOr: readonly UnsupportedTerm[] =
+    groups.length > 1 && groups.some((group) => group.muted !== undefined)
+      ? [{ operator: "is", raw: "is:muted", reason: "deferredOperator" as const }]
+      : [];
+  const unsupported = [...query.unsupported, ...mutedAcrossOr];
+
+  /*
    * THE OR RULE, mirrored from `translateOr`: "A BRANCH OF AN OR MUST BE A
    * FILTER THIS SERVER WOULD SERVE ON ITS OWN. ... a disjunction never narrows,
    * it only widens, so a branch that would scan the account alone scans the
@@ -385,7 +418,7 @@ export function planFilter(
   if (problems.length > 0) {
     return {
       filter: undefined,
-      unsupported: query.unsupported,
+      unsupported,
       problems,
       approximations,
       includesEverything,
@@ -397,7 +430,7 @@ export function planFilter(
     if (only === undefined) {
       return {
         filter: undefined,
-        unsupported: query.unsupported,
+        unsupported,
         problems: [],
         approximations,
         includesEverything,
@@ -406,7 +439,7 @@ export function planFilter(
     if (!isAnswerable(only.conditions)) {
       return {
         filter: undefined,
-        unsupported: query.unsupported,
+        unsupported,
         problems: [{ code: "needsTextOrFolder" }],
         approximations,
         includesEverything,
@@ -414,11 +447,14 @@ export function planFilter(
     }
     return {
       filter: toNode(only.conditions) ?? null,
-      unsupported: query.unsupported,
+      unsupported,
       problems: [],
       approximations,
       includesEverything,
       ...(scopedMailboxId !== undefined ? { scopedMailboxId } : {}),
+      // E4: only a single-branch query carries it; across an OR it was refused
+      // by name above rather than applied to the wrong set.
+      ...(mutedOnly !== undefined ? { mutedOnly } : {}),
     };
   }
 
@@ -427,7 +463,7 @@ export function planFilter(
       operator: "OR",
       conditions: plans.map((plan) => toNode(plan.conditions) ?? {}),
     },
-    unsupported: query.unsupported,
+    unsupported,
     problems: [],
     approximations,
     includesEverything,

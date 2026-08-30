@@ -120,3 +120,62 @@ describe("empty trash (E2 item 7)", () => {
     expect(screen.getAllByRole("treeitem")).toHaveLength(2);
   });
 });
+
+/**
+ * E4 — the three outgoing/deferred destinations, and why they stay three
+ * (canon §2.2 and §2.3).
+ */
+describe("E4: the Snoozed folder and the Scheduled entry", () => {
+  it("labels the Snoozed folder and does NOT need a role to find it", () => {
+    // Dovecot supplies the name in English and RFC 6154 has no SPECIAL-USE
+    // attribute for snoozed mail, so the sidebar recognises it by the NAME the
+    // session capability published — never by a role that does not exist.
+    renderSidebar({
+      mailboxes: [...MAILBOXES, mailbox("snz", null, "Snoozed")],
+      snoozedMailboxName: "Snoozed",
+    });
+    expect(screen.getByRole("link", { name: /pospuestos/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Snoozed$/ })).toBeNull();
+  });
+
+  it("leaves a folder alone when the session names a different one", () => {
+    // A server that renamed its folder must not have some OTHER folder called
+    // "Snoozed" relabelled and re-iconed as if it were the real one.
+    renderSidebar({
+      mailboxes: [...MAILBOXES, mailbox("snz", null, "Snoozed")],
+      snoozedMailboxName: "Zzz",
+    });
+    expect(screen.getByRole("link", { name: /^Snoozed$/ })).toBeInTheDocument();
+  });
+
+  it("draws the Scheduled entry only when something is scheduled", () => {
+    renderSidebar();
+    expect(screen.queryByRole("button", { name: /programados/i })).toBeNull();
+
+    renderSidebar({ scheduled: { count: 2, isSelected: false, onSelect: vi.fn() } });
+    expect(screen.getByRole("button", { name: /programados/i })).toBeInTheDocument();
+  });
+
+  it("keeps Outbox and Scheduled as TWO entries, never merged", () => {
+    /*
+     * Both list mail that has not gone out, and merging them would make "why is
+     * this still here?" have two different answers: the Outbox is local to this
+     * browser and drains when the network returns, while a scheduled send is a
+     * server-side submission other devices can see and cancel.
+     */
+    renderSidebar({
+      outbox: { count: 1, hasFailures: false, isSelected: false, onSelect: vi.fn() },
+      scheduled: { count: 2, isSelected: false, onSelect: vi.fn() },
+    });
+    expect(screen.getByRole("button", { name: /bandeja de salida/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /programados/i })).toBeInTheDocument();
+  });
+
+  it("navigates to Scheduled on click", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderSidebar({ scheduled: { count: 2, isSelected: false, onSelect } });
+    await user.click(screen.getByRole("button", { name: /programados/i }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+});

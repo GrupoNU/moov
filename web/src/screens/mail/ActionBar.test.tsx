@@ -120,3 +120,58 @@ describe("the shared move menu still works after the extraction", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
+
+/**
+ * E4 — snooze and mute in the bar (canon §2.2).
+ *
+ * The property under test is FEATURE DETECTION: a vendor capability the server
+ * does not advertise is a feature that does not exist here, and a permanently
+ * greyed-out button invites the user to hunt for the selection that would
+ * enable it. So absence removes the control, and only a missing SELECTION
+ * disables one.
+ */
+describe("E4: snooze and mute", () => {
+  it("shows neither control when the server has no triage capability", () => {
+    renderBar();
+    expect(screen.queryByRole("button", { name: /posponer/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /silenciar/i })).toBeNull();
+  });
+
+  it("shows both once the capability is present", () => {
+    renderBar({ onSnooze: vi.fn(), onToggleMute: vi.fn() });
+    expect(screen.getByRole("button", { name: /posponer hasta/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^silenciar$/i })).toBeInTheDocument();
+  });
+
+  it("names the mute control by what the click will DO, like the spam one", () => {
+    // Every conversation already muted → the button offers to unmute.
+    renderBar({ onToggleMute: vi.fn(), allMuted: true });
+    expect(screen.getByRole("button", { name: /dejar de silenciar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^silenciar$/i })).toBeNull();
+  });
+
+  it("disables both with nothing selected, and enables them with a selection", () => {
+    renderBar({ selectedCount: 0, onSnooze: vi.fn(), onToggleMute: vi.fn() });
+    expect(screen.getByRole("button", { name: /posponer hasta/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^silenciar$/i })).toBeDisabled();
+
+    renderBar({ selectedCount: 2, onSnooze: vi.fn(), onToggleMute: vi.fn() });
+    expect(screen.getAllByRole("button", { name: /posponer hasta/i })[1]).toBeEnabled();
+  });
+
+  it("offers unsnooze ONLY where there is something snoozed to bring back", () => {
+    renderBar({ onSnooze: vi.fn() });
+    expect(screen.queryByRole("button", { name: /traer ahora/i })).toBeNull();
+
+    renderBar({ onSnooze: vi.fn(), onUnsnooze: vi.fn() });
+    expect(screen.getByRole("button", { name: /traer ahora/i })).toBeInTheDocument();
+  });
+
+  it("mutes the selection on click", async () => {
+    const user = userEvent.setup();
+    const onToggleMute = vi.fn();
+    renderBar({ onToggleMute });
+    await user.click(screen.getByRole("button", { name: /^silenciar$/i }));
+    expect(onToggleMute).toHaveBeenCalledTimes(1);
+  });
+});

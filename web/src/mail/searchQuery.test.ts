@@ -129,15 +129,29 @@ describe("is: and has:", () => {
     expect(parseSearchQuery("has:attachment", NOW).groups[0]?.hasAttachment).toBe(true);
   });
 
-  it("defers is:muted and is:important by NAME — they are real Gmail", () => {
+  /*
+   * E4 changed half of this test, and the change is the point.
+   *
+   * `is:muted` used to be deferred by name, because nothing could answer it.
+   * E4's `Mute/get` can — just not through the filter: the server refused a
+   * vendor `inMutedThread` condition on measured grounds ("a predicate whose
+   * whole result set is [...] a few dozen ids a client can cache"). So the term
+   * is now ACCEPTED and honoured client-side, and only `is:important` — which
+   * needs a classifier that does not exist yet — is still deferred.
+   */
+  it("accepts is:muted, and still defers is:important by NAME", () => {
     const q = parseSearchQuery("is:muted is:important", NOW);
     expect(q.unsupported).toEqual([
-      { operator: "is:muted", raw: "is:muted", reason: "deferredOperator" },
       { operator: "is:important", raw: "is:important", reason: "deferredOperator" },
     ]);
-    // And critically: they do NOT leak into the free text, where they would
-    // match message bodies containing the word "muted".
+    expect(q.groups[0]?.muted).toBe(true);
+    // And critically: neither leaks into the free text, where they would match
+    // message bodies containing the word "muted".
     expect(q.groups[0]?.text).toBe("");
+  });
+
+  it("reads -is:muted as 'not muted' rather than refusing the minus", () => {
+    expect(parseSearchQuery("-is:muted hola", NOW).groups[0]?.muted).toBe(false);
   });
 
   it("defers the superstar has: values by name", () => {

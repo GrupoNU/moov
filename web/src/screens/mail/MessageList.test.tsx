@@ -73,18 +73,29 @@ function rowFor(subject: string): HTMLElement {
 }
 
 describe("hover actions (E2 item 5)", () => {
-  it("puts three actions — and only three — in every row", () => {
+  it("puts three actions in a row when the server has no snooze", () => {
     renderList();
     const row = rowFor("Subject a");
     /*
-     * Gmail ships FOUR, including snooze. Snooze is epic E4's (it needs the
-     * Snoozed mailbox and the engine's return-to-inbox job), and a dead
-     * fourth button would be worse than three that work. If E4 lands and this
-     * number does not move, the button was forgotten.
+     * Gmail ships FOUR. The fourth arrived with E4 and is a RENDER PROP, so a
+     * server without the vendor triage capability still gets exactly these
+     * three rather than a dead button — which was the whole reason E2 shipped
+     * three and named the epic that would supply the fourth.
      */
     expect(within(row).getAllByRole("button")).toHaveLength(3);
     expect(within(row).getByRole("button", { name: /archivar/i })).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: /mover a la papelera/i })).toBeInTheDocument();
+  });
+
+  it("puts FOUR — Gmail's exact set — once E4 supplies the snooze trigger", () => {
+    renderList({
+      renderRowSnooze: (_group: unknown, className: string) => (
+        <button type="button" className={className} aria-label="Posponer" />
+      ),
+    });
+    const row = rowFor("Subject a");
+    expect(within(row).getAllByRole("button")).toHaveLength(4);
+    expect(within(row).getByRole("button", { name: /posponer/i })).toBeInTheDocument();
   });
 
   it("acts on ITS OWN row, not on whatever is selected elsewhere", async () => {
@@ -148,5 +159,64 @@ describe("hover actions (E2 item 5)", () => {
     renderList({ onRowArchive: undefined, onRowDelete: undefined, onRowToggleRead: undefined });
     // Only the selection checkbox remains, and it is not a button.
     expect(within(rowFor("Subject a")).queryAllByRole("button")).toHaveLength(0);
+  });
+});
+
+/**
+ * E4 — what a row says about mute and snooze (canon §2.2).
+ *
+ * Both are facts the row has to carry visually AND to assistive technology,
+ * and both come from data the row does not own: a set of muted thread ids and
+ * a map of wake times. The tests below pin the three things that would break
+ * silently — the badge appearing for the wrong thread, the wake time not
+ * replacing the received date, and "unsnooze" also opening the message.
+ */
+describe("E4: the muted badge and the Snoozed view's rows", () => {
+  it("badges only the conversation whose thread is in the muted set", () => {
+    renderList({ mutedThreadIds: new Set(["t-a"]) });
+    // The icon is decorative; the visually-hidden state is what a screen
+    // reader hears, and it is what is asserted.
+    expect(within(rowFor("Subject a")).getByText(/silenciada/i)).toBeInTheDocument();
+    expect(within(rowFor("Subject b")).queryByText(/silenciada/i)).toBeNull();
+  });
+
+  it("says nothing about mute when nothing is muted", () => {
+    renderList();
+    expect(screen.queryByText(/silenciada/i)).toBeNull();
+  });
+
+  it("replaces the received date with the wake time in the Snoozed view", () => {
+    renderList({ snoozeUntilById: new Map([["a", "2026-09-04T08:00:00Z"]]) });
+    const row = rowFor("Subject a");
+    // The machine-readable value is the contract; the rendered text is locale
+    // and timezone dependent, so it is the `datetime` that is asserted.
+    const when = within(row).getByText(/vuelve/i);
+    expect(when.getAttribute("datetime")).toBe("2026-09-04T08:00:00Z");
+  });
+
+  it("leaves a row with no pending snooze showing its ordinary date", () => {
+    renderList({ snoozeUntilById: new Map([["a", "2026-09-04T08:00:00Z"]]) });
+    expect(within(rowFor("Subject b")).queryByText(/vuelve/i)).toBeNull();
+  });
+
+  it("offers unsnooze per row, and it does NOT also open the message", async () => {
+    const user = userEvent.setup();
+    const onRowUnsnooze = vi.fn();
+    const handlers = renderList({
+      snoozeUntilById: new Map([["a", "2026-09-04T08:00:00Z"]]),
+      onRowUnsnooze,
+    });
+    await user.click(
+      within(rowFor("Subject a")).getByRole("button", { name: /traer ahora/i }),
+    );
+    expect(onRowUnsnooze).toHaveBeenCalledTimes(1);
+    // The bug this prevents: bringing a message back and immediately opening
+    // it, because the row's own click handler is one bubble away.
+    expect(handlers.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("shows no unsnooze affordance without a handler for it", () => {
+    renderList({ snoozeUntilById: new Map([["a", "2026-09-04T08:00:00Z"]]) });
+    expect(within(rowFor("Subject a")).queryByRole("button", { name: /traer ahora/i })).toBeNull();
   });
 });

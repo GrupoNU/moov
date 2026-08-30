@@ -200,3 +200,36 @@ describe("the label route", () => {
     expect(withMessage(opened, undefined)).toEqual(base);
   });
 });
+
+/**
+ * E4 — the Scheduled route (canon §2.3).
+ *
+ * Its own kind, like the Outbox, because its rows are `EmailSubmission`
+ * records rather than `Email`s. And note what is NOT here: a Snoozed route.
+ * Snooze is a real IMAP move to a real folder (GC-10), so it is an ordinary
+ * `mailbox` route and every existing path works on it unchanged — the
+ * asymmetry between the two is the design, not an omission.
+ */
+describe("the scheduled route (E4)", () => {
+  it("round-trips", () => {
+    const route: Route = { kind: "scheduled" };
+    expect(parseRoute(formatRoute(route))).toEqual(route);
+    expect(formatRoute(route)).toBe("/scheduled");
+  });
+
+  it("absorbs a request to open a message, because it holds none", () => {
+    const route: Route = { kind: "scheduled" };
+    expect(withMessage(route, "e1")).toEqual(route);
+    expect(openMessageId(route)).toBeUndefined();
+  });
+
+  it("is a DIFFERENT destination from the Outbox", () => {
+    expect(routesEqual({ kind: "scheduled" }, { kind: "outbox" })).toBe(false);
+  });
+
+  it("leaves the Snoozed folder as an ordinary mailbox route", () => {
+    // Deep-linking a snoozed message works with no special case at all.
+    const route: Route = { kind: "mailbox", mailboxId: "snz", messageId: "e1" };
+    expect(parseRoute(formatRoute(route))).toEqual(route);
+  });
+});
