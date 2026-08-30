@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   actionTargets,
   EMPTY_SELECTION,
+  idsFromHere,
   isAllSelected,
   pruneSelection,
   selectionAfterClick,
   selectionAfterSelectAll,
+  selectionByScope,
   type SelectionState,
 } from "./selection";
 
@@ -176,5 +178,84 @@ describe("actionTargets", () => {
 
   it("is empty when there is neither", () => {
     expect(actionTargets(EMPTY_SELECTION, undefined)).toEqual([]);
+  });
+});
+
+/** The rows the `*` chords classify: read/starred flags per id. */
+const rows = [
+  { id: "a", isRead: true, isStarred: false },
+  { id: "b", isRead: false, isStarred: true },
+  { id: "c", isRead: true, isStarred: true },
+  { id: "d", isRead: false, isStarred: false },
+];
+
+describe("the * selection chords (canon §2.4)", () => {
+  it("selects everything with * a", () => {
+    expect(selected(selectionByScope(rows, "all"))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("clears with * n", () => {
+    expect(selectionByScope(rows, "none")).toBe(EMPTY_SELECTION);
+  });
+
+  it("selects the read ones with * r", () => {
+    expect(selected(selectionByScope(rows, "read"))).toEqual(["a", "c"]);
+  });
+
+  it("selects the unread ones with * u", () => {
+    expect(selected(selectionByScope(rows, "unread"))).toEqual(["b", "d"]);
+  });
+
+  it("selects the starred ones with * t", () => {
+    expect(selected(selectionByScope(rows, "starred"))).toEqual(["b", "c"]);
+  });
+
+  it("selects the unstarred ones with * s", () => {
+    expect(selected(selectionByScope(rows, "unstarred"))).toEqual(["a", "d"]);
+  });
+
+  /*
+   * REPLACES rather than adds. Pressing `* r` then `* u` must leave the unread
+   * ones selected, not the whole list — otherwise the two chords compose into
+   * `* a` and neither is usable for narrowing.
+   */
+  it("replaces the previous selection rather than adding to it", () => {
+    const read = selectionByScope(rows, "read");
+    const unread = selectionByScope(rows, "unread");
+    expect(selected(read)).toEqual(["a", "c"]);
+    expect(selected(unread)).toEqual(["b", "d"]);
+  });
+
+  it("yields an empty selection when nothing matches", () => {
+    expect(selectionByScope([{ id: "a", isRead: true, isStarred: true }], "unread")).toBe(
+      EMPTY_SELECTION,
+    );
+  });
+
+  it("sets the anchor to the first match, so a later shift-click has an origin", () => {
+    expect(selectionByScope(rows, "unread").anchor).toBe("b");
+  });
+});
+
+describe("mark-unread-from-here (Gmail's _)", () => {
+  it("takes the focused row and everything after it", () => {
+    expect(idsFromHere(ids, "c")).toEqual(["c", "d", "e"]);
+  });
+
+  it("takes the whole list from the first row", () => {
+    expect(idsFromHere(ids, "a")).toEqual(ids);
+  });
+
+  it("takes only the last row from the end", () => {
+    expect(idsFromHere(ids, "e")).toEqual(["e"]);
+  });
+
+  /*
+   * The refusal that matters. Falling back to "everything" for a stale id would
+   * mark a whole inbox unread on a keystroke meant for one row.
+   */
+  it("takes NOTHING when the anchor is not in the list", () => {
+    expect(idsFromHere(ids, "zzz")).toEqual([]);
+    expect(idsFromHere(ids, undefined)).toEqual([]);
   });
 });

@@ -84,6 +84,57 @@ export function selectionAfterClick(
   return { selected: new Set([id]), anchor: id };
 }
 
+/**
+ * The `* a`/`* n`/`* r`/`* u`/`* s`/`* t` chords (E2, canon §2.4).
+ *
+ * The caller classifies each row — this module has no idea what "read" means
+ * and must not learn, since that lives in the keywords of a thread's messages.
+ * It receives ids already paired with their two booleans and does the set
+ * maths, which is the part worth pinning: `* r` REPLACES the selection with the
+ * read rows rather than adding to it, so pressing `* r` then `* u` leaves the
+ * unread ones selected and not everything.
+ */
+export function selectionByScope(
+  rows: readonly { readonly id: string; readonly isRead: boolean; readonly isStarred: boolean }[],
+  scope: "all" | "none" | "read" | "unread" | "starred" | "unstarred",
+): SelectionState {
+  if (scope === "none") return EMPTY_SELECTION;
+  const matches = rows.filter((row) => {
+    switch (scope) {
+      case "all":
+        return true;
+      case "read":
+        return row.isRead;
+      case "unread":
+        return !row.isRead;
+      case "starred":
+        return row.isStarred;
+      case "unstarred":
+        return !row.isStarred;
+    }
+  });
+  if (matches.length === 0) return EMPTY_SELECTION;
+  return { selected: new Set(matches.map((row) => row.id)), anchor: matches[0]?.id };
+}
+
+/**
+ * The ids from `fromId` to the end of the list, inclusive (Gmail's `_`).
+ *
+ * Returns an empty array when the anchor is not in the list — never the whole
+ * list. Falling back to "everything" for a stale focus id would mark an entire
+ * inbox unread on a keystroke meant for one row, which is unrecoverable in a
+ * way that no toast fixes.
+ */
+export function idsFromHere(
+  orderedIds: readonly string[],
+  fromId: string | undefined,
+): readonly string[] {
+  if (fromId === undefined) return [];
+  const index = orderedIds.indexOf(fromId);
+  if (index < 0) return [];
+  return orderedIds.slice(index);
+}
+
 /** Selects everything, or clears the selection. */
 export function selectionAfterSelectAll(
   orderedIds: readonly string[],

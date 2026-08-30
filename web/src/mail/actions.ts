@@ -46,7 +46,18 @@ export type MessageActionKind =
   | "unflag"
   | "archive"
   | "delete"
-  | "move";
+  | "move"
+  /*
+   * E2: spam and not-spam. They are MOVES — to the mailbox with role `junk`
+   * and back to `inbox` respectively — and they are separate kinds rather
+   * than plain moves because the UI must be able to say "Report spam" instead
+   * of "Move to Junk", and because the undo stack keys its wording on the
+   * kind. The transport is identical (`moveMessages`), which is deliberate:
+   * the Rspamd learning that Mailcow's imapsieve hangs off the MOVE is
+   * triggered by the IMAP operation, not by anything we could invent here.
+   */
+  | "spam"
+  | "notSpam";
 
 /** One action, already resolved against concrete messages. */
 export interface MessageAction {
@@ -114,6 +125,8 @@ export function patchFor(
       return { removed: true };
 
     case "archive":
+    case "spam":
+    case "notSpam":
     case "move": {
       const destination = action.mailboxId;
       if (destination === undefined) return {};
