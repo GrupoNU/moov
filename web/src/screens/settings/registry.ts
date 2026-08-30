@@ -281,6 +281,30 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
     descriptionKey: "settings.signature.description",
     keywords: ["signature", "firma", "footer", "pie"],
   },
+  {
+    id: "addressAutocomplete",
+    sectionId: "account",
+    labelKey: "settings.addressAutocomplete.label",
+    descriptionKey: "settings.addressAutocomplete.description",
+    keywords: [
+      "autocomplete",
+      "autocompletado",
+      "addresses",
+      "direcciones",
+      "contacts",
+      "contactos",
+      "suggestions",
+      "sugerencias",
+      "recipients",
+      "destinatarios",
+      // Someone looking for this row because they are worried about what is
+      // stored searches for the worry, not for the feature's name.
+      "privacy",
+      "privacidad",
+      "delete",
+      "borrar",
+    ],
+  },
 
   // --- Labels (E8) ---
   {

@@ -102,7 +102,10 @@ import {
   type Route,
 } from "../../router/routes";
 import { parseComposeRequest, urlWithoutCompose } from "../../pwa/mailto";
+import { useAddressIndex } from "./useAddressIndex";
+import { useForwardAsAttachment } from "./useForwardAsAttachment";
 import { Composer } from "../compose/Composer";
+import type { ComposerAttachment } from "../compose/AttachmentList";
 import {
   draftTo,
   forwardDraft,
@@ -292,6 +295,17 @@ export function MailScreen(): React.JSX.Element {
   // --- P3 state ------------------------------------------------------------
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
   const [composerDraft, setComposerDraft] = useState<ComposerDraft | undefined>(undefined);
+  /**
+   * E7: attachments a composer should open carrying — the forwarded `.eml`s.
+   *
+   * Separate from the draft rather than a field on it because a `ComposerDraft`
+   * is built by pure functions in `composerState.ts` that know nothing about
+   * blobs or uploads, and threading an already-uploaded attachment through them
+   * would put an async concern inside a synchronous constructor.
+   */
+  const [pendingAttachments, setPendingAttachments] = useState<
+    readonly ComposerAttachment[] | undefined
+  >(undefined);
   const [identity, setIdentity] = useState<Identity | undefined>(undefined);
   /** A refetch trigger: bumped after a write so the list re-reads the truth. */
   const [refreshToken, setRefreshToken] = useState(0);
@@ -339,6 +353,51 @@ export function MailScreen(): React.JSX.Element {
    * effects use.
    */
   const { cacheMailboxes, cacheHeaders, cacheBody } = offline;
+
+  /**
+   * E7: one page of Sent, for the address index's first-run scan.
+   *
+   * Defined here rather than in the hook because this is where the client and
+   * the request repertoire live. `collapseThreads` is deliberately NOT set: the
+   * scan wants every message's recipients, and one row per conversation would
+   * hide the addresses of every reply inside a thread — which is most of them.
+   */
+  const fetchSentPage = useCallback(
+    async (
+      mailboxId: string,
+      position: number,
+      limit: number,
+    ): Promise<readonly Email[]> => {
+      if (client === undefined) return [];
+      const page = await queryEmails(
+        client,
+        accountId,
+        { kind: "mailbox", mailboxId },
+        { limit, position },
+      );
+      return page.emails;
+    },
+    [client, accountId],
+  );
+
+  /**
+   * E7: the address index's write-through, published through a ref.
+   *
+   * The two effects that feed it — the message window and the reader — are
+   * declared ABOVE the index itself, which cannot move up because it needs the
+   * Sent mailbox and therefore `roleMailboxId`. A ref reassigned on every
+   * render states "read the latest" honestly, and keeps this out of those
+   * effects' dependency arrays: `record` changes identity whenever the store or
+   * the opt-out does, and naming it would refetch the whole message window on a
+   * settings toggle.
+   *
+   * This is the same device `advanceTargetRef` uses a few hundred lines below,
+   * for the same declaration-order reason.
+   */
+  const recordAddressesRef = useRef<(emails: readonly Email[]) => void>(() => undefined);
+  const recordAddresses = useCallback((emails: readonly Email[]): void => {
+    recordAddressesRef.current(emails);
+  }, []);
 
   /**
    * True once a real request has failed with a network error.
@@ -744,6 +803,14 @@ export function MailScreen(): React.JSX.Element {
         if (filter.kind === "mailbox") {
           cacheHeaders(filter.mailboxId, page.emails);
         }
+        /*
+         * E7 write-through: every message the app loads feeds the address
+         * index, exactly as the header cache above is fed. Unlike the cache
+         * this runs for SEARCH results too — a message found by searching is
+         * still a message whose correspondents are real, and the index is not
+         * keyed by folder so there is nothing to mis-file.
+         */
+        recordAddresses(page.emails);
       } catch (error) {
         if (controller.signal.aborted) return;
         setRequestFailed(true);
@@ -783,6 +850,7 @@ export function MailScreen(): React.JSX.Element {
     sort,
     collapseThreads,
     cacheHeaders,
+    recordAddresses,
   ]);
 
   // --- P3: identity (the signature and the sending address) ----------------
@@ -1020,7 +1088,12 @@ export function MailScreen(): React.JSX.Element {
            * average message size for mail nobody may ever read — a cost paid on
            * a phone's data plan for a guess.
            */
-          if (result.email !== undefined) cacheBody(result.email);
+          if (result.email !== undefined) {
+            cacheBody(result.email);
+            // E7: an opened message is the richest sighting there is — it
+            // carries the full recipient list, where a list row may not.
+            recordAddresses([result.email]);
+          }
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -1033,7 +1106,7 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId, openMessageId, cacheBody]);
+  }, [client, accountId, openMessageId, cacheBody, recordAddresses]);
 
   // --- E9: rendering from the cache -----------------------------------------
 
@@ -1290,6 +1363,30 @@ export function MailScreen(): React.JSX.Element {
 
   const trashMailboxId = roleMailboxId("trash");
 
+  /**
+   * E7: the address index (canon §2.3, Gmail's "Other contacts" model).
+   *
+   * Declared here because it needs the Sent mailbox, which needs
+   * `roleMailboxId`. Its two feeds are wired below: the write-through rides the
+   * list and reader effects, and the first-run scan is the hook's own.
+   */
+  const addressIndex = useAddressIndex({
+    ownAddress: identity?.email,
+    sentMailboxId: roleMailboxId("sent"),
+    fetchSentPage,
+  });
+  // Publishes the current `record` to the ref the effects above read.
+  recordAddressesRef.current = addressIndex.record;
+
+  /** E7: `.eml` attachments for forward-as-attachment. */
+  const forwardAttachments = useForwardAsAttachment({
+    client,
+    accountId,
+    authorization,
+    uploadUrlTemplate: session?.uploadUrl,
+    sessionCapabilities: session?.capabilities,
+  });
+
   /** True when `delete` on the current targets ERASES rather than moves (W-A2). */
   const willDeletePermanently = useMemo(() => {
     if (trashMailboxId === undefined) return false;
@@ -1434,6 +1531,72 @@ export function MailScreen(): React.JSX.Element {
       { undoOrigin: activeMailbox?.id, autoAdvance: true },
     );
   }, [roleMailboxId, targetMessageIds, dispatchAction, format, t, activeMailbox?.id]);
+
+  /**
+   * E7: the archive half of Send & Archive, and its inverse (canon §2.3).
+   *
+   * # Why these do not go through `dispatchAction`
+   *
+   * `dispatchAction` is built for a user action on the current SELECTION: it
+   * shows a toast, clears the selection, records an undo offer and may
+   * auto-advance the reader. None of that is right here. The composer owns the
+   * message the user is looking at, it is showing its own undo affordance
+   * already, and a second undo offer in a toast — one that would undo the
+   * archive but not the send — is precisely the confusing pair this avoids.
+   *
+   * So these call `actions.run` directly: the optimistic overlay still applies
+   * (the conversation leaves the list at once, which is what makes the button
+   * feel instant), and the composer reports the outcome in the words that fit
+   * what it just did.
+   *
+   * # Why the inverse is a MOVE back to the origin, not "unarchive"
+   *
+   * There is no un-archive verb; archiving is a move, and its inverse is the
+   * move back. The origin is captured at call time from the mailbox the user is
+   * looking at, which is where the conversation was when they hit reply.
+   */
+  const archiveConversation = useCallback(
+    async (ids: readonly string[]): Promise<boolean> => {
+      const archiveId = roleMailboxId("archive");
+      if (archiveId === undefined || ids.length === 0) return false;
+      const result = await actions.run({ kind: "archive", ids, mailboxId: archiveId }, projected);
+      // Partial success counts as failure for the composer's message: the
+      // conversation is not archived if half of it moved.
+      return result.failed.length === 0 && result.succeeded.length > 0;
+    },
+    [roleMailboxId, actions, projected],
+  );
+
+  /** The mailbox a Send & Archive would return the conversation TO. */
+  const replyOriginMailboxId = activeMailbox?.id;
+
+  /**
+   * E7: the messages a Send & Archive would archive.
+   *
+   * The whole CONVERSATION, not the one message being replied to — that is
+   * what "archive" means everywhere else in this screen (see
+   * `targetMessageIds`) and what canon §2.1 says a toolbar action does. Read
+   * from the open message's thread, falling back to the message itself when
+   * the thread has not loaded.
+   *
+   * Empty whenever there is nothing on screen to archive, which is what removes
+   * the button rather than leaving one that would act on nothing.
+   */
+  const archiveTargetIds = useMemo<readonly string[]>(() => {
+    if (openMessageId === undefined) return [];
+    const thread = detail.thread;
+    if (thread !== undefined && thread.emailIds.length > 0) return thread.emailIds;
+    return [openMessageId];
+  }, [openMessageId, detail.thread]);
+
+  const restoreConversation = useCallback(
+    async (ids: readonly string[]): Promise<void> => {
+      if (replyOriginMailboxId === undefined || ids.length === 0) return;
+      await actions.run({ kind: "move", ids, mailboxId: replyOriginMailboxId }, projected);
+      refresh();
+    },
+    [replyOriginMailboxId, actions, projected, refresh],
+  );
 
   const runDelete = useCallback((): void => {
     const ids = targetMessageIds();
@@ -2646,6 +2809,45 @@ export function MailScreen(): React.JSX.Element {
     [quotingStrings],
   );
 
+  /**
+   * E7: forward one or more messages AS ATTACHMENTS (canon §2.3).
+   *
+   * Unlike the quoted forward next door, this needs no body — the whole message
+   * is downloaded as a blob, so a row from the list works as well as an opened
+   * message. That is what lets it serve multi-select from the action bar.
+   *
+   * The composer opens with the attachments already on it, and with a subject
+   * naming how many messages are inside. What could NOT be attached is named in
+   * a toast: silently forwarding three of four selected messages is exactly the
+   * kind of quiet partial success this codebase refuses elsewhere.
+   */
+  const forwardAsAttachment = useCallback(
+    (targets: readonly Email[]): void => {
+      if (targets.length === 0) return;
+      setToast(t("forwardAttachment.preparing"));
+      void (async () => {
+        const { attachments, refused } = await forwardAttachments.prepare(targets);
+        if (attachments.length === 0) {
+          setToast(t("forwardAttachment.failed"));
+          return;
+        }
+        setComposerDraft({
+          // Matches the default "Compose" takes; the composer then applies
+          // the remembered plain/rich preference on top (E7).
+          ...newDraft(true),
+          subject: format("forwardAttachment.subject", attachments.length),
+        });
+        setPendingAttachments(attachments);
+        setToast(
+          refused.length === 0
+            ? undefined
+            : `${t("forwardAttachment.failed")}: ${refused.join(", ")}`,
+        );
+      })();
+    },
+    [forwardAttachments, t, format],
+  );
+
   const openForward = useCallback((): void => {
     const original = composeSubject();
     if (original === undefined) return;
@@ -3311,6 +3513,15 @@ export function MailScreen(): React.JSX.Element {
             onManageLabels={openLabelSettings}
             onLabelMenuReady={registerLabelMenu}
             /*
+             * E7: forward the selection as `.eml` attachments. Works on the
+             * list rows directly — the whole message is downloaded as a blob,
+             * so unlike a quoted forward it needs no body to have been fetched.
+             */
+            onForwardAsAttachment={() => {
+              const wanted = new Set(targetMessageIds());
+              forwardAsAttachment(projected.filter((email) => wanted.has(email.id)));
+            }}
+            /*
              * E4: the triage controls, present only when the server advertises
              * the vendor capability. Passing `undefined` removes them entirely
              * rather than greying them out — a feature this server does not
@@ -3508,6 +3719,27 @@ export function MailScreen(): React.JSX.Element {
                 openReply(true);
               }}
               onForward={openForward}
+              /*
+               * E7: the whole CONVERSATION as attachments, matching what every
+               * other toolbar verb in this pane acts on (canon §2.1) — a reply
+               * chain forwarded to a lawyer is worth nothing if it carries only
+               * the last message.
+               */
+              onForwardAsAttachment={() => {
+                const wanted = new Set(archiveTargetIds);
+                const targets = projected.filter((email) => wanted.has(email.id));
+                /*
+                 * The projected list is the fallback's source, not the only
+                 * one: a conversation opened from a search may have members the
+                 * current window does not hold, and the message the reader is
+                 * showing is always available. It carries `blobId`, which is
+                 * all the download needs.
+                 */
+                const opened = detail.email;
+                forwardAsAttachment(
+                  targets.length > 0 ? targets : opened === undefined ? [] : [opened],
+                );
+              }}
               onArchive={runArchive}
               onDelete={runDelete}
               deleteIsPermanent={willDeletePermanently}
@@ -3602,6 +3834,21 @@ export function MailScreen(): React.JSX.Element {
         identity={identity}
         onSaveSignature={saveSignature}
         labels={labelSettings}
+        /*
+         * E7: the autocomplete row. Passed only when this browser actually has
+         * an index to govern — `offline.addresses` is undefined without usable
+         * storage, and a switch over nothing is a dead control.
+         */
+        {...(offline.addresses !== undefined
+          ? {
+              addresses: {
+                enabled: addressIndex.enabled,
+                setEnabled: addressIndex.setEnabled,
+                count: addressIndex.count,
+                clear: addressIndex.clear,
+              },
+            }
+          : {})}
       />
 
       <ShortcutsDialog
@@ -3628,9 +3875,37 @@ export function MailScreen(): React.JSX.Element {
           authorization={authorization}
           onClose={() => {
             setComposerDraft(undefined);
+            // E7: the forwarded `.eml`s belong to the composer that was
+            // carrying them, not to the next one.
+            setPendingAttachments(undefined);
           }}
           onNotify={setToast}
           onChanged={refresh}
+          {...(pendingAttachments !== undefined
+            ? { initialAttachments: pendingAttachments }
+            : {})}
+          /*
+           * E7: recipient autocomplete (canon §2.3).
+           *
+           * Empty when the user opted out or nothing is indexed yet, which the
+           * field reads as "no combobox at all" rather than "an empty popup".
+           */
+          addressSuggestions={addressIndex.suggestions}
+          onRecordAddresses={addressIndex.recordSent}
+          /*
+           * E7: Send & Archive, offered only for a REPLY that has a
+           * conversation to archive and only when there is an Archive folder to
+           * archive into. Absent removes the button, per P4 — a control that
+           * cannot act must not be on screen.
+           */
+          {...(isReplyIntent(composerDraft.intent) &&
+          archiveTargetIds.length > 0 &&
+          roleMailboxId("archive") !== undefined
+            ? {
+                onSendAndArchive: () => archiveConversation(archiveTargetIds),
+                onUndoArchive: () => restoreConversation(archiveTargetIds),
+              }
+            : {})}
           /*
            * E9: where a send goes when there is no network.
            *
@@ -3675,6 +3950,18 @@ export function MailScreen(): React.JSX.Element {
       </div>
     </div>
   );
+}
+
+/**
+ * True for the two intents Send & Archive applies to (E7, canon §2.3).
+ *
+ * Gmail's setting is worded "Show 'Send & Archive' button in reply", and a
+ * forward is not a reply: it starts a new exchange with someone who was not in
+ * the original, and archiving the thread you just forwarded onward is not what
+ * pressing send there means. A new message has no conversation at all.
+ */
+function isReplyIntent(intent: ComposerDraft["intent"]): boolean {
+  return intent === "reply" || intent === "replyAll";
 }
 
 /** The banner above the list: a refusal, a truncation warning, or a count. */

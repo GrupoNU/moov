@@ -92,6 +92,28 @@ export interface SettingsDialogProps {
    * empty state rather than crashing the sheet.
    */
   readonly labels?: LabelsSectionProps | undefined;
+  /**
+   * E7: the address index, for the autocomplete row.
+   *
+   * Absent hides the row entirely — a browser with no usable storage has no
+   * index to govern, and a switch over nothing is the dead control P4 forbids.
+   */
+  readonly addresses?: AddressSettings | undefined;
+}
+
+/**
+ * What the autocomplete row needs (E7).
+ *
+ * A narrow structural type rather than importing `AddressIndexApi`: this
+ * dialog has no business with the index's feeds, and naming only what it reads
+ * keeps a future change to `record`/`recordSent` from rippling into a settings
+ * screen that never called them.
+ */
+export interface AddressSettings {
+  readonly enabled: boolean;
+  readonly setEnabled: (enabled: boolean) => void;
+  readonly count: number;
+  readonly clear: () => Promise<void>;
 }
 
 export function SettingsDialog({
@@ -100,6 +122,7 @@ export function SettingsDialog({
   identity,
   onSaveSignature,
   labels,
+  addresses,
 }: SettingsDialogProps): React.JSX.Element {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -298,6 +321,7 @@ export function SettingsDialog({
                       identity={identity}
                       onSaveSignature={onSaveSignature}
                       showRow={showRow}
+                      addresses={addresses}
                     />
                   )}
                   {sectionId === "labels" && showRow("labels") && labels !== undefined && (
@@ -672,12 +696,14 @@ function AccountSection({
   identity,
   onSaveSignature,
   showRow,
+  addresses,
 }: {
   readonly identity: Identity | undefined;
   readonly onSaveSignature: ((textSignature: string) => Promise<boolean>) | undefined;
   readonly showRow: (id: string) => boolean;
+  readonly addresses: AddressSettings | undefined;
 }): React.JSX.Element {
-  const { t } = useTranslation();
+  const { t, format } = useTranslation();
   const [draft, setDraft] = useState(identity?.textSignature ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const fieldId = useId();
@@ -770,6 +796,59 @@ function AccountSection({
                       : ""}
               </span>
             </div>
+          </div>
+        </SettingRow>
+      )}
+
+      {/*
+        E7: the address-autocomplete opt-out (canon §2.3).
+
+        Three controls in one row because they are one decision: whether
+        addresses are collected, and what to do with the ones already here. An
+        opt-out that only stops FUTURE collection while silently keeping the
+        existing index is a setting about display dressed up as a privacy
+        control, so "delete saved addresses" sits beside the switch rather than
+        somewhere else.
+      */}
+      {showRow("addressAutocomplete") && addresses !== undefined && (
+        <SettingRow
+          labelKey="settings.addressAutocomplete.label"
+          descriptionKey="settings.addressAutocomplete.description"
+        >
+          <div className={styles.signatureField}>
+            <Switch
+              label={
+                addresses.enabled
+                  ? t("settings.addressAutocomplete.on")
+                  : t("settings.addressAutocomplete.off")
+              }
+              checked={addresses.enabled}
+              onChange={addresses.setEnabled}
+            />
+            <div className={styles.signatureActions}>
+              <span className={styles.signatureNote}>
+                {format("settings.addressAutocomplete.count", addresses.count)}
+              </span>
+              <button
+                type="button"
+                className={styles.signatureSave}
+                disabled={addresses.count === 0}
+                onClick={() => {
+                  if (!window.confirm(t("settings.addressAutocomplete.clearConfirm"))) return;
+                  void addresses.clear();
+                }}
+              >
+                {t("settings.addressAutocomplete.clear")}
+              </button>
+            </div>
+            {/*
+              The named gap, ON SCREEN rather than in a comment: prefs v1 has
+              no key for this, so the choice is per-browser. E8 set the
+              precedent for saying so where the user can read it.
+            */}
+            <span className={styles.signatureNote}>
+              {t("settings.addressAutocomplete.localOnly")}
+            </span>
           </div>
         </SettingRow>
       )}

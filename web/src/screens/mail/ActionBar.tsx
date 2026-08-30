@@ -3,6 +3,7 @@ import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
 import { LabelMenu } from "./LabelMenu";
 import { MoveMenu } from "./MoveMenu";
+import { PopupMenu } from "./PopupMenu";
 import { SnoozeMenu } from "./SnoozeMenu";
 import styles from "./ActionBar.module.css";
 
@@ -68,6 +69,15 @@ export interface ActionBarProps {
   readonly onSnooze?: ((until: string) => void) | undefined;
   /** Publishes the snooze menu's `open()` so `b` can raise it. */
   readonly onSnoozeMenuReady?: ((open: () => void) => void) | undefined;
+
+  /**
+   * E7: forwards the selection as `.eml` attachments (canon §2.3).
+   *
+   * On the BAR rather than only in the reader because this is the one triage
+   * verb that is genuinely useful in bulk — handing a security team the four
+   * phishing messages you just selected is the case it exists for.
+   */
+  readonly onForwardAsAttachment?: (() => void) | undefined;
   /** Mutes or unmutes the selection. Absent for the same reason as `onSnooze`. */
   readonly onToggleMute?: (() => void) | undefined;
   /**
@@ -104,6 +114,7 @@ export function ActionBar({
   onLabelMenuReady,
   onSnooze,
   onSnoozeMenuReady,
+  onForwardAsAttachment,
   onToggleMute,
   allMuted = false,
   onUnsnooze,
@@ -327,6 +338,43 @@ export function ActionBar({
           </svg>
         }
       />
+
+      {/*
+        E7: the overflow menu. One item today, and a menu rather than a sixth
+        icon because "forward as attachment" has no icon anyone would
+        recognise — an unlabelled glyph in a row of five is a guessing game,
+        which is exactly what the reader's text-labelled buttons avoid.
+      */}
+      {onForwardAsAttachment !== undefined && (
+        <PopupMenu
+          label={t("action.more")}
+          disabled={disabled}
+          triggerClassName={styles.action}
+          triggerContent={
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="currentColor">
+              <circle cx="4.5" cy="10" r="1.4" />
+              <circle cx="10" cy="10" r="1.4" />
+              <circle cx="15.5" cy="10" r="1.4" />
+            </svg>
+          }
+        >
+          {(close) => (
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.menuItem}
+                onClick={() => {
+                  onForwardAsAttachment();
+                  close();
+                }}
+              >
+                {t("action.forwardAsAttachment")}
+              </button>
+            </li>
+          )}
+        </PopupMenu>
+      )}
 
       <span className={styles.spacer} />
 

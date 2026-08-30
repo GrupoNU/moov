@@ -72,6 +72,12 @@ export interface ReadingPaneProps {
   readonly onReply: () => void;
   readonly onReplyAll: () => void;
   readonly onForward: () => void;
+  /**
+   * E7: forwards THIS message as a `.eml` attachment (canon §2.3).
+   *
+   * Absent removes the button — P4, no dead controls.
+   */
+  readonly onForwardAsAttachment?: (() => void) | undefined;
   readonly onArchive: () => void;
   readonly onDelete: () => void;
   /** True when delete ERASES rather than moves to Trash (server rule W-A2). */
@@ -174,6 +180,7 @@ export function ReadingPane({
   onReply,
   onReplyAll,
   onForward,
+  onForwardAsAttachment,
   onArchive,
   onDelete,
   deleteIsPermanent,
@@ -490,6 +497,25 @@ export function ReadingPane({
             triggerClassName={styles.secondaryAction}
             triggerContent={t("action.move")}
           />
+
+          {/*
+            E7: forward as attachment (canon §2.3).
+
+            A text button in this pane's own idiom rather than an overflow
+            menu: the reader has the room, and hiding a verb behind a ⋯ is
+            how a feature nobody discovers gets built. The action bar puts it
+            in a menu because five icons plus a sixth unlabelled glyph is a
+            different problem.
+          */}
+          {onForwardAsAttachment !== undefined && (
+            <button
+              type="button"
+              className={styles.secondaryAction}
+              onClick={onForwardAsAttachment}
+            >
+              {t("action.forwardAsAttachment")}
+            </button>
+          )}
 
           {/*
             E8: "Label as", beside "Move to" — the pair the reader offers for

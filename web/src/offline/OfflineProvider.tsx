@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import type { Email, Mailbox } from "../mail/types";
+import { AddressStore } from "./addressStore";
 import { MailCache } from "./cache";
 import { openDatabase } from "./idb";
 import { OutboxStore, type OutboxItem } from "./outbox";
@@ -41,6 +42,16 @@ export interface OfflineApi {
   readonly cache: MailCache | undefined;
   /** The durable send queue, when this browser has usable storage. */
   readonly outbox: OutboxStore | undefined;
+  /**
+   * E7: the address index behind recipient autocomplete.
+   *
+   * Lives here because it shares everything that matters with the cache — the
+   * same database handle, the same account scoping, the same "undefined when
+   * there is no storage" contract — and a second provider opening a second
+   * connection to the same database would be two lifetimes to keep in step for
+   * no benefit.
+   */
+  readonly addresses: AddressStore | undefined;
   /** True once the open attempt has settled, either way. */
   readonly isReady: boolean;
   /** `navigator.onLine`, kept live by the online/offline events. */
@@ -71,6 +82,7 @@ export function OfflineProvider({
 }): React.JSX.Element {
   const [cache, setCache] = useState<MailCache | undefined>(undefined);
   const [outbox, setOutbox] = useState<OutboxStore | undefined>(undefined);
+  const [addresses, setAddresses] = useState<AddressStore | undefined>(undefined);
   const [isReady, setReady] = useState(false);
   const [isOnline, setOnline] = useState(readOnline);
   const [outboxItems, setOutboxItems] = useState<readonly OutboxItem[]>([]);
@@ -118,6 +130,7 @@ export function OfflineProvider({
       }
       setCache(mailCache);
       setOutbox(queue);
+      setAddresses(new AddressStore(db, accountId));
       setOutboxItems(await queue.list());
       setReady(true);
     })();
@@ -128,6 +141,7 @@ export function OfflineProvider({
       dbRef.current = undefined;
       setCache(undefined);
       setOutbox(undefined);
+      setAddresses(undefined);
       setOutboxItems([]);
       setReady(false);
     };
@@ -193,6 +207,7 @@ export function OfflineProvider({
     () => ({
       cache,
       outbox,
+      addresses,
       isReady,
       isOnline,
       outboxItems,
@@ -204,6 +219,7 @@ export function OfflineProvider({
     [
       cache,
       outbox,
+      addresses,
       isReady,
       isOnline,
       outboxItems,
@@ -226,6 +242,7 @@ export function OfflineProvider({
 const INERT: OfflineApi = {
   cache: undefined,
   outbox: undefined,
+  addresses: undefined,
   isReady: true,
   isOnline: true,
   outboxItems: [],
