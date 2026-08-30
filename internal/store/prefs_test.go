@@ -33,7 +33,7 @@ func TestPrefsDefaultsWithoutARow(t *testing.T) {
 	if rec.Exists {
 		t.Error("a fresh account must have no preferences row")
 	}
-	if rec.Prefs != store.DefaultPrefs() {
+	if !rec.Prefs.Equal(store.DefaultPrefs()) {
 		t.Errorf("prefs = %+v, want the product defaults %+v", rec.Prefs, store.DefaultPrefs())
 	}
 	if !rec.UpdatedAt.IsZero() {
@@ -62,8 +62,26 @@ func TestPrefsRoundTrip(t *testing.T) {
 		InboxType:         "unread_first",
 		Notifications:     "off",
 		Theme:             "dark",
+
+		// v2. The maps carry entries too: a map that round-trips only when
+		// empty is a map whose encoding was never exercised.
+		Labels: map[string]store.LabelPrefs{
+			"Facturas": {Color: "amber", Visibility: "showIfUnread"},
+			"Clientes": {Color: "blue", Visibility: "hide"},
+		},
+		OfflineDepth:         store.OfflineDepthPrefs{HeadersPerMailbox: 500, Bodies: 40},
+		AddressAutocomplete:  "manual",
+		SendAndArchive:       false,
+		DefaultReplyBehavior: "replyAll",
+		Signatures: store.SignaturePrefs{
+			Items: map[string]store.SignatureItem{
+				"work": {Name: "Work", TextBody: "-- \nDiego", HTMLBody: "<p>Diego</p>"},
+			},
+			ForNew:   "work",
+			ForReply: "work",
+		},
 	}
-	if want == store.DefaultPrefs() {
+	if want.Equal(store.DefaultPrefs()) {
 		t.Fatal("the fixture must differ from every default, or it proves nothing")
 	}
 
@@ -71,7 +89,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PutPrefs: %v", err)
 	}
-	if put.Prefs != want {
+	if !put.Prefs.Equal(want) {
 		t.Errorf("PutPrefs returned %+v, want %+v", put.Prefs, want)
 	}
 	if !put.Exists {
@@ -85,7 +103,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPrefs: %v", err)
 	}
-	if got.Prefs != want {
+	if !got.Prefs.Equal(want) {
 		t.Errorf("GetPrefs returned %+v, want %+v", got.Prefs, want)
 	}
 }

@@ -55,7 +55,27 @@ import (
 // chain rather than a bare unmarshal: risk 6 of the L3 plan ("drift del
 // esquema de preferencias") is real, and the moment to build the chain is
 // before there is any stored data to be careful with, not after.
-const PrefsSchemaVersion = 1
+//
+// # v2 (the E5/E7/E8/E9b roaming keys)
+//
+// v2 adds Labels, OfflineDepth, AddressAutocomplete, SendAndArchive,
+// DefaultReplyBehavior and Signatures — client-side state those epics named as
+// gaps, so it roams between a user's devices instead of dying with a browser
+// profile.
+//
+// It is a PURE ADDITION: no v1 key is renamed, retyped or re-encoded, so a v1
+// document read by this build is a v2 document whose new keys are absent, and
+// absent keys are exactly what the defaults-on-read mechanism already fills.
+// By the rule stated above ("NOT bumped for a new key with a default") this
+// bump was therefore not strictly required — it is taken anyway for one
+// reason: the version is the only signal an OLD binary has that a document
+// holds data it would silently drop and then overwrite. A v1-stamped document
+// carrying a user's twenty labels would be read by the previous release,
+// re-encoded without them, and the labels would be gone. Stamping v2 makes
+// that old binary refuse instead (ErrPrefsUnknownVersion), which is the
+// recoverable failure of the two — the same argument the error's own
+// documentation makes, now with real data behind it.
+const PrefsSchemaVersion = 2
 
 // prefsVersionKey is the document key holding the schema version.
 const prefsVersionKey = "v"
@@ -175,6 +195,180 @@ type Prefs struct {
 	// once the session loads. The localStorage entry is therefore a pre-paint
 	// cache of this field, not a second source of truth.
 	Theme string `json:"theme"`
+
+	// ---------------------------------------------------------------------
+	// v2 — the roaming keys named as gaps by epics E5, E7, E8 and E9b
+	// ---------------------------------------------------------------------
+
+	// Labels is PRESENTATION metadata for labels, keyed by label name.
+	//
+	// The label ITSELF is not here and never will be: arbitrage A6 puts the
+	// assignment in IMAP keywords and the definition in a METADATA annotation,
+	// so a label survives in Dovecot with Moov's database deleted — the "Moov
+	// is a reconstructible cache" invariant of ADR-001. What lives here is the
+	// part Dovecot has no place for and no opinion about: which swatch the
+	// chip is drawn in, and whether the label shows in the sidebar.
+	//
+	// The map is capped at internal/imap.MaxDurableKeywordsPerMailbox (26)
+	// entries, cited at internal/imap/metadata.go:52. That constant is a
+	// Maildir fact — keywords are one letter a-z in the filename, and
+	// dovecot-keywords stops at index 25 — so a user can never durably hold a
+	// 27th label, and metadata for a label that cannot exist is dead weight
+	// that would grow without bound if a client kept writing it.
+	//
+	// Omitted (nil) is distinct from empty only in encoding, never in meaning:
+	// both are "no label has custom presentation", and every label the map
+	// does not name is drawn in the default swatch, visible.
+	Labels map[string]LabelPrefs `json:"labels,omitempty"`
+
+	// OfflineDepth is how much mail the PWA keeps for offline reading (E9b).
+	//
+	// It is a preference rather than a constant because the honest number
+	// depends on the device: a phone on a metered connection and a desktop on
+	// fibre want different answers, and the user is the only one who knows
+	// which they are on. It roams because the ANSWER usually does not — a user
+	// who wants shallow caching wants it everywhere.
+	OfflineDepth OfflineDepthPrefs `json:"offlineDepth"`
+
+	// AddressAutocomplete is "auto" or "manual" — Gmail's "create contacts for
+	// autocomplete" setting. "auto" adds an address to the autocomplete pool
+	// when the user mails it; "manual" only offers addresses the user saved
+	// deliberately.
+	//
+	// Gmail's own default is automatic, and it is adopted here under the canon
+	// filter's first rule.
+	AddressAutocomplete string `json:"addressAutocomplete"`
+
+	// SendAndArchive shows the "Send & Archive" button in replies (E7).
+	//
+	// DEFAULT TRUE, which is a REGISTERED DIVERGENCE from Gmail (whose setting
+	// ships off) and, unusually, one taken after the fact rather than before:
+	// the button already shipped visible in Moov's composer, so a default of
+	// false would REMOVE a control users already have. Changing what an
+	// existing user sees is a worse failure than differing from Gmail on a
+	// setting Google publishes no security reason for — the canon's §1.2 filter
+	// permits divergence exactly there.
+	SendAndArchive bool `json:"sendAndArchive"`
+
+	// DefaultReplyBehavior is "reply" or "replyAll" (canon §2.3).
+	//
+	// Gmail's default is "reply", and the reason to adopt it is not deference:
+	// the failure modes are asymmetric. Defaulting to reply-all means a user
+	// eventually answers a mailing list in a message they meant for one person,
+	// which cannot be taken back; defaulting to reply means they occasionally
+	// have to click "reply all", which costs a click.
+	DefaultReplyBehavior string `json:"defaultReplyBehavior"`
+
+	// Signatures is the named-signature model of epic E7: several signatures a
+	// user can pick between, plus which one new mail and replies start with.
+	//
+	// # Precedence against the per-identity signature — read this before using
+	// either
+	//
+	// RFC 8621 §6 gives an Identity exactly ONE textSignature and ONE
+	// htmlSignature, and those remain AUTHORITATIVE for any client that speaks
+	// only standard JMAP — Bulwark, or any third-party client — because they
+	// are the only signature such a client can see. Nothing here overrides
+	// them on the wire and nothing here is injected into a message by the
+	// server.
+	//
+	// The rule, stated once so both layers can cite it:
+	//
+	//	MOOV's own PWA, composing new mail : if Signatures.ForNew names an
+	//	                                     existing item, use that item's
+	//	                                     body; otherwise fall back to the
+	//	                                     Identity's signature.
+	//	MOOV's own PWA, composing a reply  : the same, with ForReply.
+	//	Any other JMAP client              : the Identity's signature, always.
+	//	                                     It never learns this key exists —
+	//	                                     the vendor capability gates it.
+	//
+	// This is a PRESENTATION-LAYER preference, not a protocol divergence: the
+	// signature is inserted into the body by the composer before the message
+	// is submitted, exactly as §6 says a client "SHOULD" do with the Identity's
+	// own. The server assembles no signature into any message, so there is no
+	// state in which two clients disagree about what was actually sent — they
+	// only ever disagree about what the composer PRE-FILLED, which is a client
+	// preference by definition.
+	Signatures SignaturePrefs `json:"signatures"`
+}
+
+// LabelPrefs is one label's presentation metadata (v2).
+type LabelPrefs struct {
+	// Color is a palette id — a NAME such as "amber", never a hex value. The
+	// closed set is web/src/mail/labelPalette.ts, mirrored and enforced by the
+	// JMAP layer's labelColorChoices.
+	//
+	// Ids rather than hex is the palette's own load-bearing decision: a future
+	// contrast fix to the amber swatch reaches every existing label, instead of
+	// leaving them pinned to a hex string chosen in 2026.
+	Color string `json:"color"`
+
+	// Visibility is "show", "showIfUnread" or "hide" — Gmail's three label-list
+	// visibilities. It governs the SIDEBAR only; a hidden label still applies
+	// to its messages and still shows on the message itself.
+	Visibility string `json:"visibility"`
+}
+
+// OfflineDepthPrefs is how much mail the PWA keeps offline (v2, epic E9b).
+type OfflineDepthPrefs struct {
+	// HeadersPerMailbox is how many message headers per mailbox are cached for
+	// offline listing: [50, 1000], default 200.
+	//
+	// The floor is not decoration. A depth below a screenful would make the
+	// offline list visibly truncated at the first scroll, which reads as data
+	// loss rather than as a setting; 50 is comfortably more than one viewport
+	// at any density.
+	HeadersPerMailbox int `json:"headersPerMailbox"`
+
+	// Bodies is how many full message bodies are cached: [20, 500], default
+	// 100. Lower than the header count by construction — a body is orders of
+	// magnitude larger than a header, and the browser's storage quota is the
+	// binding constraint.
+	Bodies int `json:"bodies"`
+}
+
+// SignaturePrefs is the named-signature model (v2, epic E7). The precedence
+// rule against the per-identity signature is documented on Prefs.Signatures.
+type SignaturePrefs struct {
+	// Items are the signatures, keyed by an opaque client-chosen id.
+	Items map[string]SignatureItem `json:"items,omitempty"`
+
+	// ForNew is the id used when composing new mail, or "" for none — in which
+	// case the composer falls back to the Identity's own signature.
+	//
+	// The empty string is the "none" case rather than a nil pointer, for the
+	// same reason Language's is: "" is not a valid id (the validator refuses
+	// it), so it cannot collide with a real choice, and it keeps the struct
+	// free of a pointer every consumer would have to nil-check. The JMAP layer
+	// renders it as the RFC's null.
+	ForNew string `json:"forNew"`
+
+	// ForReply is the id used when replying or forwarding, or "" for none.
+	ForReply string `json:"forReply"`
+}
+
+// SignatureItem is one named signature (v2).
+type SignatureItem struct {
+	// Name is what the user calls it in the picker: "Work", "Personal".
+	Name string `json:"name"`
+
+	// TextBody is the plain-text form.
+	TextBody string `json:"textBody"`
+
+	// HTMLBody is the HTML form, SANITIZED BY THE JMAP LAYER BEFORE IT
+	// ARRIVES HERE, through the same sanitizeHTMLSignature the per-identity
+	// htmlSignature goes through.
+	//
+	// The sanitizer is not called from this package, and that placement is the
+	// same division of labor the file header states: this file owns the shape,
+	// the protocol layer owns the values. It matters more here than elsewhere
+	// because the reason signatures are sanitized on the way IN
+	// (internal/jmap/mail/signature.go) is that they are content MOOV
+	// TRANSMITS under its own DKIM key — so the write path is the only place
+	// the cleaning can happen, and a second sanitizer here would be a second
+	// policy to drift.
+	HTMLBody string `json:"htmlBody"`
 }
 
 // DefaultPrefs is the product's factory setting for every preference.
@@ -198,7 +392,94 @@ func DefaultPrefs() Prefs {
 		InboxType:         "default",
 		Notifications:     "new",
 		Theme:             "light",
+
+		// v2. Labels and Signatures.Items stay NIL rather than empty maps: an
+		// empty map and a nil map mean the same thing here ("nothing
+		// customized"), and a nil one cannot be mutated by a caller that
+		// received the defaults, which encodePrefs' dense-write and the JMAP
+		// layer's read-patch-write both rely on not happening.
+		Labels: nil,
+		OfflineDepth: OfflineDepthPrefs{
+			HeadersPerMailbox: 200,
+			Bodies:            100,
+		},
+		AddressAutocomplete:  "auto",     // Gmail's own default.
+		SendAndArchive:       true,       // registered divergence — see the field.
+		DefaultReplyBehavior: "reply",    // canon §2.3; the asymmetric-failure argument.
+		Signatures:           SignaturePrefs{},
 	}
+}
+
+// Equal reports whether two preference values are identical.
+//
+// It exists because Prefs stopped being comparable with == when v2 gave it
+// maps, and the alternative — reflect.DeepEqual at every call site — would
+// treat a nil map and an empty one as different when this schema says they are
+// the same thing (DefaultPrefs' comment states why nil is the canonical form).
+// A method keeps that one judgement in one place instead of in every caller.
+func (p Prefs) Equal(other Prefs) bool {
+	if p.UndoSendSeconds != other.UndoSendSeconds ||
+		p.ImagesPolicy != other.ImagesPolicy ||
+		p.ConversationView != other.ConversationView ||
+		p.HoverActions != other.HoverActions ||
+		p.AutoAdvance != other.AutoAdvance ||
+		p.Density != other.Density ||
+		p.ShowSnippets != other.ShowSnippets ||
+		p.KeyboardShortcuts != other.KeyboardShortcuts ||
+		p.Language != other.Language ||
+		p.ReadingPane != other.ReadingPane ||
+		p.InboxType != other.InboxType ||
+		p.Notifications != other.Notifications ||
+		p.Theme != other.Theme ||
+		p.OfflineDepth != other.OfflineDepth ||
+		p.AddressAutocomplete != other.AddressAutocomplete ||
+		p.SendAndArchive != other.SendAndArchive ||
+		p.DefaultReplyBehavior != other.DefaultReplyBehavior ||
+		p.Signatures.ForNew != other.Signatures.ForNew ||
+		p.Signatures.ForReply != other.Signatures.ForReply {
+		return false
+	}
+	if len(p.Labels) != len(other.Labels) {
+		return false
+	}
+	for name, v := range p.Labels {
+		if w, ok := other.Labels[name]; !ok || v != w {
+			return false
+		}
+	}
+	if len(p.Signatures.Items) != len(other.Signatures.Items) {
+		return false
+	}
+	for id, v := range p.Signatures.Items {
+		if w, ok := other.Signatures.Items[id]; !ok || v != w {
+			return false
+		}
+	}
+	return true
+}
+
+// Clone returns a deep copy: the maps are duplicated, so a caller that mutates
+// the result cannot reach into the value it was made from.
+//
+// Every path that hands a Prefs across a boundary uses it. Without it, GetPrefs
+// would return a struct whose Labels map aliases the one just decoded, and the
+// JMAP layer's read-patch-write — which mutates the map in place while applying
+// a patch — would be editing an object it was only supposed to be reading from.
+func (p Prefs) Clone() Prefs {
+	out := p
+	if p.Labels != nil {
+		out.Labels = make(map[string]LabelPrefs, len(p.Labels))
+		for k, v := range p.Labels {
+			out.Labels[k] = v
+		}
+	}
+	if p.Signatures.Items != nil {
+		out.Signatures.Items = make(map[string]SignatureItem, len(p.Signatures.Items))
+		for k, v := range p.Signatures.Items {
+			out.Signatures.Items[k] = v
+		}
+	}
+	return out
 }
 
 // PrefsRecord is one account_prefs row as the JMAP layer reads it: the
@@ -244,6 +525,8 @@ type PrefsRecord struct {
 //	                           v1-shaped keys, since v1 is the first schema
 //	                           that ever existed. Refusing them would fail
 //	                           reads on rows this very migration creates.
+//	v == 1                  -> decode the v1 keys, LIFT to v2 (which is the
+//	                           empty operation — see below), and fill.
 //	v == PrefsSchemaVersion -> decode and fill.
 //	anything else           -> ErrPrefsUnknownVersion. That covers a version
 //	                           from the FUTURE, which is the real case (see the
@@ -253,10 +536,22 @@ type PrefsRecord struct {
 //	                           CHECK already makes unstorable and which is
 //	                           therefore corruption rather than a version.
 //
-// Adding v2 means: add a `case 2:` that decodes the v2 shape, and add a step
-// that lifts a v1 document to v2 before it. The chain is a switch precisely so
-// that the step-by-step lift is written once and reused by every older
-// version, rather than each version needing a direct-to-current decoder.
+// # The v1 -> v2 lift, and why it is one shared decode
+//
+// v2 is a pure addition: every v1 key keeps its name, its type and its
+// meaning, and the six new keys are absent from a v1 document. Filling an
+// absent key from the defaults is precisely what unmarshaling onto
+// DefaultPrefs already does, so the lift is the EMPTY transformation and both
+// versions can share one decode. liftPrefsV1ToV2 is written out anyway,
+// called on the v1 path only, because the shape of the chain is the deliverable
+// here: the next version that does rename or retype a key adds its step beside
+// this one, and a v1 document then walks 1 -> 2 -> 3 through steps that were
+// each written once, instead of needing a fresh direct-to-current decoder per
+// stored version.
+//
+// The version a document reports is the version it was STORED as, never the
+// version it was lifted to. GetPrefs surfaces that in PrefsRecord.SchemaVersion,
+// so an operator counting un-rewritten rows sees the truth.
 func migratePrefs(raw []byte) (Prefs, int, error) {
 	out := DefaultPrefs()
 	if len(raw) == 0 {
@@ -289,16 +584,44 @@ func migratePrefs(raw []byte) (Prefs, int, error) {
 		// leaves a field untouched when the document omits it, so every absent
 		// preference keeps the product default and every present one overrides
 		// it. That is the whole "defaults on read" mechanism, in one line.
+		//
+		// A v1 document CAN contain v2-shaped keys only if something wrote them
+		// without stamping the version — which nothing in this build does — and
+		// decoding them would be harmless anyway, since the lift below would
+		// leave them alone. The decode is shared because the shapes agree; see
+		// the function's header.
 		if err := json.Unmarshal(raw, &out); err != nil {
 			return Prefs{}, 0, fmt.Errorf("decoding the stored v1 preferences: %w", err)
 		}
-		return out, 1, nil
+		return liftPrefsV1ToV2(out), 1, nil
+
+	case 2:
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return Prefs{}, 0, fmt.Errorf("decoding the stored v2 preferences: %w", err)
+		}
+		return out, 2, nil
 
 	default:
 		return Prefs{}, 0, fmt.Errorf("%w: the stored document declares v%d, this build reads up to v%d",
 			ErrPrefsUnknownVersion, version, PrefsSchemaVersion)
 	}
 }
+
+// liftPrefsV1ToV2 raises a decoded v1 document to the v2 schema.
+//
+// It is the IDENTITY, and that is the correct implementation rather than a
+// placeholder: v2 renames nothing, retypes nothing and re-encodes nothing, so
+// the only difference between a v1 document and a v2 one is the six keys v1
+// omits — and the caller decoded onto DefaultPrefs, so those keys already hold
+// their defaults by the time this function sees the value.
+//
+// Writing it out regardless is what makes the chain a chain. A future v3 that
+// DOES transform something adds liftPrefsV2ToV3 beside this, and the v1 path
+// becomes `liftPrefsV2ToV3(liftPrefsV1ToV2(out))` — one composition, each step
+// tested on its own, no combinatorial set of direct decoders. Deleting this
+// function because it does nothing today would delete the seam that makes that
+// cheap.
+func liftPrefsV1ToV2(p Prefs) Prefs { return p }
 
 // encodePrefs renders preferences for storage: the full typed object plus its
 // version key.
@@ -309,8 +632,16 @@ func migratePrefs(raw []byte) (Prefs, int, error) {
 // moved still tracks the new default for keys the user never touched, and a
 // key the user DID save is by definition one they expressed an opinion about.
 // Writing the whole object means a Prefs/set that names one property preserves
-// the other twelve exactly as they were served, which is the idempotence
-// property the JMAP layer's per-property patch depends on.
+// the others exactly as they were served, which is the idempotence property
+// the JMAP layer's per-property patch depends on.
+//
+// The two v2 MAPS are the deliberate exception, tagged `omitempty`: an empty
+// `labels` map carries no information a missing one does not, and writing
+// `"labels":{}` into every row would put a key in the column whose only effect
+// is to make a document that means "nothing customized" look different from
+// another document that means "nothing customized". They read back as nil
+// either way (migratePrefs decodes onto DefaultPrefs, whose maps are nil), so
+// the round trip is exact.
 func encodePrefs(p Prefs) ([]byte, error) {
 	// Marshal the struct, then splice the version in, rather than giving Prefs
 	// a Version field: the version is metadata ABOUT the document, not a
