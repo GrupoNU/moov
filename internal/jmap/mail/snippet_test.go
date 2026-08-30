@@ -14,7 +14,7 @@ import (
 //
 // The escaping tests are the reason this file exists. Everything else here is
 // ordinary protocol conformance; TestSnippetsContainOnlyMarkMarkup and its
-// neighbours are the ones that fail if the endpoint becomes a stored XSS.
+// neighbors are the ones that fail if the endpoint becomes a stored XSS.
 
 // snippetResult runs SearchSnippet/get and returns the decoded response.
 func snippetResult(t *testing.T, f *fakeReaders, args string) snippetResponse {
@@ -25,7 +25,7 @@ func snippetResult(t *testing.T, f *fakeReaders, args string) snippetResponse {
 	}
 	raw, err := json.Marshal(out)
 	if err != nil {
-		t.Fatalf("marshalling the response: %v", err)
+		t.Fatalf("marshaling the response: %v", err)
 	}
 	var resp snippetResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {

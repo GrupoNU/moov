@@ -354,6 +354,50 @@ func TestMaxQueryReachIsTheSignedD7Ceiling(t *testing.T) {
 	}
 }
 
+// narrowing() must be TOTAL over searchFilter's E3 fields: a condition that
+// translated successfully and then failed to reach the store would be a filter
+// silently dropped, which is the failure this whole layer refuses filters to
+// avoid — and the compiler cannot catch it, because adding a field to
+// searchFilter and forgetting a line in narrowing() builds cleanly.
+//
+// The test sets every E3 field to a distinguishable value and requires each to
+// appear on the other side.
+func TestNarrowingCarriesEveryE3Condition(t *testing.T) {
+	yes := true
+	minS, maxS := int64(11), int64(22)
+	in := searchFilter{
+		hasAttachment:     &yes,
+		cc:                "cc@example.test",
+		bcc:               "bcc@example.test",
+		minSize:           &minS,
+		maxSize:           &maxS,
+		flagsAll:          1 << 2,
+		flagsNone:         1 << 4,
+		excludeMailboxIDs: []int64{41, 42},
+	}
+	got := narrowing(in)
+
+	checks := []struct {
+		field string
+		ok    bool
+	}{
+		{"hasAttachment", got.HasAttachment != nil && *got.HasAttachment},
+		{"cc", got.Cc == in.cc},
+		{"bcc", got.Bcc == in.bcc},
+		{"minSize", got.MinSize != nil && *got.MinSize == minS},
+		{"maxSize", got.MaxSize != nil && *got.MaxSize == maxS},
+		{"flagsAll", uint64(got.FlagsAll) == in.flagsAll},
+		{"flagsNone", uint64(got.FlagsNone) == in.flagsNone},
+		{"excludeMailboxIDs", len(got.ExcludeMailboxIDs) == 2},
+	}
+	for _, c := range checks {
+		if !c.ok {
+			t.Errorf("narrowing() dropped %s; the condition would be silently ignored "+
+				"by the store while the client believes it applied", c.field)
+		}
+	}
+}
+
 // The bit values query.go uses for the system flags must be the store's own.
 // They are restated in this package as untyped constants (search.go's rule
 // keeps the translation layer off the store), so nothing but a test can catch a

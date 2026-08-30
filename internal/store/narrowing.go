@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// The E3 narrowing predicates: the filter conditions every shape in the
-// repertoire shares, in one place.
+// Narrowing holds the E3 filter conditions every shape in the repertoire
+// shares, in one place.
 //
 // # Why one struct rather than six more fields on four query types
 //
@@ -243,11 +243,11 @@ func (n Narrowing) appendConditions(conds []string, args []any, mAlias, msAlias 
 	}
 
 	if n.FlagsAll != 0 {
-		args = append(args, int64(n.FlagsAll))
+		args = append(args, flagsBits(n.FlagsAll))
 		conds = append(conds, fmt.Sprintf("(%s.flags & $%d) = $%d", msAlias, len(args), len(args)))
 	}
 	if n.FlagsNone != 0 {
-		args = append(args, int64(n.FlagsNone))
+		args = append(args, flagsBits(n.FlagsNone))
 		conds = append(conds, fmt.Sprintf("(%s.flags & $%d) = 0", msAlias, len(args)))
 	}
 
@@ -257,6 +257,24 @@ func (n Narrowing) appendConditions(conds []string, args []any, mAlias, msAlias 
 	}
 
 	return conds, args
+}
+
+// flagsBits converts a flag mask to the int64 the bigint column takes.
+//
+// Flags is a uint64 and message_state.flags is a signed bigint, so the
+// conversion is only safe because the mask is a small set of low bits. The
+// guard says so rather than asserting it: every flag Moov defines lives below
+// bit 8 (types.go, where FlagSeen is fixed at bit 0), so a value with the sign
+// bit set is not a flag mask at all — it is a corrupted one, and binding it
+// would silently match the wrong messages. Returning 0 makes such a predicate
+// match NOTHING rather than something arbitrary, which is the direction a
+// filter should fail in.
+func flagsBits(f Flags) int64 {
+	const maxSafe = uint64(1)<<62 - 1
+	if uint64(f) > maxSafe {
+		return 0
+	}
+	return int64(f) //nolint:gosec // bounded on the line above
 }
 
 // escapeLikeTerm neutralizes the LIKE metacharacters in user input.

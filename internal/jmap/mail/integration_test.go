@@ -121,9 +121,16 @@ func (f *fixture) seedRaw(t *testing.T, raw []byte, mailbox store.Mailbox, uid i
 		Subject:   p.SubjectText,
 		FromAddr:  addrText(p.Headers.From),
 		ToAddrs:   addrText(p.Headers.To),
-		Date:      messageDate(p.Headers.Date),
-		BodyText:  p.BodyText,
-		Preview:   preview(p.BodyText),
+		// Cc is populated for the same reason From and To are, and it was
+		// MISSING until L3 epic E3 needed it — which made the fixture disagree
+		// with production in a way no test noticed, because nothing filtered on
+		// Cc before. The sync engine writes it (internal/sync commitBatch), the
+		// tsvector's B weight band indexes it (migration 0002), and E3's `cc`
+		// filter reads the column directly.
+		CcAddrs:  addrText(p.Headers.Cc),
+		Date:     messageDate(p.Headers.Date),
+		BodyText: p.BodyText,
+		Preview:  preview(p.BodyText),
 
 		HasAttachments: len(p.Attachments()) > 0,
 		ParseStatus:    storeStatus(p.Status),

@@ -774,10 +774,10 @@ func TestConformancePhase2Gaps(t *testing.T) {
 	// covered by real tests instead of a skip: Email/set update/destroy (W1),
 	// Mailbox/set (W2), EventSource push (W4a), Email/set create + upload +
 	// EmailSubmission/Identity (W3 — email_create_test.go, upload_test.go,
-	// submission_test.go, internal/submit). Keeping a closed gap in this list
-	// would be the same lie as omitting an open one.
+	// submission_test.go, internal/submit), and SearchSnippet/get (L3 epic E3 —
+	// snippet_test.go and TestConformanceSearchSnippet below). Keeping a closed
+	// gap in this list would be the same lie as omitting an open one.
 	gaps := []struct{ name, reason string }{
-		{"SearchSnippet_get", "phase 3 (L2 §1)"},
 		{"VacationResponse", "phase 3; the capability is not advertised"},
 		{"Thread_changes", "answered with cannotCalculateChanges BY DESIGN (L3 epic E1): threads are a " +
 			"column on messages rather than rows, so created-vs-updated cannot be told apart and a " +

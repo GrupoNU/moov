@@ -211,7 +211,7 @@ func TestSnippetsAreAccountScoped(t *testing.T) {
 	theirInbox := seedMailbox(t, s, theirs.ID, "INBOX", store.RoleInbox)
 
 	theirID := seedSnippetMessage(t, s, theirs, theirInbox, 1,
-		"Presupuesto confidencial", "el presupuesto secreto de la otra cuenta")
+		"Presupuesto reservado", "el presupuesto secreto de la otra cuenta")
 	_ = seedSnippetMessage(t, s, mine, myInbox, 1, "Presupuesto propio", "mi presupuesto")
 
 	// Asking for THEIR message id under MY account must return nothing.

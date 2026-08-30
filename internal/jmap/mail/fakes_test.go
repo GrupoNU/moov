@@ -45,7 +45,7 @@ type fakeReaders struct {
 	// snippets is the corpus SearchSnippet/get answers from, keyed by message
 	// id. Absent means "this message did not match", which the handler renders
 	// as RFC 8621 §5's nulls.
-	snippets map[int64]SnippetView
+	snippets     map[int64]SnippetView
 	changes      []ChangeRow
 	newestChange time.Time
 

@@ -186,8 +186,8 @@ func (a *Adapter) searchUnion(
 		pos int
 	}
 	var (
-		merged      []hit
-		seen        = make(map[int64]bool)
+		merged       []hit
+		seen         = make(map[int64]bool)
 		anyExhausted bool
 	)
 

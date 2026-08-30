@@ -46,10 +46,10 @@ func e3Corpus(t *testing.T, s *store.Store, n int) (store.Account, store.Mailbox
 	msgs := make([]store.NewMessage, 0, n)
 	for i := range n {
 		box := inbox.ID
-		switch {
-		case i%20 == 0:
+		switch i % 20 {
+		case 0:
 			box = junk.ID
-		case i%20 == 1:
+		case 1:
 			box = trash.ID
 		}
 		var flags store.Flags
