@@ -168,5 +168,5 @@ Todo CORE del canon §2 tiene épica: conversación (E1) · archivo/spam/star/re
 ## 9. Aprobación
 
 - [x] Verificación adversarial (§8) completada e incorporada (2026-08-30)
-- [ ] Firma de Diego: el proyecto completo, las 8 decisiones D-1…D-8, y los diferidos §6
-- [ ] Solo entonces: ejecución (equipos por épica, gates P2 por entrega, sin deploy ni push sin autorización explícita)
+- [x] **Firma de Diego (2026-08-30):** "firmo el programa, avanza hasta terminarlo y quede desplegado en nuestro servidor para probar." Decisiones firmadas con las recomendaciones del director: **D-1 SÍ · D-2 SÍ · D-3 SÍ (teclado ON) · D-4 SÍ · D-5 SÍ · D-6 SÍ · D-7 se resuelve en E3 con números · D-8 NO.** Diferidos §6 aceptados.
+- [x] **Deploy al piloto AUTORIZADO explícitamente en la firma** (el redeploy final del VPS para prueba del dueño). El push al repo público sigue requiriendo confirmación aparte.
