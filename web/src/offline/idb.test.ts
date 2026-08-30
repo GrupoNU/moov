@@ -6,6 +6,7 @@ import {
   openDatabase,
   request,
   SCHEMA_VERSION,
+  STORE_ADDRESSES,
   STORE_BODIES,
   STORE_HEADERS,
   STORE_MAILBOXES,
@@ -66,11 +67,11 @@ describe("openDatabase", () => {
     const factory = new FakeIndexedDB();
     const db = await open(factory);
 
-    // A transaction naming all four is the honest check: it throws in the real
+    // A transaction naming all five is the honest check: it throws in the real
     // API (and in the shim) if any store is missing.
     const ok = await withTransaction(
       db,
-      [STORE_MAILBOXES, STORE_HEADERS, STORE_BODIES, STORE_OUTBOX],
+      [STORE_MAILBOXES, STORE_HEADERS, STORE_BODIES, STORE_OUTBOX, STORE_ADDRESSES],
       "readonly",
       () => true,
     );
@@ -89,7 +90,7 @@ describe("openDatabase", () => {
 
 describe("upgradeDatabase", () => {
   it("does nothing for an already-current database", () => {
-    // The fall-through switch must not re-create stores when oldVersion is
+    // The migration chain must not re-create stores when oldVersion is
     // already the current one — that is what makes the chain safe to re-run.
     const created: string[] = [];
     const db = {
@@ -103,7 +104,7 @@ describe("upgradeDatabase", () => {
     expect(created).toEqual([]);
   });
 
-  it("creates all four stores from scratch", () => {
+  it("creates all five stores from scratch", () => {
     const created: string[] = [];
     const indexes: string[] = [];
     const db = {
@@ -124,8 +125,60 @@ describe("upgradeDatabase", () => {
       STORE_HEADERS,
       STORE_BODIES,
       STORE_OUTBOX,
+      STORE_ADDRESSES,
     ]);
     expect(indexes).toHaveLength(2);
+  });
+
+  /**
+   * E7's schema bump, and the reason each step is guarded on `oldVersion`.
+   *
+   * A browser that already ran v1 must get ONLY the addresses store — not a
+   * second attempt at the four it has, which `createObjectStore` refuses with a
+   * ConstraintError in the real API.
+   */
+  it("adds only the addresses store when upgrading v1 → v2", () => {
+    const created: string[] = [];
+    const db = {
+      createObjectStore: (name: string) => {
+        created.push(name);
+        return { createIndex: () => undefined };
+      },
+    } as unknown as IDBDatabase;
+
+    upgradeDatabase(db, 1);
+
+    expect(created).toEqual([STORE_ADDRESSES]);
+  });
+
+  it("upgrades a real v1 database to v2 without losing its rows", async () => {
+    const factory = new FakeIndexedDB();
+    // A database as v1 left it, with a row in it.
+    const v1 = await openDatabase(factory as unknown as IDBFactory, "chain-db", 1);
+    expect(v1).toBeDefined();
+    await withTransaction(v1!, [STORE_MAILBOXES], "readwrite", async (tx) =>
+      request(tx.objectStore(STORE_MAILBOXES).put({ id: "mb1", accountId: "a1" })),
+    );
+
+    // Re-opening at the current version runs the v1 → v2 step.
+    const v2 = await openDatabase(factory as unknown as IDBFactory, "chain-db", SCHEMA_VERSION);
+    expect(v2).toBeDefined();
+
+    // The new store exists…
+    const hasAddresses = await withTransaction(
+      v2!,
+      [STORE_ADDRESSES],
+      "readonly",
+      () => true,
+    );
+    expect(hasAddresses).toBe(true);
+
+    // …and the migration did not take the existing data with it, which is the
+    // failure a "drop and recreate" migration would have shipped silently.
+    const kept = await withTransaction(v2!, [STORE_MAILBOXES], "readonly", async (tx) =>
+      request(tx.objectStore(STORE_MAILBOXES).get("mb1")),
+    );
+    expect(kept).toMatchObject({ id: "mb1" });
   });
 });
 

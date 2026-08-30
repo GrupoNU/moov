@@ -5,10 +5,10 @@
  *
  * The brief forbids new npm dependencies, and that constraint happens to be
  * right here: `idb` is a general-purpose wrapper for a general-purpose API, and
- * this app uses four object stores with `get`/`put`/`delete`/`getAll` and one
- * index. That is the ~150 lines below. What a dependency would buy is the parts
- * we do not use, plus a supply-chain surface on the one module that holds a
- * copy of the user's mail.
+ * this app uses five object stores with `get`/`put`/`delete`/`getAll` and two
+ * indexes. That is the ~150 lines below. What a dependency would buy is the
+ * parts we do not use, plus a supply-chain surface on the one module that holds
+ * a copy of the user's mail.
  *
  * # The rule every function here obeys: failure is silent and total
  *
@@ -28,11 +28,11 @@
  * # Versioning
  *
  * {@link SCHEMA_VERSION} is bumped whenever a store or index changes, and
- * {@link upgradeDatabase} is written as a fall-through switch on the OLD
- * version so upgrading from any earlier version applies every step in order.
- * `onupgradeneeded` gives us `oldVersion`, which is what makes that possible;
- * the alternative — "create everything if missing" — silently skips migrations
- * that need to touch existing rows.
+ * {@link upgradeDatabase} applies one guarded block per version step against
+ * the OLD version, so upgrading from any earlier version runs every step in
+ * order. `onupgradeneeded` gives us `oldVersion`, which is what makes that
+ * possible; the alternative — "create everything if missing" — silently skips
+ * migrations that need to touch existing rows.
  */
 
 /** The database name. One per origin; the account id scopes the rows inside it. */
@@ -42,14 +42,17 @@ export const DB_NAME = "moov-offline";
  * The schema version.
  *
  * v1 (E9b): mailboxes, headers, bodies, outbox.
+ * v2 (E7): addresses — the autocomplete index (Gmail's "Other contacts" model).
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** The object stores. Named constants because a typo'd string is a silent miss. */
 export const STORE_MAILBOXES = "mailboxes";
 export const STORE_HEADERS = "headers";
 export const STORE_BODIES = "bodies";
 export const STORE_OUTBOX = "outbox";
+/** E7: the address index that feeds recipient autocomplete. */
+export const STORE_ADDRESSES = "addresses";
 
 /** The index that answers "the headers of mailbox X, newest first". */
 export const INDEX_HEADERS_BY_MAILBOX = "byMailbox";
@@ -66,38 +69,64 @@ export const INDEX_BODIES_BY_READ = "byLastReadAt";
  */
 export function upgradeDatabase(db: IDBDatabase, oldVersion: number): void {
   /*
-   * A `switch` on the OLD version, written to FALL THROUGH: upgrading from v0
-   * must apply v1, then v2, then v3 in order, and a `case` that returns would
-   * silently skip every later step. There is only one case today, so nothing
-   * falls through yet — the shape is here so that adding v2 is one `case` and
-   * not a restructuring.
+   * The migration chain: one guarded block per version step, applied IN ORDER.
+   *
+   * This was a fall-through `switch` while there was a single step. E7 added
+   * the second one and the shape had to change, because `tsconfig`'s
+   * `noFallthroughCasesInSwitch` rejects the very fall-through the chain
+   * depends on — and it is right to: a `switch` whose correctness rests on
+   * nobody ever adding a `break` is a trap for the next person.
+   *
+   * Sequential `if`s say the same thing without the trap. A database at v0 runs
+   * both blocks in order; one at v1 runs only the second; one already current
+   * runs neither. Adding v3 is one more `if`, and forgetting to make it
+   * conditional would be visible rather than silent.
    */
-  switch (oldVersion) {
-    case 0: {
-      // Keyed by mailbox id; one row per mailbox, holding the JMAP object.
-      db.createObjectStore(STORE_MAILBOXES, { keyPath: "id" });
+  if (oldVersion < 1) {
+    // Keyed by mailbox id; one row per mailbox, holding the JMAP object.
+    db.createObjectStore(STORE_MAILBOXES, { keyPath: "id" });
 
-      /*
-       * Headers are keyed by MESSAGE id rather than by [mailbox, message]:
-       * a message has exactly one mailbox on this server (types.ts: "exactly
-       * one key"), and a compound key would make "update this message's flags"
-       * require knowing where it lives, which the SSE refresh path does not
-       * always have to hand.
-       */
-      const headers = db.createObjectStore(STORE_HEADERS, { keyPath: "id" });
-      // `[mailboxId, receivedAt]` so a range query over one mailbox comes back
-      // in date order without sorting the whole store in memory.
-      headers.createIndex(INDEX_HEADERS_BY_MAILBOX, ["mailboxId", "receivedAt"]);
+    /*
+     * Headers are keyed by MESSAGE id rather than by [mailbox, message]:
+     * a message has exactly one mailbox on this server (types.ts: "exactly
+     * one key"), and a compound key would make "update this message's flags"
+     * require knowing where it lives, which the SSE refresh path does not
+     * always have to hand.
+     */
+    const headers = db.createObjectStore(STORE_HEADERS, { keyPath: "id" });
+    // `[mailboxId, receivedAt]` so a range query over one mailbox comes back
+    // in date order without sorting the whole store in memory.
+    headers.createIndex(INDEX_HEADERS_BY_MAILBOX, ["mailboxId", "receivedAt"]);
 
-      const bodies = db.createObjectStore(STORE_BODIES, { keyPath: "id" });
-      // The LRU's cursor: oldest `lastReadAt` first.
-      bodies.createIndex(INDEX_BODIES_BY_READ, "lastReadAt");
+    const bodies = db.createObjectStore(STORE_BODIES, { keyPath: "id" });
+    // The LRU's cursor: oldest `lastReadAt` first.
+    bodies.createIndex(INDEX_BODIES_BY_READ, "lastReadAt");
 
-      // The outbox is keyed by our own generated id, not by anything the
-      // server assigns — the whole point is that it exists before the server
-      // has ever seen it.
-      db.createObjectStore(STORE_OUTBOX, { keyPath: "id" });
-    }
+    // The outbox is keyed by our own generated id, not by anything the
+    // server assigns — the whole point is that it exists before the server
+    // has ever seen it.
+    db.createObjectStore(STORE_OUTBOX, { keyPath: "id" });
+  }
+
+  if (oldVersion < 2) {
+    /*
+     * E7: the address index.
+     *
+     * Keyed by `key` — the account id and the lowercased address joined —
+     * rather than by the address alone. Two mailboxes in one browser profile
+     * must not share an autocomplete index: the addresses someone corresponds
+     * with are among the more sensitive things this app stores, and a shared
+     * key would leak one account's contacts into the other's suggestions.
+     * That is the same rule `cache.ts` states for every other store, applied
+     * to the KEY here rather than to a filter, because this store is read by
+     * prefix scan and a filter after the fact would still have matched.
+     *
+     * No index is created: the whole store for one account is small (a few
+     * thousand rows at the very most) and every read wants all of it, ranked
+     * in memory. An index on `timesSeen` would have to be maintained on every
+     * write to answer a question a sort already answers in microseconds.
+     */
+    db.createObjectStore(STORE_ADDRESSES, { keyPath: "key" });
   }
 }
 
