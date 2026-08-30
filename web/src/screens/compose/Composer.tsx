@@ -25,6 +25,7 @@ import { AddressField } from "./AddressField";
 import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
 import { BodyEditor } from "./BodyEditor";
 import type { ComposerDraft } from "./composerState";
+import { ScheduleMenu } from "./ScheduleMenu";
 import styles from "./Composer.module.css";
 
 /**
@@ -77,6 +78,16 @@ export interface ComposerProps {
   readonly onQueueOffline?: (spec: DraftSpec) => Promise<boolean>;
   /** E9: `navigator.onLine`, so Send can queue rather than fail. */
   readonly isOnline?: boolean;
+  /**
+   * E4: how far ahead this server accepts a scheduled send, in seconds
+   * (the session's `maxDelayedSendSeconds` — 30 days on this one).
+   *
+   * `undefined` means the server does not advertise schedule send, and the
+   * control is not rendered at all. Read from the session rather than assumed,
+   * because "declared == applied" is the server's own rule (J1) and a picker
+   * offering a date the server will refuse is the client half of breaking it.
+   */
+  readonly maxDelayedSendSeconds?: number | undefined;
 }
 
 export function Composer({
@@ -94,6 +105,7 @@ export function Composer({
   onChanged,
   onQueueOffline,
   isOnline = true,
+  maxDelayedSendSeconds,
 }: ComposerProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -489,6 +501,76 @@ export function Composer({
     onQueueOffline,
   ]);
 
+  /**
+   * E4: sends this message at a chosen future instant (canon §2.3).
+   *
+   * # Why it is a separate path and not `send` with an argument
+   *
+   * Everything after the request differs. An ordinary send opens the undo
+   * window and holds the composer open with a countdown; a scheduled one has
+   * NO undo window — its `sendAt` is days out, so the "undo" is the Scheduled
+   * view's own "Cancel send", available for as long as the schedule lasts. So
+   * this closes the composer immediately and says when the message goes out.
+   *
+   * # What the server does that this must not fight
+   *
+   * The message STAYS A DRAFT. `sendDraft` omits `onSuccessUpdateEmail` for a
+   * scheduled send and the server suppresses it anyway (`holdsItsDraft`),
+   * because a message scheduled for Friday sitting in Sent from Tuesday would
+   * tell the user it was already sent and would not be a draft they could
+   * edit. `draftIdRef` is therefore NOT cleared: the draft is still this
+   * composer's, and a later save must still replace rather than duplicate it.
+   *
+   * The cap of 100 comes back as `overQuota` with the server's own sentence,
+   * which is shown verbatim — it already names the number and says what to do.
+   */
+  const schedule = useCallback(
+    async (until: string): Promise<void> => {
+      if (sendingRef.current) return;
+      const current = specRef.current;
+      if (current === undefined || identity === undefined) return;
+
+      sendingRef.current = true;
+      setSending(true);
+      setSendError(undefined);
+      scheduler.cancel();
+
+      try {
+        const result = await sendDraft(client, accountId, current, {
+          identityId: identity.id,
+          sentMailboxId,
+          previousDraftId: draftIdRef.current,
+          sendAt: until,
+        });
+        if (result.submission === undefined) {
+          setSendError(firstFailureMessage(result.outcome) ?? t("send.failedTitle"));
+          return;
+        }
+        onNotify(format("schedule.scheduled", formatScheduled(until, locale)));
+        onChanged();
+        onClose();
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : String(error));
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+      }
+    },
+    [
+      client,
+      accountId,
+      identity,
+      sentMailboxId,
+      scheduler,
+      t,
+      format,
+      locale,
+      onNotify,
+      onChanged,
+      onClose,
+    ],
+  );
+
   /** The countdown. One interval, cleared on every exit path. */
   useEffect(() => {
     if (pending === undefined) return undefined;
@@ -743,6 +825,37 @@ export function Composer({
               {isSending ? t("compose.sending") : t("compose.send")}
             </button>
 
+            {/*
+              E4: "Schedule send" — a SECONDARY action beside Send, not a
+              variant of it (canon §2.3).
+
+              Two reasons it is its own control rather than a dropdown ON the
+              send button. First, Send must stay a single unambiguous click:
+              splitting it means a user aiming for "send" can land on a caret
+              and open a menu instead, which is the one place in a mail client
+              where a mis-click is expensive. Second, it is UNAVAILABLE offline
+              — a schedule is a promise only the server can keep, and there is
+              no queue for it — so it has to be able to disappear without
+              taking Send with it.
+            */}
+            {maxDelayedSendSeconds !== undefined && isOnline && (
+              <ScheduleMenu
+                disabled={!canSend || isSending || pending !== undefined}
+                maxDelayedSendSeconds={maxDelayedSendSeconds}
+                onSchedule={(sendAt) => {
+                  void schedule(sendAt);
+                }}
+                triggerClassName={styles.iconButton}
+                triggerContent={
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                    <circle cx="10" cy="11" r="6.3" />
+                    <path d="M10 7.6v3.6l2.4 1.4" />
+                    <path d="M16.2 4.4l-2.6 2.6m2.6-2.6h-2.4m2.4 0v2.4" />
+                  </svg>
+                }
+              />
+            )}
+
             <input
               ref={fileInputRef}
               className={styles.fileInput}
@@ -831,4 +944,22 @@ function isEmptyDraft(spec: DraftSpec): boolean {
     spec.bcc.length === 0 &&
     spec.attachments.length === 0
   );
+}
+
+/**
+ * The scheduled instant, for the toast that confirms it (E4).
+ *
+ * Absolute rather than relative: "in 3 days" is not something a user can check
+ * against a calendar, and the whole value of the confirmation is that they can.
+ */
+function formatScheduled(sendAt: string, locale: string): string {
+  const at = new Date(sendAt);
+  if (Number.isNaN(at.getTime())) return sendAt;
+  return at.toLocaleString(locale, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

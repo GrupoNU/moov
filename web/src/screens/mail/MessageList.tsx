@@ -73,12 +73,19 @@ export interface MessageListProps {
   ) => void;
 
   /*
-   * E2 item 5: the hover actions.
+   * E2 item 5 / E4: the hover actions.
    *
-   * Gmail ships FOUR — archive, delete, snooze, mark-read. Snooze is epic E4's
-   * (it needs the Snoozed mailbox and the engine's return-to-inbox job, per
-   * GC-10), and a dead fourth button that greys out or does nothing would be
-   * worse than three that work. E4 adds it here as a fourth prop.
+   * Gmail ships FOUR — archive, delete, snooze, mark-read (canon §2.2:
+   * "Exactly four"). Three landed with E2; snooze was deliberately left out
+   * because it needed the Snoozed mailbox and the engine's return-to-inbox job
+   * (GC-10), and a dead fourth button would have been worse than three that
+   * work. E4 supplies it, and the set is now complete.
+   *
+   * Snooze is a RENDER PROP rather than a callback, because it is the one
+   * action that opens a menu instead of acting: the row hands it a class and
+   * its own group, and the caller returns the `SnoozeMenu` already wired. A
+   * plain `onRowSnooze` would have had to raise a menu anchored somewhere else
+   * on screen, which is exactly the affordance Gmail's hover strip is not.
    *
    * Each acts on the row it sits in, never on the selection: the pointer has
    * already named its target.
@@ -86,6 +93,29 @@ export interface MessageListProps {
   readonly onRowArchive?: (group: ThreadGroup) => void;
   readonly onRowDelete?: (group: ThreadGroup) => void;
   readonly onRowToggleRead?: (group: ThreadGroup) => void;
+  readonly renderRowSnooze?: (
+    group: ThreadGroup,
+    triggerClassName: string,
+  ) => React.ReactNode;
+
+  /**
+   * E4: the muted conversations, by THREAD id.
+   *
+   * A SET rather than a per-row flag, for the same reason the labels are passed
+   * as a table: membership is a pure function of data the row already has, and
+   * the whole set is a few dozen ids the server serves in one `Mute/get`.
+   */
+  readonly mutedThreadIds?: ReadonlySet<string>;
+
+  /**
+   * E4: the wake times of snoozed messages, by message id.
+   *
+   * Present only in the Snoozed view, which is where a row has to say WHEN it
+   * comes back — everywhere else a snoozed message simply is not in the list.
+   */
+  readonly snoozeUntilById?: ReadonlyMap<string, string>;
+  /** E4: the Snoozed view's per-row "bring it back now". */
+  readonly onRowUnsnooze?: (group: ThreadGroup) => void;
 
   /**
    * E8: the labels a row may carry, so each row can resolve its own chips.
@@ -115,6 +145,10 @@ export interface MessageListProps {
 /** A stable empty map, for the same reason `EMPTY_LABELS` exists. */
 const EMPTY_SNIPPETS: ReadonlyMap<string, SearchSnippet> = new Map();
 
+/** E4: stable empties for the mute set and the snooze times. */
+const EMPTY_MUTED: ReadonlySet<string> = new Set();
+const EMPTY_SNOOZES: ReadonlyMap<string, string> = new Map();
+
 export function MessageList({
   groups,
   selectedId,
@@ -129,6 +163,10 @@ export function MessageList({
   onRowArchive,
   onRowDelete,
   onRowToggleRead,
+  renderRowSnooze,
+  mutedThreadIds,
+  snoozeUntilById,
+  onRowUnsnooze,
   labels,
   onSelectLabel,
   snippets,
@@ -286,6 +324,12 @@ export function MessageList({
                   onRowArchive={prefs.hoverActions ? onRowArchive : undefined}
                   onRowDelete={prefs.hoverActions ? onRowDelete : undefined}
                   onRowToggleRead={prefs.hoverActions ? onRowToggleRead : undefined}
+                  /* E4: the fourth hover action, under the same preference —
+                     Gmail's "Disable hover actions" turns off all four. */
+                  renderRowSnooze={prefs.hoverActions ? renderRowSnooze : undefined}
+                  isMuted={(mutedThreadIds ?? EMPTY_MUTED).has(group.latest.threadId ?? "")}
+                  snoozeUntil={(snoozeUntilById ?? EMPTY_SNOOZES).get(group.latest.id)}
+                  onRowUnsnooze={onRowUnsnooze}
                   showSnippet={prefs.showSnippets}
                   labels={labels ?? EMPTY_LABELS}
                   onSelectLabel={onSelectLabel}
@@ -322,6 +366,15 @@ interface MessageRowProps {
   readonly onRowArchive: ((group: ThreadGroup) => void) | undefined;
   readonly onRowDelete: ((group: ThreadGroup) => void) | undefined;
   readonly onRowToggleRead: ((group: ThreadGroup) => void) | undefined;
+  /** E4: the fourth hover action, rendered by the caller (it opens a menu). */
+  readonly renderRowSnooze:
+    | ((group: ThreadGroup, triggerClassName: string) => React.ReactNode)
+    | undefined;
+  /** E4: this conversation is muted — replies skip the inbox. */
+  readonly isMuted: boolean;
+  /** E4: when this message wakes, in the Snoozed view only. */
+  readonly snoozeUntil: string | undefined;
+  readonly onRowUnsnooze: ((group: ThreadGroup) => void) | undefined;
   /** E5: the `showSnippets` preference — the preview line next to the subject. */
   readonly showSnippet: boolean;
   /** E8: the known labels, for resolving this row's chips and their colours. */
@@ -346,6 +399,10 @@ function MessageRow({
   onRowArchive,
   onRowDelete,
   onRowToggleRead,
+  renderRowSnooze,
+  isMuted,
+  snoozeUntil,
+  onRowUnsnooze,
   showSnippet,
   labels,
   onSelectLabel,
@@ -558,7 +615,8 @@ function MessageRow({
       */}
       {(onRowArchive !== undefined ||
         onRowDelete !== undefined ||
-        onRowToggleRead !== undefined) && (
+        onRowToggleRead !== undefined ||
+        renderRowSnooze !== undefined) && (
         <span role="gridcell" className={styles.hoverActions}>
           {onRowArchive !== undefined && (
             <RowAction
@@ -603,10 +661,75 @@ function MessageRow({
               )}
             </RowAction>
           )}
+          {/*
+            E4: the fourth action, and the one that completes Gmail's set.
+
+            It is rendered BY THE CALLER because it opens a menu rather than
+            acting, and the menu needs the app's clock, its i18n and its
+            dispatcher — none of which the list has. The row supplies only the
+            styling, so the trigger looks like its three siblings.
+
+            The wrapper carries the three stop-propagations `RowAction` applies
+            to itself, because the menu's trigger and items are the caller's
+            elements and cannot be reached from here. Without them a click that
+            picked a wake time would ALSO open the message behind the menu, and
+            tabbing to the trigger would silently change the selection.
+
+            `role="none"` is not decoration: the span is a plain event boundary
+            with no semantics of its own, and saying so is what keeps it out of
+            the grid's structure (the cell around it is still the one
+            `gridcell`) — and what tells the linter that a span carrying
+            handlers is deliberate here rather than an interactive element
+            missing its role and its keyboard support.
+          */}
+          {renderRowSnooze !== undefined && (
+            <span
+              role="none"
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+              }}
+              onFocus={(event) => {
+                event.stopPropagation();
+              }}
+            >
+              {renderRowSnooze(group, styles.rowAction ?? "")}
+            </span>
+          )}
         </span>
       )}
 
       <span role="gridcell" className={styles.meta}>
+        {/*
+          E4: the muted badge (canon §2.2 — replies "skip your inbox and go
+          directly to your archive").
+
+          A small icon rather than a word, in the meta strip beside the star and
+          the paperclip, because it is the same KIND of fact those two are: a
+          persistent property of the conversation rather than an action. Its
+          meaning is spelled out in the row's visually-hidden state below, which
+          is where every other icon's meaning already lives.
+        */}
+        {isMuted && (
+          <svg
+            className={styles.mutedIcon}
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            {/* A speaker with a slash: the conversation still exists, it just
+                does not come back to the inbox. */}
+            <path d="M4 7.5h2.6L10 4.6v10.8L6.6 12.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z" />
+            <path d="M13.4 7.6l3.6 4.8m0-4.8l-3.6 4.8" />
+          </svg>
+        )}
         {group.hasFlagged && (
           <svg
             className={styles.flagIcon}
@@ -634,7 +757,42 @@ function MessageRow({
             <path d="M14.5 9.2l-5 5a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 1 1 3 3l-6 6a1.1 1.1 0 0 1-1.5-1.5l5.3-5.3" />
           </svg>
         )}
-        {isoDate !== undefined ? (
+        {/*
+          E4: in the Snoozed view the row's date is REPLACED by its wake time.
+
+          The received date is not what a snoozed row is about — the one thing
+          the user came here to see is when it comes back — and showing both
+          would put two timestamps of different kinds side by side with nothing
+          saying which is which.
+        */}
+        {snoozeUntil !== undefined ? (
+          <span className={styles.snoozeMeta}>
+            <time className={styles.wakeTime} dateTime={snoozeUntil}>
+              {format("snooze.wakesAt", formatWake(snoozeUntil, locale))}
+            </time>
+            {onRowUnsnooze !== undefined && (
+              <button
+                type="button"
+                className={styles.unsnooze}
+                onClick={(event) => {
+                  // Same rule as the hover actions: without this the click
+                  // would also open the message it just brought back.
+                  event.stopPropagation();
+                  event.preventDefault();
+                  onRowUnsnooze(group);
+                }}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onFocus={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                {t("snooze.unsnooze")}
+              </button>
+            )}
+          </span>
+        ) : isoDate !== undefined ? (
           <time className={styles.date} dateTime={isoDate}>
             {date}
           </time>
@@ -649,6 +807,8 @@ function MessageRow({
         {group.hasUnread ? t("list.unread") : ""}
         {group.hasFlagged ? ` ${t("list.flagged")}` : ""}
         {group.hasAttachment ? ` ${t("list.attachment")}` : ""}
+        {/* E4: the muted icon's meaning, where every other icon's already is. */}
+        {isMuted ? ` ${t("mute.badge")}` : ""}
         {group.size > 1
           ? ` ${
               group.sizeIsExact
@@ -659,6 +819,26 @@ function MessageRow({
       </span>
     </div>
   );
+}
+
+/**
+ * A snooze's wake time, as the Snoozed row shows it (E4).
+ *
+ * Absolute, never relative: "in 3 days" cannot be checked against a calendar,
+ * and the whole point of the Snoozed view is to let a user verify that what
+ * they set is what they meant. An unparseable value falls back to the raw
+ * string rather than to "Invalid Date".
+ */
+function formatWake(until: string, locale: string): string {
+  const at = new Date(until);
+  if (Number.isNaN(at.getTime())) return until;
+  return at.toLocaleString(locale, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /**

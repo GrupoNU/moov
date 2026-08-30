@@ -62,6 +62,31 @@ export interface MailboxListProps {
     readonly isSelected: boolean;
     readonly onSelect: () => void;
   };
+  /**
+   * E4: the Scheduled view (canon §2.3 — Gmail's own left-nav "Scheduled").
+   *
+   * Like the Outbox, absent means the row is not drawn: nothing is scheduled,
+   * so a permanent entry would mean nothing almost all of the time. Unlike the
+   * Outbox, the count is of SERVER-side submissions, which is why the three
+   * outgoing destinations stay separate rather than being merged into one
+   * "pending" folder — they fail differently, they are cancelled differently,
+   * and only one of them is local to this browser.
+   */
+  readonly scheduled?: {
+    readonly count: number;
+    readonly isSelected: boolean;
+    readonly onSelect: () => void;
+  };
+  /**
+   * E4: the NAME of the Snoozed folder, so the sidebar can label and badge it
+   * as a first-class destination rather than as one more custom folder.
+   *
+   * The name rather than an id, because that is how the folder is identified
+   * everywhere (there is no RFC 6154 role for snoozed mail); the row is still
+   * a real `Mailbox` from the tree, which is what keeps `g b`, deep links and
+   * the message list working on it with no special case.
+   */
+  readonly snoozedMailboxName?: string | undefined;
 }
 
 /**
@@ -75,11 +100,31 @@ function useRoleName(): (mailbox: Mailbox) => string {
   return (mailbox: Mailbox): string => mailboxLabel(mailbox, t);
 }
 
-/** An inline icon per role, so folders are recognisable before they are read. */
-function MailboxIcon({ role }: { readonly role: MailboxRole | null }): React.JSX.Element {
+/**
+ * An inline icon per role, so folders are recognisable before they are read.
+ *
+ * `iconKey` overrides the role, and E4 is why it exists: the Snoozed folder has
+ * no role to key on (RFC 6154 defines none and the sync engine refused to
+ * invent one), so it is recognised by NAME upstream and told which icon to
+ * wear here. A clock, which is what the folder is about.
+ */
+function MailboxIcon({
+  role,
+  iconKey,
+}: {
+  /*
+   * Optional so a caller with no mailbox behind it — the Scheduled row — can
+   * omit it and pass only `iconKey`. Writing `role={null}` there instead is
+   * what a first version did, and jsx-a11y correctly reads a literal `role`
+   * prop as an ARIA role and rejects `null` as one; the lint was right about
+   * the shape even though this is not a DOM element.
+   */
+  readonly role?: MailboxRole | null | undefined;
+  readonly iconKey?: string | undefined;
+}): React.JSX.Element {
   // One 20x20 grid, stroked with currentColor, so every icon shares a weight
   // and inherits the row's colour (including the selected state).
-  const path = ICON_PATHS[role ?? "folder"] ?? ICON_PATHS.folder;
+  const path = ICON_PATHS[iconKey ?? role ?? "folder"] ?? ICON_PATHS.folder;
   return (
     <svg
       className={styles.icon}
@@ -139,6 +184,22 @@ const ICON_PATHS: Readonly<Record<string, React.JSX.Element>> = {
     <path d="M10 2.6l2.3 4.7 5.2.8-3.8 3.7.9 5.2-4.6-2.4-4.6 2.4.9-5.2L2.5 8.1l5.2-.8z" />
   ),
   folder: <path d="M2.5 5.4a1 1 0 0 1 1-1h3.4l1.8 2h7.8a1 1 0 0 1 1 1v7.2a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1z" />,
+  // E4: a clock, for the Snoozed folder — the only thing snoozed mail is about.
+  snoozed: (
+    <>
+      <circle cx="10" cy="10.5" r="6.8" />
+      <path d="M10 6.8v3.9l2.6 1.6" />
+    </>
+  ),
+  // E4: a clock over an outbound arrow, for Scheduled — the same clock as
+  // Snoozed, because both are "later", with the direction that tells them apart.
+  scheduled: (
+    <>
+      <circle cx="10" cy="11" r="6.3" />
+      <path d="M10 7.6v3.6l2.4 1.4" />
+      <path d="M16.2 4.4l-2.6 2.6m2.6-2.6h-2.4m2.4 0v2.4" />
+    </>
+  ),
 };
 
 export function MailboxList({
@@ -149,6 +210,8 @@ export function MailboxList({
   onEmptyTrash,
   isEmptyingTrash = false,
   outbox,
+  scheduled,
+  snoozedMailboxName,
 }: MailboxListProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const roleName = useRoleName();
@@ -163,21 +226,82 @@ export function MailboxList({
 
   return (
     <ul className={styles.tree} role="tree" aria-label={t("shell.mailboxes")}>
-      {tree.map((node) => (
-        <MailboxRow
-          key={node.mailbox.id}
-          node={node}
-          isSelected={node.mailbox.id === selectedId}
-          name={roleName(node.mailbox)}
-          onSelect={onSelect}
-          formatUnread={(count) => format("mailbox.unreadCount", count)}
-          {...(onEmptyTrash !== undefined && node.mailbox.role === "trash"
-            ? { onEmptyTrash, isEmptyingTrash }
-            : {})}
-        />
-      ))}
+      {tree.map((node) => {
+        /*
+         * E4: the Snoozed folder is a REAL mailbox (GC-10 makes snoozing an
+         * IMAP move), so it comes through the tree like any other and every
+         * existing code path — routing, deep links, the message list, `g b` —
+         * works on it unchanged. Only two things differ, and both are
+         * presentation: it gets the clock icon and a localised name, because
+         * Dovecot supplies its name in English exactly as it does for Sent and
+         * Drafts.
+         */
+        const isSnoozed =
+          snoozedMailboxName !== undefined && node.mailbox.name === snoozedMailboxName;
+        return (
+          <MailboxRow
+            key={node.mailbox.id}
+            node={node}
+            isSelected={node.mailbox.id === selectedId}
+            name={isSnoozed ? t("snooze.mailboxName") : roleName(node.mailbox)}
+            onSelect={onSelect}
+            formatUnread={(count) => format("mailbox.unreadCount", count)}
+            {...(isSnoozed ? { iconKey: "snoozed" } : {})}
+            {...(onEmptyTrash !== undefined && node.mailbox.role === "trash"
+              ? { onEmptyTrash, isEmptyingTrash }
+              : {})}
+          />
+        );
+      })}
       {outbox !== undefined && <OutboxRow {...outbox} />}
+      {scheduled !== undefined && <ScheduledRow {...scheduled} />}
     </ul>
+  );
+}
+
+/**
+ * The Scheduled row (E4).
+ *
+ * Its own component for the reason `OutboxRow` is: there is no `Mailbox` behind
+ * it and its badge counts messages WAITING rather than messages unread. The two
+ * are deliberately NOT merged into one "pending" row, even though both list
+ * mail that has not gone out: the Outbox is local to this browser and drains
+ * when the network returns, while these are server-side submissions with a
+ * chosen hour that other devices can see and cancel. One row for both would
+ * make "why is this still here?" have two different answers.
+ */
+function ScheduledRow({
+  count,
+  isSelected,
+  onSelect,
+}: {
+  readonly count: number;
+  readonly isSelected: boolean;
+  readonly onSelect: () => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+
+  return (
+    <li role="treeitem" aria-level={1} aria-selected={isSelected} className={styles.item}>
+      <button
+        type="button"
+        className={[styles.row, isSelected ? styles.selected : ""].filter(Boolean).join(" ")}
+        onClick={onSelect}
+        style={{ paddingLeft: "var(--space-3)" }}
+        {...(isSelected ? { "aria-current": "page" as const } : {})}
+      >
+        <MailboxIcon iconKey="scheduled" />
+        <span className={styles.name}>{t("schedule.viewName")}</span>
+        {count > 0 && (
+          <span className={styles.badge} aria-hidden="true">
+            {count}
+          </span>
+        )}
+        {/* What the number counts, for the same reason the Outbox states it:
+            a bare number after a folder name reads as an unread count. */}
+        <span className="visually-hidden">{t("schedule.viewName")}</span>
+      </button>
+    </li>
   );
 }
 
@@ -261,6 +385,8 @@ interface MailboxRowProps {
   /** E2: present only on the Trash row, and only while Trash is on screen. */
   readonly onEmptyTrash?: ((trash: Mailbox) => void) | undefined;
   readonly isEmptyingTrash?: boolean;
+  /** E4: an icon override for a folder with no role to key on (Snoozed). */
+  readonly iconKey?: string | undefined;
 }
 
 function MailboxRow({
@@ -271,6 +397,7 @@ function MailboxRow({
   formatUnread,
   onEmptyTrash,
   isEmptyingTrash = false,
+  iconKey,
 }: MailboxRowProps): React.JSX.Element {
   const { t } = useTranslation();
   const { mailbox, depth } = node;
@@ -306,7 +433,7 @@ function MailboxRow({
         style={{ paddingLeft: `calc(var(--space-3) + ${depth} * var(--space-4))` }}
         {...(isSelected ? { "aria-current": "page" as const } : {})}
       >
-        <MailboxIcon role={mailbox.role} />
+        <MailboxIcon role={mailbox.role} iconKey={iconKey} />
         <span className={styles.name}>{name}</span>
         {badge !== undefined && (
           <span

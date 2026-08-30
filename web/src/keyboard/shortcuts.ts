@@ -66,7 +66,36 @@ export type ShortcutAction =
    * payload. A single key cannot name one of up to 26 labels, and Gmail's `l`
    * does exactly this: it opens the picker.
    */
-  | { readonly kind: "labelAs" };
+  | { readonly kind: "labelAs" }
+  /**
+   * E4 — `b`: open the snooze menu (canon §2.2, /mail/answer/7622010).
+   *
+   * Like `l`, it OPENS a menu rather than applying anything, and for the same
+   * reason: a single key cannot name one of five wake times. Gmail's `b` does
+   * exactly this.
+   */
+  | { readonly kind: "snooze" }
+  /**
+   * E4 — `m`: mute the conversation (canon §2.2, /mail/answer/16594169).
+   *
+   * Unlike `b` this ACTS immediately, because mute is binary — there is
+   * nothing to pick. It toggles: pressing `m` on an already-muted conversation
+   * unmutes it, which is the only sensible reading of the key in a view that
+   * shows the muted badge.
+   */
+  | { readonly kind: "toggleMute" }
+  /**
+   * E4 — `g b`: go to Snoozed (canon §2.2 names the chord explicitly).
+   *
+   * Its OWN action rather than `{kind:"goToMailbox", role:"snoozed"}`, because
+   * there is no such role: RFC 6154 defines no SPECIAL-USE attribute for
+   * snoozed mail and `internal/sync/snooze.go` refused to invent one, so the
+   * folder is found by the NAME the session capability publishes. Passing
+   * "snoozed" through the role channel would make the resolver look for
+   * something that cannot exist, and the failure would be a silently dead
+   * chord.
+   */
+  | { readonly kind: "goToSnoozed" };
 
 /**
  * The six selection scopes Gmail's `*` chord offers, verbatim (canon §2.4):
@@ -216,7 +245,13 @@ export function resolveShortcut(
   // The `g` chord's second key. Checked first so a live prefix cannot be
   // shadowed by a single-key binding of the same letter.
   if (state.pendingG) {
-    const role = CHORD_TARGETS[event.key.toLowerCase()];
+    const key = event.key.toLowerCase();
+    // E4: `g b` is the one chord target that is not a role — the Snoozed
+    // folder is found by name, so it gets its own action.
+    if (key === "b") {
+      return { action: { kind: "goToSnoozed" }, nextState: INITIAL_KEYBOARD_STATE };
+    }
+    const role = CHORD_TARGETS[key];
     return {
       action: role !== undefined ? { kind: "goToMailbox", role } : undefined,
       nextState: INITIAL_KEYBOARD_STATE,
@@ -368,6 +403,20 @@ export function resolveShortcut(
     case "l":
       return { action: { kind: "labelAs" }, nextState: INITIAL_KEYBOARD_STATE };
 
+    /*
+     * E4 — Gmail's triage pair (canon §2.2).
+     *
+     * `b` does not shadow the `g b` chord's second key: that one is only
+     * reachable with a pending `g`, which the branch at the top of this
+     * function resolves before ever entering this switch. The same
+     * relationship `l` has with `g l`.
+     */
+    case "b":
+      return { action: { kind: "snooze" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    case "m":
+      return { action: { kind: "toggleMute" }, nextState: INITIAL_KEYBOARD_STATE };
+
     // Gmail toggles a row's checkbox with `x`.
     case "x":
       return { action: { kind: "selectRow" }, nextState: INITIAL_KEYBOARD_STATE };
@@ -442,6 +491,10 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["_"], descriptionKey: "shortcuts.markUnreadFromHere" },
   { keys: ["s"], descriptionKey: "shortcuts.flag" },
   { keys: ["l"], descriptionKey: "shortcuts.labelAs" },
+  // E4: the triage pair, next to the other verbs that make a row leave the
+  // list — which is what they have in common with archive and delete.
+  { keys: ["b"], descriptionKey: "shortcuts.snooze" },
+  { keys: ["m"], descriptionKey: "shortcuts.mute" },
   { keys: ["x"], descriptionKey: "shortcuts.selectRow" },
   { keys: ["c"], descriptionKey: "shortcuts.compose" },
   { keys: ["r"], descriptionKey: "shortcuts.reply" },
@@ -453,6 +506,7 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["g", "d"], descriptionKey: "shortcuts.goDrafts" },
   { keys: ["g", "a"], descriptionKey: "shortcuts.goArchive" },
   { keys: ["g", "t"], descriptionKey: "shortcuts.goTrash" },
+  { keys: ["g", "b"], descriptionKey: "shortcuts.goSnoozed" },
   { keys: ["*", "a"], descriptionKey: "shortcuts.selectAll" },
   { keys: ["*", "n"], descriptionKey: "shortcuts.selectNone" },
   { keys: ["*", "r"], descriptionKey: "shortcuts.selectRead" },

@@ -81,10 +81,12 @@ import {
 } from "../../mail/undo";
 import { MAX_EMPTY_ROUNDS, shouldContinue, summarize, type EmptyRound } from "../../mail/emptyTrash";
 import {
+  cancelSubmission,
   destroyMessages,
   firstFailureMessage,
   hasFailures,
   sendDraft,
+  sendScheduledNow,
   setIdentitySignature,
   type DraftSpec,
 } from "../../mail/write";
@@ -110,9 +112,22 @@ import {
   type ComposerDraft,
   type QuotingStrings,
 } from "../compose/composerState";
+import {
+  fetchMutedThreadIds,
+  fetchSnoozes,
+  scheduleLimits,
+  sessionHasTriage,
+  setThreadsMuted,
+  snoozeMailboxName,
+  snoozeMessages,
+  unsnoozeMessages,
+} from "../../mail/triage";
+import { fetchScheduled, type ScheduledSend } from "../../mail/scheduled";
 import { ActionBar } from "./ActionBar";
 import { ConnectionPill } from "./ConnectionPill";
 import { OutboxView } from "./OutboxView";
+import { ScheduledView } from "./ScheduledView";
+import { SnoozeMenu } from "./SnoozeMenu";
 import type { ConversationControls } from "./ConversationView";
 import { LabelList } from "./LabelList";
 import { useLabels } from "./useLabels";
@@ -1669,6 +1684,15 @@ export function MailScreen(): React.JSX.Element {
   // --- E2: undo (`z`) -------------------------------------------------------
 
   /**
+   * E4's un-snooze, read through a ref by `runUndo`.
+   *
+   * Same shape and same reason as `advanceTargetRef`: the real callback lives
+   * in the E4 block below, which depends on the resolved mailbox list, and a
+   * ref reassigned on every render says "read the latest" honestly.
+   */
+  const unsnoozeRef = useRef<(ids: readonly string[]) => void>(() => undefined);
+
+  /**
    * Takes back the last undoable action.
    *
    * This re-issues the INVERSE MUTATION to the server. Repainting the client
@@ -1679,7 +1703,30 @@ export function MailScreen(): React.JSX.Element {
    */
   const runUndo = useCallback((): void => {
     const entry = undoEntry;
-    if (!isUndoable(entry, Date.now()) || entry?.inverseAction === undefined) {
+    if (entry === undefined || !isUndoable(entry, Date.now())) {
+      setToast(t("action.undoExpired"));
+      return;
+    }
+
+    /*
+     * E4: a snooze's reverse is not a `MessageAction`.
+     *
+     * A `move` back into the inbox would restore the row while leaving the
+     * server's wake time in place, so the message would return and then vanish
+     * again at the appointed hour. `Snooze/set destroy` is the only honest
+     * reverse, so the entry carries the ids and this branch calls it.
+     */
+    if ((entry.unsnoozeIds ?? []).length > 0) {
+      setUndoEntry(undefined);
+      // Through a ref for the same reason `advanceTargetRef` exists: the E4
+      // block is declared below this one (it depends on the mailbox list and
+      // the route), and hoisting it here to satisfy a declaration order would
+      // tangle two unrelated concerns.
+      unsnoozeRef.current(entry.unsnoozeIds ?? []);
+      return;
+    }
+
+    if (entry.inverseAction === undefined) {
       setToast(t("action.undoExpired"));
       return;
     }
@@ -2035,6 +2082,362 @@ export function MailScreen(): React.JSX.Element {
     },
     [offline, identity, accountId, roleMailboxId, t],
   );
+
+  // --- E4: snooze, mute and scheduled sends ---------------------------------
+
+  /**
+   * Whether this server has the triage verbs at all.
+   *
+   * A vendor capability is by definition something a server may not have, and
+   * RFC 8620 §1.8 makes the opt-in per capability. So every control below is
+   * gated on this rather than rendered and failing: a snooze button that
+   * answers `unknownMethod` is worse than no snooze button, because the user
+   * cannot tell it apart from a bug.
+   */
+  const hasTriage = sessionHasTriage(session, accountId);
+  /**
+   * The Snoozed folder, resolved by the NAME the session publishes.
+   *
+   * Not by role: RFC 6154 defines no SPECIAL-USE attribute for snoozed mail and
+   * `internal/sync/snooze.go` refused to invent one, so the name IS the
+   * contract — and it comes from the server so a rename does not need a client
+   * release.
+   */
+  const snoozedFolderName = snoozeMailboxName(session);
+  const snoozedMailbox = useMemo<Mailbox | undefined>(() => {
+    if (!hasTriage || snoozedFolderName === undefined) return undefined;
+    return mailboxes.find((mailbox) => mailbox.name === snoozedFolderName);
+  }, [hasTriage, snoozedFolderName, mailboxes]);
+  const inSnoozed =
+    snoozedMailbox !== undefined && activeMailbox?.id === snoozedMailbox.id;
+
+  /** E4: the muted conversations, cached as the server's own header says to. */
+  const [mutedThreadIds, setMutedThreadIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  /** E4: pending snoozes, by message id — only ever read in the Snoozed view. */
+  const [snoozeUntilById, setSnoozeUntilById] = useState<ReadonlyMap<string, string>>(
+    () => new Map<string, string>(),
+  );
+  const [scheduledSends, setScheduledSends] = useState<readonly ScheduledSend[]>([]);
+  const [scheduleBusyId, setScheduleBusyId] = useState<string | undefined>(undefined);
+
+  /*
+   * The mute set, refetched on every list refresh.
+   *
+   * `Mute/get` returns the WHOLE set in one indexed read — the server's own
+   * header calls it "a few dozen ids a client can cache" and declines to
+   * register a /changes for exactly that reason — so re-reading it alongside
+   * the list is cheaper than tracking deltas would be.
+   */
+  useEffect(() => {
+    if (!hasTriage || client === undefined || accountId === "") return undefined;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const muted = await fetchMutedThreadIds(client, accountId, controller.signal);
+        if (!controller.signal.aborted) setMutedThreadIds(muted);
+      } catch {
+        /*
+         * Swallowed deliberately: mute state is a BADGE. A list that renders
+         * without it is missing an icon, where a list that fails to render
+         * because a decoration could not be fetched is broken. The same rule
+         * `Thread/get` follows on the list path.
+         */
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [hasTriage, client, accountId, refreshToken]);
+
+  /* The wake times, fetched only where they are shown. */
+  useEffect(() => {
+    if (!hasTriage || !inSnoozed || client === undefined || accountId === "") {
+      return undefined;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const records = await fetchSnoozes(client, accountId, controller.signal);
+        if (controller.signal.aborted) return;
+        setSnoozeUntilById(new Map(records.map((record) => [record.id, record.until])));
+      } catch {
+        // Same reasoning as the mute set: the rows still render, without times.
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [hasTriage, inSnoozed, client, accountId, refreshToken]);
+
+  /** E4: the account's schedule limits, read from the session (declared == applied). */
+  const limits = useMemo(() => scheduleLimits(session, accountId), [session, accountId]);
+
+  const inScheduled = route.kind === "scheduled";
+
+  /*
+   * The scheduled sends.
+   *
+   * Fetched whenever the app is running, not only inside the view, because the
+   * SIDEBAR entry appears only when the list is non-empty (E9b's Outbox shape)
+   * — and a sidebar that can only discover its own entry by being visited is
+   * not an entry at all.
+   */
+  useEffect(() => {
+    if (client === undefined || accountId === "") return undefined;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const rows = await fetchScheduled(client, accountId, {
+          now: Date.now(),
+          undoWindowSeconds: prefs.undoSendSeconds,
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) setScheduledSends(rows);
+      } catch {
+        // A view that cannot list is empty, not broken.
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [client, accountId, refreshToken, prefs.undoSendSeconds]);
+
+  const goToScheduled = useCallback((): void => {
+    navigate({ kind: "scheduled" });
+    setSearchText("");
+  }, [navigate]);
+
+  const goToSnoozed = useCallback((): void => {
+    if (snoozedMailbox === undefined) {
+      // The chord is bound whether or not the folder exists; saying so is
+      // better than a keypress that silently does nothing.
+      setToast(t("snooze.unavailable"));
+      return;
+    }
+    goToMailbox(snoozedMailbox);
+  }, [snoozedMailbox, goToMailbox, t]);
+
+  /**
+   * Snoozes a set of messages until an instant.
+   *
+   * The WHOLE CONVERSATION goes, which is Gmail's unit: a thread with three of
+   * its messages asleep and one awake is a conversation nobody can reason
+   * about. The caller expands the thread (`idsOfGroup` / `targetMessageIds`).
+   *
+   * The row leaves the list optimistically because the server MOVEs it — that
+   * is GC-10's whole point, snoozing is IMAP-visible — so a `removed` patch is
+   * the truth rather than a guess, and the refetch that follows confirms it.
+   *
+   * The undo offer is real: un-snoozing before the wake is a plain move back
+   * (`Snooze/set destroy`), and the ids the client is holding are still the
+   * server's. That stops being true AFTER the wake — `internal/sync/snooze.go`
+   * re-APPENDs with a fresh INTERNALDATE so the mail "returns to the top of
+   * your inbox", which mints a new UID — but the undo window is eight seconds
+   * and the nearest wake is hours away, so the case cannot arise.
+   */
+  const runSnooze = useCallback(
+    (ids: readonly string[], until: string): void => {
+      if (client === undefined || accountId === "" || ids.length === 0) return;
+      void (async () => {
+        try {
+          const outcome = await snoozeMessages(client, accountId, ids, until);
+          if (hasFailures(outcome)) {
+            setToast(
+              `${t("action.failedTitle")}: ${firstFailureMessage(outcome) ?? ""}`.trim(),
+            );
+            refresh();
+            return;
+          }
+          setToast(format("snooze.done", 1));
+          // The inverse is a real server call, not a repaint — the rule
+          // `mail/undo.ts` exists to enforce.
+          undoCounter.current += 1;
+          setUndoEntry({
+            id: undoCounter.current,
+            action: { kind: "move", ids, mailboxId: snoozedMailbox?.id ?? "" },
+            inverseAction: undefined,
+            inverses: new Map(),
+            expiresAt: Date.now() + UNDO_WINDOW_MS,
+            unsnoozeIds: ids,
+          });
+          refresh();
+        } catch (error) {
+          setToast(error instanceof Error ? error.message : String(error));
+        }
+      })();
+    },
+    [client, accountId, snoozedMailbox, t, format, refresh],
+  );
+
+  /** E4: brings snoozed messages back now — the inverse of a snooze. */
+  const runUnsnooze = useCallback(
+    (ids: readonly string[]): void => {
+      if (client === undefined || accountId === "" || ids.length === 0) return;
+      void (async () => {
+        try {
+          const outcome = await unsnoozeMessages(client, accountId, ids);
+          setToast(
+            hasFailures(outcome)
+              ? `${t("action.failedTitle")}: ${firstFailureMessage(outcome) ?? ""}`.trim()
+              : t("snooze.undone"),
+          );
+          refresh();
+        } catch (error) {
+          setToast(error instanceof Error ? error.message : String(error));
+        }
+      })();
+    },
+    [client, accountId, t, refresh],
+  );
+
+  // Kept current for `runUndo`, which is declared above this block.
+  unsnoozeRef.current = runUnsnooze;
+
+  /**
+   * Mutes or unmutes the conversations under the cursor.
+   *
+   * Gmail's `m` toggles, and the direction is decided by the SELECTION as a
+   * whole — the same rule `resolveToggle` applies to read and starred: if any
+   * target is unmuted, mute them all; only when every one is already muted does
+   * the key unmute. Toggling each independently leaves a mixed selection after
+   * an explicit keystroke, which is never what anyone meant.
+   *
+   * The cached set is updated optimistically so the badge appears at once, and
+   * the refetch above reconciles it.
+   */
+  const runToggleMute = useCallback((): void => {
+    if (client === undefined || accountId === "" || !hasTriage) return;
+    const ids = actionTargets(selection, selectedId);
+    const threadIds = groups
+      .filter((group) => ids.includes(group.id))
+      .map((group) => group.latest.threadId)
+      .filter((id): id is string => id !== undefined && id !== "");
+    if (threadIds.length === 0) return;
+
+    const muting = threadIds.some((id) => !mutedThreadIds.has(id));
+    setMutedThreadIds((current) => {
+      const next = new Set(current);
+      for (const id of threadIds) {
+        if (muting) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
+    void (async () => {
+      try {
+        const outcome = await setThreadsMuted(client, accountId, threadIds, muting);
+        if (hasFailures(outcome)) {
+          setToast(`${t("action.failedTitle")}: ${firstFailureMessage(outcome) ?? ""}`.trim());
+        } else {
+          setToast(muting ? t("mute.done") : t("mute.undone"));
+        }
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : String(error));
+      } finally {
+        // Whatever happened, the server's answer is the one that stands.
+        refresh();
+      }
+    })();
+  }, [
+    client,
+    accountId,
+    hasTriage,
+    selection,
+    selectedId,
+    groups,
+    mutedThreadIds,
+    t,
+    refresh,
+  ]);
+
+  /** E4: cancels a scheduled send. The DRAFT survives, and the toast says so. */
+  const cancelScheduled = useCallback(
+    (item: ScheduledSend): void => {
+      if (client === undefined || accountId === "") return;
+      setScheduleBusyId(item.id);
+      void (async () => {
+        try {
+          const outcome = await cancelSubmission(client, accountId, item.id);
+          setToast(
+            hasFailures(outcome)
+              ? // `cannotUnsend` is a TRUE statement: the mail is going out.
+                (firstFailureMessage(outcome) ?? t("send.cannotUnsend"))
+              : t("schedule.canceled"),
+          );
+        } catch (error) {
+          setToast(error instanceof Error ? error.message : String(error));
+        } finally {
+          setScheduleBusyId(undefined);
+          refresh();
+        }
+      })();
+    },
+    [client, accountId, t, refresh],
+  );
+
+  /** E4: releases a scheduled send immediately (cancel, then resubmit). */
+  const sendScheduledImmediately = useCallback(
+    (item: ScheduledSend): void => {
+      if (client === undefined || accountId === "" || identity === undefined) return;
+      if (item.emailId === "") {
+        // Without the draft's id there is nothing to resubmit, and cancelling
+        // alone would silently turn "send now" into "cancel".
+        setToast(t("action.failedTitle"));
+        return;
+      }
+      setScheduleBusyId(item.id);
+      void (async () => {
+        try {
+          const result = await sendScheduledNow(client, accountId, item.id, item.emailId, {
+            identityId: identity.id,
+            sentMailboxId: roleMailboxId("sent"),
+          });
+          if (result.resubmitted === undefined) {
+            setToast(firstFailureMessage(result.canceled) ?? t("send.cannotUnsend"));
+          } else if (hasFailures(result.resubmitted)) {
+            setToast(
+              `${t("action.failedTitle")}: ${firstFailureMessage(result.resubmitted) ?? ""}`.trim(),
+            );
+          } else {
+            setToast(t("schedule.sentNow"));
+          }
+        } catch (error) {
+          setToast(error instanceof Error ? error.message : String(error));
+        } finally {
+          setScheduleBusyId(undefined);
+          refresh();
+        }
+      })();
+    },
+    [client, accountId, identity, roleMailboxId, t, refresh],
+  );
+
+  /**
+   * True when EVERY conversation under the cursor is already muted.
+   *
+   * Drives the label on the mute control, so the button says what the click
+   * will do. `every` rather than `some` for the same reason `resolveToggle`
+   * uses `some` in the opposite direction: the toggle mutes unless there is
+   * nothing left to mute, so "Unmute" is only honest when all of them are.
+   */
+  const allTargetsMuted = useMemo((): boolean => {
+    const ids = new Set(actionTargets(selection, selectedId));
+    const targets = groups.filter((group) => ids.has(group.id));
+    if (targets.length === 0) return false;
+    return targets.every((group) => {
+      const threadId = group.latest.threadId;
+      return threadId !== undefined && mutedThreadIds.has(threadId);
+    });
+  }, [selection, selectedId, groups, mutedThreadIds]);
+
+  /** Opens the snooze menu from the `b` key. Published by the menu itself. */
+  const snoozeMenuRef = useRef<(() => void) | undefined>(undefined);
+  const registerSnoozeMenu = useCallback((open: () => void): void => {
+    snoozeMenuRef.current = open;
+  }, []);
 
   // --- P3: opening the composer --------------------------------------------
 
@@ -2397,6 +2800,23 @@ export function MailScreen(): React.JSX.Element {
           break;
         }
 
+        // --- E4 (canon §2.2) ---
+        /*
+         * `b` OPENS the menu rather than snoozing: a single key cannot name one
+         * of five wake times. Exactly what `l` does for labels, and the
+         * imperative handle is the same one — a synthetic click on a disabled
+         * trigger would silently do nothing and look like a broken shortcut.
+         */
+        case "snooze":
+          snoozeMenuRef.current?.();
+          break;
+        case "toggleMute":
+          runToggleMute();
+          break;
+        case "goToSnoozed":
+          goToSnoozed();
+          break;
+
         // --- E2 ---
         case "toggleSpam":
           runToggleSpam();
@@ -2471,6 +2891,9 @@ export function MailScreen(): React.JSX.Element {
       runArchiveAndAdvance,
       runMarkUnreadFromHere,
       runSelectBy,
+      // E4
+      runToggleMute,
+      goToSnoozed,
     ],
   );
 
@@ -2672,6 +3095,23 @@ export function MailScreen(): React.JSX.Element {
                     },
                   }
                 : {})}
+              /*
+               * E4: Scheduled, on the same "only when it holds something" rule
+               * as the Outbox. Snoozed is NOT here and does not need to be: it
+               * is a real folder in the tree above, and canon §2.2's `g b`
+               * navigation means Gmail shows it always — which a real folder
+               * does for free.
+               */
+              {...(scheduledSends.length > 0
+                ? {
+                    scheduled: {
+                      count: scheduledSends.length,
+                      isSelected: inScheduled,
+                      onSelect: goToScheduled,
+                    },
+                  }
+                : {})}
+              snoozedMailboxName={snoozedFolderName}
             />
           )}
 
@@ -2748,6 +3188,20 @@ export function MailScreen(): React.JSX.Element {
               onRetry={retryOutboxItem}
               onDiscard={discardOutboxItem}
             />
+          ) : inScheduled ? (
+            /*
+             * E4: the Scheduled view, on the same footing as the Outbox and for
+             * the same reason — its rows are `EmailSubmission` records, not
+             * `Email`s, so none of the list's machinery (selection, keyboard,
+             * actions) applies to them.
+             */
+            <ScheduledView
+              items={scheduledSends}
+              onCancel={cancelScheduled}
+              onSendNow={sendScheduledImmediately}
+              busyId={scheduleBusyId}
+              locale={locale}
+            />
           ) : (
           <>
           {/*
@@ -2805,6 +3259,29 @@ export function MailScreen(): React.JSX.Element {
             onToggleLabel={runToggleLabel}
             onManageLabels={openLabelSettings}
             onLabelMenuReady={registerLabelMenu}
+            /*
+             * E4: the triage controls, present only when the server advertises
+             * the vendor capability. Passing `undefined` removes them entirely
+             * rather than greying them out — a feature this server does not
+             * have is not a feature waiting for a selection.
+             */
+            {...(hasTriage
+              ? {
+                  onSnooze: (until: string) => {
+                    runSnooze(targetMessageIds(), until);
+                  },
+                  onSnoozeMenuReady: registerSnoozeMenu,
+                  onToggleMute: runToggleMute,
+                  allMuted: allTargetsMuted,
+                }
+              : {})}
+            {...(hasTriage && inSnoozed
+              ? {
+                  onUnsnooze: () => {
+                    runUnsnooze(targetMessageIds());
+                  },
+                }
+              : {})}
           />
           <MessageList
             labels={labelsApi.labels}
@@ -2873,6 +3350,45 @@ export function MailScreen(): React.JSX.Element {
                 value ? t("action.markRead") : t("action.markUnread"),
               );
             }}
+            /*
+             * E4: the FOURTH hover action, which completes Gmail's set of four
+             * (canon §2.2). It is a render prop rather than a callback because
+             * it opens a menu, and the menu needs the clock, the i18n and the
+             * dispatcher this component holds — the row supplies only the
+             * trigger's styling so it looks like its three siblings.
+             *
+             * It acts on THAT row's conversation regardless of the selection,
+             * the same rule the other three follow: the pointer already named
+             * its target.
+             */
+            {...(hasTriage
+              ? {
+                  renderRowSnooze: (group, triggerClassName) => (
+                    <SnoozeMenu
+                      disabled={false}
+                      triggerClassName={triggerClassName}
+                      onSnooze={(until) => {
+                        runSnooze(idsOfGroup(group), until);
+                      }}
+                      triggerContent={
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                          <circle cx="10" cy="10.5" r="6.8" />
+                          <path d="M10 6.8v3.9l2.6 1.6" />
+                        </svg>
+                      }
+                    />
+                  ),
+                }
+              : {})}
+            mutedThreadIds={mutedThreadIds}
+            {...(inSnoozed
+              ? {
+                  snoozeUntilById,
+                  onRowUnsnooze: (group: ThreadGroup) => {
+                    runUnsnooze(idsOfGroup(group));
+                  },
+                }
+              : {})}
             notice={
               <ListNotice
                 refusal={refusal}
@@ -3052,6 +3568,16 @@ export function MailScreen(): React.JSX.Element {
            */
           {...(offline.outbox !== undefined ? { onQueueOffline: queueForLater } : {})}
           isOnline={offline.isOnline}
+          /*
+           * E4: schedule send, offered only when the server advertises the
+           * triage capability that carries its horizon. `maxDelayedSend` was 0
+           * before E4 and is 30 days now, so a client that assumed a number
+           * would have been wrong in both directions — it is read, never
+           * guessed.
+           */
+          {...(hasTriage
+            ? { maxDelayedSendSeconds: limits.maxDelayedSendSeconds }
+            : {})}
         />
       )}
 

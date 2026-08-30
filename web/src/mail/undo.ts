@@ -76,6 +76,26 @@ export interface UndoEntry {
   readonly inverses: ReadonlyMap<string, MessagePatch>;
   /** Epoch millis after which the offer is gone. */
   readonly expiresAt: number;
+  /**
+   * E4: the message ids to UN-SNOOZE, when the action being undone was a
+   * snooze.
+   *
+   * A snooze cannot be undone by {@link inverseAction}, and the reason is not
+   * an omission — it is that the inverse is not a `MessageAction` at all. A
+   * `move` back into the inbox would put the message where it was WITHOUT
+   * clearing the wake time the server recorded, so the mail would return and
+   * then vanish again at the appointed hour. The only honest reverse is
+   * `Snooze/set destroy`, which is a different method under a different
+   * capability, so it travels as its own field.
+   *
+   * The asymmetry that makes this safe: un-snoozing BEFORE the wake is a plain
+   * move back and the message keeps its id, while AFTER the wake
+   * `internal/sync/snooze.go` re-APPENDs it with a fresh INTERNALDATE (so it
+   * "returns to the top of your inbox") and the id changes. The undo window is
+   * eight seconds and the nearest preset is hours away, so only the first case
+   * can ever be offered.
+   */
+  readonly unsnoozeIds?: readonly string[];
 }
 
 /**
@@ -134,7 +154,15 @@ export function makeUndoEntry(input: {
 /** True while the entry's offer is still live. */
 export function isUndoable(entry: UndoEntry | undefined, now: number): boolean {
   if (entry === undefined) return false;
-  if (entry.inverseAction === undefined) return false;
+  /*
+   * An entry needs SOMETHING to re-issue. Ordinarily that is the inverse
+   * action; E4's snooze entry has no inverse action by construction (see
+   * `unsnoozeIds`) and carries its own reverse instead, so either one keeps
+   * the offer live and neither one alone is required.
+   */
+  if (entry.inverseAction === undefined && (entry.unsnoozeIds ?? []).length === 0) {
+    return false;
+  }
   // Strictly less-than: at exactly `expiresAt` the window has closed. Being
   // explicit here is the point — "<=" would keep an expired offer clickable
   // for one tick, which is precisely the kind of boundary a test must pin.

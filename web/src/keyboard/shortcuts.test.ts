@@ -430,3 +430,70 @@ describe("E8: the label key", () => {
     expect(SHORTCUT_HELP.some((entry) => entry.keys.join("") === "l")).toBe(true);
   });
 });
+
+/**
+ * E4 — the triage keys (canon §2.2, /mail/answer/7622010 and /16594169).
+ *
+ * The canon names all three explicitly: `b` for snooze, `m` for mute, `g b` to
+ * reach the Snoozed view. What these tests protect is the interaction between
+ * the two `b` bindings, which is exactly the shape that broke for `l`/`g l`.
+ */
+describe("E4: b, m and g b", () => {
+  it("binds b to opening the snooze menu, not to applying a time", () => {
+    // A single key cannot name one of five wake times, so `b` opens a picker —
+    // the same shape as `l`.
+    expect(resolveShortcut(key("b")).action).toEqual({ kind: "snooze" });
+  });
+
+  it("binds m to the mute TOGGLE", () => {
+    // Mute is binary, so unlike `b` it acts immediately; and it toggles,
+    // because pressing `m` on a conversation showing the muted badge can only
+    // sensibly mean "stop muting it".
+    expect(resolveShortcut(key("m")).action).toEqual({ kind: "toggleMute" });
+  });
+
+  it("lets the g chord shadow b, so `g b` is never read as snooze", () => {
+    const armed = resolveShortcut(key("g")).nextState;
+    expect(resolveShortcut(key("b"), armed).action).toEqual({ kind: "goToSnoozed" });
+    expect(resolveShortcut(key("b")).action?.kind).toBe("snooze");
+  });
+
+  it("gives g b its OWN action rather than a role that does not exist", () => {
+    // RFC 6154 has no SPECIAL-USE attribute for snoozed mail and the sync
+    // engine refused to invent one, so the folder is found by the name the
+    // session publishes. A `{kind:"goToMailbox", role:"snoozed"}` would make
+    // the resolver look for something that cannot exist.
+    const armed = resolveShortcut(key("g")).nextState;
+    const action = resolveShortcut(key("b"), armed).action;
+    expect(action).not.toHaveProperty("role");
+  });
+
+  it("clears the g prefix after b, like every other chord target", () => {
+    const armed = resolveShortcut(key("g")).nextState;
+    expect(resolveShortcut(key("b"), armed).nextState.pendingG).toBe(false);
+  });
+
+  it("obeys the shortcuts-off setting — both keys ACT on mail", () => {
+    const off = { enabled: false };
+    expect(resolveShortcut(key("b"), INITIAL_KEYBOARD_STATE, off).action).toBeUndefined();
+    expect(resolveShortcut(key("m"), INITIAL_KEYBOARD_STATE, off).action).toBeUndefined();
+  });
+
+  it("does not fire while the user is typing", () => {
+    const target = { tagName: "TEXTAREA" } as unknown as EventTarget;
+    expect(resolveShortcut({ ...key("b"), target }).action).toBeUndefined();
+    expect(resolveShortcut({ ...key("m"), target }).action).toBeUndefined();
+  });
+
+  it("does not shadow n/p — m is not a conversation-navigation key", () => {
+    expect(resolveShortcut(key("n")).action?.kind).toBe("conversationMessage");
+    expect(resolveShortcut(key("p")).action?.kind).toBe("conversationMessage");
+  });
+
+  it("documents all three in the help sheet", () => {
+    const entries = SHORTCUT_HELP.map((entry) => entry.keys.join(" "));
+    expect(entries).toContain("b");
+    expect(entries).toContain("m");
+    expect(entries).toContain("g b");
+  });
+});

@@ -3,6 +3,7 @@ import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
 import { LabelMenu } from "./LabelMenu";
 import { MoveMenu } from "./MoveMenu";
+import { SnoozeMenu } from "./SnoozeMenu";
 import styles from "./ActionBar.module.css";
 
 /**
@@ -53,6 +54,29 @@ export interface ActionBarProps {
   readonly onManageLabels: () => void;
   /** Publishes the menu's `open()` so the `l` shortcut can raise it. */
   readonly onLabelMenuReady?: ((open: () => void) => void) | undefined;
+
+  // --- E4: snooze and mute (canon §2.2) ---
+  /**
+   * Snoozes the selection until an instant, or absent when this server has no
+   * triage capability.
+   *
+   * Absent removes the control entirely rather than disabling it: a vendor
+   * capability the server does not advertise is a feature that does not exist
+   * here, and a permanently greyed-out button invites the user to hunt for the
+   * selection that would enable it.
+   */
+  readonly onSnooze?: ((until: string) => void) | undefined;
+  /** Publishes the snooze menu's `open()` so `b` can raise it. */
+  readonly onSnoozeMenuReady?: ((open: () => void) => void) | undefined;
+  /** Mutes or unmutes the selection. Absent for the same reason as `onSnooze`. */
+  readonly onToggleMute?: (() => void) | undefined;
+  /**
+   * True when every selected conversation is already muted, so the control can
+   * say what the click will DO rather than what the state is.
+   */
+  readonly allMuted?: boolean;
+  /** E4: in the Snoozed view, "bring these back now" replaces nothing else. */
+  readonly onUnsnooze?: (() => void) | undefined;
 }
 
 export function ActionBar({
@@ -78,6 +102,11 @@ export function ActionBar({
   onToggleLabel,
   onManageLabels,
   onLabelMenuReady,
+  onSnooze,
+  onSnoozeMenuReady,
+  onToggleMute,
+  allMuted = false,
+  onUnsnooze,
 }: ActionBarProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const hasSelection = selectedCount > 0;
@@ -200,6 +229,69 @@ export function ActionBar({
           )
         }
       />
+
+      {/*
+        E4: snooze (`b`). It sits with archive, delete and spam because it
+        belongs to the same family — the verbs that make a conversation LEAVE
+        the list — rather than with move and label, which relocate or annotate
+        it. Gmail's own hover strip groups it exactly this way.
+      */}
+      {onSnooze !== undefined && (
+        <SnoozeMenu
+          disabled={disabled}
+          onSnooze={onSnooze}
+          onReady={onSnoozeMenuReady}
+          triggerClassName={styles.action}
+          triggerContent={
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <circle cx="10" cy="10.5" r="6.8" />
+              <path d="M10 6.8v3.9l2.6 1.6" />
+            </svg>
+          }
+        />
+      )}
+
+      {/*
+        E4: bring a snoozed conversation back now. Present only in the Snoozed
+        view, where it is the one thing a user does to a row — everywhere else
+        there is nothing snoozed to bring back.
+      */}
+      {onUnsnooze !== undefined && (
+        <ActionButton
+          label={t("snooze.unsnooze")}
+          disabled={disabled}
+          onClick={onUnsnooze}
+          icon={
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M3.4 10.5a6.6 6.6 0 1 1 2 4.7" />
+              <path d="M3 6.4v4.1h4.1" />
+            </svg>
+          }
+        />
+      )}
+
+      {/*
+        E4: mute (`m`). Its LABEL flips with the selection's state, the same
+        rule the spam button follows: one control covering both directions,
+        saying what the click will do rather than what the state is.
+      */}
+      {onToggleMute !== undefined && (
+        <ActionButton
+          label={allMuted ? t("mute.unmute") : t("mute.action")}
+          disabled={disabled}
+          onClick={onToggleMute}
+          icon={
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M4 7.5h2.6L10 4.6v10.8L6.6 12.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z" />
+              {allMuted ? (
+                <path d="M13.2 8.2a3.2 3.2 0 0 1 0 4.6" />
+              ) : (
+                <path d="M13.4 7.6l3.6 4.8m0-4.8l-3.6 4.8" />
+              )}
+            </svg>
+          }
+        />
+      )}
 
       <MoveMenu
         mailboxes={mailboxes}

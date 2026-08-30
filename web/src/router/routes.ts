@@ -68,7 +68,22 @@ export type Route =
    * to special-case it. It carries no `messageId` for the same reason — there
    * is no message to open, only a queue entry to retry or discard.
    */
-  | { readonly kind: "outbox" };
+  | { readonly kind: "outbox" }
+  /**
+   * E4: the Scheduled view — messages with a future `sendAt` (canon §2.3).
+   *
+   * Its own kind for the same reason the Outbox is, and for a second one the
+   * Outbox does not have. The rows are `EmailSubmission` records, not `Email`s,
+   * so nothing that resolves a mailbox applies to them — and there deliberately
+   * IS no Scheduled folder: `internal/jmap/mail/submission_query.go` refused
+   * one because "a scheduled message must stay a DRAFT [...] moving it to a
+   * second folder would make every other IMAP client show it outside Drafts".
+   *
+   * The Snoozed view is NOT here, and that asymmetry is the design: snooze is a
+   * real MOVE to a real folder (GC-10), so it is an ordinary `mailbox` route
+   * and every existing code path works on it unchanged.
+   */
+  | { readonly kind: "scheduled" };
 
 /** Where an unrecognised or empty URL lands. */
 export const DEFAULT_ROUTE: Route = { kind: "mailbox", mailboxId: "inbox" };
@@ -160,6 +175,8 @@ export function parseRoute(url: string): Route {
 
   // E9: a single fixed segment; there is nothing to parameterise.
   if (segments[0] === "outbox") return { kind: "outbox" };
+  // E4: likewise — the Scheduled view lists submissions, not messages.
+  if (segments[0] === "scheduled") return { kind: "scheduled" };
 
   if (segments[0] === "mail") {
     const mailbox = segments[1];
@@ -210,6 +227,8 @@ export function formatRoute(route: Route): string {
     }
     case "outbox":
       return "/outbox";
+    case "scheduled":
+      return "/scheduled";
   }
 }
 
@@ -241,7 +260,7 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
    * request rather than inventing a route. Returning the outbox unchanged is
    * the honest answer to "open message X in this list": there is no such list.
    */
-  if (route.kind === "outbox") return route;
+  if (route.kind === "outbox" || route.kind === "scheduled") return route;
   return messageId === undefined
     ? { kind: "search", query: route.query }
     : { kind: "search", query: route.query, messageId };
@@ -249,5 +268,7 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
 
 /** The message currently open in a route, if any. */
 export function openMessageId(route: Route): string | undefined {
-  return route.kind === "outbox" ? undefined : route.messageId;
+  return route.kind === "outbox" || route.kind === "scheduled"
+    ? undefined
+    : route.messageId;
 }

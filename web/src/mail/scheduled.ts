@@ -228,9 +228,15 @@ export async function fetchScheduled(
 
 export type SchedulePresetId = "thisAfternoon" | "tomorrowMorning" | "mondayMorning";
 
+/** The i18n keys the schedule presets carry — typed, so `t()` needs no cast. */
+export type SchedulePresetLabelKey =
+  | "schedule.thisAfternoon"
+  | "schedule.tomorrowMorning"
+  | "schedule.mondayMorning";
+
 export interface SchedulePreset {
   readonly id: SchedulePresetId;
-  readonly labelKey: string;
+  readonly labelKey: SchedulePresetLabelKey;
   readonly at: Date;
 }
 

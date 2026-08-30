@@ -53,11 +53,24 @@ export type SnoozePresetId =
   | "thisWeekend"
   | "nextWeek";
 
+/**
+ * The i18n keys the presets carry, as a literal union.
+ *
+ * Typed rather than left as `string` so a renderer can pass one straight to
+ * `t()` without a cast — and so renaming a key here is a compile error at the
+ * string table rather than a blank menu row at runtime.
+ */
+export type SnoozePresetLabelKey =
+  | "snooze.laterToday"
+  | "snooze.tomorrow"
+  | "snooze.thisWeekend"
+  | "snooze.nextWeek";
+
 /** One offered preset: what to call it and when it wakes. */
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
   /** The i18n key for the row's label. */
-  readonly labelKey: string;
+  readonly labelKey: SnoozePresetLabelKey;
   /** The wake instant, in local time. */
   readonly at: Date;
 }

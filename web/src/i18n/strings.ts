@@ -752,6 +752,74 @@ export const en = {
   "search.zeroResults": "No messages matched",
   "search.zeroResultsBody":
     "Every term was searched. Try removing one, or search all mail including Spam and Trash.",
+
+  // --- E4: snooze, mute and schedule send (canon §2.2 and §2.3) ---
+  //
+  // The preset LABELS are Gmail's, from its fetchable help page. The TIMES
+  // behind them are ours — canon §5 puts "snooze preset times" in the
+  // UNSOURCED register — and they are documented in `mail/snoozePresets.ts`.
+  "snooze.action": "Snooze",
+  "snooze.menuLabel": "Snooze until",
+  "snooze.laterToday": "Later today",
+  "snooze.tomorrow": "Tomorrow",
+  "snooze.thisWeekend": "This weekend",
+  "snooze.nextWeek": "Next week",
+  "snooze.pickDate": "Pick date & time",
+  "snooze.pickDateLabel": "Wake this conversation at",
+  "snooze.pickDateConfirm": "Snooze",
+  "snooze.pickDateInvalid": "Choose a date and time in the future.",
+  "snooze.mailboxName": "Snoozed",
+  "snooze.done": (count: number): string =>
+    count === 1 ? "Conversation snoozed" : `${count} conversations snoozed`,
+  "snooze.undone": "Back in your inbox",
+  "snooze.unsnooze": "Unsnooze",
+  "snooze.wakesAt": (when: string): string => `Wakes ${when}`,
+  "snooze.returnsTo": (folder: string): string => `Returns to ${folder}`,
+  "snooze.unavailable":
+    "Snoozing is not available on this server.",
+  "snooze.empty": "Nothing is snoozed.",
+  "snooze.explain":
+    "Snoozed mail leaves your inbox and comes back at the time you chose. It is a real folder, so your other mail apps see it too.",
+
+  "mute.action": "Mute",
+  "mute.unmute": "Unmute",
+  "mute.done": "Muted — replies will skip your inbox",
+  "mute.undone": "Unmuted",
+  "mute.badge": "Muted",
+  "mute.badgeExplain":
+    "Replies to this conversation skip the inbox and go straight to Archive.",
+  "mute.viewName": "Muted",
+  "mute.empty": "No conversations are muted.",
+  "mute.clientSideNotice":
+    "This list is built from the muted conversations loaded in this view.",
+
+  "schedule.action": "Schedule send",
+  "schedule.menuLabel": "Send later",
+  "schedule.thisAfternoon": "This afternoon",
+  "schedule.tomorrowMorning": "Tomorrow morning",
+  "schedule.mondayMorning": "Monday morning",
+  "schedule.pickDate": "Pick date & time",
+  "schedule.pickDateLabel": "Send at",
+  "schedule.pickDateConfirm": "Schedule",
+  "schedule.pickDateInvalid": "Choose a date and time in the future.",
+  "schedule.tooFarAhead": (days: number): string =>
+    `This server schedules sends up to ${days} days ahead.`,
+  "schedule.scheduled": (when: string): string => `Scheduled for ${when}`,
+  "schedule.viewName": "Scheduled",
+  "schedule.empty": "Nothing is scheduled to be sent.",
+  "schedule.explain":
+    "These messages are still drafts. They go out at the time you chose, and cancelling one leaves the draft where it is.",
+  "schedule.cancel": "Cancel send",
+  "schedule.canceled": "Send cancelled — the message is still in Drafts",
+  "schedule.sendNow": "Send now",
+  "schedule.sentNow": "Sending now",
+  "schedule.noRecipients": "(no recipients)",
+  "schedule.overQuota": (limit: number): string =>
+    `You already have ${limit} scheduled sends, which is the limit. Cancel one to schedule another.`,
+
+  "shortcuts.snooze": "Snooze",
+  "shortcuts.mute": "Mute or unmute the conversation",
+  "shortcuts.goSnoozed": "Go to Snoozed",
 } as const;
 
 /**
@@ -1414,6 +1482,69 @@ export const es: Strings = {
   "search.zeroResults": "Ningún mensaje coincide",
   "search.zeroResultsBody":
     "Se buscaron todos los términos. Probá sacando alguno, o buscá en todo el correo incluyendo Spam y Papelera.",
+
+  // --- E4: posponer, silenciar y programar el envío (canon §2.2 y §2.3) ---
+  "snooze.action": "Posponer",
+  "snooze.menuLabel": "Posponer hasta",
+  "snooze.laterToday": "Más tarde hoy",
+  "snooze.tomorrow": "Mañana",
+  "snooze.thisWeekend": "Este fin de semana",
+  "snooze.nextWeek": "La próxima semana",
+  "snooze.pickDate": "Elegir fecha y hora",
+  "snooze.pickDateLabel": "Volver a mostrar esta conversación el",
+  "snooze.pickDateConfirm": "Posponer",
+  "snooze.pickDateInvalid": "Elegí una fecha y hora futuras.",
+  "snooze.mailboxName": "Pospuestos",
+  "snooze.done": (count: number): string =>
+    count === 1 ? "Conversación pospuesta" : `${count} conversaciones pospuestas`,
+  "snooze.undone": "De vuelta en tu bandeja",
+  "snooze.unsnooze": "Traer ahora",
+  "snooze.wakesAt": (when: string): string => `Vuelve ${when}`,
+  "snooze.returnsTo": (folder: string): string => `Vuelve a ${folder}`,
+  "snooze.unavailable": "Este servidor no permite posponer mensajes.",
+  "snooze.empty": "No hay nada pospuesto.",
+  "snooze.explain":
+    "El correo pospuesto sale de tu bandeja y vuelve a la hora que elegiste. Es una carpeta real, así que tus otras apps de correo también la ven.",
+
+  "mute.action": "Silenciar",
+  "mute.unmute": "Dejar de silenciar",
+  "mute.done": "Silenciada — las respuestas van a saltear tu bandeja",
+  "mute.undone": "Ya no está silenciada",
+  "mute.badge": "Silenciada",
+  "mute.badgeExplain":
+    "Las respuestas de esta conversación saltean la bandeja y van directo a Archivo.",
+  "mute.viewName": "Silenciadas",
+  "mute.empty": "No hay conversaciones silenciadas.",
+  "mute.clientSideNotice":
+    "Esta lista se arma con las conversaciones silenciadas que están cargadas en esta vista.",
+
+  "schedule.action": "Programar envío",
+  "schedule.menuLabel": "Enviar más tarde",
+  "schedule.thisAfternoon": "Esta tarde",
+  "schedule.tomorrowMorning": "Mañana a la mañana",
+  "schedule.mondayMorning": "El lunes a la mañana",
+  "schedule.pickDate": "Elegir fecha y hora",
+  "schedule.pickDateLabel": "Enviar el",
+  "schedule.pickDateConfirm": "Programar",
+  "schedule.pickDateInvalid": "Elegí una fecha y hora futuras.",
+  "schedule.tooFarAhead": (days: number): string =>
+    `Este servidor programa envíos hasta ${days} días adelante.`,
+  "schedule.scheduled": (when: string): string => `Programado para ${when}`,
+  "schedule.viewName": "Programados",
+  "schedule.empty": "No hay nada programado para enviarse.",
+  "schedule.explain":
+    "Estos mensajes siguen siendo borradores. Salen a la hora que elegiste, y si cancelás uno el borrador se queda donde está.",
+  "schedule.cancel": "Cancelar envío",
+  "schedule.canceled": "Envío cancelado — el mensaje sigue en Borradores",
+  "schedule.sendNow": "Enviar ahora",
+  "schedule.sentNow": "Enviando ahora",
+  "schedule.noRecipients": "(sin destinatarios)",
+  "schedule.overQuota": (limit: number): string =>
+    `Ya tenés ${limit} envíos programados, que es el límite. Cancelá uno para programar otro.`,
+
+  "shortcuts.snooze": "Posponer",
+  "shortcuts.mute": "Silenciar o dejar de silenciar la conversación",
+  "shortcuts.goSnoozed": "Ir a Pospuestos",
 };
 
 /** The locales the app ships with. */

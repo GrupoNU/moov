@@ -239,6 +239,55 @@
   font-weight: var(--weight-medium);
 }
 
+/* --- E4: the muted badge and the Snoozed view's wake time --- */
+
+/*
+ * The muted icon sits with the star and the paperclip because it is the same
+ * kind of fact — a persistent property of the conversation. It is MUTED in
+ * colour on purpose: it marks a conversation the user chose to stop caring
+ * about, so it must not draw the eye the way the warning-coloured star does.
+ */
+.mutedIcon {
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+}
+
+.snoozeMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.wakeTime {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-default);
+}
+
+/*
+ * "Unsnooze" is always visible rather than revealed on hover, unlike the hover
+ * actions. In the Snoozed view it is the primary thing a user does to a row,
+ * and hiding the primary action behind a hover is how a feature becomes
+ * undiscoverable — and unreachable on a touch screen.
+ */
+.unsnooze {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-default);
+  cursor: pointer;
+}
+
+.unsnooze:hover,
+.unsnooze:focus-visible {
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+}
+
 /* --- the loading skeleton --- */
 
 .skeleton {
