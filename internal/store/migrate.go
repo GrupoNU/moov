@@ -53,6 +53,29 @@ func MigrateDown(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// MigrateDownTo rolls back every migration ABOVE version, leaving version
+// itself applied. Passing 0 rolls everything back.
+//
+// It exists because MigrateDown ("exactly one") makes a caller's correctness
+// depend on which migration happens to be the head — a test that rolls back
+// one step to reach the state before migration N silently starts testing
+// migration N+1 the day one is added. Naming the target instead of counting
+// steps is invariant under new migrations, which is the property a test that
+// exercises a SPECIFIC migration needs.
+//
+// Like MigrateDown it is for development and tests; production rollbacks stay
+// a deliberate operator action.
+func MigrateDownTo(ctx context.Context, db *sql.DB, version int64) error {
+	provider, err := newProvider(db)
+	if err != nil {
+		return err
+	}
+	if _, err := provider.DownTo(ctx, version); err != nil {
+		return fmt.Errorf("rolling back migrations above version %d: %w", version, err)
+	}
+	return nil
+}
+
 // MigrationVersion reports the highest migration version applied to db.
 func MigrationVersion(ctx context.Context, db *sql.DB) (int64, error) {
 	provider, err := newProvider(db)

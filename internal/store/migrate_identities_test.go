@@ -206,10 +206,16 @@ func TestIdentityBackfillReachesPreExistingAccounts(t *testing.T) {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = $1`, accountID)
 	})
 
-	// Roll 0006 back: the identities table goes away, the account stays. This
-	// is the pre-migration state the pilot's database was in.
-	if err := store.MigrateDown(ctx, db); err != nil {
-		t.Fatalf("rolling back 0006: %v", err)
+	// Roll back TO 0005: the identities table goes away, the account stays.
+	// This is the pre-migration state the pilot's database was in.
+	//
+	// The target is named rather than counted (MigrateDownTo, not one
+	// MigrateDown step) because this test is about migration 0006 specifically.
+	// Counting steps made it silently test the head migration instead the day
+	// 0007 was added — which is exactly what happened, and is why MigrateDownTo
+	// exists.
+	if err := store.MigrateDownTo(ctx, db, 5); err != nil {
+		t.Fatalf("rolling back to 0005: %v", err)
 	}
 	var exists bool
 	if err := db.QueryRowContext(ctx, `
