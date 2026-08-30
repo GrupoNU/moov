@@ -566,6 +566,9 @@ export const en = {
   // states the budget rather than discovering it at the 27th create — which
   // would succeed, apply, and lose the label weeks later when Dovecot rebuilds
   // its index. Folders are the unlimited alternative and the copy says so.
+  "list.emptyLabel": "Nothing labelled that",
+  "list.emptyLabelBody": (name: string): string =>
+    `No message carries "${name}" yet. Select some mail and use "Label as" to apply it.`,
   "label.plural": "Labels",
   "label.labelAs": "Label as",
   "label.manage": "Manage labels…",
@@ -1128,6 +1131,9 @@ export const es: Strings = {
   "folder.createFailed": "La carpeta no se pudo crear",
 
   // --- E8: etiquetas bajo el techo de 26 keywords (GC-5) ---
+  "list.emptyLabel": "Nada con esa etiqueta",
+  "list.emptyLabelBody": (name: string): string =>
+    `Todavía ningún mensaje tiene «${name}». Seleccioná correo y usá «Etiquetar como» para aplicarla.`,
   "label.plural": "Etiquetas",
   "label.labelAs": "Etiquetar como",
   "label.manage": "Administrar etiquetas…",

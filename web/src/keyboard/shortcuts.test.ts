@@ -394,3 +394,39 @@ describe("the shortcuts-off gate", () => {
     expect(isAlwaysOnKey("?")).toBe(false);
   });
 });
+
+describe("E8: the label key", () => {
+  it("resolves `l` to labelAs", () => {
+    // Gmail's application keys (canon §2.7): "`v` move to · `l` label as".
+    expect(resolveShortcut(key("l")).action).toEqual({ kind: "labelAs" });
+  });
+
+  it("OPENS a menu rather than applying anything — it carries no payload", () => {
+    // One key cannot name one of up to 26 labels, so `l` raises the picker.
+    // Gmail's does the same.
+    const action = resolveShortcut(key("l")).action;
+    expect(Object.keys(action ?? {})).toEqual(["kind"]);
+  });
+
+  it("is not shadowed by, and does not shadow, the g chord", () => {
+    // `g l` has no target in CHORD_TARGETS, so it resolves to nothing rather
+    // than falling through to the single-key label binding.
+    const armed = resolveShortcut(key("g")).nextState;
+    expect(resolveShortcut(key("l"), armed).action).toBeUndefined();
+    expect(resolveShortcut(key("l")).action?.kind).toBe("labelAs");
+  });
+
+  it("obeys the shortcuts-off setting — it is a key that ACTS", () => {
+    expect(resolveShortcut(key("l"), INITIAL_KEYBOARD_STATE, { enabled: false }).action)
+      .toBeUndefined();
+  });
+
+  it("does not fire while the user is typing", () => {
+    const target = { tagName: "INPUT" } as unknown as EventTarget;
+    expect(resolveShortcut({ ...key("l"), target }).action).toBeUndefined();
+  });
+
+  it("appears in the help sheet, or it is a shortcut only its author uses", () => {
+    expect(SHORTCUT_HELP.some((entry) => entry.keys.join("") === "l")).toBe(true);
+  });
+});

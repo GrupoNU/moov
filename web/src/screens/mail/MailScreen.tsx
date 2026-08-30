@@ -2142,6 +2142,7 @@ export function MailScreen(): React.JSX.Element {
             empty={
               <EmptyState
                 isSearch={route.kind === "search"}
+                labelName={route.kind === "label" ? route.name : undefined}
                 query={route.kind === "search" ? route.query : ""}
                 hasRefusal={refusal !== undefined}
               />
@@ -2381,10 +2382,13 @@ function EmptyState({
   isSearch,
   query,
   hasRefusal,
+  labelName,
 }: {
   readonly isSearch: boolean;
   readonly query: string;
   readonly hasRefusal: boolean;
+  /** E8: the label being viewed, when the route is a label view. */
+  readonly labelName?: string | undefined;
 }): React.JSX.Element | null {
   const { t, format } = useTranslation();
   const branding = useBranding();
@@ -2393,13 +2397,28 @@ function EmptyState({
   // contradict it.
   if (hasRefusal) return null;
 
+  /*
+   * E8: a label view's empty state names the LABEL. "This folder has no
+   * messages" would be wrong twice over — a label is not a folder, and the
+   * account is not empty; nothing carries this label yet, which is a different
+   * and actionable fact.
+   */
+  const title = labelName !== undefined
+    ? t("list.emptyLabel")
+    : isSearch
+      ? t("list.emptySearch")
+      : t("list.empty");
+  const body = labelName !== undefined
+    ? format("list.emptyLabelBody", labelName)
+    : isSearch
+      ? format("list.emptySearchBody", query)
+      : t("list.emptyBody");
+
   return (
     <div className={styles.empty}>
       <BrandMark branding={branding} size="lg" iconOnly />
-      <p className={styles.emptyTitle}>{isSearch ? t("list.emptySearch") : t("list.empty")}</p>
-      <p className={styles.emptyBody}>
-        {isSearch ? format("list.emptySearchBody", query) : t("list.emptyBody")}
-      </p>
+      <p className={styles.emptyTitle}>{title}</p>
+      <p className={styles.emptyBody}>{body}</p>
     </div>
   );
 }
