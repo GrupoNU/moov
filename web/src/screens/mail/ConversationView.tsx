@@ -299,8 +299,20 @@ export function ConversationView({
       : undefined;
     if (escaped === undefined) return;
     const element = container.querySelector(`[data-message-id="${escaped}"]`);
-    if (element instanceof HTMLElement) {
+    if (!(element instanceof HTMLElement)) return;
+    /*
+     * Scrolling is a COURTESY, and it must never be able to abort the
+     * navigation that asked for it. `scrollIntoView` is absent in jsdom and in
+     * some embedded webviews, and an exception here would leave `p`/`n` having
+     * expanded a message and then thrown on the way to showing it — the state
+     * changed, the UI did not, and the error surfaces nowhere near the cause.
+     */
+    if (typeof element.scrollIntoView !== "function") return;
+    try {
       element.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    } catch {
+      // Older engines reject the options object; the position is not worth a
+      // second attempt with different arguments.
     }
   }, []);
 

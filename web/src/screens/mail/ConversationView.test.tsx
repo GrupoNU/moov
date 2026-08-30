@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { JmapClient } from "../../api/jmap";
@@ -327,6 +327,63 @@ describe("the keyboard controls it publishes", () => {
     expect(typeof controls?.expandAll).toBe("function");
     expect(typeof controls?.collapseAll).toBe("function");
     expect(typeof controls?.goToMessage).toBe("function");
+  });
+
+  it("walks the thread with repeated `p`, expanding as it goes", async () => {
+    /*
+     * The staleness trap this exists for: `goToMessage` closes over the
+     * current message, so a callback that was published once and never
+     * refreshed would move ONE step and then keep re-deciding from the same
+     * starting point. Pressing twice is what catches that; pressing once
+     * cannot.
+     */
+    let controls: ConversationControls | undefined;
+    renderConversation({
+      onControls: (next) => {
+        if (next !== undefined) controls = next;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Sender m1")).toBeInTheDocument();
+    });
+
+    // Start on m3 (the open one) and walk backwards: m2, then m1.
+    await act(async () => {
+      controls?.goToMessage("previous");
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(expandedMessages()).toHaveLength(2);
+    });
+
+    await act(async () => {
+      controls?.goToMessage("previous");
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      // Three: the second press moved on from m2 rather than re-deciding
+      // from m3 and re-expanding it.
+      expect(expandedMessages()).toHaveLength(3);
+    });
+  });
+
+  it("stops at the end of the thread rather than wrapping", async () => {
+    let controls: ConversationControls | undefined;
+    renderConversation({
+      onControls: (next) => {
+        if (next !== undefined) controls = next;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Sender m1")).toBeInTheDocument();
+    });
+
+    // m3 is already the newest; `next` has nowhere to go.
+    await act(async () => {
+      controls?.goToMessage("next");
+      await Promise.resolve();
+    });
+    expect(expandedMessages()).toHaveLength(1);
   });
 });
 

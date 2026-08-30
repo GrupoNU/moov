@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { JmapClient } from "../api/jmap";
 import { fetchConversationMessages, fetchThreadRows, queryEmails } from "./api";
+import { INBOX_TYPES, sortForInboxType } from "./prefs";
 import type { Email, Thread } from "./types";
 
 /**
@@ -87,6 +88,48 @@ describe("queryEmails", () => {
     });
     expect(page.emails).toEqual([ROW]);
     expect(page.threads).toEqual([]);
+  });
+
+  it("collapses together with the [hasKeyword, receivedAt] sort", async () => {
+    /*
+     * The pair a real client opens every folder with, and the one combination
+     * E1's UI half depends on: the server's own
+     * TestQueryCollapseWithTheKeywordSort pins the other side of this.
+     */
+    const { client, sent } = stub({
+      q: { ids: ["e1"] },
+      g: { list: [ROW] },
+      th: { list: [THREAD] },
+    });
+    await queryEmails(client, ACCOUNT, { kind: "mailbox", mailboxId: "m1" }, {
+      collapseThreads: true,
+      sort: [
+        { property: "hasKeyword", keyword: "$seen", isAscending: true },
+        { property: "receivedAt", isAscending: false },
+      ],
+    });
+    expect(sent[0]?.[1].collapseThreads).toBe(true);
+    expect(sent[0]?.[1].sort).toHaveLength(2);
+  });
+
+  it("never sends the one sort the server refuses to collapse", () => {
+    /*
+     * The server declines `collapseThreads` with the `relevance` sort, because
+     * that sort ranks a bounded recent window rather than an index order and so
+     * has no cursor to page a collapsed result with.
+     *
+     * This client cannot express that combination: `sortForInboxType` is the
+     * ONLY thing that builds a sort, and it emits nothing but hasKeyword and
+     * receivedAt. Pinned here so a future sort option cannot quietly introduce
+     * the refusal — the failure would be a list that silently falls back to
+     * uncollapsed, which nobody would notice.
+     */
+    for (const inboxType of INBOX_TYPES) {
+      const sort = sortForInboxType(inboxType) ?? [];
+      for (const comparator of sort) {
+        expect(comparator.property).not.toBe("relevance");
+      }
+    }
   });
 
   it("restores the query's order rather than trusting Email/get's", async () => {
