@@ -295,3 +295,62 @@ describe("unsubscribe (E2 item 6)", () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * E4 — the reader's triage controls and the muted badge (canon §2.2).
+ *
+ * The badge and the button's wording read from the SAME flag, which is the
+ * property worth pinning: a header saying "Silenciada" beside a button offering
+ * to mute is the kind of contradiction a user cannot resolve.
+ */
+describe("E4: snooze and mute in the reader", () => {
+  it("shows no triage controls when the server has no capability", () => {
+    renderPane();
+    expect(screen.queryByRole("button", { name: /posponer/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /silenciar/i })).toBeNull();
+  });
+
+  it("offers snooze and mute once the capability is wired", () => {
+    renderPane({ onSnooze: vi.fn(), onToggleMute: vi.fn() });
+    expect(screen.getByRole("button", { name: /posponer hasta/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^silenciar$/i })).toBeInTheDocument();
+  });
+
+  it("badges a muted conversation in WORDS, with the consequence spelled out", () => {
+    renderPane({ onToggleMute: vi.fn(), isMuted: true });
+    const badge = screen.getByText(/^silenciada$/i);
+    // Not "this conversation is quiet" — the fact that matters is that its
+    // replies skip the inbox entirely, and the title says exactly that.
+    expect(badge).toHaveAttribute("title", expect.stringMatching(/saltean la bandeja/i));
+  });
+
+  it("keeps the badge and the button agreeing about the same fact", () => {
+    renderPane({ onToggleMute: vi.fn(), isMuted: true });
+    expect(screen.getByText(/^silenciada$/i)).toBeInTheDocument();
+    // The button says what the CLICK will do, which is the opposite of the
+    // state the badge reports.
+    expect(screen.getByRole("button", { name: /dejar de silenciar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^silenciar$/i })).toBeNull();
+  });
+
+  it("shows no badge on an unmuted conversation", () => {
+    renderPane({ onToggleMute: vi.fn(), isMuted: false });
+    expect(screen.queryByText(/^silenciada$/i)).toBeNull();
+  });
+
+  it("offers unsnooze only where there is something snoozed", () => {
+    renderPane({ onSnooze: vi.fn() });
+    expect(screen.queryByRole("button", { name: /traer ahora/i })).toBeNull();
+
+    renderPane({ onSnooze: vi.fn(), onUnsnooze: vi.fn() });
+    expect(screen.getByRole("button", { name: /traer ahora/i })).toBeInTheDocument();
+  });
+
+  it("mutes the conversation on click", async () => {
+    const user = userEvent.setup();
+    const onToggleMute = vi.fn();
+    renderPane({ onToggleMute });
+    await user.click(screen.getByRole("button", { name: /^silenciar$/i }));
+    expect(onToggleMute).toHaveBeenCalledTimes(1);
+  });
+});

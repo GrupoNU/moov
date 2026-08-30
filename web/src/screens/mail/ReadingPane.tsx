@@ -22,6 +22,7 @@ import { LabelChips } from "./LabelChips";
 import { LabelMenu } from "./LabelMenu";
 import { labelsFor, type Label } from "../../mail/labelStore";
 import { MoveMenu } from "./MoveMenu";
+import { SnoozeMenu } from "./SnoozeMenu";
 import styles from "./ReadingPane.module.css";
 
 /**
@@ -109,6 +110,24 @@ export interface ReadingPaneProps {
    * the unblock control is not rendered at all.
    */
   readonly inJunk: boolean;
+
+  // --- E4: snooze and mute (canon §2.2) ---
+  /**
+   * Snoozes the open conversation. Absent when the server has no triage
+   * capability, which removes the control rather than disabling it.
+   */
+  readonly onSnooze?: ((until: string) => void) | undefined;
+  /** Mutes or unmutes the open conversation. */
+  readonly onToggleMute?: (() => void) | undefined;
+  /**
+   * True when the open conversation is muted.
+   *
+   * Drives BOTH the badge in the header and the wording of the control, so the
+   * two can never disagree about the same fact.
+   */
+  readonly isMuted?: boolean;
+  /** E4: brings the open conversation back now, in the Snoozed view. */
+  readonly onUnsnooze?: (() => void) | undefined;
   /**
    * E5 / D-4: load remote images without asking (the `imagesPolicy: "always"`
    * pole). Junk still overrides it — see {@link MessageBody}.
@@ -171,6 +190,10 @@ export function ReadingPane({
   mailboxes,
   currentMailboxId,
   inJunk,
+  onSnooze,
+  onToggleMute,
+  isMuted = false,
+  onUnsnooze,
   autoLoadImages = false,
   onNextMessage,
   onPreviousMessage,
@@ -288,6 +311,23 @@ export function ReadingPane({
               max={Number.POSITIVE_INFINITY}
               onSelect={onSelectLabel}
             />
+            {/*
+              E4: the muted badge, in WORDS here rather than as the list row's
+              icon (canon §2.2).
+
+              The reader has the room the row does not, and mute is a state
+              whose consequence a user will not infer from a small icon: it is
+              not "this conversation is quiet", it is "its replies will skip
+              your inbox entirely". The `title` carries that sentence, and the
+              badge sits beside the labels because it belongs to the same
+              family — persistent facts ABOUT the conversation, not actions on
+              it.
+            */}
+            {isMuted && (
+              <span className={styles.mutedBadge} title={t("mute.badgeExplain")}>
+                {t("mute.badge")}
+              </span>
+            )}
           </h1>
           {/*
             Previous/next before close, in that reading order, because that is
@@ -411,6 +451,36 @@ export function ReadingPane({
           <button type="button" className={styles.secondaryAction} onClick={onToggleSpam}>
             {inJunk ? t("action.notSpam") : t("action.spam")}
           </button>
+
+          {/*
+            E4: snooze and mute, in the reader's own text-label idiom rather
+            than the action bar's icons. Both act on the WHOLE conversation,
+            which is the same thing every other button in this row does —
+            `targetMessageIds()` expands the focused thread — and is what canon
+            §2.1 asks for.
+          */}
+          {onSnooze !== undefined && (
+            <SnoozeMenu
+              disabled={false}
+              onSnooze={onSnooze}
+              triggerClassName={styles.secondaryAction}
+              triggerContent={t("snooze.action")}
+            />
+          )}
+
+          {onUnsnooze !== undefined && (
+            <button type="button" className={styles.secondaryAction} onClick={onUnsnooze}>
+              {t("snooze.unsnooze")}
+            </button>
+          )}
+
+          {onToggleMute !== undefined && (
+            <button type="button" className={styles.secondaryAction} onClick={onToggleMute}>
+              {/* The word says what the click will DO — the badge above says
+                  what the state IS, and the two read from the same flag. */}
+              {isMuted ? t("mute.unmute") : t("mute.action")}
+            </button>
+          )}
 
           <MoveMenu
             mailboxes={mailboxes}

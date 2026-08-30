@@ -2471,6 +2471,19 @@ export function MailScreen(): React.JSX.Element {
     });
   }, [selection, selectedId, groups, mutedThreadIds]);
 
+  /**
+   * E4: whether the conversation OPEN IN THE READER is muted.
+   *
+   * Read off the open message rather than off `allTargetsMuted`, which follows
+   * the selection: the reader shows one conversation, and a badge that changed
+   * because a checkbox moved somewhere else in the list would be describing a
+   * different thread than the one on screen.
+   */
+  const openThreadIsMuted = useMemo((): boolean => {
+    const threadId = detail.email?.threadId;
+    return threadId !== undefined && mutedThreadIds.has(threadId);
+  }, [detail.email, mutedThreadIds]);
+
   /** Opens the snooze menu from the `b` key. Published by the menu itself. */
   const snoozeMenuRef = useRef<(() => void) | undefined>(undefined);
   const registerSnoozeMenu = useCallback((open: () => void): void => {
@@ -3517,6 +3530,28 @@ export function MailScreen(): React.JSX.Element {
               mailboxes={mailboxes}
               currentMailboxId={activeMailbox?.id}
               inJunk={inJunk}
+              /*
+               * E4: the triage verbs in the reader, acting on the whole
+               * conversation exactly as archive and delete do —
+               * `targetMessageIds()` expands the open thread, which is what
+               * canon §2.1 asks of every toolbar action.
+               */
+              {...(hasTriage
+                ? {
+                    onSnooze: (until: string) => {
+                      runSnooze(targetMessageIds(), until);
+                    },
+                    onToggleMute: runToggleMute,
+                    isMuted: openThreadIsMuted,
+                  }
+                : {})}
+              {...(hasTriage && inSnoozed
+                ? {
+                    onUnsnooze: () => {
+                      runUnsnooze(targetMessageIds());
+                    },
+                  }
+                : {})}
               /*
                * E5 / D-4: the images policy.
                *
