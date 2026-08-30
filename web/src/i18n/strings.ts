@@ -134,8 +134,11 @@ export const en = {
   "settings.images.ask": "Ask before showing",
 
   "settings.conversation.label": "Conversation view",
+  // E1 landed the behavior this once promised for "this release": the list
+  // groups by conversation and the reader shows the whole thread. A setting
+  // that still disclaimed a shipped feature would teach users not to trust it.
   "settings.conversation.description":
-    "Group replies into a single conversation. The grouped list arrives with the conversation view in this release.",
+    "Group replies into a single conversation. The list shows one row per conversation, and opening one shows every message in it.",
   "settings.hover.label": "Hover actions",
   "settings.hover.description": "Show archive, delete and read buttons on a row when you point at it.",
   "settings.autoAdvance.label": "Auto-advance",
@@ -677,7 +680,7 @@ export const es: Strings = {
 
   "settings.conversation.label": "Vista de conversación",
   "settings.conversation.description":
-    "Agrupa las respuestas en una sola conversación. La lista agrupada llega con la vista de conversación de esta misma entrega.",
+    "Agrupa las respuestas en una sola conversación. La lista muestra una fila por conversación, y al abrir una se ven todos sus mensajes.",
   "settings.hover.label": "Acciones al pasar el cursor",
   "settings.hover.description":
     "Mostrar los botones de archivar, borrar y leído en la fila que estás señalando.",
