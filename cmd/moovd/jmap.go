@@ -149,6 +149,25 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		return nil, fmt.Errorf("building the identity adapter: %w", err)
 	}
 	deps.Identities = identities
+
+	// The preference surface (L3 epic E0): per-account settings under Moov's
+	// vendor capability. Same replacement as the identity adapter above and
+	// for the same reason — NewDeps installed a notifier-less build, and a
+	// preference save must push an SSE StateChange so the user's other
+	// sessions (and the PWA's pre-paint theme cache) reconcile without a
+	// reload.
+	//
+	// It also feeds the SEND path: an account's undoSendSeconds overrides the
+	// daemon's configured window per submission (mail.undoWindowFor), which is
+	// why this must be installed before RegisterSubmissionMethods is called.
+	prefs, err := mail.NewPrefsAdapter(st, broker)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, fmt.Errorf("building the preference adapter: %w", err)
+	}
+	deps.Prefs = prefs
+
 	// The cancel half of the submission counters (W4b): an undo never reaches
 	// the outbox, so the JMAP layer is the only place it can be counted.
 	deps.SubmissionObserver = submissionMetrics{m}
@@ -169,7 +188,11 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		// called below — the two must move together (advertised ==
 		// registered, the J1 rule).
 		Submission: true,
-		Metrics:    m,
+		// Moov's vendor preference capability (E0), advertised because
+		// RegisterPrefsMethods is called below — advertised == registered, the
+		// same J1 rule the submission flag follows.
+		Prefs:   true,
+		Metrics: m,
 		// Push (W4a): the broker says WHEN, the mail adapter says WHAT. The
 		// State reader is deliberately the SAME object that answers Email/get
 		// and Email/changes, which is what guarantees a pushed state string
@@ -195,6 +218,8 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	mail.RegisterQueryMethods(srv.Registry(), deps)
 	mail.RegisterSetMethods(srv.Registry(), deps)
 	mail.RegisterSubmissionMethods(srv.Registry(), deps)
+	// E0's preference methods, under the vendor capability.
+	mail.RegisterPrefsMethods(srv.Registry(), deps)
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),

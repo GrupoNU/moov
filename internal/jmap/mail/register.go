@@ -54,9 +54,24 @@ type Deps struct {
 	// submission sends AS, so the two are mounted together or not at all.
 	Identities IdentityStore
 
+	// Prefs is the per-account preference surface (L3 epic E0), served under
+	// the vendor capability jmap.CapPrefs. Required by RegisterPrefsMethods.
+	//
+	// It is OPTIONAL for the submission path, which consults it for the
+	// account's undo window and falls back to UndoWindow when it is nil: a
+	// deployment may serve mail without the preference capability, and
+	// submission.go's undoWindowFor documents why that fallback must degrade
+	// rather than fail.
+	Prefs PrefsStore
+
 	// UndoWindow is the undo-send window (W-A3): a submission's not_before is
 	// its creation time plus this. RegisterSubmissionMethods clamps it to the
 	// [5s, 30s] range the config contract states; zero means the 10s default.
+	//
+	// Since E0 it is the DEFAULT rather than the only value: an account with a
+	// stored undoSendSeconds preference overrides it per submission
+	// (undoWindowFor). It remains the value used by accounts that have never
+	// chosen one, which is most of them.
 	UndoWindow time.Duration
 
 	// SubmissionObserver, when set, is told once per submission CANCELED here

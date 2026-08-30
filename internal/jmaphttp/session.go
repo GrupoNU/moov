@@ -70,6 +70,22 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		accountCapabilities[jmap.CapSubmission] = submissionAccountCapability()
 		primaryAccounts[jmap.CapSubmission] = id.AccountID
 	}
+	if s.cfg.Prefs {
+		// Moov's vendor preference capability (L3 epic E0). It is advertised
+		// in all three places a data capability belongs, mirroring submission
+		// exactly: the server-wide capabilities object, the account's
+		// accountCapabilities, and primaryAccounts.
+		//
+		// Advertising it in all three is what makes it DISCOVERABLE rather
+		// than secret knowledge a client has to be told about out of band —
+		// RFC 8620 §2 is explicit that the session is where a client learns
+		// what a server can do. A client that does not recognize the URI
+		// ignores three extra keys, which is exactly what §2's extensibility
+		// contract asks of it.
+		capabilities[jmap.CapPrefs] = prefsCapability()
+		accountCapabilities[jmap.CapPrefs] = prefsAccountCapability()
+		primaryAccounts[jmap.CapPrefs] = id.AccountID
+	}
 
 	return map[string]any{
 		"capabilities": capabilities,
@@ -116,6 +132,58 @@ func submissionAccountCapability() map[string]any {
 	return map[string]any{
 		"maxDelayedSend":       0,
 		"submissionExtensions": map[string]any{},
+	}
+}
+
+// prefsCapability is the server-wide value of Moov's vendor preference
+// capability (L3 epic E0).
+//
+// Unlike the two IETF capabilities, whose session values RFC 8621 §1.3 fixes
+// as empty objects, a vendor capability defines its own contents — so this one
+// carries what a client genuinely cannot discover any other way: the schema
+// version it is talking to, and the fact that /changes is implemented rather
+// than declined.
+//
+// Both keys exist to keep a promise the L2 discipline makes everywhere else in
+// this server: never let a client meet an unknownMethod surprise, and never
+// advertise something that is not enforced.
+//
+//   - schemaVersion tells a client which preference vocabulary this server
+//     speaks. A newer server with new properties bumps it, and a client that
+//     stores preferences locally knows to re-read rather than assume.
+//   - maxChangesSupported: true says Prefs/changes really answers, rather than
+//     registering only to decline (which is what Mailbox/queryChanges does,
+//     deliberately). A client can therefore poll it instead of refetching the
+//     whole object.
+func prefsCapability() map[string]any {
+	return map[string]any{
+		"schemaVersion":       mail.PrefsSchemaVersion,
+		"maxChangesSupported": true,
+	}
+}
+
+// prefsAccountCapability is the per-account value of the preference
+// capability.
+//
+// It carries the closed value domains the server ENFORCES, which is the same
+// declared == applied rule mailAccountCapability follows for sort options and
+// limits: a client builds its settings UI from these lists, so a list that
+// disagreed with the validator would produce a control whose every save is
+// refused.
+//
+// The undo-send values are Gmail's exact four (canon §2.3); the server
+// additionally clamps to [5, 30] on the send path, so the advertised set and
+// the enforced bound cannot disagree by construction.
+func prefsAccountCapability() map[string]any {
+	return map[string]any{
+		"undoSendSeconds":     mail.UndoSendSecondsChoices(),
+		"imagesPolicyValues":  mail.ImagesPolicyChoices(),
+		"autoAdvanceValues":   mail.AutoAdvanceChoices(),
+		"densityValues":       mail.DensityChoices(),
+		"readingPaneValues":   mail.ReadingPaneChoices(),
+		"inboxTypeValues":     mail.InboxTypeChoices(),
+		"notificationsValues": mail.NotificationsChoices(),
+		"themeValues":         mail.ThemeChoices(),
 	}
 }
 

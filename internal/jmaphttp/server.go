@@ -102,6 +102,16 @@ type Config struct {
 	// capability.
 	Submission bool
 
+	// Prefs advertises and accepts Moov's vendor preference capability
+	// (jmap.CapPrefs, L3 epic E0). Same rule as Submission: it must be set
+	// exactly when RegisterPrefsMethods was called on this server's registry.
+	//
+	// A client that does not opt into this URI is unaffected by it — RFC 8620
+	// §1.8 makes the server "behave as though it does not implement anything
+	// else" — which is the property that lets a vendor capability ship without
+	// touching any standards-conforming client (capabilities.go).
+	Prefs bool
+
 	// Notifier and State power the EventSource endpoint (W4a, RFC 8620 §7.3).
 	//
 	// Both are required for push: Notifier says WHEN an account changed
@@ -209,7 +219,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 
 	// The capability set the engine accepts in "using" is exactly the set the
 	// session advertises — one list, used twice, so they cannot drift.
-	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(cfg.Submission), cfg.Logger)
+	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(cfg.Submission, cfg.Prefs), cfg.Logger)
 
 	maxSSE := cfg.MaxSSEPerAccount
 	if maxSSE <= 0 {
@@ -295,11 +305,15 @@ func fillLimitDefaults(l jmap.Limits) jmap.Limits {
 // supportedCapabilities is the single source for what this server speaks:
 // advertised in the Session object AND accepted in a request's "using" list.
 // The submission capability joins exactly when the deployment mounts the
-// submission methods (Config.Submission).
-func supportedCapabilities(submission bool) []string {
+// submission methods (Config.Submission), and Moov's vendor preference
+// capability exactly when it mounts those (Config.Prefs).
+func supportedCapabilities(submission, prefs bool) []string {
 	caps := []string{jmap.CapCore, jmap.CapMail}
 	if submission {
 		caps = append(caps, jmap.CapSubmission)
+	}
+	if prefs {
+		caps = append(caps, jmap.CapPrefs)
 	}
 	return caps
 }

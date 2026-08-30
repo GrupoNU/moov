@@ -405,6 +405,145 @@ func TestConformanceForeignAccountIsRejected(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// The vendor capability (E0), against RFC 8620's extensibility clauses
+// ---------------------------------------------------------------------------
+
+// TestConformanceVendorCapabilityDoesNotLeakIntoStandardRequests is the
+// clause-by-clause check that Moov's preference extension cannot affect a
+// client that has never heard of it.
+//
+// RFC 8620 §1.8: "The client MUST opt in to use an extension by passing the
+// appropriate capability identifier in the 'using' array of the Request object
+// [...] The server MUST only follow the specifications that are opted into and
+// behave as though it does not implement anything else when processing a
+// request."
+//
+// §3.6.2 supplies the answer for a method the server is behaving as though it
+// does not implement: "unknownMethod: The server does not recognize this
+// method name."
+//
+// The test drives a registry with BOTH the mail methods and the preference
+// methods mounted — the production wiring — and issues a request whose "using"
+// names only the two IETF capabilities. The mail method must work and the
+// preference method must be invisible, in the same request, because that is
+// the exact situation a standards-only client puts the server in.
+func TestConformanceVendorCapabilityDoesNotLeakIntoStandardRequests(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	registry := jmap.NewRegistry()
+	mail.RegisterGetMethods(registry, f.deps)
+	mail.RegisterQueryMethods(registry, f.deps)
+	mail.RegisterPrefsMethods(registry, f.deps)
+
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapMail, jmap.CapPrefs}, nil)
+
+	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+		"methodCalls":[
+			["Mailbox/get",{"accountId":"` + f.accountID() + `","ids":null},"c1"],
+			["Prefs/get",{"accountId":"` + f.accountID() + `","ids":null},"c2"]]}`
+
+	resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	if len(resp.MethodResponses) != 2 {
+		t.Fatalf("got %d responses, want 2", len(resp.MethodResponses))
+	}
+
+	// The standard method is unaffected by the extension's presence.
+	if resp.MethodResponses[0].Name != "Mailbox/get" {
+		t.Errorf("Mailbox/get answered %q: the vendor capability disturbed a standard method",
+			resp.MethodResponses[0].Name)
+	}
+	// The extension is invisible.
+	if resp.MethodResponses[1].Name != "error" {
+		t.Fatalf("Prefs/get answered %q without being opted into (RFC 8620 §1.8)",
+			resp.MethodResponses[1].Name)
+	}
+	errObj := decodeArgs(t, resp.MethodResponses[1].Args)
+	if errObj["type"] != "unknownMethod" {
+		t.Errorf("type = %v, want unknownMethod (RFC 8620 §3.6.2)", errObj["type"])
+	}
+}
+
+// TestConformanceUnknownCapabilityIsStillRejected guards the other direction:
+// implementing one vendor URI must not have turned the server permissive about
+// URIs in general.
+//
+// RFC 8620 §3.6.1: "unknownCapability: The client included a capability in the
+// 'using' property of the request that the server does not support."
+func TestConformanceUnknownCapabilityIsStillRejected(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	registry := jmap.NewRegistry()
+	mail.RegisterPrefsMethods(registry, f.deps)
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapMail, jmap.CapPrefs}, nil)
+
+	body := `{"using":["urn:ietf:params:jmap:core","https://example.invalid/ns/nope"],
+		"methodCalls":[["Prefs/get",{"accountId":"` + f.accountID() + `","ids":null},"c1"]]}`
+
+	_, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr == nil {
+		t.Fatal("an unsupported capability in \"using\" was accepted (RFC 8620 §3.6.1)")
+	}
+}
+
+// TestConformancePrefsSingletonShape pins the shape RFC 8621 §8 established
+// for a per-account configuration object and that this extension reuses: "The
+// id of the object is 'singleton'."
+//
+// It matters for conformance rather than only for us: a client's generic /get
+// and /set machinery works on this object precisely because the id behaves
+// like any other Id, and a server that answered ids:null with an empty list —
+// or invented a per-account id — would break that machinery without breaking
+// any explicit rule.
+func TestConformancePrefsSingletonShape(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	registry := jmap.NewRegistry()
+	mail.RegisterPrefsMethods(registry, f.deps)
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapPrefs}, nil)
+
+	body := `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+		"methodCalls":[["Prefs/get",{"accountId":"` + f.accountID() + `","ids":null},"c1"]]}`
+
+	resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	args := decodeArgs(t, resp.MethodResponses[0].Args)
+
+	// §5.1's response shape: accountId, state, list, notFound — all present,
+	// with notFound an array rather than null (clients iterate it unguarded).
+	for _, key := range []string{"accountId", "state", "list", "notFound"} {
+		if _, ok := args[key]; !ok {
+			t.Errorf("the /get response is missing %q (RFC 8620 §5.1)", key)
+		}
+	}
+	if _, ok := args["notFound"].([]any); !ok {
+		t.Errorf("notFound is %T, want an array (RFC 8620 §5.1 types it Id[])", args["notFound"])
+	}
+
+	list, ok := args["list"].([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("list = %v, want exactly the singleton", args["list"])
+	}
+	obj, ok := list[0].(map[string]any)
+	if !ok {
+		t.Fatalf("list[0] is %T, want an object", list[0])
+	}
+	if obj["id"] != "singleton" {
+		t.Errorf(`id = %v, want "singleton" (RFC 8621 §8's shape for a per-account configuration object)`, obj["id"])
+	}
+	if s, _ := args["state"].(string); s == "" {
+		t.Error("state is empty; §5.2 makes it the cursor /changes is called with")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Explicit phase-2 gaps (L2 §2.5: skips are "nunca silencioso")
 // ---------------------------------------------------------------------------
 

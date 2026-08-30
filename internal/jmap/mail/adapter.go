@@ -62,6 +62,13 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 	if err != nil {
 		return nil, err
 	}
+	// The preference surface (L3 epic E0), for the same reason and with the
+	// same shape: a reader that also writes, so it takes a notifier, and
+	// cmd/moovd replaces this one with a broker-attached build.
+	prefs, err := NewPrefsAdapter(st, nil)
+	if err != nil {
+		return nil, err
+	}
 	return &Deps{
 		Mailboxes: a,
 		Emails:    a,
@@ -73,6 +80,7 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 		Search:     a,
 		Changes:    a,
 		Identities: identities,
+		Prefs:      prefs,
 		Limits:     limits,
 	}, nil
 }

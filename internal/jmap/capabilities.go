@@ -23,4 +23,36 @@ const (
 	// its session value is an empty object and the per-account values
 	// (maxDelayedSend, submissionExtensions) live in accountCapabilities.
 	CapSubmission = "urn:ietf:params:jmap:submission"
+
+	// CapPrefs is Moov's VENDOR capability for per-account preferences (L3
+	// epic E0): the Prefs singleton and its /get and /set methods.
+	//
+	// # Why a vendor capability rather than an extension of the mail one
+	//
+	// RFC 8620 §2 is explicit that this is the mechanism: "Servers MAY add
+	// additional properties to the [capabilities] object [...] Vendors MUST
+	// use a URI they control as the property name." §1.8 completes the
+	// contract from the client's side: "The client MUST opt in to use an
+	// extension by passing the appropriate capability identifier in the
+	// 'using' array [...] The server MUST only follow the specifications that
+	// are opted into and behave as though it does not implement anything else
+	// when processing a request."
+	//
+	// Those two sentences together are exactly the property epic E0 needs and
+	// an extra key on urn:ietf:params:jmap:mail could not give: a client that
+	// has never heard of Moov's preferences — Bulwark, or any other JMAP
+	// client — never puts this URI in "using", never sees Prefs/get exist, and
+	// is completely unaffected. Bolting preference properties onto the
+	// standard mail capability would instead hand every conforming client
+	// object properties RFC 8621 does not define, in a namespace it is
+	// entitled to assume it understands.
+	//
+	// # The URI
+	//
+	// An https URI under a domain Moov controls, per §2's "a URI they control"
+	// requirement. It is an identifier, not an endpoint: nothing dereferences
+	// it, and it deliberately does not use the urn:ietf:params:jmap: prefix,
+	// which is an IANA registry (RFC 8620 §8.4) reserved for standards-track
+	// specifications and which a vendor extension must not squat.
+	CapPrefs = "https://moov.email/ns/prefs"
 )
