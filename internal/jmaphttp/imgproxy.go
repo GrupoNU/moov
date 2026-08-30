@@ -512,7 +512,7 @@ func (s *Server) handleImageProxy(w http.ResponseWriter, r *http.Request) {
 		writeGenericProblem(w, http.StatusBadGateway, "the image could not be fetched")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		writeGenericProblem(w, http.StatusBadGateway, "the image could not be fetched")
