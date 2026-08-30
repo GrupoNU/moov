@@ -236,7 +236,81 @@ func assignOne(ctx context.Context, tx pgx.Tx, accountID, id int64, c ThreadCand
 		}
 	}
 
+	// The DURABLE identity row (migration 0009, L3 epic E4).
+	//
+	// It is written from inside this same transaction, so a conversation and
+	// the row that names it durably are always consistent — an unpaired row
+	// would let a mute attach to a thread that does not exist.
+	//
+	// The key is derived from THIS message's headers, and that is correct even
+	// though the row describes the whole thread: a message joins a thread only
+	// by naming an ancestor, so the winner's own key is what a later member
+	// derives too — the References chain contains the root regardless of which
+	// member you look at. The one case where it differs is the out-of-order
+	// parent (step 2 above): a genuine ancestor arriving late derives a key
+	// closer to the real root and takes over the row, which is exactly the
+	// "the root only ever moves backwards in time" property migration 0009's
+	// header claims.
+	if err := ensureThreadRow(ctx, tx, accountID, winner, c, assignment.MergedFrom); err != nil {
+		return assignment, err
+	}
+
 	return assignment, nil
+}
+
+// ensureThreadRow maintains the durable thread row for an assignment, and
+// tombstones the rows of the threads this assignment absorbed.
+//
+// # Why the merged rows are tombstoned rather than deleted
+//
+// RFC 8621 §5.2 makes `destroyed` a list a client must be TOLD about; a row
+// that is gone cannot be reported. Keeping the row with a tombstone and a
+// pointer at the winner is what lets Thread/changes answer the merge case
+// exactly — the gap changes.go named as one of the two reasons it declined.
+//
+// # Failure policy
+//
+// An error here aborts the whole assignment transaction, which means a message
+// whose durable row cannot be written is not threaded either. That is the
+// stricter of the two options and it is chosen deliberately: the alternative
+// (thread the message, skip the row) produces a conversation with no durable
+// identity, which mute would silently fail to attach to — a feature that looks
+// like it worked and did not. Failing the batch makes the sync engine retry,
+// which is loud and recoverable.
+func ensureThreadRow(ctx context.Context, tx pgx.Tx, accountID, winner int64, c ThreadCandidate, mergedFrom []int64) error {
+	row, err := EnsureThread(ctx, tx, accountID, ThreadKey(c), winner)
+	if err != nil {
+		return err
+	}
+	for _, loser := range mergedFrom {
+		// The loser's row is found by the thread_id it USED to carry. It may
+		// legitimately not exist — a thread whose messages predate migration
+		// 0009's backfill, or one the backfill skipped — in which case there is
+		// nothing to tombstone and nothing was lost: a client cannot hold an id
+		// for a thread this server never named.
+		var loserRowID int64
+		err := tx.QueryRow(ctx,
+			`SELECT id FROM threads
+			  WHERE account_id = $1 AND thread_id = $2 AND destroyed_at IS NULL`,
+			accountID, loser).Scan(&loserRowID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return fmt.Errorf("finding the merged thread row for %d: %w", loser, err)
+		}
+		if loserRowID == row.ID {
+			// The winner and loser share a row: the durable key did not change,
+			// only the surrogate id did. Nothing was destroyed — EnsureThread
+			// already re-pointed the row — so tombstoning it would report a
+			// death that did not happen.
+			continue
+		}
+		if err := TombstoneThread(ctx, tx, accountID, loserRowID, row.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // threadsOfMessageIDs resolves a set of Message-ID headers to the threads of
