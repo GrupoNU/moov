@@ -88,6 +88,65 @@ type PrefsValue struct {
 	InboxType     string
 	Notifications string
 	Theme         string
+
+	// --- v2: the roaming keys of epics E5, E7, E8 and E9b ---
+
+	// Labels is presentation metadata per label NAME. The label itself lives
+	// in IMAP keywords (arbitrage A6); this is only the swatch and the sidebar
+	// visibility, which Dovecot has no place for.
+	Labels map[string]LabelPrefsValue
+
+	// OfflineDepth is how much mail the PWA keeps for offline reading (E9b).
+	OfflineDepth OfflineDepthValue
+
+	// AddressAutocomplete is "auto" or "manual".
+	AddressAutocomplete string
+
+	// SendAndArchive shows the Send & Archive button in replies (E7).
+	SendAndArchive bool
+
+	// DefaultReplyBehavior is "reply" or "replyAll" (canon §2.3).
+	DefaultReplyBehavior string
+
+	// Signatures is the E7 named-signature model. store.Prefs.Signatures
+	// carries the precedence rule against the per-identity signature; the short
+	// form is that RFC 8621 §6's textSignature/htmlSignature stay AUTHORITATIVE
+	// for any client that speaks only standard JMAP, and this is a
+	// presentation-layer preference our own composer consults first.
+	Signatures SignaturePrefsValue
+}
+
+// LabelPrefsValue is one label's presentation metadata.
+type LabelPrefsValue struct {
+	// Color is a palette id — a name such as "amber", never a hex value.
+	Color string
+	// Visibility is "show", "showIfUnread" or "hide".
+	Visibility string
+}
+
+// OfflineDepthValue is the offline cache depth (E9b).
+type OfflineDepthValue struct {
+	HeadersPerMailbox int
+	Bodies            int
+}
+
+// SignaturePrefsValue is the named-signature model (E7).
+type SignaturePrefsValue struct {
+	Items map[string]SignatureItemValue
+
+	// ForNew and ForReply are item ids, or "" for none — which the wire renders
+	// as null and which means "fall back to the Identity's own signature".
+	ForNew   string
+	ForReply string
+}
+
+// SignatureItemValue is one named signature. HTMLBody is stored SANITIZED, by
+// the same sanitizeHTMLSignature the per-identity htmlSignature goes through
+// (signature.go states why that one string is cleaned on the way in).
+type SignatureItemValue struct {
+	Name     string
+	TextBody string
+	HTMLBody string
 }
 
 // PrefsRecord is the singleton plus the watermark its state cursor is built
@@ -176,6 +235,123 @@ var (
 	// and reconciles it against this value once the session loads; that copy is
 	// a pre-paint cache, not a second source of truth.
 	themeChoices = []string{"light", "dark", "system"}
+
+	// --- v2 ---
+
+	// labelColorChoices is the CLOSED label palette, mirroring the twelve ids
+	// of web/src/mail/labelPalette.ts in its order.
+	//
+	// # Why ids and not colors
+	//
+	// The palette stores a NAME ("amber"), never a hex value, and that is the
+	// palette's own load-bearing decision: a future contrast fix to the amber
+	// swatch reaches every existing label instead of leaving them pinned to a
+	// hex string chosen in 2026. The server therefore validates membership in a
+	// closed set of names and holds no color data at all — the four hex values
+	// behind each id are the client's business, and the server having a second
+	// copy of them would be a second thing to drift.
+	//
+	// # Why the palette is closed at the SERVER too
+	//
+	// The client's reason (a free picker lets a user choose #f0f0f0 on #ffffff
+	// and the unreadable chip is one we shipped) is a client-side argument, and
+	// on its own it would justify enforcing this only in the UI. The server
+	// enforces it because the client is not the only writer: any JMAP client
+	// that opts into the vendor capability can Prefs/set, and an unvalidated
+	// color field is a free-text column reachable over the API. A closed set
+	// keeps the column holding ids and nothing else.
+	//
+	// # The duplication, stated plainly
+	//
+	// This list and labelPalette.ts are the same twelve names written twice,
+	// across a language boundary no compiler spans. It is a real duplication
+	// and it is accepted here because the alternatives are worse: generating Go
+	// from TypeScript would put a codegen step between a designer and a swatch,
+	// and serving the palette from the server would make the client unable to
+	// render a chip until the session loads. What makes it safe is that the
+	// server advertises this exact list in the account capability
+	// (labelColorValues), so a client whose palette disagreed would see the
+	// disagreement in the session object rather than in a rejected save.
+	labelColorChoices = []string{
+		"slate", "red", "orange", "amber", "lime", "green",
+		"teal", "cyan", "blue", "indigo", "purple", "pink",
+	}
+
+	// labelVisibilityChoices — Gmail's three label-list visibilities. It
+	// governs the SIDEBAR only: a hidden label still applies to its messages
+	// and still renders on the message itself.
+	labelVisibilityChoices = []string{"show", "showIfUnread", "hide"}
+
+	// addressAutocompleteChoices — Gmail's "create contacts for autocomplete":
+	// automatic, or only contacts the user saved deliberately.
+	addressAutocompleteChoices = []string{"auto", "manual"}
+
+	// defaultReplyBehaviorChoices — canon §2.3. Gmail's default is "reply", and
+	// the reason to adopt it is that the failure modes are asymmetric: a
+	// reply-all sent by accident to a mailing list cannot be taken back, while
+	// a missing reply-all costs one click.
+	defaultReplyBehaviorChoices = []string{"reply", "replyAll"}
+)
+
+// The caps on the v2 collections. Each is a limit with a REASON, not a round
+// number, and each is advertised in the account capability so a client can
+// stop a user before a save is refused rather than after.
+const (
+	// maxLabelPrefs caps the label-presentation map at the KEYWORD CEILING:
+	// internal/imap.MaxDurableKeywordsPerMailbox, 26, cited at
+	// internal/imap/metadata.go:52.
+	//
+	// The ceiling is a Maildir fact rather than a policy: keywords are encoded
+	// as one letter a-z in the message filename and dovecot-keywords stops at
+	// index 25, so a 27th label cannot exist DURABLY — validation V1 showed
+	// Dovecot accepting 500 keywords in its warm index and keeping 26 after a
+	// force-resync. Presentation metadata for a label that cannot exist is
+	// therefore dead weight, and an uncapped map is one a buggy client can grow
+	// without bound in a column every session read pulls.
+	//
+	// The constant is duplicated rather than imported because internal/jmap
+	// must not depend on internal/imap — the protocol layer knows nothing about
+	// transports — and prefs_mapping_test.go pins the two against each other so
+	// the copy cannot drift.
+	maxLabelPrefs = 26
+
+	// maxSignatureItems caps the named signatures at 10.
+	//
+	// Unlike the label cap this is a product judgement, not a protocol fact:
+	// signatures are picked from a dropdown, and a dropdown of more than about
+	// ten is a list the user scrolls rather than scans. It also bounds the
+	// object a settings screen fetches on every load — ten signatures at the
+	// per-signature cap is the worst case, and it is what maxSignaturesBytes
+	// below is derived from.
+	maxSignatureItems = 10
+
+	// maxSignatureNameBytes caps a signature's display name. It is a label in a
+	// dropdown, not content.
+	maxSignatureNameBytes = 64
+
+	// maxSignatureIDBytes caps a signature's id. The id is opaque to the server
+	// — the client chooses it — so the only constraint that matters is that it
+	// cannot be used to smuggle content into a key.
+	maxSignatureIDBytes = 64
+
+	// maxSignaturesBytes caps the TOTAL size of the signature collection at
+	// 128 KiB — TWICE the per-signature cap (maxSignatureBytes, 64 KiB, shared
+	// with Identity and reasoned about on that constant), not ten times it.
+	//
+	// The per-item cap alone does not bound the object: ten signatures each
+	// just under 64 KiB is 640 KiB in a JSONB column that every settings load
+	// reads, every Prefs/get serializes, and every save rewrites whole. The
+	// obvious total — items × per-item — is the arithmetic that FEELS right and
+	// is exactly the one that can never bind, since it is the sum of the maxima
+	// the per-item check already enforces. A cap that cannot be reached is not
+	// a cap.
+	//
+	// 128 KiB is the honest bound for what this collection IS: a handful of
+	// signatures, the largest image-free corporate ones running a few KiB. It
+	// still admits two signatures at the full per-item cap, so the two limits
+	// do not contradict each other for the single-signature case that shares
+	// its constant with Identity.
+	maxSignaturesBytes = 128 * 1024
 )
 
 // The exported accessors the session object builds its accountCapabilities
@@ -213,6 +389,58 @@ func NotificationsChoices() []string { return append([]string(nil), notification
 // ThemeChoices is the theme domain.
 func ThemeChoices() []string { return append([]string(nil), themeChoices...) }
 
+// LabelColorChoices is the closed label palette, by id.
+func LabelColorChoices() []string { return append([]string(nil), labelColorChoices...) }
+
+// LabelVisibilityChoices is the label-visibility domain.
+func LabelVisibilityChoices() []string { return append([]string(nil), labelVisibilityChoices...) }
+
+// AddressAutocompleteChoices is the address-autocomplete domain.
+func AddressAutocompleteChoices() []string {
+	return append([]string(nil), addressAutocompleteChoices...)
+}
+
+// DefaultReplyBehaviorChoices is the reply-behavior domain.
+func DefaultReplyBehaviorChoices() []string {
+	return append([]string(nil), defaultReplyBehaviorChoices...)
+}
+
+// The numeric limits the account capability advertises, so a settings screen
+// can stop a user at the boundary instead of after a refused save.
+
+// MaxLabelPrefs is the label-metadata cap — the durable-keyword ceiling.
+func MaxLabelPrefs() int { return maxLabelPrefs }
+
+// MaxSignatureItems is the named-signature cap.
+func MaxSignatureItems() int { return maxSignatureItems }
+
+// MaxSignatureBytes is the per-signature byte cap, shared with Identity.
+func MaxSignatureBytes() int { return maxSignatureBytes }
+
+// MaxSignaturesBytes is the cap on the whole signature collection. It is
+// SMALLER than MaxSignatureItems × MaxSignatureBytes on purpose — see the
+// constant — so a client must advertise both to describe what it enforces.
+func MaxSignaturesBytes() int { return maxSignaturesBytes }
+
+// OfflineDepthBounds is the inclusive range each offline depth accepts.
+func OfflineDepthBounds() (headersMin, headersMax, bodiesMin, bodiesMax int) {
+	return minOfflineHeaders, maxOfflineHeaders, minOfflineBodies, maxOfflineBodies
+}
+
+// The offline-depth bounds (E9b).
+//
+// The floors are not decoration. A header depth below a screenful would make
+// the offline list visibly truncated at the first scroll, which a user reads as
+// data loss rather than as a setting; 50 is comfortably more than one viewport
+// at any density. The ceilings are what the browser's storage quota tolerates
+// for a mailbox of realistic size.
+const (
+	minOfflineHeaders = 50
+	maxOfflineHeaders = 1000
+	minOfflineBodies  = 20
+	maxOfflineBodies  = 500
+)
+
 // prefsProperties is the property set this object serves — the keys /get's
 // `properties` filter is validated against.
 var prefsProperties = map[string]bool{
@@ -230,6 +458,13 @@ var prefsProperties = map[string]bool{
 	"inboxType":         true,
 	"notifications":     true,
 	"theme":             true,
+	// v2.
+	"labels":               true,
+	"offlineDepth":         true,
+	"addressAutocomplete":  true,
+	"sendAndArchive":       true,
+	"defaultReplyBehavior": true,
+	"signatures":           true,
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +571,17 @@ func prefsObject(p PrefsValue, properties *[]string) map[string]any {
 		"inboxType":     p.InboxType,
 		"notifications": p.Notifications,
 		"theme":         p.Theme,
+
+		// v2. The three structured properties are rendered as objects rather
+		// than flattened into dotted scalars, because §5.3's PatchObject
+		// addresses nested values with JSON Pointers — "labels/Facturas" — and
+		// a flattened wire shape would have no pointer to address.
+		"labels":               prefsLabelsValue(p.Labels),
+		"offlineDepth":         prefsOfflineDepthValue(p.OfflineDepth),
+		"addressAutocomplete":  p.AddressAutocomplete,
+		"sendAndArchive":       p.SendAndArchive,
+		"defaultReplyBehavior": p.DefaultReplyBehavior,
+		"signatures":           prefsSignaturesValue(p.Signatures),
 	}
 	if properties == nil {
 		return full
@@ -355,6 +601,65 @@ func prefsLanguageValue(tag string) any {
 		return nil
 	}
 	return tag
+}
+
+// prefsLabelsValue renders the label-presentation map.
+//
+// An empty or nil map renders as `{}` and NOT as null, which is the one place
+// this object's wire form deliberately differs from the stored one: the store
+// omits an empty map (its `omitempty` tag) because a missing key and an empty
+// map carry the same information, but a CLIENT reading `null` would have to
+// decide whether to treat it as "no labels" or "unknown", and a client patching
+// into it would have to create the container first. An always-present object is
+// the shape a client can read and patch without a special case.
+func prefsLabelsValue(labels map[string]LabelPrefsValue) map[string]any {
+	out := make(map[string]any, len(labels))
+	for name, l := range labels {
+		out[name] = map[string]any{
+			"color":      l.Color,
+			"visibility": l.Visibility,
+		}
+	}
+	return out
+}
+
+// prefsOfflineDepthValue renders the offline cache depth.
+func prefsOfflineDepthValue(d OfflineDepthValue) map[string]any {
+	return map[string]any{
+		"headersPerMailbox": d.HeadersPerMailbox,
+		"bodies":            d.Bodies,
+	}
+}
+
+// prefsSignaturesValue renders the named-signature model.
+//
+// forNew and forReply are "String|null": null means "no named signature is
+// selected", which is where the precedence rule (documented on
+// store.Prefs.Signatures) falls back to the Identity's own signature. Null
+// rather than "" for the same reason language uses it — "" is not a valid id,
+// so a client would have to guess what it meant.
+func prefsSignaturesValue(s SignaturePrefsValue) map[string]any {
+	items := make(map[string]any, len(s.Items))
+	for id, item := range s.Items {
+		items[id] = map[string]any{
+			"name":     item.Name,
+			"textBody": item.TextBody,
+			"htmlBody": item.HTMLBody,
+		}
+	}
+	return map[string]any{
+		"items":    items,
+		"forNew":   prefsOptionalID(s.ForNew),
+		"forReply": prefsOptionalID(s.ForReply),
+	}
+}
+
+// prefsOptionalID renders an id reference, mapping "" onto JSON null.
+func prefsOptionalID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +887,7 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 			Description: "an update must be a PatchObject (RFC 8620 §5.3)"}
 	}
 
-	next := current
+	next := clonePrefsValue(current)
 	var bad []string
 	reasons := map[string]string{}
 	fail := func(property, why string) {
@@ -592,14 +897,51 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 		reasons[property] = why
 	}
 
+	// The v2 properties with internal structure are collected first and applied
+	// after the loop, because a MAP can be addressed two ways in one patch —
+	// `{"labels": {...}}` replaces it whole, `{"labels/Work": {...}}` edits one
+	// entry — and the cap has to be checked against the RESULT of both, not
+	// against each in isolation. A patch that removes twenty labels and adds
+	// twenty must pass; checking per-key would refuse it at the first addition.
+	//
+	// Map iteration order is random in Go, so an in-loop application would also
+	// make "whole replacement plus per-entry edit in the same patch" resolve
+	// differently on different runs. Deferring makes the order defined: the
+	// whole-value replacement lands first, then the per-entry edits apply on
+	// top of it, which is the only reading under which a patch means one thing.
+	labelEdits := map[string]json.RawMessage{}
+	var labelsWhole json.RawMessage
+	signatureEdits := map[string]json.RawMessage{}
+	var signaturesWhole json.RawMessage
+	offlineEdits := map[string]json.RawMessage{}
+	var offlineWhole json.RawMessage
+
 	for key, val := range fields {
-		property, _, hasSub, ok := splitPatchPointer(key)
-		if !ok || hasSub {
-			// No Prefs property has nested structure: every one is a scalar.
-			// §5.3's invalidPatch is the answer for a pointer that cannot
-			// apply to the object at all.
+		property, sub, hasSub, ok := splitPatchPointer(key)
+		if !ok {
+			// A pointer deeper than one sub-level. "signatures/items/work" is
+			// the realistic case and it is genuinely not addressable here: §5.3
+			// invalidPatch is the answer for a pointer that cannot apply.
 			return nil, &setError{Type: setErrInvalidPatch,
 				Description: fmt.Sprintf("%q is not a patchable path on a Prefs object", key)}
+		}
+		if hasSub {
+			// Only the three structured v2 properties have anything a
+			// sub-pointer could name. Every other property is a scalar, so
+			// "theme/dark" cannot apply to the object at all.
+			switch property {
+			case "labels":
+				labelEdits[sub] = val
+			case "signatures":
+				signatureEdits[sub] = val
+			case "offlineDepth":
+				offlineEdits[sub] = val
+			default:
+				return nil, &setError{Type: setErrInvalidPatch,
+					Description: fmt.Sprintf("%q is not a patchable path on a Prefs object: "+
+						"%q has no nested properties", key, property)}
+			}
+			continue
 		}
 
 		switch property {
@@ -670,6 +1012,27 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 			}
 			next.Language = tag
 
+		// --- v2 ---
+
+		case "addressAutocomplete":
+			prefsPatchEnum(val, addressAutocompleteChoices, property, &next.AddressAutocomplete, fail)
+		case "defaultReplyBehavior":
+			prefsPatchEnum(val, defaultReplyBehaviorChoices, property, &next.DefaultReplyBehavior, fail)
+		case "sendAndArchive":
+			prefsPatchBool(val, property, &next.SendAndArchive, fail)
+
+		case "labels", "signatures", "offlineDepth":
+			// Whole-value replacement, applied after the loop so it can be
+			// composed with any per-entry edits in the same patch.
+			switch property {
+			case "labels":
+				labelsWhole = val
+			case "signatures":
+				signaturesWhole = val
+			default:
+				offlineWhole = val
+			}
+
 		case "id":
 			// §5.3: an immutable/server-set property named in an update "MUST
 			// be rejected with an 'invalidProperties' SetError".
@@ -684,6 +1047,12 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 		}
 	}
 
+	// The structured properties, in the defined order: whole-value replacement
+	// first, then the per-entry edits on top of it.
+	applyLabelsPatch(&next, labelsWhole, labelEdits, fail)
+	applySignaturesPatch(&next, signaturesWhole, signatureEdits, fail)
+	applyOfflineDepthPatch(&next, offlineWhole, offlineEdits, fail)
+
 	if len(bad) > 0 {
 		sort.Strings(bad)
 		details := make([]string, 0, len(bad))
@@ -694,6 +1063,480 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 			Description: strings.Join(details, "; ")}
 	}
 	return &next, nil
+}
+
+// ---------------------------------------------------------------------------
+// the v2 structured properties
+// ---------------------------------------------------------------------------
+
+// clonePrefsValue deep-copies a preference value so a patch can be applied to
+// the maps in place without editing the object it was read from.
+func clonePrefsValue(p PrefsValue) PrefsValue {
+	out := p
+	if p.Labels != nil {
+		out.Labels = make(map[string]LabelPrefsValue, len(p.Labels))
+		for k, v := range p.Labels {
+			out.Labels[k] = v
+		}
+	}
+	if p.Signatures.Items != nil {
+		out.Signatures.Items = make(map[string]SignatureItemValue, len(p.Signatures.Items))
+		for k, v := range p.Signatures.Items {
+			out.Signatures.Items[k] = v
+		}
+	}
+	return out
+}
+
+// applyLabelsPatch applies a whole-map replacement and/or per-label edits.
+//
+// The three shapes a client can send, and what each means:
+//
+//	{"labels": {...}}            replace the whole map.
+//	{"labels": null}             §5.3's "set to the default value if specified"
+//	                             — the default is no custom presentation, so
+//	                             this clears it.
+//	{"labels/Work": {...}}       set one label's metadata.
+//	{"labels/Work": null}        §5.3's "otherwise remove the property" —
+//	                             remove that label's metadata, which returns it
+//	                             to the default swatch, visible. It does NOT
+//	                             delete the label: the label is an IMAP keyword
+//	                             (A6) and this map holds only presentation.
+//
+// The cap is checked ONCE, on the result, for the reason applyPrefsPatch
+// states: a patch that removes twenty labels and adds twenty is legal and a
+// per-key check would refuse it at the first addition.
+func applyLabelsPatch(next *PrefsValue, whole json.RawMessage, edits map[string]json.RawMessage, fail func(string, string)) {
+	if whole == nil && len(edits) == 0 {
+		return
+	}
+
+	if whole != nil {
+		if prefsIsNull(whole) {
+			next.Labels = nil
+		} else {
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(whole, &raw); err != nil {
+				fail("labels", "labels must be an object keyed by label name, or null")
+				return
+			}
+			replacement := make(map[string]LabelPrefsValue, len(raw))
+			for name, val := range raw {
+				l, why := parseLabelPrefs(name, val)
+				if why != "" {
+					fail("labels", why)
+					return
+				}
+				replacement[name] = *l
+			}
+			next.Labels = replacement
+		}
+	}
+
+	for name, val := range edits {
+		if prefsIsNull(val) {
+			delete(next.Labels, name)
+			continue
+		}
+		l, why := parseLabelPrefs(name, val)
+		if why != "" {
+			// The property named in the error is the POINTER the client sent,
+			// not the bare "labels": §5.3's invalidProperties list is what a
+			// settings screen highlights, and highlighting "labels" when one
+			// label of twenty is wrong tells the user nothing.
+			fail("labels/"+name, why)
+			continue
+		}
+		if next.Labels == nil {
+			next.Labels = map[string]LabelPrefsValue{}
+		}
+		next.Labels[name] = *l
+	}
+
+	if len(next.Labels) > maxLabelPrefs {
+		fail("labels", fmt.Sprintf(
+			"at most %d labels can carry presentation metadata (the durable IMAP keyword ceiling: "+
+				"Maildir encodes a keyword as one letter a-z in the filename, so a %dth label cannot "+
+				"survive an index rebuild); the patch would leave %d",
+			maxLabelPrefs, maxLabelPrefs+1, len(next.Labels)))
+	}
+	if len(next.Labels) == 0 {
+		// Normalize empty to nil, so the stored form has one spelling for
+		// "nothing customized" and a round trip cannot change the value.
+		next.Labels = nil
+	}
+}
+
+// parseLabelPrefs validates one label's metadata. It returns a reason string
+// (empty when valid) rather than an error, because the caller composes it into
+// §5.3's per-property description.
+func parseLabelPrefs(name string, raw json.RawMessage) (*LabelPrefsValue, string) {
+	if strings.TrimSpace(name) == "" {
+		return nil, "a label name cannot be empty"
+	}
+	if len(name) > maxLabelNameBytes {
+		return nil, fmt.Sprintf("a label name is at most %d bytes", maxLabelNameBytes)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Sprintf("the metadata for label %q must be an object with color and visibility", name)
+	}
+	// Unknown NESTED keys are refused for the same reason unknown top-level
+	// ones are: a silently dropped key is a control the user watched move that
+	// changed nothing.
+	for key := range fields {
+		if key != "color" && key != "visibility" {
+			return nil, fmt.Sprintf("%q is not a property of a label: expected color and visibility", key)
+		}
+	}
+
+	out := LabelPrefsValue{}
+	color, ok := fields["color"]
+	if !ok {
+		return nil, fmt.Sprintf("the metadata for label %q must name a color", name)
+	}
+	var colorID string
+	if err := json.Unmarshal(color, &colorID); err != nil {
+		return nil, "a label color must be a string"
+	}
+	if !prefsAllowedString(colorID, labelColorChoices) {
+		return nil, fmt.Sprintf("%q is not a palette color: one of %s "+
+			"(the palette is closed and stores ids, not hex, so a contrast fix reaches every existing label)",
+			colorID, prefsJoinStrings(labelColorChoices))
+	}
+	out.Color = colorID
+
+	visibility, ok := fields["visibility"]
+	if !ok {
+		return nil, fmt.Sprintf("the metadata for label %q must name a visibility", name)
+	}
+	var vis string
+	if err := json.Unmarshal(visibility, &vis); err != nil {
+		return nil, "a label visibility must be a string"
+	}
+	if !prefsAllowedString(vis, labelVisibilityChoices) {
+		return nil, fmt.Sprintf("%q is not a label visibility: one of %s",
+			vis, prefsJoinStrings(labelVisibilityChoices))
+	}
+	out.Visibility = vis
+	return &out, ""
+}
+
+// maxLabelNameBytes caps a label NAME used as a map key.
+//
+// It is not the label's authoritative length limit — the label lives in an IMAP
+// keyword and Dovecot has its own opinion — but a key in this map must not be
+// a place to store content, and an unbounded key in a JSONB document is exactly
+// that.
+const maxLabelNameBytes = 256
+
+// applySignaturesPatch applies a whole-value replacement and/or per-key edits
+// to the named-signature model.
+//
+// The addressable sub-keys are the three properties of the object — "items",
+// "forNew", "forReply" — and NOT individual signature ids: "signatures/items"
+// replaces the whole item map, while "signatures/items/work" is a two-level
+// pointer that splitPatchPointer already refused as invalidPatch. That is a
+// real limitation and it is accepted: RFC 8620 §5.3's pointers are one level
+// deep in every other type here, and a client that wants to change one
+// signature sends the whole items map, which is a few kilobytes.
+func applySignaturesPatch(next *PrefsValue, whole json.RawMessage, edits map[string]json.RawMessage, fail func(string, string)) {
+	if whole == nil && len(edits) == 0 {
+		return
+	}
+
+	if whole != nil {
+		if prefsIsNull(whole) {
+			next.Signatures = SignaturePrefsValue{}
+		} else {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(whole, &fields); err != nil {
+				fail("signatures", "signatures must be an object with items, forNew and forReply, or null")
+				return
+			}
+			for key := range fields {
+				if key != "items" && key != "forNew" && key != "forReply" {
+					fail("signatures", fmt.Sprintf(
+						"%q is not a property of signatures: expected items, forNew and forReply", key))
+					return
+				}
+			}
+			replacement := SignaturePrefsValue{}
+			if items, ok := fields["items"]; ok {
+				parsed, why := parseSignatureItems(items)
+				if why != "" {
+					fail("signatures/items", why)
+					return
+				}
+				replacement.Items = parsed
+			}
+			if v, ok := fields["forNew"]; ok {
+				id, why := parseSignatureRef(v, "forNew")
+				if why != "" {
+					fail("signatures/forNew", why)
+					return
+				}
+				replacement.ForNew = id
+			}
+			if v, ok := fields["forReply"]; ok {
+				id, why := parseSignatureRef(v, "forReply")
+				if why != "" {
+					fail("signatures/forReply", why)
+					return
+				}
+				replacement.ForReply = id
+			}
+			next.Signatures = replacement
+		}
+	}
+
+	for key, val := range edits {
+		switch key {
+		case "items":
+			if prefsIsNull(val) {
+				next.Signatures.Items = nil
+				continue
+			}
+			parsed, why := parseSignatureItems(val)
+			if why != "" {
+				fail("signatures/items", why)
+				continue
+			}
+			next.Signatures.Items = parsed
+		case "forNew":
+			id, why := parseSignatureRef(val, "forNew")
+			if why != "" {
+				fail("signatures/forNew", why)
+				continue
+			}
+			next.Signatures.ForNew = id
+		case "forReply":
+			id, why := parseSignatureRef(val, "forReply")
+			if why != "" {
+				fail("signatures/forReply", why)
+				continue
+			}
+			next.Signatures.ForReply = id
+		default:
+			fail("signatures/"+key, fmt.Sprintf(
+				"%q is not a property of signatures: expected items, forNew and forReply", key))
+		}
+	}
+
+	// REFERENTIAL INTEGRITY, checked on the RESULT rather than per-key: forNew
+	// and items can arrive in the same patch, in either order, and a check that
+	// ran while one of them was still the old value would refuse a legal patch
+	// that creates a signature and selects it at once.
+	//
+	// A dangling reference is refused rather than silently cleared because the
+	// fallback it would silently produce — the Identity's own signature — is a
+	// DIFFERENT signature going out under the user's name, which is exactly the
+	// class of silent substitution a settings screen must never do.
+	for property, id := range map[string]string{
+		"signatures/forNew":   next.Signatures.ForNew,
+		"signatures/forReply": next.Signatures.ForReply,
+	} {
+		if id == "" {
+			continue
+		}
+		if _, ok := next.Signatures.Items[id]; !ok {
+			fail(property, fmt.Sprintf(
+				"%q names no signature: set it to null to fall back to the identity's own signature", id))
+		}
+	}
+
+	if len(next.Signatures.Items) == 0 {
+		next.Signatures.Items = nil
+	}
+}
+
+// parseSignatureItems validates the whole item map, applying the count, name,
+// id and byte caps — and SANITIZING each htmlBody through the same
+// sanitizeHTMLSignature the per-identity htmlSignature goes through.
+func parseSignatureItems(raw json.RawMessage) (map[string]SignatureItemValue, string) {
+	var items map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, "signatures.items must be an object keyed by signature id"
+	}
+	if len(items) > maxSignatureItems {
+		return nil, fmt.Sprintf("at most %d named signatures (a picker longer than that is a list "+
+			"the user scrolls rather than scans); the patch names %d", maxSignatureItems, len(items))
+	}
+
+	out := make(map[string]SignatureItemValue, len(items))
+	total := 0
+	for id, val := range items {
+		if strings.TrimSpace(id) == "" {
+			return nil, "a signature id cannot be empty"
+		}
+		if len(id) > maxSignatureIDBytes {
+			return nil, fmt.Sprintf("a signature id is at most %d bytes", maxSignatureIDBytes)
+		}
+
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(val, &fields); err != nil {
+			return nil, fmt.Sprintf("signature %q must be an object with name, textBody and htmlBody", id)
+		}
+		for key := range fields {
+			if key != "name" && key != "textBody" && key != "htmlBody" {
+				return nil, fmt.Sprintf("%q is not a property of a signature: expected name, textBody and htmlBody", key)
+			}
+		}
+
+		item := SignatureItemValue{}
+		if v, ok := fields["name"]; ok {
+			s, ok := patchString(v)
+			if !ok {
+				return nil, fmt.Sprintf("the name of signature %q must be a string", id)
+			}
+			if len(s) > maxSignatureNameBytes {
+				return nil, fmt.Sprintf("the name of signature %q exceeds %d bytes", id, maxSignatureNameBytes)
+			}
+			item.Name = s
+		}
+		if v, ok := fields["textBody"]; ok {
+			s, ok := patchString(v)
+			if !ok {
+				return nil, fmt.Sprintf("the textBody of signature %q must be a string", id)
+			}
+			if len(s) > maxSignatureBytes {
+				return nil, fmt.Sprintf("the textBody of signature %q exceeds this server's %d-byte limit",
+					id, maxSignatureBytes)
+			}
+			item.TextBody = s
+		}
+		if v, ok := fields["htmlBody"]; ok {
+			s, ok := patchString(v)
+			if !ok {
+				return nil, fmt.Sprintf("the htmlBody of signature %q must be a string", id)
+			}
+			// The INPUT is measured, exactly as Identity/set measures it, so an
+			// oversize signature is reported as the user's problem rather than
+			// silently dropped by the sanitizer's own cap.
+			if len(s) > maxSignatureBytes {
+				return nil, fmt.Sprintf("the htmlBody of signature %q exceeds this server's %d-byte limit",
+					id, maxSignatureBytes)
+			}
+			// Sanitized HERE, before storage, through the SAME function the
+			// per-identity htmlSignature uses. signature.go documents why that
+			// one string inverts the project's sanitize-on-render rule, and
+			// every word of it applies identically to a named signature: it is
+			// content Moov transmits under its own DKIM key, the database is
+			// the only copy, and it is served back into a contenteditable.
+			item.HTMLBody = sanitizeHTMLSignature(s)
+		}
+		total += len(item.Name) + len(item.TextBody) + len(item.HTMLBody)
+		out[id] = item
+	}
+
+	if total > maxSignaturesBytes {
+		return nil, fmt.Sprintf("the signatures total %d bytes, over this server's %d-byte limit "+
+			"for the whole collection (each one may still be up to %d bytes)",
+			total, maxSignaturesBytes, maxSignatureBytes)
+	}
+	return out, ""
+}
+
+// parseSignatureRef validates a forNew/forReply reference. Existence is checked
+// by the caller against the RESULT of the whole patch.
+func parseSignatureRef(raw json.RawMessage, property string) (string, string) {
+	if prefsIsNull(raw) {
+		return "", ""
+	}
+	var id string
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return "", fmt.Sprintf("%s must be a signature id or null", property)
+	}
+	if strings.TrimSpace(id) == "" {
+		// "" is accepted as a spelling of null for the same reason language's
+		// empty string is: a client clearing a selection naturally produces it,
+		// and refusing would make "no signature" fail for no visible reason.
+		return "", ""
+	}
+	if len(id) > maxSignatureIDBytes {
+		return "", fmt.Sprintf("%s is at most %d bytes", property, maxSignatureIDBytes)
+	}
+	return id, ""
+}
+
+// applyOfflineDepthPatch applies a whole-value replacement and/or per-key edits
+// to the offline cache depth.
+//
+// Unlike the two maps, a whole replacement here does NOT reset the unnamed key
+// to its default: {"offlineDepth": {"bodies": 50}} keeps the current
+// headersPerMailbox. The object has exactly two members and they are
+// independent settings, so the read a user expects from naming one is "change
+// that one" — the same read every scalar property of this object gets.
+func applyOfflineDepthPatch(next *PrefsValue, whole json.RawMessage, edits map[string]json.RawMessage, fail func(string, string)) {
+	if whole == nil && len(edits) == 0 {
+		return
+	}
+
+	if whole != nil {
+		if prefsIsNull(whole) {
+			next.OfflineDepth = DefaultPrefsValue().OfflineDepth
+		} else {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(whole, &fields); err != nil {
+				fail("offlineDepth", "offlineDepth must be an object with headersPerMailbox and bodies, or null")
+				return
+			}
+			for key, val := range fields {
+				switch key {
+				case "headersPerMailbox", "bodies":
+					// Merged into the per-key edits so the two spellings take
+					// exactly one code path and cannot validate differently.
+					if _, already := edits[key]; !already {
+						edits[key] = val
+					}
+				default:
+					fail("offlineDepth", fmt.Sprintf(
+						"%q is not a property of offlineDepth: expected headersPerMailbox and bodies", key))
+					return
+				}
+			}
+		}
+	}
+
+	for key, val := range edits {
+		switch key {
+		case "headersPerMailbox":
+			prefsPatchBoundedInt(val, "offlineDepth/headersPerMailbox",
+				minOfflineHeaders, maxOfflineHeaders, &next.OfflineDepth.HeadersPerMailbox, fail)
+		case "bodies":
+			prefsPatchBoundedInt(val, "offlineDepth/bodies",
+				minOfflineBodies, maxOfflineBodies, &next.OfflineDepth.Bodies, fail)
+		default:
+			fail("offlineDepth/"+key, fmt.Sprintf(
+				"%q is not a property of offlineDepth: expected headersPerMailbox and bodies", key))
+		}
+	}
+}
+
+// prefsPatchBoundedInt reads an integer property constrained to an inclusive
+// range, reporting the range in the refusal so a client can show it.
+func prefsPatchBoundedInt(raw json.RawMessage, property string, low, high int, dst *int, fail func(string, string)) {
+	n, ok := prefsPatchInt(raw)
+	if !ok {
+		fail(property, fmt.Sprintf("%s must be a whole number between %d and %d", property, low, high))
+		return
+	}
+	if n < low || n > high {
+		fail(property, fmt.Sprintf("%s must be between %d and %d, not %d", property, low, high, n))
+		return
+	}
+	*dst = n
+}
+
+// prefsAllowedString reports membership in a closed domain.
+func prefsAllowedString(v string, choices []string) bool {
+	for _, c := range choices {
+		if v == c {
+			return true
+		}
+	}
+	return false
 }
 
 // prefsPatchEnum reads a closed-domain string property.

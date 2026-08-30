@@ -102,7 +102,7 @@ func prefsRecord(r store.PrefsRecord) PrefsRecord {
 }
 
 func prefsValue(p store.Prefs) PrefsValue {
-	return PrefsValue{
+	out := PrefsValue{
 		UndoSendSeconds:   p.UndoSendSeconds,
 		ImagesPolicy:      p.ImagesPolicy,
 		ConversationView:  p.ConversationView,
@@ -116,11 +116,43 @@ func prefsValue(p store.Prefs) PrefsValue {
 		InboxType:         p.InboxType,
 		Notifications:     p.Notifications,
 		Theme:             p.Theme,
+
+		OfflineDepth: OfflineDepthValue{
+			HeadersPerMailbox: p.OfflineDepth.HeadersPerMailbox,
+			Bodies:            p.OfflineDepth.Bodies,
+		},
+		AddressAutocomplete:  p.AddressAutocomplete,
+		SendAndArchive:       p.SendAndArchive,
+		DefaultReplyBehavior: p.DefaultReplyBehavior,
+		Signatures: SignaturePrefsValue{
+			ForNew:   p.Signatures.ForNew,
+			ForReply: p.Signatures.ForReply,
+		},
 	}
+	// The maps are COPIED rather than aliased, in both directions, so neither
+	// layer can reach into the other's value through a shared reference. A nil
+	// map stays nil (never becomes empty): the store's DefaultPrefs comment
+	// makes nil the canonical spelling of "nothing customized", and an empty
+	// map here would be written back as a key the encoder means to omit.
+	if p.Labels != nil {
+		out.Labels = make(map[string]LabelPrefsValue, len(p.Labels))
+		for name, l := range p.Labels {
+			out.Labels[name] = LabelPrefsValue{Color: l.Color, Visibility: l.Visibility}
+		}
+	}
+	if p.Signatures.Items != nil {
+		out.Signatures.Items = make(map[string]SignatureItemValue, len(p.Signatures.Items))
+		for id, s := range p.Signatures.Items {
+			out.Signatures.Items[id] = SignatureItemValue{
+				Name: s.Name, TextBody: s.TextBody, HTMLBody: s.HTMLBody,
+			}
+		}
+	}
+	return out
 }
 
 func storePrefs(p PrefsValue) store.Prefs {
-	return store.Prefs{
+	out := store.Prefs{
 		UndoSendSeconds:   p.UndoSendSeconds,
 		ImagesPolicy:      p.ImagesPolicy,
 		ConversationView:  p.ConversationView,
@@ -134,7 +166,34 @@ func storePrefs(p PrefsValue) store.Prefs {
 		InboxType:         p.InboxType,
 		Notifications:     p.Notifications,
 		Theme:             p.Theme,
+
+		OfflineDepth: store.OfflineDepthPrefs{
+			HeadersPerMailbox: p.OfflineDepth.HeadersPerMailbox,
+			Bodies:            p.OfflineDepth.Bodies,
+		},
+		AddressAutocomplete:  p.AddressAutocomplete,
+		SendAndArchive:       p.SendAndArchive,
+		DefaultReplyBehavior: p.DefaultReplyBehavior,
+		Signatures: store.SignaturePrefs{
+			ForNew:   p.Signatures.ForNew,
+			ForReply: p.Signatures.ForReply,
+		},
 	}
+	if p.Labels != nil {
+		out.Labels = make(map[string]store.LabelPrefs, len(p.Labels))
+		for name, l := range p.Labels {
+			out.Labels[name] = store.LabelPrefs{Color: l.Color, Visibility: l.Visibility}
+		}
+	}
+	if p.Signatures.Items != nil {
+		out.Signatures.Items = make(map[string]store.SignatureItem, len(p.Signatures.Items))
+		for id, s := range p.Signatures.Items {
+			out.Signatures.Items[id] = store.SignatureItem{
+				Name: s.Name, TextBody: s.TextBody, HTMLBody: s.HTMLBody,
+			}
+		}
+	}
+	return out
 }
 
 // DefaultPrefsValue is the product's factory setting, in this package's shape.

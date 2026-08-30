@@ -37,8 +37,9 @@ func TestPrefsMappingCoversEveryField(t *testing.T) {
 			t.Errorf("store.Prefs has no field %s", want.Name)
 			continue
 		}
-		if got.Type != want.Type {
-			t.Errorf("field %s is %s here and %s in the store", want.Name, want.Type, got.Type)
+		if !sameShape(got.Type, want.Type) {
+			t.Errorf("field %s is %s here and %s in the store: the two are not the same shape",
+				want.Name, want.Type, got.Type)
 		}
 	}
 
@@ -58,9 +59,167 @@ func TestPrefsMappingCoversEveryField(t *testing.T) {
 		InboxType:         "starred_first",
 		Notifications:     "off",
 		Theme:             "system",
+
+		// v2. Populated, because a map whose mapping is only exercised empty
+		// is a mapping that would pass while dropping every entry.
+		Labels: map[string]store.LabelPrefs{
+			"Facturas": {Color: "amber", Visibility: "showIfUnread"},
+			"Equipo":   {Color: "teal", Visibility: "hide"},
+		},
+		OfflineDepth:         store.OfflineDepthPrefs{HeadersPerMailbox: 300, Bodies: 60},
+		AddressAutocomplete:  "manual",
+		SendAndArchive:       false,
+		DefaultReplyBehavior: "replyAll",
+		Signatures: store.SignaturePrefs{
+			Items: map[string]store.SignatureItem{
+				"work": {Name: "Work", TextBody: "-- \nD", HTMLBody: "<p>D</p>"},
+			},
+			ForNew:   "work",
+			ForReply: "work",
+		},
 	}
-	if got := storePrefs(prefsValue(in)); got != in {
+	got := storePrefs(prefsValue(in))
+	if !got.Equal(in) {
 		t.Errorf("round trip changed the value:\n in: %+v\nout: %+v", in, got)
+	}
+	// The nested values specifically: Equal walks the maps, but a mapping that
+	// carried the KEYS and dropped a struct field would need this to be caught.
+	if l := got.Labels["Facturas"]; l.Color != "amber" || l.Visibility != "showIfUnread" {
+		t.Errorf("a label lost a field in the mapping: %+v", l)
+	}
+	if s := got.Signatures.Items["work"]; s.Name != "Work" || s.TextBody != "-- \nD" || s.HTMLBody != "<p>D</p>" {
+		t.Errorf("a signature lost a field in the mapping: %+v", s)
+	}
+}
+
+// TestPrefsMappingDoesNotAliasTheMaps pins that the two layers hold SEPARATE
+// maps. An aliased map would let the JMAP layer's read-patch-write edit the
+// value it was only supposed to be reading from — and the bug would be
+// invisible until two requests raced.
+func TestPrefsMappingDoesNotAliasTheMaps(t *testing.T) {
+	src := store.Prefs{
+		Labels:     map[string]store.LabelPrefs{"a": {Color: "red", Visibility: "show"}},
+		Signatures: store.SignaturePrefs{Items: map[string]store.SignatureItem{"s": {Name: "S"}}},
+	}
+
+	mapped := prefsValue(src)
+	mapped.Labels["a"] = LabelPrefsValue{Color: "blue", Visibility: "hide"}
+	mapped.Signatures.Items["s"] = SignatureItemValue{Name: "TAMPERED"}
+
+	if src.Labels["a"].Color != "red" {
+		t.Error("prefsValue aliases the store's label map: mutating the JMAP value changed the store's")
+	}
+	if src.Signatures.Items["s"].Name != "S" {
+		t.Error("prefsValue aliases the store's signature map")
+	}
+
+	back := storePrefs(mapped)
+	back.Labels["a"] = store.LabelPrefs{Color: "lime", Visibility: "show"}
+	if mapped.Labels["a"].Color != "blue" {
+		t.Error("storePrefs aliases the JMAP value's label map")
+	}
+
+	// A nil map must stay nil rather than becoming empty, in both directions:
+	// nil is the canonical "nothing customized" and the encoder omits it.
+	if prefsValue(store.Prefs{}).Labels != nil {
+		t.Error("prefsValue turned a nil label map into an empty one")
+	}
+	if storePrefs(PrefsValue{}).Signatures.Items != nil {
+		t.Error("storePrefs turned a nil signature map into an empty one")
+	}
+}
+
+// TestPrefsLabelCapIsTheKeywordCeiling pins the duplication this package
+// accepted deliberately: maxLabelPrefs is internal/imap's
+// MaxDurableKeywordsPerMailbox, copied because the protocol layer must not
+// import a transport package.
+//
+// The constant is re-derived here from its documented value rather than
+// imported, so this test fails if either side moves — which is the only thing
+// keeping the copy honest.
+func TestPrefsLabelCapIsTheKeywordCeiling(t *testing.T) {
+	// internal/imap/metadata.go:52 — MaxDurableKeywordsPerMailbox = 26, a
+	// Maildir fact: a keyword is one letter a-z in the filename, and
+	// dovecot-keywords stops at index 25.
+	const durableKeywordCeiling = 26
+	if maxLabelPrefs != durableKeywordCeiling {
+		t.Errorf("maxLabelPrefs = %d, want the durable keyword ceiling %d "+
+			"(internal/imap.MaxDurableKeywordsPerMailbox): presentation metadata for a label "+
+			"that cannot durably exist is dead weight", maxLabelPrefs, durableKeywordCeiling)
+	}
+}
+
+// TestPrefsPaletteMirrorsTheClient pins the OTHER accepted duplication: the
+// twelve palette ids are written in Go here and in TypeScript in
+// web/src/mail/labelPalette.ts, across a boundary no compiler spans.
+//
+// The list below is transcribed from that file. It cannot detect a change made
+// to BOTH sides — nothing can, short of codegen — but it catches the realistic
+// failure, which is one side moving alone.
+func TestPrefsPaletteMirrorsTheClient(t *testing.T) {
+	// web/src/mail/labelPalette.ts, LABEL_COLORS, in order.
+	client := []string{
+		"slate", "red", "orange", "amber", "lime", "green",
+		"teal", "cyan", "blue", "indigo", "purple", "pink",
+	}
+	got := LabelColorChoices()
+	if len(got) != len(client) {
+		t.Fatalf("the server advertises %d palette colors, the client ships %d", len(got), len(client))
+	}
+	for i, want := range client {
+		if got[i] != want {
+			t.Errorf("palette[%d] = %q, want %q (web/src/mail/labelPalette.ts)", i, got[i], want)
+		}
+	}
+	// "slate" is the client's DEFAULT_LABEL_COLOR_ID and its fallback for an id
+	// a build does not know, so it must be a member the server accepts — or a
+	// label the client renders in the default swatch would be one the server
+	// refuses to store.
+	if !prefsAllowedString("slate", labelColorChoices) {
+		t.Error(`"slate" is the client's default and fallback color but the server does not accept it`)
+	}
+}
+
+// sameShape reports whether two types are structurally identical, looking
+// THROUGH the named struct types the two layers deliberately keep separate.
+//
+// The v1 preferences were all scalars, so identical types was the same question
+// as identical shape and the test could ask the easy one. v2's three structured
+// properties made them different questions: store.LabelPrefs and
+// mail.LabelPrefsValue are distinct types ON PURPOSE — contracts.go' boundary,
+// "a type named in this package's interfaces is a type this package owns" —
+// and requiring type identity would be requiring the boundary not to exist.
+//
+// What still has to hold is that they carry the same FIELDS with the same
+// names and shapes, which is the property whose violation actually loses a
+// user's setting. So the walk descends into structs, maps and slices, comparing
+// names and kinds, and only demands exact identity at the leaves.
+func sameShape(a, b reflect.Type) bool {
+	if a == b {
+		return true
+	}
+	if a.Kind() != b.Kind() {
+		return false
+	}
+	switch a.Kind() {
+	case reflect.Struct:
+		if a.NumField() != b.NumField() {
+			return false
+		}
+		for i := range a.NumField() {
+			fa := a.Field(i)
+			fb, ok := b.FieldByName(fa.Name)
+			if !ok || !sameShape(fa.Type, fb.Type) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		return sameShape(a.Key(), b.Key()) && sameShape(a.Elem(), b.Elem())
+	case reflect.Slice, reflect.Ptr:
+		return sameShape(a.Elem(), b.Elem())
+	default:
+		return false
 	}
 }
 
@@ -91,6 +250,9 @@ func TestPrefsDefaultsAreInsideTheEnforcedDomains(t *testing.T) {
 		{"inboxType", d.InboxType, inboxTypeChoices},
 		{"notifications", d.Notifications, notificationsChoices},
 		{"theme", d.Theme, themeChoices},
+		// v2.
+		{"addressAutocomplete", d.AddressAutocomplete, addressAutocompleteChoices},
+		{"defaultReplyBehavior", d.DefaultReplyBehavior, defaultReplyBehaviorChoices},
 	} {
 		found := false
 		for _, allowed := range c.domain {
@@ -106,6 +268,23 @@ func TestPrefsDefaultsAreInsideTheEnforcedDomains(t *testing.T) {
 	// The auto case, which is "" in the stored form and null on the wire.
 	if d.Language != "" {
 		t.Errorf("the default language is %q, want \"\" (follow the browser)", d.Language)
+	}
+
+	// v2's bounded integers. A default outside its own bound would be the worst
+	// shape of this bug: an account that works until the user touches an
+	// unrelated setting, at which point the whole object is refused.
+	if d.OfflineDepth.HeadersPerMailbox < minOfflineHeaders || d.OfflineDepth.HeadersPerMailbox > maxOfflineHeaders {
+		t.Errorf("the default offlineDepth.headersPerMailbox (%d) is outside the enforced [%d, %d]",
+			d.OfflineDepth.HeadersPerMailbox, minOfflineHeaders, maxOfflineHeaders)
+	}
+	if d.OfflineDepth.Bodies < minOfflineBodies || d.OfflineDepth.Bodies > maxOfflineBodies {
+		t.Errorf("the default offlineDepth.bodies (%d) is outside the enforced [%d, %d]",
+			d.OfflineDepth.Bodies, minOfflineBodies, maxOfflineBodies)
+	}
+	// The default names no signature, so the composer falls back to the
+	// Identity's own — which is the precedence rule's base case.
+	if d.Signatures.ForNew != "" || d.Signatures.ForReply != "" {
+		t.Errorf("the default signature selection is %+v, want none", d.Signatures)
 	}
 }
 

@@ -403,9 +403,9 @@ func DefaultPrefs() Prefs {
 			HeadersPerMailbox: 200,
 			Bodies:            100,
 		},
-		AddressAutocomplete:  "auto",     // Gmail's own default.
-		SendAndArchive:       true,       // registered divergence — see the field.
-		DefaultReplyBehavior: "reply",    // canon §2.3; the asymmetric-failure argument.
+		AddressAutocomplete:  "auto",  // Gmail's own default.
+		SendAndArchive:       true,    // registered divergence — see the field.
+		DefaultReplyBehavior: "reply", // canon §2.3; the asymmetric-failure argument.
 		Signatures:           SignaturePrefs{},
 	}
 }

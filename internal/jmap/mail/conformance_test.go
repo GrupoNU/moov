@@ -52,6 +52,7 @@ package mail_test
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/GrupoNU/moov/internal/jmap"
@@ -778,6 +779,154 @@ func TestConformancePrefsSingletonShape(t *testing.T) {
 	}
 }
 
+// TestConformancePrefsSchemaVersionIsAdvertised pins the feature-detection
+// contract of the vendor capability at schema v2.
+//
+// RFC 8620 §2 lets a capability object carry "an object with further
+// information about the server's capabilities in relation to that
+// specification", and §1.8 makes an extension's vocabulary the extension's own
+// business. A client therefore has no standard way to ask "do you know the
+// signatures property?" — asking by TRYING costs it a whole refused save, since
+// §5.3 refuses the entire update when any property is invalid.
+//
+// So the number is published, and this test pins that the number published is
+// the number enforced: mail.PrefsSchemaVersion is store.PrefsSchemaVersion, and
+// it is what every stored document is stamped with.
+func TestConformancePrefsSchemaVersionIsAdvertised(t *testing.T) {
+	if mail.PrefsSchemaVersion != 2 {
+		t.Errorf("PrefsSchemaVersion = %d, want 2 (the E5/E7/E8/E9b roaming keys)",
+			mail.PrefsSchemaVersion)
+	}
+}
+
+// TestConformancePrefsV2PropertiesAreDiscoverable pins that every v2 property
+// the server SERVES is also a property its /get `properties` filter ACCEPTS.
+//
+// RFC 8620 §5.1: "If any of the properties are not valid [...] MUST return
+// invalidArguments." A property served but absent from the accepted set would
+// make a client that filters on exactly what it received get its request
+// refused — which is the specific failure mode the two-list arrangement here
+// is prone to, and which no compiler catches.
+func TestConformancePrefsV2PropertiesAreDiscoverable(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	registry := jmap.NewRegistry()
+	mail.RegisterPrefsMethods(registry, f.deps)
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapPrefs}, nil)
+
+	// Fetch unfiltered, then ask for exactly the keys that came back.
+	body := `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+		"methodCalls":[["Prefs/get",{"accountId":"` + f.accountID() + `","ids":null},"c1"]]}`
+	resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	args := decodeArgs(t, resp.MethodResponses[0].Args)
+	list, _ := args["list"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("list = %v, want the singleton", args["list"])
+	}
+	obj, _ := list[0].(map[string]any)
+
+	names := make([]string, 0, len(obj))
+	for name := range obj {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	// The v2 keys must be among them, or the schema version advertises a
+	// vocabulary the object does not serve.
+	for _, want := range []string{
+		"labels", "offlineDepth", "addressAutocomplete",
+		"sendAndArchive", "defaultReplyBehavior", "signatures",
+	} {
+		if _, ok := obj[want]; !ok {
+			t.Errorf("the served object is missing the v2 property %q although schemaVersion says 2", want)
+		}
+	}
+
+	props, err := json.Marshal(names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+		"methodCalls":[["Prefs/get",{"accountId":"` + f.accountID() +
+		`","ids":null,"properties":` + string(props) + `},"c1"]]}`
+	resp, rerr = engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	if resp.MethodResponses[0].Name == "error" {
+		t.Fatalf("filtering on the properties the server itself served was refused: %s",
+			resp.MethodResponses[0].Args)
+	}
+}
+
+// TestConformancePrefsV2NestedPatchPointers pins the §5.3 PatchObject reading
+// this extension applies to its structured properties.
+//
+// RFC 8620 §5.3: "The keys are a path in JSON Pointer format [RFC6901], with an
+// implicit leading '/'" and "If null, set to the default value if specified for
+// the property; otherwise, remove the property from the patched object."
+//
+// Both halves are exercised on a map member — set one, remove one — because a
+// per-entry patch is the only shape in which this object's caps and its
+// idempotence interact, and it is the shape a settings screen actually sends.
+func TestConformancePrefsV2NestedPatchPointers(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	registry := jmap.NewRegistry()
+	mail.RegisterPrefsMethods(registry, f.deps)
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapPrefs}, nil)
+
+	run := func(t *testing.T, patch string) map[string]any {
+		t.Helper()
+		body := `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+			"methodCalls":[["Prefs/set",{"accountId":"` + f.accountID() +
+			`","update":{"singleton":` + patch + `}},"c1"]]}`
+		resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+		if rerr != nil {
+			t.Fatalf("request-level error: %v", rerr)
+		}
+		if resp.MethodResponses[0].Name == "error" {
+			t.Fatalf("Prefs/set answered a method error: %s", resp.MethodResponses[0].Args)
+		}
+		return decodeArgs(t, resp.MethodResponses[0].Args)
+	}
+
+	if got := run(t, `{"labels":{"A":{"color":"red","visibility":"show"},
+		"B":{"color":"blue","visibility":"show"}}}`); got["notUpdated"] != nil {
+		t.Fatalf("seeding two labels was refused: %v", got["notUpdated"])
+	}
+	// A pointer that SETS one member, and a pointer that REMOVES another, in
+	// one patch.
+	if got := run(t, `{"labels/A":{"color":"lime","visibility":"hide"},"labels/B":null}`); got["notUpdated"] != nil {
+		t.Fatalf("a §5.3 pointer patch was refused: %v", got["notUpdated"])
+	}
+
+	body := `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+		"methodCalls":[["Prefs/get",{"accountId":"` + f.accountID() + `","ids":null},"c1"]]}`
+	resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	args := decodeArgs(t, resp.MethodResponses[0].Args)
+	list, _ := args["list"].([]any)
+	obj, _ := list[0].(map[string]any)
+	labels, ok := obj["labels"].(map[string]any)
+	if !ok {
+		t.Fatalf("labels is %T, want an object", obj["labels"])
+	}
+	if len(labels) != 1 {
+		t.Fatalf("labels = %v, want only A (B was removed with null)", labels)
+	}
+	a, _ := labels["A"].(map[string]any)
+	if a["color"] != "lime" || a["visibility"] != "hide" {
+		t.Errorf("A = %v, want the pointer-patched metadata", a)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Explicit phase-2 gaps (L2 §2.5: skips are "nunca silencioso")
 // ---------------------------------------------------------------------------
@@ -826,6 +975,21 @@ func TestConformancePhase2Gaps(t *testing.T) {
 			"pre-announced via canCalculateChanges:false — conforming, not missing"},
 		{"cross_account", "one account per credential in phase 1; the official suite's " +
 			"cross-account tests would skip for the same reason"},
+
+		// --- preference schema v2 (E5/E7/E8/E9b roaming keys) ---
+		//
+		// Two DECLINES rather than omissions, both listed so the boundary is in
+		// the CI log rather than only in a code comment.
+		{"Prefs_signatures_two_level_pointer", "RFC 8620 §5.3's JSON Pointer patches are honored ONE " +
+			"level deep on this object: \"signatures/items\" replaces the item map, and " +
+			"\"signatures/items/work\" is refused with invalidPatch. Every other type in this server " +
+			"draws the line at the same depth, and a client that wants to change one signature sends " +
+			"the whole items map, which is a few kilobytes"},
+		{"Prefs_labels_are_presentation_only", "the label ITSELF is not a Prefs property and never " +
+			"will be: arbitrage A6 puts the assignment in IMAP keywords and the definition in a " +
+			"METADATA annotation, so a label survives in Dovecot with Moov's database deleted " +
+			"(ADR-001's reconstructible-cache invariant). Prefs.labels carries only the palette id " +
+			"and the sidebar visibility — creating or destroying a label is not a Prefs/set"},
 	}
 	for _, g := range gaps {
 		t.Run(g.name, func(t *testing.T) {

@@ -198,6 +198,16 @@ func submissionAccountCapability() map[string]any {
 //   - schemaVersion tells a client which preference vocabulary this server
 //     speaks. A newer server with new properties bumps it, and a client that
 //     stores preferences locally knows to re-read rather than assume.
+//
+//     It reads 2 as of the E5/E7/E8/E9b roaming keys (labels, offlineDepth,
+//     addressAutocomplete, sendAndArchive, defaultReplyBehavior, signatures).
+//     This is the FEATURE-DETECTION contract the bump was taken for on the
+//     wire side: a client that patches `signatures` against a server still
+//     reporting 1 gets its whole save refused with invalidProperties, so
+//     reading this number first is how it avoids sending the patch at all.
+//     The value is store.PrefsSchemaVersion, so the number advertised and the
+//     number written into every document cannot disagree.
+//
 //   - maxChangesSupported: true says Prefs/changes really answers, rather than
 //     registering only to decline (which is what Mailbox/queryChanges does,
 //     deliberately). A client can therefore poll it instead of refetching the
@@ -222,6 +232,7 @@ func prefsCapability() map[string]any {
 // additionally clamps to [5, 30] on the send path, so the advertised set and
 // the enforced bound cannot disagree by construction.
 func prefsAccountCapability() map[string]any {
+	headersMin, headersMax, bodiesMin, bodiesMax := mail.OfflineDepthBounds()
 	return map[string]any{
 		"undoSendSeconds":     mail.UndoSendSecondsChoices(),
 		"imagesPolicyValues":  mail.ImagesPolicyChoices(),
@@ -231,6 +242,38 @@ func prefsAccountCapability() map[string]any {
 		"inboxTypeValues":     mail.InboxTypeChoices(),
 		"notificationsValues": mail.NotificationsChoices(),
 		"themeValues":         mail.ThemeChoices(),
+
+		// --- schema v2 ---
+		//
+		// The label palette is advertised because it is written down TWICE —
+		// here in Go and in web/src/mail/labelPalette.ts — across a boundary no
+		// compiler spans. Publishing the server's list means a client whose
+		// palette disagreed discovers it in the session object rather than in a
+		// refused save (labelColorChoices' comment carries the full reasoning).
+		"labelColorValues":           mail.LabelColorChoices(),
+		"labelVisibilityValues":      mail.LabelVisibilityChoices(),
+		"addressAutocompleteValues":  mail.AddressAutocompleteChoices(),
+		"defaultReplyBehaviorValues": mail.DefaultReplyBehaviorChoices(),
+
+		// The numeric caps, so a settings screen can stop a user AT the
+		// boundary instead of after a refused save — the same declared ==
+		// enforced rule the value lists follow.
+		//
+		// maxLabels is the durable IMAP keyword ceiling (26), not a product
+		// choice: Maildir encodes a keyword as one letter a-z in the filename,
+		// so a 27th label cannot survive an index rebuild.
+		"maxLabels":         mail.MaxLabelPrefs(),
+		"maxSignatures":     mail.MaxSignatureItems(),
+		"maxSignatureBytes": mail.MaxSignatureBytes(),
+		// SMALLER than maxSignatures × maxSignatureBytes on purpose: the
+		// product of the two maxima is the sum the per-item check already
+		// enforces, so a cap set there could never bind. Both numbers are
+		// advertised because neither describes the limit on its own.
+		"maxSignaturesTotalBytes":     mail.MaxSignaturesBytes(),
+		"minOfflineHeadersPerMailbox": headersMin,
+		"maxOfflineHeadersPerMailbox": headersMax,
+		"minOfflineBodies":            bodiesMin,
+		"maxOfflineBodies":            bodiesMax,
 	}
 }
 
