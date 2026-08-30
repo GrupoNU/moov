@@ -67,7 +67,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 		// empty is a map whose encoding was never exercised.
 		Labels: map[string]store.LabelPrefs{
 			"Facturas": {Color: "amber", Visibility: "showIfUnread"},
-			"Clientes": {Color: "blue", Visibility: "hide"},
+			"Equipo":   {Color: "blue", Visibility: "hide"},
 		},
 		OfflineDepth:         store.OfflineDepthPrefs{HeadersPerMailbox: 500, Bodies: 40},
 		AddressAutocomplete:  "manual",

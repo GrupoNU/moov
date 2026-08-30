@@ -225,9 +225,9 @@ type Prefs struct {
 	//
 	// It is a preference rather than a constant because the honest number
 	// depends on the device: a phone on a metered connection and a desktop on
-	// fibre want different answers, and the user is the only one who knows
-	// which they are on. It roams because the ANSWER usually does not — a user
-	// who wants shallow caching wants it everywhere.
+	// a fast link want different answers, and the user is the only one who
+	// knows which they are on. It roams because the ANSWER usually does not —
+	// a user who wants shallow caching wants it everywhere.
 	OfflineDepth OfflineDepthPrefs `json:"offlineDepth"`
 
 	// AddressAutocomplete is "auto" or "manual" — Gmail's "create contacts for

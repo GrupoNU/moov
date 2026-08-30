@@ -452,46 +452,46 @@ func TestPrefsV2LabelRejectsUnknownNestedKeys(t *testing.T) {
 func TestPrefsV2LabelCapIsTheKeywordCeiling(t *testing.T) {
 	f := newFixture(t)
 
-	cap := mail.MaxLabelPrefs()
-	if cap != 26 {
-		t.Fatalf("MaxLabelPrefs = %d, want the durable keyword ceiling 26", cap)
+	ceiling := mail.MaxLabelPrefs()
+	if ceiling != 26 {
+		t.Fatalf("MaxLabelPrefs = %d, want the durable keyword ceiling 26", ceiling)
 	}
 
-	// Exactly at the cap: accepted.
-	atCap := make([]string, 0, cap)
-	for i := range cap {
+	// Exactly at the ceiling: accepted.
+	atCap := make([]string, 0, ceiling)
+	for i := range ceiling {
 		atCap = append(atCap, fmt.Sprintf(`"L%d":{"color":"red","visibility":"show"}`, i))
 	}
 	if resp := prefsV2Update(t, f, `{"labels":{`+strings.Join(atCap, ",")+`}}`); resp["notUpdated"] != nil {
-		t.Fatalf("a map of exactly %d labels was refused: %v", cap, resp["notUpdated"])
+		t.Fatalf("a map of exactly %d labels was refused: %v", ceiling, resp["notUpdated"])
 	}
-	if got := len(prefsV2Sub(t, prefsV2Object(t, f), "labels")); got != cap {
-		t.Fatalf("stored %d labels, want %d", got, cap)
+	if got := len(prefsV2Sub(t, prefsV2Object(t, f), "labels")); got != ceiling {
+		t.Fatalf("stored %d labels, want %d", got, ceiling)
 	}
 
 	// One over, by whole replacement: refused.
 	overCap := append(append([]string(nil), atCap...),
-		fmt.Sprintf(`"L%d":{"color":"red","visibility":"show"}`, cap))
+		fmt.Sprintf(`"L%d":{"color":"red","visibility":"show"}`, ceiling))
 	entry := prefsV2Refusal(t, f, `{"labels":{`+strings.Join(overCap, ",")+`}}`)
 	if desc, _ := entry["description"].(string); !strings.Contains(desc, "26") {
 		t.Errorf("the refusal does not name the ceiling: %q", desc)
 	}
 
-	// One over, by ADDING to a full map: refused too. The cap must be checked
+	// One over, by ADDING to a full map: refused too. The ceiling must be checked
 	// on the result, not only on a whole replacement.
 	if e := prefsV2Refusal(t, f, `{"labels/Extra":{"color":"red","visibility":"show"}}`); e["type"] != "invalidProperties" {
 		t.Errorf("adding a 27th label by pointer was not refused: %v", e)
 	}
 
 	// And the legal shape the per-key check would have wrongly refused:
-	// removing one and adding one in the same patch keeps the count at the cap.
+	// removing one and adding one in the same patch keeps the count at the ceiling.
 	resp := prefsV2Update(t, f, `{"labels/L0":null,"labels/Nueva":{"color":"blue","visibility":"show"}}`)
 	if resp["notUpdated"] != nil {
 		t.Fatalf("a patch that removes one label and adds one was refused: %v", resp["notUpdated"])
 	}
 	labels := prefsV2Sub(t, prefsV2Object(t, f), "labels")
-	if len(labels) != cap {
-		t.Errorf("after a swap the map holds %d labels, want %d", len(labels), cap)
+	if len(labels) != ceiling {
+		t.Errorf("after a swap the map holds %d labels, want %d", len(labels), ceiling)
 	}
 	if _, ok := labels["Nueva"]; !ok {
 		t.Error("the swap did not add the new label")
