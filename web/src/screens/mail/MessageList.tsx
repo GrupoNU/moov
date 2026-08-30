@@ -62,6 +62,21 @@ export interface MessageListProps {
     group: ThreadGroup,
     modifiers: { readonly toggle: boolean; readonly range: boolean },
   ) => void;
+
+  /*
+   * E2 item 5: the hover actions.
+   *
+   * Gmail ships FOUR — archive, delete, snooze, mark-read. Snooze is epic E4's
+   * (it needs the Snoozed mailbox and the engine's return-to-inbox job, per
+   * GC-10), and a dead fourth button that greys out or does nothing would be
+   * worse than three that work. E4 adds it here as a fourth prop.
+   *
+   * Each acts on the row it sits in, never on the selection: the pointer has
+   * already named its target.
+   */
+  readonly onRowArchive?: (group: ThreadGroup) => void;
+  readonly onRowDelete?: (group: ThreadGroup) => void;
+  readonly onRowToggleRead?: (group: ThreadGroup) => void;
 }
 
 export function MessageList({
@@ -75,6 +90,9 @@ export function MessageList({
   listKey,
   selectedIds,
   onToggleSelect,
+  onRowArchive,
+  onRowDelete,
+  onRowToggleRead,
 }: MessageListProps): React.JSX.Element {
   const { t, locale } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -200,6 +218,9 @@ export function MessageList({
                   onOpen={onOpen}
                   isChecked={selectedIds?.has(group.id) === true}
                   onToggleSelect={onToggleSelect}
+                  onRowArchive={onRowArchive}
+                  onRowDelete={onRowDelete}
+                  onRowToggleRead={onRowToggleRead}
                 />
               );
             })}
@@ -229,6 +250,9 @@ interface MessageRowProps {
         modifiers: { readonly toggle: boolean; readonly range: boolean },
       ) => void)
     | undefined;
+  readonly onRowArchive: ((group: ThreadGroup) => void) | undefined;
+  readonly onRowDelete: ((group: ThreadGroup) => void) | undefined;
+  readonly onRowToggleRead: ((group: ThreadGroup) => void) | undefined;
 }
 
 function MessageRow({
@@ -243,6 +267,9 @@ function MessageRow({
   onOpen,
   isChecked,
   onToggleSelect,
+  onRowArchive,
+  onRowDelete,
+  onRowToggleRead,
 }: MessageRowProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -375,6 +402,70 @@ function MessageRow({
         )}
       </span>
 
+      {/*
+        E2 item 5: the hover actions.
+
+        They live in a `gridcell` of their own so the grid semantics stay
+        valid, and they are FOCUSABLE (`tabIndex={0}` — not the row's roving
+        -1), so a keyboard user reaches them with Tab from the focused row
+        instead of them being a mouse-only feature. The cell is present in the
+        DOM at all times and revealed by CSS on hover/focus-within: rendering
+        it conditionally on a hover state would re-mount three buttons on every
+        pointer move across a virtualized list.
+
+        Every handler stops propagation — without it the click would also open
+        the message, and "archive" would archive-then-open.
+      */}
+      {(onRowArchive !== undefined ||
+        onRowDelete !== undefined ||
+        onRowToggleRead !== undefined) && (
+        <span role="gridcell" className={styles.hoverActions}>
+          {onRowArchive !== undefined && (
+            <RowAction
+              label={t("action.archive")}
+              onActivate={() => {
+                onRowArchive(group);
+              }}
+            >
+              <path d="M2.6 3.6h14.8v3.6H2.6z" />
+              <path d="M4 7.2v8a1.4 1.4 0 0 0 1.4 1.4h9.2a1.4 1.4 0 0 0 1.4-1.4v-8M8 10.4h4" />
+            </RowAction>
+          )}
+          {onRowDelete !== undefined && (
+            <RowAction
+              label={t("action.delete")}
+              onActivate={() => {
+                onRowDelete(group);
+              }}
+            >
+              <path d="M3.6 5.6h12.8M8 5.6V4.2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.4M5.4 5.6l.7 10a1.4 1.4 0 0 0 1.4 1.3h5a1.4 1.4 0 0 0 1.4-1.3l.7-10" />
+            </RowAction>
+          )}
+          {onRowToggleRead !== undefined && (
+            <RowAction
+              /* The label says what the CLICK will do, which depends on the
+                 row's own state — "Mark as read" on an unread row. */
+              label={group.hasUnread ? t("action.markRead") : t("action.markUnread")}
+              onActivate={() => {
+                onRowToggleRead(group);
+              }}
+            >
+              {group.hasUnread ? (
+                <>
+                  <path d="M2.8 6.2l7.2 5 7.2-5" />
+                  <rect x="2.8" y="4.5" width="14.4" height="11" rx="1.6" />
+                </>
+              ) : (
+                <>
+                  <rect x="2.8" y="4.5" width="14.4" height="11" rx="1.6" />
+                  <circle cx="15.4" cy="5.6" r="2.6" fill="currentColor" stroke="none" />
+                </>
+              )}
+            </RowAction>
+          )}
+        </span>
+      )}
+
       <span role="gridcell" className={styles.meta}>
         {group.hasFlagged && (
           <svg
@@ -421,6 +512,64 @@ function MessageRow({
         {group.size > 1 ? ` ${format("list.threadSize", group.size)}` : ""}
       </span>
     </div>
+  );
+}
+
+/**
+ * One hover action inside a row (E2 item 5).
+ *
+ * The three event handlers are not defensive noise — each blocks a specific
+ * way the row's own handlers would otherwise fire:
+ *
+ *   - `onClick` stopping propagation, or "archive" archives AND opens;
+ *   - `onKeyDown` stopping propagation, or the row's Enter/Space handler opens
+ *     the message on top of the button's own activation;
+ *   - `onFocus` stopping propagation, because the row selects itself on focus
+ *     and tabbing to a button must not silently change the selection.
+ */
+function RowAction({
+  label,
+  onActivate,
+  children,
+}: {
+  readonly label: string;
+  readonly onActivate: () => void;
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={styles.rowAction}
+      aria-label={label}
+      title={label}
+      /* Reachable by Tab from the focused row — the roving tabindex governs
+         the ROWS, not the controls inside the one the user is on. */
+      tabIndex={0}
+      onClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        onActivate();
+      }}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+      }}
+      onFocus={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      <svg
+        viewBox="0 0 20 20"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        {children}
+      </svg>
+    </button>
   );
 }
 

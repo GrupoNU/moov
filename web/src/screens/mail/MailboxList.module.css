@@ -191,3 +191,37 @@
     outline: 1px solid CanvasText;
   }
 }
+
+/*
+ * E2: "Empty trash now".
+ *
+ * Deliberately quiet — a link-weight control, indented under its folder, that
+ * only exists while Trash is the folder on screen. An irreversible bulk
+ * destroy styled as a button in a permanently visible sidebar is a mis-click
+ * waiting to happen; this one has to be looked for.
+ */
+.emptyTrash {
+  display: block;
+  width: calc(100% - var(--space-3));
+  margin: var(--space-1) 0 var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.emptyTrash:hover:not(:disabled),
+.emptyTrash:focus-visible:not(:disabled) {
+  border-color: var(--color-danger, var(--border-strong, var(--border-default)));
+  color: var(--color-danger, var(--text-default));
+}
+
+.emptyTrash:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

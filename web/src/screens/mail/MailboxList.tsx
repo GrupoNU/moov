@@ -35,6 +35,15 @@ export interface MailboxListProps {
   readonly selectedId: string | undefined;
   readonly onSelect: (mailbox: Mailbox) => void;
   readonly isLoading?: boolean;
+  /**
+   * E2 item 7: "Empty trash now", rendered under the Trash row.
+   *
+   * Absent means no affordance at all — the caller passes it only while Trash
+   * is the folder on screen, because a permanently visible irreversible bulk
+   * destroy in a sidebar is a mis-click waiting to happen.
+   */
+  readonly onEmptyTrash?: ((trash: Mailbox) => void) | undefined;
+  readonly isEmptyingTrash?: boolean;
 }
 
 /**
@@ -119,6 +128,8 @@ export function MailboxList({
   selectedId,
   onSelect,
   isLoading = false,
+  onEmptyTrash,
+  isEmptyingTrash = false,
 }: MailboxListProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const roleName = useRoleName();
@@ -141,6 +152,9 @@ export function MailboxList({
           name={roleName(node.mailbox)}
           onSelect={onSelect}
           formatUnread={(count) => format("mailbox.unreadCount", count)}
+          {...(onEmptyTrash !== undefined && node.mailbox.role === "trash"
+            ? { onEmptyTrash, isEmptyingTrash }
+            : {})}
         />
       ))}
     </ul>
@@ -153,6 +167,9 @@ interface MailboxRowProps {
   readonly name: string;
   readonly onSelect: (mailbox: Mailbox) => void;
   readonly formatUnread: (count: number) => string;
+  /** E2: present only on the Trash row, and only while Trash is on screen. */
+  readonly onEmptyTrash?: ((trash: Mailbox) => void) | undefined;
+  readonly isEmptyingTrash?: boolean;
 }
 
 function MailboxRow({
@@ -161,7 +178,10 @@ function MailboxRow({
   name,
   onSelect,
   formatUnread,
+  onEmptyTrash,
+  isEmptyingTrash = false,
 }: MailboxRowProps): React.JSX.Element {
+  const { t } = useTranslation();
   const { mailbox, depth } = node;
   const badge = badgeCount(mailbox);
   const hasUnread = mailbox.unreadEmails > 0 && mailbox.role !== "sent";
@@ -210,6 +230,22 @@ function MailboxRow({
         )}
         {badge !== undefined && <span className="visually-hidden">{formatUnread(badge)}</span>}
       </a>
+      {/*
+        A sibling of the folder LINK, not a child of it: a button inside an
+        anchor is invalid HTML and, worse, its click would also navigate.
+      */}
+      {onEmptyTrash !== undefined && (
+        <button
+          type="button"
+          className={styles.emptyTrash}
+          disabled={isEmptyingTrash || mailbox.totalEmails === 0}
+          onClick={() => {
+            onEmptyTrash(mailbox);
+          }}
+        >
+          {isEmptyingTrash ? t("action.emptyTrashWorking") : t("action.emptyTrash")}
+        </button>
+      )}
     </li>
   );
 }

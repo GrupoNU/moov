@@ -306,3 +306,101 @@
     outline-offset: -2px;
   }
 }
+
+/* ==========================================================================
+   E2 item 5: hover actions
+   ========================================================================== */
+
+/*
+ * OVERLAID on the meta column rather than given a sixth grid track.
+ *
+ * That is Gmail's own arrangement, and it is the only one that costs nothing:
+ * a real sixth column would reserve horizontal space on every row forever,
+ * squeezing the subject on narrow windows so that three buttons nobody is
+ * hovering can exist. Overlaying means the date is simply covered while the
+ * pointer is on the row.
+ *
+ * `grid-column: -1` anchors it to the last track and `position: absolute`
+ * lifts it out of the flow, so the row's own column maths is untouched — the
+ * virtualizer's fixed ROW_HEIGHT stays exactly as it was.
+ */
+.hoverActions {
+  position: absolute;
+  top: 0;
+  right: var(--space-4);
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-left: var(--space-4);
+  /* Fade to the row's background so a long date underneath does not show
+     through the gap between the buttons. */
+  background: linear-gradient(to right, transparent, var(--surface-default) 1.5rem);
+
+  /*
+   * Hidden by DEFAULT and revealed on hover/focus — with `visibility`, not
+   * `display: none`, so the buttons stay in the accessibility tree and in the
+   * tab order computation, and a screen-reader user can find them on the row
+   * they are on rather than discovering the list has hidden verbs.
+   */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.row:hover .hoverActions,
+.row:focus-within .hoverActions,
+.row:focus-visible .hoverActions {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* A keyboard user must see them the moment one takes focus, even without a
+   pointer anywhere near the list. */
+.hoverActions:focus-within {
+  opacity: 1;
+  visibility: visible;
+}
+
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rowAction:hover,
+.rowAction:focus-visible {
+  background: var(--color-accent-tint);
+  color: var(--color-accent);
+}
+
+.rowAction svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* The row is selected/checked: keep the gradient matching its background. */
+.selected .hoverActions,
+.checked .hoverActions {
+  background: linear-gradient(to right, transparent, var(--color-accent-tint) 1.5rem);
+}
+
+/*
+ * Respect reduced motion: the reveal becomes instant rather than a fade.
+ * The control still appears — this is not an animation that can be dropped,
+ * it is the only way to reach the action.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .hoverActions {
+    transition: none;
+  }
+}
