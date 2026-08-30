@@ -181,6 +181,22 @@ func RegisterQueryMethods(registry *jmap.Registry, deps *Deps) {
 	registry.Register("Mailbox/changes", jmap.CapMail, deps.handleMailboxChanges)
 	registry.Register("Email/queryChanges", jmap.CapMail, deps.handleEmailQueryChanges)
 	registry.Register("Mailbox/queryChanges", jmap.CapMail, deps.handleMailboxQueryChanges)
+
+	// Mailbox/query (RFC 8621 §2.3), added in L3 epic E1. It needs the mailbox
+	// reader rather than the search repertoire: a folder list is bounded by the
+	// shape of the data, so it is filtered in memory out of the same single
+	// query Mailbox/get already runs (mailbox_query.go).
+	if deps.Mailboxes == nil {
+		panic("mail: RegisterQueryMethods requires a Mailboxes reader for Mailbox/query")
+	}
+	registry.Register("Mailbox/query", jmap.CapMail, deps.handleMailboxQuery)
+
+	// Thread/changes is registered even though it only ever declines, for the
+	// same reason the /queryChanges pair is: a conforming refusal a client knows
+	// how to recover from beats an unknownMethod it reads as a broken server.
+	// The full decision — why it is declined rather than implemented, and what
+	// would close it — is on handleThreadChanges.
+	registry.Register("Thread/changes", jmap.CapMail, deps.handleThreadChanges)
 }
 
 // RegisterSetMethods registers the write-family mail methods (W1: Email/set;

@@ -439,6 +439,101 @@ func (d *Deps) handleMailboxQueryChanges(ctx context.Context, args json.RawMessa
 	return queryChangesRefusal(ctx, args, "Mailbox")
 }
 
+// handleThreadChanges implements Thread/changes (RFC 8621 §3.2, over RFC 8620
+// §5.2) by DECLINING — and the decision to decline rather than implement is
+// worth stating in full, because unlike the /queryChanges pair this one is not
+// obviously impossible.
+//
+// # What the method would have to answer
+//
+// §5.2 requires three disjoint, exact lists: the Threads CREATED since the
+// client's state, those UPDATED, and those DESTROYED. §3 defines a Thread as its
+// id plus its ordered emailIds, so "updated" means its member set changed.
+//
+// # Why the existing change tracking cannot answer it exactly
+//
+// It can answer the easy half. store.ChangedSince yields every message whose
+// state moved after a cursor, and every event that can change a Thread bumps one
+// of those rows — a new message, a tombstone, and (deliberately, threads.go
+// mergeThread) a merge that moves a message's thread_id. Mapping those message
+// ids to their thread ids therefore yields a SUPERSET of the changed threads,
+// cheaply and with the index already in place.
+//
+// It cannot answer the hard half, and the hard half is where a wrong answer
+// corrupts a cache:
+//
+//   - CREATED vs UPDATED. A Thread is created when its FIRST member appears.
+//     The store can see that a message was created after the cursor, but not
+//     whether its thread already existed — that requires knowing whether any
+//     OTHER member of the same thread predates the cursor, which is a query per
+//     changed thread over messages.created_at, and one whose answer is still
+//     wrong after a merge: a merge makes an OLD thread adopt an id that may
+//     itself be old, so "the oldest member is newer than the cursor" does not
+//     mean the client has not seen the thread.
+//   - DESTROYED. A Thread dies when its LAST member is tombstoned, and there is
+//     no tombstone for the thread itself — only for messages. Deciding it needs a
+//     "does any live member remain" count per changed thread, and a thread that
+//     lost its id to a merge is destroyed with no message tombstoned at all.
+//     Nothing in the schema records that event; ADR-001 §2 arbitrated that a
+//     merge "emite destroyed+created", and the store has no place to emit it
+//     from.
+//
+// So an implementation would be a per-thread query fan-out (the unbounded work
+// L2 §4.3 forbids) producing an answer that is still WRONG across merges — the
+// exact case §5.2's created/destroyed rules exist to describe. A server that
+// guessed here would silently corrupt client caches, which §5.2 addresses with a
+// refusal it defines for the purpose.
+//
+// # Why it is registered rather than absent
+//
+// Same reason as the /queryChanges pair: `unknownMethod` tells a client the
+// server is partial, while `cannotCalculateChanges` is a conforming answer with
+// a prescribed recovery — "The client MUST invalidate its Foo cache" — which for
+// Threads costs one Email/query plus a Thread/get, both of which are indexed
+// reads this server serves fast.
+//
+// # What would close it
+//
+// A `threads` table with its own updated_at and a tombstone. Migration 0004
+// deliberately did not create one ("no thread-level state exists in this system
+// ... What a threads table WOULD buy is a place to hang a thread's own state if
+// one ever appears"). This is the first reader that wants it, and L3 epic E4
+// (snooze/mute, which need durable per-thread state anyway) is where it is
+// likely to arrive. Named here so the two land together rather than a thread
+// table appearing without this method following it.
+func (d *Deps) handleThreadChanges(ctx context.Context, args json.RawMessage) (any, *jmap.MethodError) {
+	caller, ok := jmap.CallerFromContext(ctx)
+	if !ok {
+		return nil, jmap.NewMethodError(jmap.CodeForbidden).
+			WithDescription("no authenticated caller in context")
+	}
+	// The account check runs FIRST, so a request naming somebody else's account
+	// gets accountNotFound rather than a refusal that would confirm the account
+	// exists — the same no-oracle rule queryChangesRefusal follows.
+	var req changesRequest
+	if err := json.Unmarshal(args, &req); err != nil {
+		return nil, jmap.NewMethodError(jmap.CodeInvalidArguments).
+			WithDescription("arguments did not parse: %v", err)
+	}
+	if req.AccountID == "" {
+		return nil, jmap.NewMethodError(jmap.CodeInvalidArguments).
+			WithDescription("the accountId argument is required")
+	}
+	if req.AccountID != caller.JMAPAccountID() {
+		return nil, jmap.NewMethodError(jmap.CodeAccountNotFound)
+	}
+	if req.SinceState == "" {
+		return nil, jmap.NewMethodError(jmap.CodeInvalidArguments).
+			WithDescription("the sinceState argument is required")
+	}
+
+	return nil, jmap.NewMethodError(jmap.CodeCannotCalculateChanges).
+		WithDescription("Thread/changes is not supported: this server stores threads as a column on " +
+			"messages rather than as rows, so it cannot tell a thread created since your state from one " +
+			"you have already seen, and a thread destroyed by a merge leaves no record at all; " +
+			"resync with Email/changes, whose threadId tells you which threads moved")
+}
+
 // queryChangesRefusal validates the caller and account, then declines.
 //
 // The account check runs FIRST so that a request naming somebody else's

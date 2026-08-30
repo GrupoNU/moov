@@ -105,6 +105,37 @@ func queryConformance(t *testing.T, f *fixture, args string) (string, map[string
 	return inv.Name, decodeArgs(t, inv.Args)
 }
 
+// dispatchConformance runs ANY method through the full get+query surface and
+// returns the invocation name alongside its decoded arguments.
+//
+// It differs from fixture.call in the one way these tests need: it does NOT fail
+// on a method error. Half of what this suite verifies is that the server
+// DECLINES certain calls conformingly, and a helper that treats every error as a
+// test failure cannot express "the refusal is the expected answer".
+func dispatchConformance(t *testing.T, f *fixture, method, args string) (string, map[string]any) {
+	t.Helper()
+	registry := jmap.NewRegistry()
+	mail.RegisterGetMethods(registry, f.deps)
+	mail.RegisterQueryMethods(registry, f.deps)
+
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapMail}, nil)
+
+	body := fmt.Sprintf(
+		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],`+
+			`"methodCalls":[[%q,%s,"c1"]]}`, method, args)
+
+	resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	if len(resp.MethodResponses) != 1 {
+		t.Fatalf("got %d method responses, want 1", len(resp.MethodResponses))
+	}
+	inv := resp.MethodResponses[0]
+	return inv.Name, decodeArgs(t, inv.Args)
+}
+
 // decodeArgs decodes an invocation's arguments as generic JSON, so assertions
 // are made against the WIRE shape rather than against Go structs.
 func decodeArgs(t *testing.T, raw json.RawMessage) map[string]any {
@@ -299,6 +330,194 @@ func TestConformanceQueryHasKeywordSort(t *testing.T) {
 	// it first — which is exactly what this asserts.
 	if ids[0] != pinned {
 		t.Errorf("first id = %q, want the pinned message %q (order: %v)", ids[0], pinned, ids)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RFC 8621 §4.4.3 — collapseThreads (L3 epic E1)
+// ---------------------------------------------------------------------------
+
+// §4.4.3: "collapseThreads: Boolean (default: false) — If true, Emails in the
+// same Thread as a previous Email in the list (given the filter and sort order)
+// will be removed from the list."
+//
+// Verified against a real store rather than a fake, because the collapse is a
+// SQL shape (store.ListCollapsedMessages) and the thing worth checking here is
+// that the whole stack — trigger-assigned thread_id, the collapse query, the
+// JMAP translation — agrees on which message represents a conversation.
+func TestConformanceQueryCollapseThreads(t *testing.T) {
+	f, ids := newConformanceFixture(t)
+	mb := mail.EncodeMailboxID(f.inbox.ID)
+
+	// Two replies to the fixture's first message, chained by In-Reply-To, so
+	// the store's own JWZ pass groups all three into one thread.
+	for i, parent := range []string{"<conf-0@example.test>", "<conf-reply-0@example.test>"} {
+		raw := fmt.Appendf(nil,
+			"From: replier@example.test\r\n"+
+				"To: conformance@example.test\r\n"+
+				"Subject: Re: Conformance message 0\r\n"+
+				"Message-ID: <conf-reply-%d@example.test>\r\n"+
+				"In-Reply-To: %s\r\n"+
+				"References: %s\r\n"+
+				"Date: Mon, 10 Aug 2026 2%d:00:00 +0000\r\n"+
+				"Content-Type: text/plain; charset=utf-8\r\n"+
+				"\r\nReply %d.\r\n", i, parent, parent, i, i)
+		f.seedRaw(t, raw, f.inbox, int64(10+i), 0, nil)
+	}
+
+	flat := conformanceIDs(t, f, fmt.Sprintf(
+		`{"accountId":%q,"filter":{"inMailbox":%q}}`, f.accountID(), mb))
+	collapsed := conformanceIDs(t, f, fmt.Sprintf(
+		`{"accountId":%q,"filter":{"inMailbox":%q},"collapseThreads":true}`, f.accountID(), mb))
+
+	if len(flat) != 5 {
+		t.Fatalf("the uncollapsed list has %d ids, want 5 (3 fixture + 2 replies)", len(flat))
+	}
+	// Three conversations: the thread of message 0 plus its two replies, and
+	// messages 1 and 2 alone.
+	if len(collapsed) != 3 {
+		t.Fatalf("the collapsed list has %d ids, want 3 conversations: %v", len(collapsed), collapsed)
+	}
+
+	// §4.4.3 keeps the FIRST email of each thread in the list's order, which for
+	// the default newest-first sort is the thread's newest member — here the
+	// second reply, not the original.
+	if collapsed[0] != flat[0] {
+		t.Errorf("the collapsed list leads with %q but the flat list leads with %q; "+
+			"the newest message must head both", collapsed[0], flat[0])
+	}
+	// And the messages the collapse removed are really gone: the fixture's
+	// first message is the ROOT of the three-message thread, so it must not
+	// appear alongside the reply that now represents that conversation.
+	root := ids[0]
+	for _, id := range collapsed {
+		if id == root {
+			t.Errorf("the thread's root %q is in the collapsed list beside its newer members; "+
+				"§4.4.3 keeps exactly one message per thread: %v", root, collapsed)
+		}
+	}
+}
+
+// §4.4.3 collapsing does not change what §5.6 can compute — if anything it makes
+// it harder, because a message enters and leaves a collapsed list when a NEWER
+// member of its thread arrives, without changing itself at all. This server
+// declines every Email/queryChanges (ADR §2) and must keep doing so here.
+func TestConformanceQueryChangesDeclinesCollapsedQueriesToo(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	name, args := dispatchConformance(t, f, "Email/queryChanges", fmt.Sprintf(
+		`{"accountId":%q,"sinceQueryState":"q1-1","filter":{"inMailbox":%q},"collapseThreads":true}`,
+		f.accountID(), mail.EncodeMailboxID(f.inbox.ID)))
+	if name != "error" || args["type"] != "cannotCalculateChanges" {
+		t.Errorf("got %q/%v, want error/cannotCalculateChanges", name, args["type"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RFC 8621 §2.3 — Mailbox/query (L3 epic E1)
+// ---------------------------------------------------------------------------
+
+// §2.3: "This is a standard '/query' method as described in [RFC8620],
+// Section 5.5." Registering it is what turns a client's probe from
+// `unknownMethod` — a statement about the SERVER, which a client generalizes —
+// into an answer about the request.
+func TestConformanceMailboxQuery(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	t.Run("an unfiltered query names every mailbox Mailbox/get returns", func(t *testing.T) {
+		name, qargs := dispatchConformance(t, f, "Mailbox/query",
+			fmt.Sprintf(`{"accountId":%q}`, f.accountID()))
+		if name != "Mailbox/query" {
+			t.Fatalf("Mailbox/query was refused: %v", qargs)
+		}
+		gargs := f.call(t, "Mailbox/get", fmt.Sprintf(`{"accountId":%q}`, f.accountID()))
+
+		list, _ := gargs["list"].([]any)
+		queried, _ := qargs["ids"].([]any)
+		if len(queried) != len(list) {
+			t.Errorf("Mailbox/query returned %d ids but Mailbox/get returned %d objects; "+
+				"the two must describe the same folder set", len(queried), len(list))
+		}
+	})
+
+	t.Run("§5.5 canCalculateChanges is honest", func(t *testing.T) {
+		// Mailbox/queryChanges declines every call, so advertising true here
+		// would send a conforming client to a method that refuses it.
+		_, args := dispatchConformance(t, f, "Mailbox/query",
+			fmt.Sprintf(`{"accountId":%q}`, f.accountID()))
+		if v, _ := args["canCalculateChanges"].(bool); v {
+			t.Error("canCalculateChanges is true but Mailbox/queryChanges declines every call")
+		}
+		if s, _ := args["queryState"].(string); s == "" {
+			t.Error("queryState is empty; §5.5 makes it the cursor future responses are compared to")
+		}
+	})
+
+	t.Run("§2.3 hasAnyRole partitions the tree", func(t *testing.T) {
+		name, args := dispatchConformance(t, f, "Mailbox/query",
+			fmt.Sprintf(`{"accountId":%q,"filter":{"hasAnyRole":true}}`, f.accountID()))
+		if name != "Mailbox/query" {
+			t.Fatalf("the hasAnyRole filter was refused: %v", args)
+		}
+		if ids, _ := args["ids"].([]any); len(ids) == 0 {
+			t.Error("no mailbox has a role, but the fixture seeds INBOX with one")
+		}
+	})
+
+	t.Run("§5.5 calculateTotal is exact for a complete result set", func(t *testing.T) {
+		// The one place this server can always answer `total`: unlike
+		// Email/query there is no window for it to be wrong about.
+		_, args := dispatchConformance(t, f, "Mailbox/query",
+			fmt.Sprintf(`{"accountId":%q,"calculateTotal":true}`, f.accountID()))
+		total, ok := args["total"].(float64)
+		if !ok {
+			t.Fatalf("total is %v, want a number", args["total"])
+		}
+		ids, _ := args["ids"].([]any)
+		if int(total) != len(ids) {
+			t.Errorf("total is %d but %d ids were returned; the folder list is complete, "+
+				"so the two must agree", int(total), len(ids))
+		}
+	})
+
+	t.Run("§2.3 sortAsTree is declined rather than ignored", func(t *testing.T) {
+		// Accepting it would return a flat list to a client that asked for a
+		// tree-consistent one, which renders the hierarchy wrong.
+		name, args := dispatchConformance(t, f, "Mailbox/query",
+			fmt.Sprintf(`{"accountId":%q,"sortAsTree":true}`, f.accountID()))
+		if name != "error" {
+			t.Errorf("sortAsTree was accepted; this server does not implement it: %v", args)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// RFC 8621 §3.2 — Thread/changes (L3 epic E1: a deliberate decline)
+// ---------------------------------------------------------------------------
+
+// §5.2 defines cannotCalculateChanges for exactly this case, and §3.2 makes
+// Thread/changes a standard method — so the conforming answer to "I cannot
+// compute this" is the refusal, not the method's absence.
+//
+// The reasoning for declining rather than implementing is on handleThreadChanges:
+// this server stores threads as a column on messages, so it cannot distinguish a
+// thread created since the client's state from one the client already holds, and
+// a thread destroyed by a merge leaves no record at all.
+func TestConformanceThreadChangesDeclinesRatherThanVanishes(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	name, args := dispatchConformance(t, f, "Thread/changes",
+		fmt.Sprintf(`{"accountId":%q,"sinceState":"1-1"}`, f.accountID()))
+
+	if name != "error" {
+		t.Fatalf("Thread/changes answered: %v", args)
+	}
+	if args["type"] == "unknownMethod" {
+		t.Error("Thread/changes is unregistered, so a client reads the whole server as partial; " +
+			"§5.2's cannotCalculateChanges is the conforming way to decline")
+	}
+	if args["type"] != "cannotCalculateChanges" {
+		t.Errorf("got %v, want cannotCalculateChanges", args["type"])
 	}
 }
 
@@ -560,6 +779,16 @@ func TestConformancePhase2Gaps(t *testing.T) {
 	gaps := []struct{ name, reason string }{
 		{"SearchSnippet_get", "phase 3 (L2 §1)"},
 		{"VacationResponse", "phase 3; the capability is not advertised"},
+		{"Thread_changes", "answered with cannotCalculateChanges BY DESIGN (L3 epic E1): threads are a " +
+			"column on messages rather than rows, so created-vs-updated cannot be told apart and a " +
+			"thread destroyed by a merge leaves no record; closed by the threads table L3 epic E4 " +
+			"needs anyway — conforming, not missing"},
+		{"Mailbox_query_name_filter", "RFC 8621 §2.3's name condition is a substring test, and this " +
+			"server's Mailbox names are the LEAF only (the IMAP path is split into name+parentId), so " +
+			"the substring semantics are unsettled; parentId, role, hasAnyRole and isSubscribed are served"},
+		{"Mailbox_query_sortAsTree_filterAsTree", "RFC 8621 §2.3's two tree arguments are declined by " +
+			"name rather than ignored: this server returns a flat list and the client composes the tree " +
+			"from parentId"},
 		{"EmailSubmission_query", "not registered: no known client queries submissions, and a /query " +
 			"surface without an index behind it would advertise ordering it cannot honor; " +
 			"revisited when a real client asks"},
