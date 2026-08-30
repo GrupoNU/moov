@@ -86,6 +86,30 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: "jsdom",
       setupFiles: ["./src/test/setup.ts"],
+
+      /*
+       * A cap on parallelism, because the default one is a memory limit in
+       * disguise.
+       *
+       * Vitest defaults to roughly one worker per core, and every worker that
+       * runs a component test builds its own jsdom — a browser's worth of
+       * objects each. On an 8-core machine that is 7 simultaneous DOMs, which
+       * on a developer box with other things open reliably ends in
+       * `FATAL ERROR: ... process out of memory` rather than a test failure.
+       * A crash is the worst possible gate result: it reports nothing about
+       * the code, and it looks like the change under test broke something.
+       *
+       * Two forks keep the suite comfortably inside a couple of gigabytes and
+       * cost only a few seconds against the unbounded default. `forks` (not
+       * `threads`) and ISOLATION ARE DELIBERATE: the component suites share
+       * `document`, so running them in one context makes them fail with
+       * "multiple elements found" — a shared-DOM artifact, not a real defect.
+       * Reducing the worker COUNT is the fix; reusing a worker is not.
+       */
+      pool: "forks",
+      poolOptions: {
+        forks: { maxForks: 2 },
+      },
       css: {
         // CSS modules resolve to their class names rather than being stripped,
         // so a test can assert on structure without parsing the styles.
