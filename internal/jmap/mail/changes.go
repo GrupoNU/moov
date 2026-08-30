@@ -440,98 +440,137 @@ func (d *Deps) handleMailboxQueryChanges(ctx context.Context, args json.RawMessa
 }
 
 // handleThreadChanges implements Thread/changes (RFC 8621 §3.2, over RFC 8620
-// §5.2) by DECLINING — and the decision to decline rather than implement is
-// worth stating in full, because unlike the /queryChanges pair this one is not
-// obviously impossible.
+// §5.2) — IMPLEMENTED as of L3 epic E4, replacing the decline this method
+// carried through J3.
 //
-// # What the method would have to answer
+// ===========================================================================
+// WHAT CHANGED, AND WHY THE DECLINE IS NO LONGER HONEST
+// ===========================================================================
 //
-// §5.2 requires three disjoint, exact lists: the Threads CREATED since the
-// client's state, those UPDATED, and those DESTROYED. §3 defines a Thread as its
-// id plus its ordered emailIds, so "updated" means its member set changed.
+// The decline named exactly what would close it: "a `threads` table with its
+// own updated_at and a tombstone [...] L3 epic E4 (snooze/mute, which need
+// durable per-thread state anyway) is where it is likely to arrive." Migration
+// 0009 created it, so the two gaps the decline rested on are now answerable
+// from an indexed read of one table:
 //
-// # Why the existing change tracking cannot answer it exactly
+//   - CREATED vs UPDATED is exact. A thread row has its own created_at, so
+//     "did this conversation exist when the client took its cursor" is a
+//     column comparison rather than the per-thread fan-out over
+//     messages.created_at the decline described. The merge case that made even
+//     that fan-out wrong is gone too: a merge no longer makes an old
+//     conversation adopt a possibly-old surrogate id, because identity is now
+//     the row (whose created_at is when the CONVERSATION first appeared), not
+//     the id of its oldest member.
+//   - DESTROYED-BY-MERGE is exact. threads.merged_into + destroyed_at is the
+//     record ADR-001 §2 asked for ("fusión de threads emite destroyed+created")
+//     and that the schema previously had nowhere to write.
 //
-// It can answer the easy half. store.ChangedSince yields every message whose
-// state moved after a cursor, and every event that can change a Thread bumps one
-// of those rows — a new message, a tombstone, and (deliberately, threads.go
-// mergeThread) a merge that moves a message's thread_id. Mapping those message
-// ids to their thread ids therefore yields a SUPERSET of the changed threads,
-// cheaply and with the index already in place.
+// Continuing to answer cannotCalculateChanges with that table in place would
+// be a server refusing a question it can now answer — which is the dishonest
+// direction, and the opposite of the reason the refusal was right before.
 //
-// It cannot answer the hard half, and the hard half is where a wrong answer
-// corrupts a cache:
+// ===========================================================================
+// THE ONE CASE THAT IS STILL NOT EXACT, STATED RATHER THAN HIDDEN
+// ===========================================================================
 //
-//   - CREATED vs UPDATED. A Thread is created when its FIRST member appears.
-//     The store can see that a message was created after the cursor, but not
-//     whether its thread already existed — that requires knowing whether any
-//     OTHER member of the same thread predates the cursor, which is a query per
-//     changed thread over messages.created_at, and one whose answer is still
-//     wrong after a merge: a merge makes an OLD thread adopt an id that may
-//     itself be old, so "the oldest member is newer than the cursor" does not
-//     mean the client has not seen the thread.
-//   - DESTROYED. A Thread dies when its LAST member is tombstoned, and there is
-//     no tombstone for the thread itself — only for messages. Deciding it needs a
-//     "does any live member remain" count per changed thread, and a thread that
-//     lost its id to a merge is destroyed with no message tombstoned at all.
-//     Nothing in the schema records that event; ADR-001 §2 arbitrated that a
-//     merge "emite destroyed+created", and the store has no place to emit it
-//     from.
+// A Thread also dies when its LAST message is tombstoned — the user deleted
+// every mail in a conversation. That event writes to message_state, not to
+// threads, so this method does NOT report it in `destroyed`.
 //
-// So an implementation would be a per-thread query fan-out (the unbounded work
-// L2 §4.3 forbids) producing an answer that is still WRONG across merges — the
-// exact case §5.2's created/destroyed rules exist to describe. A server that
-// guessed here would silently corrupt client caches, which §5.2 addresses with a
-// refusal it defines for the purpose.
+// What it does instead: nothing. The thread row stays live, so the
+// conversation is simply absent from the next /changes response unless
+// something else touches it.
 //
-// # Why it is registered rather than absent
+// Why that is the right trade rather than a second gap papered over:
 //
-// Same reason as the /queryChanges pair: `unknownMethod` tells a client the
-// server is partial, while `cannotCalculateChanges` is a conforming answer with
-// a prescribed recovery — "The client MUST invalidate its Foo cache" — which for
-// Threads costs one Email/query plus a Thread/get, both of which are indexed
-// reads this server serves fast.
+//   - Closing it exactly would require, per deletion batch, a "does any live
+//     member remain" count for each affected thread — precisely the per-thread
+//     query fan-out on the WRITE path that L2 §4.3 forbids and that the
+//     original decline correctly identified as unaffordable. Deleting a
+//     mailbox's worth of mail would turn into one aggregate per conversation.
+//   - The failure it leaves is bounded and benign in the direction that
+//     matters. §5.2's contract is about not MISLEADING a cache: reporting a
+//     thread as created when the client has it, or destroyed when it has not,
+//     corrupts state. Failing to mention a thread whose messages the client
+//     was ALREADY told were destroyed (Email/changes reported every one of
+//     them) leaves the client holding a Thread id whose emailIds list is
+//     empty — and Thread/get answers notFound for it, which is the same
+//     signal, one request later.
 //
-// # What would close it
-//
-// A `threads` table with its own updated_at and a tombstone. Migration 0004
-// deliberately did not create one ("no thread-level state exists in this system
-// ... What a threads table WOULD buy is a place to hang a thread's own state if
-// one ever appears"). This is the first reader that wants it, and L3 epic E4
-// (snooze/mute, which need durable per-thread state anyway) is where it is
-// likely to arrive. Named here so the two land together rather than a thread
-// table appearing without this method following it.
+// So the answer this method gives is exact for created, exact for updated,
+// exact for destroyed-by-merge, and silent for destroyed-by-emptying. That
+// last one is written down here, in the conformance suite, and in the E4
+// report, because a gap nobody names is the kind that gets rediscovered as a
+// bug.
 func (d *Deps) handleThreadChanges(ctx context.Context, args json.RawMessage) (any, *jmap.MethodError) {
-	caller, ok := jmap.CallerFromContext(ctx)
-	if !ok {
-		return nil, jmap.NewMethodError(jmap.CodeForbidden).
-			WithDescription("no authenticated caller in context")
+	req, caller, merr := parseChanges(ctx, args)
+	if merr != nil {
+		return nil, merr
 	}
-	// The account check runs FIRST, so a request naming somebody else's account
-	// gets accountNotFound rather than a refusal that would confirm the account
-	// exists — the same no-oracle rule queryChangesRefusal follows.
-	var req changesRequest
-	if err := json.Unmarshal(args, &req); err != nil {
-		return nil, jmap.NewMethodError(jmap.CodeInvalidArguments).
-			WithDescription("arguments did not parse: %v", err)
+	if d.ThreadChanges == nil {
+		// A deployment wired without the thread-change reader answers the
+		// refusal this method used to give unconditionally — a conforming
+		// answer with a prescribed recovery, rather than an unknownMethod a
+		// client reads as a broken server.
+		return nil, jmap.NewMethodError(jmap.CodeCannotCalculateChanges).
+			WithDescription("this deployment does not track thread changes; resync with Email/changes, " +
+				"whose threadId tells you which conversations moved")
 	}
-	if req.AccountID == "" {
-		return nil, jmap.NewMethodError(jmap.CodeInvalidArguments).
-			WithDescription("the accountId argument is required")
-	}
-	if req.AccountID != caller.JMAPAccountID() {
-		return nil, jmap.NewMethodError(jmap.CodeAccountNotFound)
-	}
-	if req.SinceState == "" {
-		return nil, jmap.NewMethodError(jmap.CodeInvalidArguments).
-			WithDescription("the sinceState argument is required")
+	since, merr := cursorFromState(req.SinceState)
+	if merr != nil {
+		return nil, merr
 	}
 
-	return nil, jmap.NewMethodError(jmap.CodeCannotCalculateChanges).
-		WithDescription("Thread/changes is not supported: this server stores threads as a column on " +
-			"messages rather than as rows, so it cannot tell a thread created since your state from one " +
-			"you have already seen, and a thread destroyed by a merge leaves no record at all; " +
-			"resync with Email/changes, whose threadId tells you which threads moved")
+	limit := defaultChangesLimit
+	if req.MaxChanges != nil {
+		capped := min(*req.MaxChanges, uint64(maxChangesCeiling))
+		limit = int(capped) //nolint:gosec // capped to maxChangesCeiling on the line above
+	}
+
+	rows, err := d.ThreadChanges.ThreadsChangedSince(ctx, caller.AccountID, since, limit+1)
+	if err != nil {
+		return nil, serverFail("reading thread changes", err)
+	}
+
+	resp := newChangesResponse(req.AccountID, req.SinceState)
+	hasMore := false
+	if len(rows) > limit {
+		rows = rows[:limit]
+		hasMore = true
+	}
+	for _, t := range rows {
+		// §5.2's three coalescing rules, one branch each, over the two facts
+		// the row carries: when the conversation first appeared, and whether it
+		// has since been absorbed.
+		created := since.IsZero() || t.CreatedAt.After(since)
+		switch {
+		case created && t.Destroyed:
+			// "If a record has been created AND destroyed since the old state,
+			// the server SHOULD remove the id from the response entirely." A
+			// conversation that appeared and was merged away between two polls
+			// is one the client never saw and never will.
+		case t.Destroyed:
+			resp.Destroyed = append(resp.Destroyed, EncodeThreadID(t.ThreadID))
+		case created:
+			resp.Created = append(resp.Created, EncodeThreadID(t.ThreadID))
+		default:
+			resp.Updated = append(resp.Updated, EncodeThreadID(t.ThreadID))
+		}
+	}
+	resp.HasMoreChanges = hasMore
+	if hasMore {
+		// The cursor stops at the last row RETURNED, so the next page starts
+		// exactly where this one ended — the same paging contract
+		// EmailSubmission/changes uses.
+		resp.NewState = stateForCursor(rows[len(rows)-1].UpdatedAt)
+	} else {
+		state, err := d.State.ThreadState(ctx, caller.AccountID)
+		if err != nil {
+			return nil, serverFail("reading thread state", err)
+		}
+		resp.NewState = state
+	}
+	return resp, nil
 }
 
 // queryChangesRefusal validates the caller and account, then declines.

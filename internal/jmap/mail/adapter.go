@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -631,10 +632,89 @@ func (a *Adapter) MailboxState(ctx context.Context, accountID int64) (string, er
 	return a.dataState(ctx, accountID)
 }
 
-// ThreadState is the Thread type's state, on the same watermark for the same
-// reason: a thread changes when a message joins it.
+// ThreadsChangedSince implements ThreadChangeReader over the threads table.
+func (a *Adapter) ThreadsChangedSince(ctx context.Context, accountID int64, since time.Time, limit int) ([]ThreadChangeRow, error) {
+	rows, err := a.store.ThreadRowsChangedSince(ctx, accountID, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ThreadChangeRow, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, ThreadChangeRow{
+			ThreadID:  t.ThreadID,
+			CreatedAt: t.CreatedAt,
+			UpdatedAt: t.UpdatedAt,
+			Destroyed: t.Destroyed(),
+		})
+	}
+	return out, nil
+}
+
+// ThreadState is the Thread type's state.
+//
+// It is the LATER of two watermarks, and both terms are load-bearing since
+// L3 epic E4 made Thread/changes a real method (changes.go):
+//
+//   - the message watermark, because a thread changes when a message joins or
+//     leaves it, and that is what moves message_state;
+//   - the thread-row watermark (migration 0009), because a merge tombstone and
+//     a durable-identity repoint are thread events that may touch no message
+//     row of their own.
+//
+// Taking the max rather than picking one keeps the cursor MONOTONE against
+// both feeds: Thread/changes pages on threads.updated_at, so a state string
+// that could sit behind a thread row would make a client re-see the same
+// change forever, and one that ignored messages would fail to advance when a
+// conversation gained a member.
+//
+// The count term is the message count for the same reason every other type
+// uses one: it is what makes the state differ after a reap that lowers the
+// row count without moving any watermark.
 func (a *Adapter) ThreadState(ctx context.Context, accountID int64) (string, error) {
-	return a.dataState(ctx, accountID)
+	messages, err := a.dataState(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	threadWatermark, err := a.store.ThreadRowWatermark(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	if threadWatermark.IsZero() {
+		return messages, nil
+	}
+	// The message state's own watermark, re-derived from the string rather
+	// than re-queried: dataState already paid for the scan, and parsing back
+	// the value it produced is what guarantees the two halves are compared as
+	// the same quantity.
+	messageWatermark, count, ok := parseStateString(messages)
+	if !ok || threadWatermark.After(messageWatermark) {
+		return stateFor(threadWatermark, count), nil
+	}
+	return messages, nil
+}
+
+// parseStateString reads back a "<nanos>-<count>" state string.
+//
+// It is the inverse of stateFor and exists so a caller that needs to COMBINE
+// two states does it in the same units stateFor emits, rather than by
+// re-querying and hoping the second read sees the same rows.
+func parseStateString(state string) (watermark time.Time, count int64, ok bool) {
+	nanos, countPart, found := strings.Cut(state, "-")
+	if !found {
+		return time.Time{}, 0, false
+	}
+	n, err := strconv.ParseInt(nanos, 10, 64)
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	c, err := strconv.ParseInt(countPart, 10, 64)
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	if n == 0 {
+		return time.Time{}, c, true
+	}
+	return time.Unix(0, n).UTC(), c, true
 }
 
 // stateFor renders a watermark as a state string.

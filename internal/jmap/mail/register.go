@@ -29,6 +29,12 @@ type Deps struct {
 	// Changes feeds Email/changes and Mailbox/changes (J3).
 	Changes ChangesReader
 
+	// ThreadChanges feeds Thread/changes (L3 epic E4). nil makes that method
+	// answer the cannotCalculateChanges refusal it answered through J3, which
+	// is the honest degradation for a deployment whose schema predates
+	// migration 0009 — see handleThreadChanges.
+	ThreadChanges ThreadChangeReader
+
 	// Snippets answers SearchSnippet/get (RFC 8621 §5, L3 epic E3). Required
 	// by RegisterQueryMethods: a search surface that cannot say WHY a message
 	// matched is the half of E3 the plan calls exceeding both references, so
@@ -69,6 +75,13 @@ type Deps struct {
 	// submission.go's undoWindowFor documents why that fallback must degrade
 	// rather than fail.
 	Prefs PrefsStore
+
+	// Triage is the snooze/mute surface (L3 epic E4), served under the vendor
+	// capability jmap.CapTriage. Required by RegisterTriageMethods, unused
+	// elsewhere: nothing in the standard mail surface consults it, which is
+	// what keeps a deployment that does not mount the triage capability
+	// completely unaffected by its existence.
+	Triage TriageStore
 
 	// UndoWindow is the undo-send window (W-A3): a submission's not_before is
 	// its creation time plus this. RegisterSubmissionMethods clamps it to the

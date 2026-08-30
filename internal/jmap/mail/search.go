@@ -189,6 +189,45 @@ type ChangesReader interface {
 	MailboxesTouchedSince(ctx context.Context, accountID int64, since time.Time, limit int) (counts, rows []int64, err error)
 }
 
+// ThreadChangeReader feeds Thread/changes (L3 epic E4, migration 0009).
+//
+// It is a SEPARATE interface from ChangesReader rather than two more methods
+// on it, for one reason worth stating: Thread/changes was a documented decline
+// through J3, and a deployment that has not run migration 0009 genuinely
+// cannot answer it. Keeping the reader separable means "this server tracks
+// thread changes" is a wiring fact the handler can check (Deps.ThreadChanges
+// nil) and fall back from honestly, instead of a nil-method panic inside an
+// interface every other change method depends on.
+type ThreadChangeReader interface {
+	// ThreadsChangedSince returns the account's thread rows whose watermark is
+	// strictly after the cursor, oldest first, at most limit rows.
+	//
+	// Oldest-first for the same §5.2 reason ChangedSince states: a paged
+	// response must never report a record as created after an earlier page
+	// deemed it updated or destroyed.
+	ThreadsChangedSince(ctx context.Context, accountID int64, since time.Time, limit int) ([]ThreadChangeRow, error)
+}
+
+// ThreadChangeRow is one changed conversation as Thread/changes needs it.
+type ThreadChangeRow struct {
+	// ThreadID is the conversation's CURRENT messages.thread_id — what the
+	// wire renders as a Thread id.
+	ThreadID int64
+
+	// CreatedAt is when the conversation first appeared. Compared against the
+	// client's cursor, it is what separates §5.2's created from its updated —
+	// the distinction the pre-0009 schema could not make.
+	CreatedAt time.Time
+
+	// UpdatedAt is the row's watermark, which the paging cursor stops at.
+	UpdatedAt time.Time
+
+	// Destroyed reports a merge tombstone: this conversation was absorbed by
+	// another. It is the only destroy this feed can report exactly, and
+	// handleThreadChanges documents the one it cannot.
+	Destroyed bool
+}
+
 // ChangeRow is one changed message as /changes needs it.
 type ChangeRow struct {
 	// MessageID is the store message id.

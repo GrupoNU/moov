@@ -49,6 +49,12 @@ type fakeReaders struct {
 	changes      []ChangeRow
 	newestChange time.Time
 
+	// E4: the thread-change feed, oldest first. It is separate from `changes`
+	// because Thread/changes reads the threads table (migration 0009) rather
+	// than message_state, and a test that seeds one must not accidentally
+	// satisfy the other.
+	threadChanges []ThreadChangeRow
+
 	mailboxCountChanges []int64
 	mailboxRowChanges   []int64
 
@@ -555,8 +561,34 @@ func (f *fakeReaders) deps() *Deps {
 		Mailboxes: f, Emails: f, Threads: f, Blobs: f, State: f,
 		Search: f, Changes: f, Snippets: f, SearchWindow: f.searchWindow,
 		Writer: f, Mailboxer: f, Creator: f,
-		Limits: jmap.DefaultLimits(),
+		ThreadChanges: f,
+		Limits:        jmap.DefaultLimits(),
 	}
+}
+
+// ThreadsChangedSince implements ThreadChangeReader (E4).
+//
+// It filters and pages exactly as the store does — strictly after the cursor,
+// oldest first, bounded — so a handler test that asserts on the coalescing
+// rules is exercising the handler's logic rather than the fake's convenience.
+func (f *fakeReaders) ThreadsChangedSince(_ context.Context, accountID int64, since time.Time, limit int) ([]ThreadChangeRow, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if accountID != testAccountID {
+		return nil, nil
+	}
+	var out []ThreadChangeRow
+	for _, r := range f.threadChanges {
+		if !r.UpdatedAt.After(since) {
+			continue
+		}
+		out = append(out, r)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // contextType is the context interface the handler signatures take. It is

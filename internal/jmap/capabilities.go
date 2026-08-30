@@ -55,4 +55,29 @@ const (
 	// which is an IANA registry (RFC 8620 §8.4) reserved for standards-track
 	// specifications and which a vendor extension must not squat.
 	CapPrefs = "https://moov.email/ns/prefs"
+
+	// CapTriage is Moov's VENDOR capability for the triage verbs RFC 8621 has
+	// no vocabulary for: snooze and mute (L3 epic E4, canon §2.2).
+	//
+	// # Why these need a capability of their own
+	//
+	// Both are CORE Gmail behaviors and neither exists in JMAP. RFC 8621 §4
+	// has keywords, mailboxes and a mutable `keywords` map; it has no notion
+	// of "come back later" and no per-Thread state at all (§3 gives a Thread
+	// exactly two properties, id and emailIds, both server-set). So there is
+	// nothing to extend — the objects have to be new, and RFC 8620 §2's vendor
+	// mechanism is where new objects go.
+	//
+	// It is a SEPARATE URI from CapPrefs rather than more methods under it,
+	// because §1.8's opt-in is per capability and the two answer different
+	// questions: a client may well want the settings surface without the
+	// triage verbs (a settings-only admin UI) or the triage verbs without the
+	// settings (a keyboard-driven client with its own preferences). Fusing
+	// them would make "I understand snooze" and "I understand density" the
+	// same statement.
+	//
+	// A client that never names this URI never sees Snooze/set or Mute/set
+	// exist, and — the property that matters for the Bulwark oracle — is
+	// completely unaffected by their presence.
+	CapTriage = "https://moov.email/ns/triage"
 )
