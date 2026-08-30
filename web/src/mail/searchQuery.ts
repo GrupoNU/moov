@@ -673,6 +673,19 @@ export function formatQuery(query: ParsedQuery): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * A chip's or the panel's edit to one group.
+ *
+ * Every key is explicitly `| undefined` rather than merely optional, because
+ * under `exactOptionalPropertyTypes` those are different types and only the
+ * first can carry the REMOVAL signal: `{ unread: undefined }` means "turn this
+ * operator off", which is what a chip does on its second press. A plain
+ * `Partial<QueryGroup>` cannot express it.
+ */
+export type GroupPatch = {
+  readonly [K in keyof QueryGroup]?: QueryGroup[K] | undefined;
+};
+
+/**
  * Applies a change to the FIRST group of a query and returns the new string.
  *
  * The first group is the one the chips edit, and the reason is honesty about
@@ -683,23 +696,60 @@ export function formatQuery(query: ParsedQuery): string {
  */
 export function withGroupPatch(
   input: string,
-  patch: Partial<QueryGroup>,
+  patch: GroupPatch,
   now: Date = new Date(),
 ): string {
   const parsed = parseSearchQuery(input, now);
   const groups = parsed.groups.length > 0 ? [...parsed.groups] : [EMPTY_GROUP];
   const head = groups[0] ?? EMPTY_GROUP;
 
-  const merged: QueryGroup = { ...head, ...patch };
-  // An explicit `undefined` in the patch REMOVES the key, which is how a chip
-  // toggles off. Spreading alone would leave the key present-and-undefined,
-  // which `isEmptyGroup` and `formatGroup` both read as absent anyway, but
-  // rebuilding keeps the object shape clean for equality in tests.
-  const cleaned = Object.fromEntries(
-    Object.entries(merged).filter(([, value]) => value !== undefined),
-  ) as unknown as QueryGroup;
+  /*
+   * The merge, written out rather than spread, because the two halves of a
+   * QueryGroup behave differently and a spread hides that:
+   *
+   *   - `text` and `fields` are REQUIRED, so a patch that omits them (or sets
+   *     them to undefined, which a chip does when it clears an unrelated key)
+   *     must fall back to the current value, never to undefined.
+   *   - every other key is OPTIONAL, and an explicit `undefined` is the
+   *     REMOVAL signal — that is how a chip toggles itself off.
+   *
+   * The rebuilt draft goes through `sealDraft`, so the "present but undefined"
+   * keys a spread would leave behind never reach the output at all. The
+   * previous version leaned on a double cast to silence exactly this, which is
+   * how `text: undefined` could have reached a caller typed as `string`.
+   */
+  const has = <K extends keyof QueryGroup>(key: K): boolean =>
+    Object.prototype.hasOwnProperty.call(patch, key);
+  const pick = <K extends keyof QueryGroup>(key: K): QueryGroup[K] | undefined =>
+    has(key) ? patch[key] : head[key];
 
-  groups[0] = { ...cleaned, fields: merged.fields, text: merged.text };
+  const draft: GroupDraft = {
+    textParts: [],
+    fields: { ...(pick("fields") ?? head.fields) },
+  };
+  const nextText = pick("text") ?? (has("text") ? "" : head.text);
+  if (nextText !== "") draft.textParts.push(nextText);
+
+  const hasAttachment = pick("hasAttachment");
+  if (hasAttachment !== undefined) draft.hasAttachment = hasAttachment;
+  const unread = pick("unread");
+  if (unread !== undefined) draft.unread = unread;
+  const starred = pick("starred");
+  if (starred !== undefined) draft.starred = starred;
+  const inMailbox = pick("inMailbox");
+  if (inMailbox !== undefined) draft.inMailbox = inMailbox;
+  const label = pick("label");
+  if (label !== undefined) draft.label = label;
+  const after = pick("after");
+  if (after !== undefined) draft.after = after;
+  const before = pick("before");
+  if (before !== undefined) draft.before = before;
+  const larger = pick("larger");
+  if (larger !== undefined) draft.larger = larger;
+  const smaller = pick("smaller");
+  if (smaller !== undefined) draft.smaller = smaller;
+
+  groups[0] = sealDraft(draft);
   return formatQuery({ groups, unsupported: [] });
 }
 
