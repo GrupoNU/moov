@@ -242,10 +242,21 @@ export const en = {
   "shortcuts.sectionNavigate": "Moving around",
   "shortcuts.sectionActions": "Acting on mail",
   "shortcuts.sectionJump": "Jumping to a folder",
-  // P3 wires the actions behind e and #; saying so is more honest than a
-  // shortcut that silently does nothing.
   "shortcuts.comingSoon": "Arriving in the next release",
   "action.notYet": "This action arrives in the next release",
+
+  // --- E2: the rest of Gmail's triage vocabulary ---
+  "shortcuts.spam": "Report spam, or mark as not spam",
+  "shortcuts.undo": "Undo the last action",
+  "shortcuts.archiveNext": "Archive and go to the next message",
+  "shortcuts.archivePrevious": "Archive and go to the previous message",
+  "shortcuts.markUnreadFromHere": "Mark unread from here down",
+  "shortcuts.selectAll": "Select every conversation",
+  "shortcuts.selectNone": "Clear the selection",
+  "shortcuts.selectRead": "Select the read ones",
+  "shortcuts.selectUnread": "Select the unread ones",
+  "shortcuts.selectStarred": "Select the starred ones",
+  "shortcuts.selectUnstarred": "Select the ones without a star",
 
   // --- P3: actions on messages ---
   //
@@ -290,6 +301,54 @@ export const en = {
   "action.doneDeletedForever": (count: number): string =>
     count === 1 ? "Deleted permanently" : `${count} deleted permanently`,
   "action.doneMoved": (folder: string): string => `Moved to ${folder}`,
+
+  // --- E2: spam, undo, the completed reader, and emptying the trash ---
+  //
+  // "Report spam" rather than "Move to Junk": the user's intent is a verdict
+  // about the message, and the folder it lands in is an implementation detail
+  // of that verdict. Inside Junk the same control means the opposite, so it
+  // gets its own label rather than a toggled state on one word.
+  "action.spam": "Report spam",
+  "action.notSpam": "Not spam",
+  "action.doneSpam": (count: number): string =>
+    count === 1 ? "Reported as spam" : `${count} reported as spam`,
+  "action.doneNotSpam": (count: number): string =>
+    count === 1 ? "Moved back to the inbox" : `${count} moved back to the inbox`,
+  "action.undoDone": "The action was undone",
+  "action.undoFailed": "That could not be undone",
+  "action.undoExpired": "There is nothing to undo",
+  "action.emptyTrash": "Empty trash now",
+  "action.emptyTrashConfirm": (count: number): string =>
+    count === 1
+      ? "Delete the 1 message in Trash permanently? This cannot be undone."
+      : `Delete all ${count} messages in Trash permanently? This cannot be undone.`,
+  "action.emptyTrashEmpty": "The Trash is already empty",
+  "action.emptyTrashDone": (count: number): string =>
+    count === 1 ? "1 message deleted permanently" : `${count} messages deleted permanently`,
+  "action.emptyTrashWorking": "Emptying the Trash…",
+  "action.print": "Print",
+  "action.viewOriginal": "Show original",
+  "action.next": "Next message",
+  "action.previous": "Previous message",
+  "action.unsubscribe": "Unsubscribe",
+
+  // --- E2: the reader's new surfaces ---
+  "reader.spamBanner": "This message is in Spam",
+  "reader.spamBannerBody":
+    "Moov shows it because you asked for it, and keeps its images and links inert. If it does not belong here, mark it as not spam.",
+  "reader.spamImagesBlocked":
+    "Images are never loaded for a message in Spam.",
+  "reader.originalTitle": "Original message",
+  "reader.originalHeaders": "Headers, exactly as they arrived",
+  "reader.originalLoading": "Loading the original…",
+  "reader.originalFailed": "Could not load the original message",
+  "reader.copy": "Copy to clipboard",
+  "reader.copied": "Copied",
+  "reader.copyFailed": "Could not copy. Select the text and copy it manually.",
+  "reader.unsubscribeFrom": (list: string): string => `Unsubscribe from ${list}`,
+  "reader.unsubscribeOpensTab": "Opens the sender's page in a new tab",
+  "reader.unsubscribeLatency":
+    "It can take a few days for the sender to stop sending.",
 
   // --- P3: the composer ---
   "compose.new": "Write",
@@ -577,6 +636,19 @@ export const es: Strings = {
   "shortcuts.comingSoon": "Llega en la próxima versión",
   "action.notYet": "Esta acción llega en la próxima versión",
 
+  // --- E2: el resto del vocabulario de triage de Gmail ---
+  "shortcuts.spam": "Marcar como spam, o quitar el spam",
+  "shortcuts.undo": "Deshacer la última acción",
+  "shortcuts.archiveNext": "Archivar e ir al mensaje siguiente",
+  "shortcuts.archivePrevious": "Archivar e ir al mensaje anterior",
+  "shortcuts.markUnreadFromHere": "Marcar como no leídos de acá para abajo",
+  "shortcuts.selectAll": "Seleccionar todas las conversaciones",
+  "shortcuts.selectNone": "Limpiar la selección",
+  "shortcuts.selectRead": "Seleccionar los leídos",
+  "shortcuts.selectUnread": "Seleccionar los no leídos",
+  "shortcuts.selectStarred": "Seleccionar los destacados",
+  "shortcuts.selectUnstarred": "Seleccionar los que no están destacados",
+
   // --- P3: acciones sobre mensajes ---
   "action.markRead": "Marcar como leído",
   "action.markUnread": "Marcar como no leído",
@@ -614,6 +686,49 @@ export const es: Strings = {
   "action.doneDeletedForever": (count: number): string =>
     count === 1 ? "Eliminado definitivamente" : `${count} eliminados definitivamente`,
   "action.doneMoved": (folder: string): string => `Movido a ${folder}`,
+
+  // --- E2: spam, deshacer, el lector completo y vaciar la papelera ---
+  "action.spam": "Marcar como spam",
+  "action.notSpam": "No es spam",
+  "action.doneSpam": (count: number): string =>
+    count === 1 ? "Marcado como spam" : `${count} marcados como spam`,
+  "action.doneNotSpam": (count: number): string =>
+    count === 1 ? "Devuelto a la bandeja de entrada" : `${count} devueltos a la bandeja de entrada`,
+  "action.undoDone": "Se deshizo la acción",
+  "action.undoFailed": "No se pudo deshacer",
+  "action.undoExpired": "No hay nada para deshacer",
+  "action.emptyTrash": "Vaciar la papelera",
+  "action.emptyTrashConfirm": (count: number): string =>
+    count === 1
+      ? "¿Eliminar definitivamente el mensaje de la Papelera? No se puede deshacer."
+      : `¿Eliminar definitivamente los ${count} mensajes de la Papelera? No se puede deshacer.`,
+  "action.emptyTrashEmpty": "La Papelera ya está vacía",
+  "action.emptyTrashDone": (count: number): string =>
+    count === 1 ? "1 mensaje eliminado definitivamente" : `${count} mensajes eliminados definitivamente`,
+  "action.emptyTrashWorking": "Vaciando la Papelera…",
+  "action.print": "Imprimir",
+  "action.viewOriginal": "Ver original",
+  "action.next": "Mensaje siguiente",
+  "action.previous": "Mensaje anterior",
+  "action.unsubscribe": "Cancelar la suscripción",
+
+  // --- E2: las superficies nuevas del lector ---
+  "reader.spamBanner": "Este mensaje está en Spam",
+  "reader.spamBannerBody":
+    "Moov lo muestra porque lo pediste, y mantiene sus imágenes y enlaces inertes. Si no corresponde que esté acá, marcalo como que no es spam.",
+  "reader.spamImagesBlocked":
+    "Las imágenes nunca se cargan en un mensaje que está en Spam.",
+  "reader.originalTitle": "Mensaje original",
+  "reader.originalHeaders": "Encabezados, tal como llegaron",
+  "reader.originalLoading": "Cargando el original…",
+  "reader.originalFailed": "No se pudo cargar el mensaje original",
+  "reader.copy": "Copiar al portapapeles",
+  "reader.copied": "Copiado",
+  "reader.copyFailed": "No se pudo copiar. Seleccioná el texto y copialo a mano.",
+  "reader.unsubscribeFrom": (list: string): string => `Cancelar la suscripción a ${list}`,
+  "reader.unsubscribeOpensTab": "Abre la página del remitente en una pestaña nueva",
+  "reader.unsubscribeLatency":
+    "El remitente puede tardar unos días en dejar de enviar.",
 
   // --- P3: el compositor ---
   "compose.new": "Escribir",

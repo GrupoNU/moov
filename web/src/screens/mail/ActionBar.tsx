@@ -1,9 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-
 import { useTranslation } from "../../i18n/I18nProvider";
-import { buildMailboxTree } from "../../mail/mailboxes";
-import { mailboxLabelKey } from "./mailboxLabels";
 import type { Mailbox } from "../../mail/types";
+import { MoveMenu } from "./MoveMenu";
 import styles from "./ActionBar.module.css";
 
 /**
@@ -41,6 +38,10 @@ export interface ActionBarProps {
   readonly deleteIsPermanent: boolean;
   readonly onCompose: () => void;
   readonly isBusy: boolean;
+  /** E2: report spam, or — inside Junk — take it back out. */
+  readonly onToggleSpam: () => void;
+  /** True when the current folder IS Junk, which flips the spam control. */
+  readonly inJunk: boolean;
 }
 
 export function ActionBar({
@@ -59,6 +60,8 @@ export function ActionBar({
   deleteIsPermanent,
   onCompose,
   isBusy,
+  onToggleSpam,
+  inJunk,
 }: ActionBarProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const hasSelection = selectedCount > 0;
@@ -157,11 +160,42 @@ export function ActionBar({
         }
       />
 
+      {/*
+        E2: report spam. The label FLIPS inside Junk — "Not spam" there — so
+        one control covers both directions, which is Gmail's shape and what
+        the `!` key does. Two separate buttons would leave one of them dead in
+        every folder.
+      */}
+      <ActionButton
+        label={inJunk ? t("action.notSpam") : t("action.spam")}
+        disabled={disabled}
+        onClick={onToggleSpam}
+        icon={
+          inJunk ? (
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M10 2.6l6.6 3.5v4c0 3.7-2.8 6.4-6.6 7.3-3.8-.9-6.6-3.6-6.6-7.3v-4z" />
+              <path d="M7.2 9.9l2 2 3.6-3.8" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M10 2.6l6.6 3.5v4c0 3.7-2.8 6.4-6.6 7.3-3.8-.9-6.6-3.6-6.6-7.3v-4z" />
+              <path d="M10 7v4M10 13.6v.1" />
+            </svg>
+          )
+        }
+      />
+
       <MoveMenu
         mailboxes={mailboxes}
         currentMailboxId={currentMailboxId}
         disabled={disabled}
         onMove={onMove}
+        triggerClassName={styles.action}
+        triggerContent={
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+            <path d="M2.8 5.4a1.4 1.4 0 0 1 1.4-1.4h3l1.6 2h6a1.4 1.4 0 0 1 1.4 1.4v7.2a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4z" />
+          </svg>
+        }
       />
 
       <span className={styles.spacer} />
@@ -199,120 +233,4 @@ function ActionButton({
       {icon}
     </button>
   );
-}
-
-/**
- * The move-to-folder menu.
- *
- * Implemented as a `menu`/`menuitem` pattern with roving focus and Escape to
- * close — the WAI-ARIA APG menu-button behaviour — rather than a `<select>`,
- * because a select cannot show the folder hierarchy with indentation and
- * cannot be dismissed without choosing something.
- */
-function MoveMenu({
-  mailboxes,
-  currentMailboxId,
-  disabled,
-  onMove,
-}: {
-  readonly mailboxes: readonly Mailbox[];
-  readonly currentMailboxId: string | undefined;
-  readonly disabled: boolean;
-  readonly onMove: (mailboxId: string) => void;
-}): React.JSX.Element {
-  const { t } = useTranslation();
-  const [isOpen, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
-
-  const close = useCallback((): void => {
-    setOpen(false);
-    buttonRef.current?.focus();
-  }, []);
-
-  // Click outside and Escape both dismiss. Both are required: a menu that only
-  // closes on Escape traps a mouse user, and one that only closes on an
-  // outside click traps a keyboard user.
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const onPointerDown = (event: PointerEvent): void => {
-      if (containerRef.current?.contains(event.target as Node) !== true) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        close();
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown, true);
-    };
-  }, [isOpen, close]);
-
-  const targets = buildMailboxTree(mailboxes).filter(
-    (node) => node.mailbox.id !== currentMailboxId && node.mailbox.myRights.mayAddItems,
-  );
-
-  return (
-    <div className={styles.menuWrap} ref={containerRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        className={styles.action}
-        disabled={disabled}
-        aria-haspopup="menu"
-        aria-expanded={isOpen}
-        aria-label={t("action.moveTo")}
-        title={t("action.moveTo")}
-        onClick={() => {
-          setOpen((open) => !open);
-        }}
-      >
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-          <path d="M2.8 5.4a1.4 1.4 0 0 1 1.4-1.4h3l1.6 2h6a1.4 1.4 0 0 1 1.4 1.4v7.2a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4z" />
-        </svg>
-      </button>
-
-      {isOpen && (
-        <ul className={styles.menu} role="menu" aria-label={t("action.moveTo")}>
-          {targets.map((node, index) => (
-            <li key={node.mailbox.id} role="none">
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.menuItem}
-                style={{ paddingLeft: `calc(var(--space-3) + ${node.depth} * var(--space-4))` }}
-                /* The APG menu-button pattern requires focus to move into the
-                   menu when it opens; without it the menu is unusable by
-                   keyboard. */
-                // eslint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus={index === 0}
-                onClick={() => {
-                  onMove(node.mailbox.id);
-                  close();
-                }}
-              >
-                <MailboxName mailbox={node.mailbox} />
-              </button>
-            </li>
-          ))}
-          {targets.length === 0 && (
-            <li role="none">
-              <span className={styles.menuEmpty}>{t("list.empty")}</span>
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/** A mailbox's display name: the translated role name, or the server's own. */
-function MailboxName({ mailbox }: { readonly mailbox: Mailbox }): React.JSX.Element {
-  const { t } = useTranslation();
-  const key = mailboxLabelKey(mailbox.role);
-  return <>{key === undefined ? mailbox.name : t(key)}</>;
 }

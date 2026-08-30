@@ -1,12 +1,22 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import { withAccessToken, type JmapClient } from "../../api/jmap";
 import { signImageProxyUrls } from "../../mail/api";
 import { formatBytes, formatFullDate, initialsFor, machineDate } from "../../mail/format";
+import { headerSection, unfoldHeaders } from "../../mail/rawMessage";
 import { displaySubject, senderLabel } from "../../mail/threading";
-import type { Email, EmailAddress, EmailBodyPart, Thread } from "../../mail/types";
+import {
+  isFlagged,
+  type Email,
+  type EmailAddress,
+  type EmailBodyPart,
+  type Mailbox,
+  type Thread,
+} from "../../mail/types";
+import { listIdLabel, unsubscribeInfo, type UnsubscribeInfo } from "../../mail/unsubscribe";
 import { MessageBody } from "./MessageBody";
+import { MoveMenu } from "./MoveMenu";
 import styles from "./ReadingPane.module.css";
 
 /**
@@ -44,6 +54,32 @@ export interface ReadingPaneProps {
   readonly onDelete: () => void;
   /** True when delete ERASES rather than moves to Trash (server rule W-A2). */
   readonly deleteIsPermanent: boolean;
+
+  // --- E2: the completed reader ------------------------------------------
+  /** Toggles the star on the open message. */
+  readonly onToggleFlag: () => void;
+  /** Moves the open message to a chosen folder. */
+  readonly onMove: (mailboxId: string) => void;
+  /** Marks the open message unread (and returns to the list, per Gmail). */
+  readonly onMarkUnread: () => void;
+  /** Reports spam, or — when already in Junk — takes it back out. */
+  readonly onToggleSpam: () => void;
+  /** Opens the composer prefilled from a `mailto:` unsubscribe URI. */
+  readonly onUnsubscribeByMail: (to: string, subject: string | undefined, body: string | undefined) => void;
+  readonly mailboxes: readonly Mailbox[];
+  /** The folder being viewed, so the move menu can exclude it. */
+  readonly currentMailboxId: string | undefined;
+  /**
+   * True when the open message is in the mailbox with role `junk`.
+   *
+   * Two consequences, both from canon §4.1.9: the reader shows the spam
+   * banner, and remote images become UNLOADABLE rather than merely blocked —
+   * the unblock control is not rendered at all.
+   */
+  readonly inJunk: boolean;
+  /** Goes to the next/previous message in the list; absent when there is none. */
+  readonly onNextMessage: (() => void) | undefined;
+  readonly onPreviousMessage: (() => void) | undefined;
 }
 
 export function ReadingPane({
@@ -61,8 +97,19 @@ export function ReadingPane({
   onDelete,
   deleteIsPermanent,
   blobToken,
+  onToggleFlag,
+  onMove,
+  onMarkUnread,
+  onToggleSpam,
+  onUnsubscribeByMail,
+  mailboxes,
+  currentMailboxId,
+  inJunk,
+  onNextMessage,
+  onPreviousMessage,
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
+  const [originalOpen, setOriginalOpen] = useState(false);
 
   // The remote-image signer the secure HTML renderer uses (W-A4): the ONLY
   // path by which a message's remote image can ever be fetched, and it goes
@@ -108,10 +155,17 @@ export function ReadingPane({
   const attachments = email.attachments ?? [];
   const threadSize = thread?.emailIds.length ?? 1;
   const isoDate = machineDate(email.receivedAt);
+  const unsubscribe = unsubscribeInfo(email);
 
   return (
     <article
-      className={styles.pane}
+      /*
+       * `printRoot` is what the print stylesheet keys on: at print time every
+       * other column of the app is hidden and this element becomes the page.
+       * Marking it in the markup rather than selecting it by position means a
+       * layout change cannot silently break printing.
+       */
+      className={[styles.pane, styles.printRoot].join(" ")}
       /* A labelled region, so a screen reader user can jump straight to the
        * message they just opened. */
       aria-label={subject}
@@ -119,19 +173,74 @@ export function ReadingPane({
       <header className={styles.header}>
         <div className={styles.headerTop}>
           <h1 className={styles.subject}>{subject}</h1>
-          <button
-            type="button"
-            className={styles.close}
-            onClick={onClose}
-            /* The accessible name says where it goes, not what it looks like. */
-            aria-label={t("reader.close")}
-            title={t("reader.close")}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-              <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
-            </svg>
-          </button>
+          {/*
+            Previous/next before close, in that reading order, because that is
+            the order they are reached by Tab and the order they sit in every
+            mail client's top-right corner. Each is DISABLED rather than hidden
+            at the ends of the list: a control that vanishes moves the two
+            beside it, and the close button must not jump under the pointer.
+          */}
+          <div className={styles.navGroup} role="group" aria-label={t("shortcuts.sectionNavigate")}>
+            <button
+              type="button"
+              className={styles.close}
+              onClick={onPreviousMessage}
+              disabled={onPreviousMessage === undefined}
+              aria-label={t("action.previous")}
+              title={`${t("action.previous")} (k)`}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 15.5l-6-5.5 6-5.5" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={styles.close}
+              onClick={onNextMessage}
+              disabled={onNextMessage === undefined}
+              aria-label={t("action.next")}
+              title={`${t("action.next")} (j)`}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7 4.5l6 5.5-6 5.5" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={styles.close}
+              onClick={onClose}
+              /* The accessible name says where it goes, not what it looks like. */
+              aria-label={t("reader.close")}
+              title={t("reader.close")}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {/*
+          The Spam banner (canon §4.1.9).
+          `role="note"` rather than `alert`: it is a standing property of the
+          message, not an event, and an alert would re-interrupt a screen
+          reader every time the pane re-renders.
+        */}
+        {inJunk && (
+          <div className={styles.spamBanner} role="note">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M10 2.6l6.6 3.5v4c0 3.7-2.8 6.4-6.6 7.3-3.8-.9-6.6-3.6-6.6-7.3v-4z" />
+              <path d="M10 7v4M10 13.6v.1" />
+            </svg>
+            <div>
+              <p className={styles.spamBannerTitle}>{t("reader.spamBanner")}</p>
+              <p className={styles.spamBannerBody}>{t("reader.spamBannerBody")}</p>
+            </div>
+            <button type="button" className={styles.primaryAction} onClick={onToggleSpam}>
+              {t("action.notSpam")}
+            </button>
+          </div>
+        )}
 
         {/*
           The action row. Reply is the primary action of a mail client and is
@@ -151,6 +260,24 @@ export function ReadingPane({
             {t("action.forward")}
           </button>
           <span className={styles.actionSpacer} />
+
+          {/*
+            E2: the star. `aria-pressed` rather than a changing label, because
+            it IS a toggle in one state and announcing it as a toggle is what
+            tells a screen-reader user whether the message is starred right
+            now — a label that flips only says what the next press will do.
+          */}
+          <button
+            type="button"
+            className={[styles.secondaryAction, isFlagged(email) ? styles.activeAction : ""]
+              .filter(Boolean)
+              .join(" ")}
+            onClick={onToggleFlag}
+            aria-pressed={isFlagged(email)}
+          >
+            {isFlagged(email) ? t("action.unflag") : t("action.flag")}
+          </button>
+
           <button type="button" className={styles.secondaryAction} onClick={onArchive}>
             {t("action.archive")}
           </button>
@@ -163,6 +290,50 @@ export function ReadingPane({
             onClick={onDelete}
           >
             {deleteIsPermanent ? t("action.deleteForever") : t("action.delete")}
+          </button>
+
+          <button type="button" className={styles.secondaryAction} onClick={onToggleSpam}>
+            {inJunk ? t("action.notSpam") : t("action.spam")}
+          </button>
+
+          <MoveMenu
+            mailboxes={mailboxes}
+            currentMailboxId={currentMailboxId}
+            disabled={false}
+            onMove={onMove}
+            triggerClassName={styles.secondaryAction}
+            triggerContent={t("action.move")}
+          />
+
+          {/*
+            Mark-unread CLOSES the reader, and that is not a shortcut: leaving
+            the message open would have the reading pane immediately re-mark it
+            read, so the button would appear to do nothing. Gmail returns to
+            the list for exactly this reason.
+          */}
+          <button type="button" className={styles.secondaryAction} onClick={onMarkUnread}>
+            {t("action.markUnread")}
+          </button>
+
+          <button
+            type="button"
+            className={styles.secondaryAction}
+            onClick={() => {
+              window.print();
+            }}
+          >
+            {t("action.print")}
+          </button>
+
+          <button
+            type="button"
+            className={styles.secondaryAction}
+            onClick={() => {
+              setOriginalOpen(true);
+            }}
+            aria-haspopup="dialog"
+          >
+            {t("action.viewOriginal")}
           </button>
         </div>
 
@@ -187,6 +358,16 @@ export function ReadingPane({
               </time>
             )}
           </div>
+          {/* Canon §2.2: the control sits NEXT TO THE SENDER, not in the
+              toolbar — it is a statement about who is writing, not an action
+              on this one message. */}
+          {unsubscribe !== undefined && (
+            <UnsubscribeButton
+              info={unsubscribe}
+              listName={listIdLabel(email)}
+              onUnsubscribeByMail={onUnsubscribeByMail}
+            />
+          )}
         </div>
 
         {/*
@@ -214,14 +395,265 @@ export function ReadingPane({
 
       <div className={styles.bodyRegion}>
         {/* Keyed by message id so per-message state — the remote-images
-            opt-in above all — can never leak from one message to the next. */}
-        <MessageBody key={email.id} email={email} signImageUrls={signImages} />
+            opt-in above all — can never leak from one message to the next.
+
+            Canon §4.1.9: in Spam the images are not merely blocked-with-an-
+            offer, they are UNLOADABLE. `allowRemoteImages={false}` removes the
+            unblock control entirely rather than disabling it, because a
+            disabled "Show images" invites the click that the policy exists to
+            prevent, and a remote fetch from a message in Spam is a delivery
+            receipt to a spammer. */}
+        <MessageBody
+          key={email.id}
+          email={email}
+          signImageUrls={signImages}
+          allowRemoteImages={!inJunk}
+        />
+        {inJunk && (
+          <p className={styles.spamImagesNote} role="note">
+            {t("reader.spamImagesBlocked")}
+          </p>
+        )}
       </div>
 
       <footer className={styles.footer}>
         <DownloadOriginalButton email={email} client={client} accountId={accountId} />
       </footer>
+
+      <OriginalDialog
+        isOpen={originalOpen}
+        onClose={() => {
+          setOriginalOpen(false);
+        }}
+        email={email}
+        client={client}
+        accountId={accountId}
+      />
     </article>
+  );
+}
+
+/**
+ * The Unsubscribe control (canon §2.2).
+ *
+ * The `mailto:` path opens OUR composer prefilled, so the user sees exactly
+ * what is about to be sent from their own address and can cancel. The http(s)
+ * path is a link with `rel="noopener noreferrer"` and `target="_blank"` — a
+ * real anchor rather than a button calling `window.open`, so middle-click and
+ * "copy link" work and the user can see where it goes before committing.
+ */
+function UnsubscribeButton({
+  info,
+  listName,
+  onUnsubscribeByMail,
+}: {
+  readonly info: UnsubscribeInfo;
+  readonly listName: string | undefined;
+  readonly onUnsubscribeByMail: (
+    to: string,
+    subject: string | undefined,
+    body: string | undefined,
+  ) => void;
+}): React.JSX.Element | null {
+  const { t, format } = useTranslation();
+
+  // The accessible name says WHAT is being unsubscribed from when the message
+  // told us (List-ID), which is the difference between "Unsubscribe" (from
+  // what?) and "Unsubscribe from Moov News".
+  const label =
+    listName === undefined ? t("action.unsubscribe") : format("reader.unsubscribeFrom", listName);
+
+  if (info.mailto !== undefined) {
+    const { to, subject, body } = info.mailto;
+    return (
+      <button
+        type="button"
+        className={styles.unsubscribe}
+        onClick={() => {
+          onUnsubscribeByMail(to, subject, body);
+        }}
+        aria-label={label}
+        title={t("reader.unsubscribeLatency")}
+      >
+        {t("action.unsubscribe")}
+      </button>
+    );
+  }
+
+  if (info.url === undefined) return null;
+
+  /*
+   * TODO(E-server): RFC 8058 one-click. `info.oneClick` says the sender
+   * accepts a bare POST to this URI, which would spare the user the round
+   * trip to a landing page — but the POST cannot be made from the browser
+   * (cross-origin, and it would leak the reader's IP to the sender). It
+   * belongs on the server, in a later epic; until then the link is the
+   * honest path and the flag is parsed and carried for it.
+   */
+  return (
+    <a
+      className={styles.unsubscribe}
+      href={info.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={label}
+      title={t("reader.unsubscribeOpensTab")}
+    >
+      {t("action.unsubscribe")}
+    </a>
+  );
+}
+
+/**
+ * "Show original" — the raw RFC 822 headers (canon §2.2).
+ *
+ * The bytes come through the SAME authenticated blob path the download button
+ * uses (the download route needs HTTP Basic, which a navigation cannot carry —
+ * see {@link DownloadOriginalButton}), and only the header section is rendered:
+ * a 4 MB message with a base64 attachment must not become 4 MB of DOM.
+ *
+ * Rendered as TEXT in a `<pre>`, never as HTML. The content is attacker-
+ * controlled by definition, and this is one of the few places in the app that
+ * shows it verbatim.
+ */
+function OriginalDialog({
+  isOpen,
+  onClose,
+  email,
+  client,
+  accountId,
+}: {
+  readonly isOpen: boolean;
+  readonly onClose: () => void;
+  readonly email: Email;
+  readonly client: JmapClient;
+  readonly accountId: string;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const [headers, setHeaders] = useState<string | undefined>(undefined);
+  const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
+  const [copied, setCopied] = useState<"idle" | "done" | "failed">("idle");
+
+  // The same <dialog> pattern as ShortcutsDialog: showModal() makes the rest
+  // of the page inert, traps focus and handles Escape, none of which a
+  // hand-rolled overlay gets right. Focus restoration is explicit because not
+  // every browser does it.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog === null) return;
+    if (isOpen && !dialog.open) {
+      returnFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      dialog.showModal();
+    } else if (!isOpen && dialog.open) {
+      dialog.close();
+      returnFocusRef.current?.focus();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog === null) return undefined;
+    const handleClose = (): void => {
+      returnFocusRef.current?.focus();
+      onClose();
+    };
+    dialog.addEventListener("close", handleClose);
+    return () => {
+      dialog.removeEventListener("close", handleClose);
+    };
+  }, [onClose]);
+
+  const blobId = email.blobId;
+
+  useEffect(() => {
+    if (!isOpen || blobId === undefined) return undefined;
+    let cancelled = false;
+    setState("loading");
+    setCopied("idle");
+    void (async () => {
+      try {
+        const blob = await client.downloadBlob(accountId, blobId, "message.eml", "message/rfc822");
+        const raw = await blob.text();
+        if (cancelled) return;
+        setHeaders(unfoldHeaders(headerSection(raw)));
+        setState("idle");
+      } catch {
+        if (!cancelled) setState("failed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, client, accountId, blobId]);
+
+  const copy = useCallback((): void => {
+    if (headers === undefined) return;
+    // `navigator.clipboard` is absent in insecure contexts and in jsdom; the
+    // failure is REPORTED rather than swallowed, because a Copy button that
+    // silently does nothing is the most confusing control in any UI.
+    const clipboard = navigator.clipboard as Clipboard | undefined;
+    if (clipboard === undefined) {
+      setCopied("failed");
+      return;
+    }
+    void clipboard.writeText(headers).then(
+      () => {
+        setCopied("done");
+      },
+      () => {
+        setCopied("failed");
+      },
+    );
+  }, [headers]);
+
+  return (
+    <dialog ref={dialogRef} className={styles.originalDialog} aria-labelledby="original-title">
+      <div className={styles.originalContent}>
+        <div className={styles.originalHeader}>
+          <h2 className={styles.originalTitle} id="original-title">
+            {t("reader.originalTitle")}
+          </h2>
+          <button
+            type="button"
+            className={styles.close}
+            onClick={onClose}
+            aria-label={t("shortcuts.close")}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+              <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+            </svg>
+          </button>
+        </div>
+
+        <p className={styles.originalSubtitle}>{t("reader.originalHeaders")}</p>
+
+        {state === "loading" && <p className={styles.mutedText}>{t("reader.originalLoading")}</p>}
+        {state === "failed" && <p className={styles.errorTitle}>{t("reader.originalFailed")}</p>}
+        {state === "idle" && headers !== undefined && (
+          <pre className={styles.originalPre}>{headers}</pre>
+        )}
+
+        <div className={styles.originalActions}>
+          <button
+            type="button"
+            className={styles.secondaryAction}
+            onClick={copy}
+            disabled={headers === undefined}
+          >
+            {t("reader.copy")}
+          </button>
+          {/* Always present so the outcome is ANNOUNCED when it appears,
+              rather than a live region being inserted with its own text. */}
+          <span role="status" aria-live="polite" className={styles.downloadStatus}>
+            {copied === "done" ? t("reader.copied") : ""}
+            {copied === "failed" ? t("reader.copyFailed") : ""}
+          </span>
+        </div>
+      </div>
+    </dialog>
   );
 }
 

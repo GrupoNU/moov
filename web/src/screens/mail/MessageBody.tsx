@@ -37,6 +37,15 @@ export interface MessageBodyProps {
   readonly email: Email;
   /** Signs remote-image URLs for the proxy (mail/api.ts). */
   readonly signImageUrls: SignImageUrls;
+  /**
+   * E2 / canon §4.1.9: whether the user may unblock remote images AT ALL.
+   *
+   * `false` in the Junk mailbox. It is stronger than the default blocked
+   * state: the opt-in control is not rendered, so there is no path — not even
+   * a deliberate one — by which a message in Spam fetches from its sender's
+   * server. Defaults to `true`, so every existing caller keeps the offer.
+   */
+  readonly allowRemoteImages?: boolean;
 }
 
 /** Picks the body value for a part, if the server sent one. */
@@ -48,9 +57,17 @@ function valueFor(
   return email.bodyValues?.[part.partId];
 }
 
-export function MessageBody({ email, signImageUrls }: MessageBodyProps): React.JSX.Element {
+export function MessageBody({
+  email,
+  signImageUrls,
+  allowRemoteImages = true,
+}: MessageBodyProps): React.JSX.Element {
   const { t } = useTranslation();
   const [showImages, setShowImages] = useState(false);
+  // Belt AND braces: even if the opt-in state were somehow set (a stale value
+  // surviving a re-key, a future caller flipping the prop), the images stay
+  // blocked. The policy is enforced here rather than only by hiding a button.
+  const imagesShown = showImages && allowRemoteImages;
 
   const textParts = email.textBody ?? [];
   const htmlParts = email.htmlBody ?? [];
@@ -112,7 +129,8 @@ export function MessageBody({ email, signImageUrls }: MessageBodyProps): React.J
       <div className={styles.htmlBody}>
         <SecureHtmlBody
           html={rawHtml}
-          blockRemoteImages={!showImages}
+          blockRemoteImages={!imagesShown}
+          allowUnblock={allowRemoteImages}
           onShowRemoteImages={() => {
             setShowImages(true);
           }}

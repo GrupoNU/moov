@@ -198,4 +198,12 @@ export const DETAIL_PROPERTIES: readonly string[] = [
   "htmlBody",
   "attachments",
   "bodyValues",
+  /*
+   * E2: `headers` is requested for the OPEN message only — never for a list
+   * row, where it would make the server re-parse every message's raw blob to
+   * paint a list (see LIST_PROPERTIES above). The reading pane needs it for
+   * `List-Unsubscribe` and `List-ID`, which exist nowhere else in the JMAP
+   * object model.
+   */
+  "headers",
 ];

@@ -373,3 +373,223 @@ a.attachmentName:focus-visible {
   background: var(--color-danger-tint);
   border-color: var(--color-danger);
 }
+
+/* ==========================================================================
+   E2: the completed reader
+   ========================================================================== */
+
+/* Previous / next / close, grouped so they stay together at the top right. */
+.navGroup {
+  display: inline-flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.navGroup .close:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/*
+ * The Spam banner (canon §4.1.9).
+ *
+ * It DEGRADES the message's affordances without hiding the message — the
+ * whole point of Gmail's shape: the user asked to read it, so they read it,
+ * but nothing in it gets to act on their behalf.
+ */
+.spamBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger-border, var(--border-default));
+  border-radius: var(--radius-md);
+  background: var(--color-danger-tint, var(--surface-sunken));
+  color: var(--text-default);
+}
+
+.spamBanner svg {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
+  color: var(--color-danger, var(--text-default));
+}
+
+.spamBanner > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.spamBannerTitle {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.spamBannerBody {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.spamImagesNote {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* A starred message's toggle reads as pressed, not just as a changed label. */
+.activeAction {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/*
+ * Unsubscribe — a quiet link-weight control beside the sender, never a
+ * primary button. It is an escape hatch, not a call to action.
+ */
+.unsubscribe {
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: auto;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.unsubscribe:hover,
+.unsubscribe:focus-visible {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* --- "Show original" ---------------------------------------------------- */
+
+.originalDialog {
+  width: min(52rem, 92vw);
+  max-height: 86vh;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  color: var(--text-default);
+}
+
+.originalDialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.originalContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  max-height: 86vh;
+}
+
+.originalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.originalTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.originalSubtitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/*
+ * `pre` with `white-space: pre-wrap`: header lines are long and must wrap
+ * rather than force the dialog to scroll sideways, but their leading
+ * whitespace is meaningful and must survive.
+ */
+.originalPre {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.originalActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ==========================================================================
+   Printing (E2 item 3)
+   ========================================================================== */
+
+/*
+ * Printing ONE message, not the app.
+ *
+ * The rule is inverted rather than additive: everything is hidden, then the
+ * reader and its ancestors are put back. Listing what to hide instead would
+ * mean every future column added to this screen silently starts printing.
+ *
+ * `position: static` on the restored chain matters as much as visibility: the
+ * reading pane is a scrolled flex child, and a print with the app's scroll
+ * geometry intact renders one clipped viewport-sized page instead of the whole
+ * message flowing across as many pages as it needs.
+ */
+@media print {
+  :global(body) *,
+  :global(#root) * {
+    visibility: hidden;
+  }
+
+  .printRoot,
+  .printRoot * {
+    visibility: visible;
+  }
+
+  .printRoot {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    background: #fff;
+    color: #000;
+  }
+
+  /* The controls are not part of the message. */
+  .actions,
+  .navGroup,
+  .footer,
+  .downloadRow,
+  .unsubscribe,
+  .originalDialog {
+    display: none !important;
+  }
+
+  /* Let the body flow across pages instead of scrolling inside a box. */
+  .bodyRegion {
+    overflow: visible;
+    max-height: none;
+  }
+}

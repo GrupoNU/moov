@@ -57,6 +57,15 @@ export interface SecureHtmlBodyProps {
   readonly blockRemoteImages: boolean;
   /** Called when the user explicitly opts in to loading them. */
   readonly onShowRemoteImages: () => void;
+  /**
+   * Whether the opt-in is OFFERED at all (E2, canon §4.1.9).
+   *
+   * `false` in the Junk mailbox: the banner still says the images are hidden —
+   * silence there would look like a rendering bug — but the button that loads
+   * them is not rendered. Disabling it instead would invite the click the
+   * policy exists to prevent. Defaults to `true`.
+   */
+  readonly allowUnblock?: boolean;
   /** The image-proxy signer (mail/api.ts). */
   readonly signImageUrls: SignImageUrls;
   /** Rendered when sanitization fails or yields nothing displayable —
@@ -91,6 +100,7 @@ export function SecureHtmlBody({
   onShowRemoteImages,
   signImageUrls,
   fallback,
+  allowUnblock = true,
 }: SecureHtmlBodyProps): React.JSX.Element {
   const { t, format } = useTranslation();
 
@@ -170,13 +180,18 @@ export function SecureHtmlBody({
           <span className={styles.imageBannerText}>
             {format("reader.imagesBlocked", remoteUrls.length)}
           </span>
-          <button
-            type="button"
-            className={styles.showImagesButton}
-            onClick={onShowRemoteImages}
-          >
-            {t("reader.showImages")}
-          </button>
+          {/* Canon §4.1.9: in Spam the count is still stated — silence would
+              look like a rendering bug — but there is NO control to load
+              them. */}
+          {allowUnblock && (
+            <button
+              type="button"
+              className={styles.showImagesButton}
+              onClick={onShowRemoteImages}
+            >
+              {t("reader.showImages")}
+            </button>
+          )}
         </div>
       )}
 
