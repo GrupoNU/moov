@@ -465,10 +465,30 @@ func (s *Syncer) commitBatch(
 	if err := s.addBlobRefs(ctx, account.ID, ids, batch); err != nil {
 		return 0, 0, err
 	}
-	if err := s.assignThreads(ctx, account.ID, ids, rows); err != nil {
+	assigned, err := s.assignThreads(ctx, account.ID, ids, rows)
+	if err != nil {
 		return 0, 0, err
 	}
+	// THE MUTE HOOK (L3 epic E4). It runs here — after threading, inside the
+	// commit step — because "which conversation did this message join" is what
+	// threading decides, and mute is a per-conversation rule. Running it any
+	// earlier would mean guessing; running it later (a separate sweep) would
+	// mean the reply visibly sits in the inbox for a poll interval.
+	//
+	// It never returns an error: mute.go's Apply isolates per message and
+	// treats every failure as "the reply stays in the inbox", which is the
+	// pre-feature state rather than a corruption.
+	s.applyMutes(ctx, account.ID, mb, ids, assigned)
 	return countInserted(ids), failed, nil
+}
+
+// applyMutes runs the mute archiver over a freshly committed batch, when one
+// is configured.
+func (s *Syncer) applyMutes(ctx context.Context, accountID int64, mb syncMailbox, ids []int64, threadIDs []int64) {
+	if s.opts.Mutes == nil || len(threadIDs) == 0 {
+		return
+	}
+	s.opts.Mutes.Apply(ctx, accountID, mb.row, ids, threadIDs)
 }
 
 // assignThreads groups the batch's messages into conversations (migration 0004).
@@ -490,20 +510,41 @@ func (s *Syncer) commitBatch(
 //
 // The exception is context cancellation, which is propagated: a shutdown must
 // stop the pipeline rather than be logged as a threading problem.
-func (s *Syncer) assignThreads(ctx context.Context, accountID int64, ids []int64, rows []store.NewMessage) error {
+// It returns the thread id assigned to each of `ids`, parallel to it — the
+// mute hook's input. A message whose threading failed reports its own id,
+// which is the JWZ base case InsertMessages already wrote and therefore the
+// truthful answer rather than a placeholder.
+func (s *Syncer) assignThreads(ctx context.Context, accountID int64, ids []int64, rows []store.NewMessage) ([]int64, error) {
 	candidates := make([]store.ThreadCandidate, len(rows))
 	for i := range rows {
 		candidates[i] = threadCandidate(&rows[i].Message)
 	}
+	// The fallback answer, overwritten below by whatever the assignment
+	// decided. Pre-filling it means a partial failure still yields a parallel
+	// slice rather than a shorter one the caller would have to align by hand.
+	threadIDs := make([]int64, len(ids))
+	copy(threadIDs, ids)
 
 	assignments, err := s.store.AssignThreads(ctx, accountID, ids, candidates)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		s.opts.Logger.Warn("threading failed for a batch; messages remain single-message threads",
 			"account_id", accountID, "batch_size", len(rows), "error", err)
-		return nil
+		return threadIDs, nil
+	}
+
+	position := make(map[int64]int, len(ids))
+	for i, id := range ids {
+		if id != 0 {
+			position[id] = i
+		}
+	}
+	for _, a := range assignments {
+		if i, ok := position[a.MessageID]; ok {
+			threadIDs[i] = a.ThreadID
+		}
 	}
 
 	// A merge is worth a log line: it is the rare case (an ancestor arriving
@@ -522,7 +563,7 @@ func (s *Syncer) assignThreads(ctx context.Context, accountID int64, ids []int64
 			"merged_from", a.MergedFrom,
 			"moved_messages", a.MovedMessages)
 	}
-	return nil
+	return threadIDs, nil
 }
 
 // insertDegraded re-inserts a failed batch one message at a time, quarantining

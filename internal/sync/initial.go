@@ -75,6 +75,16 @@ type Options struct {
 	// Broker makes every hook a no-op (Broker.Notify is nil-safe), so a
 	// daemon running without a JMAP server pays nothing.
 	Broker *Broker
+
+	// Mutes, when set, archives arriving mail on muted conversations (L3
+	// epic E4, GC-10). It rides here for the same reason Broker does: every
+	// path that can INSERT a message goes through the commit step, and mute's
+	// effect must be applied to all of them, not only to the watcher's.
+	//
+	// nil means the feature is inert, which is what a deployment without a
+	// write executor gets — the archive is a MOVE, so mute cannot work
+	// read-only, and pretending otherwise would be a control that does nothing.
+	Mutes *MuteArchiver
 }
 
 // Defaults for Options.

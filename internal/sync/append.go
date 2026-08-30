@@ -46,9 +46,14 @@ var ErrAppendNotSupported = errors.New("sync: the server lacks UIDPLUS; an appen
 
 // AppendBlobStore is what ApplyAppend needs from the blob layer: durable bytes
 // plus the reference that keeps them alive. *blob.Store satisfies it.
+//
+// Open joined the set in L3 epic E4: the snooze wake re-appends a message this
+// store already holds, so it reads the bytes back rather than re-fetching them
+// from Dovecot (snooze.go documents why the wake is an append at all).
 type AppendBlobStore interface {
 	Put(ctx context.Context, r io.Reader) (blob.Hash, int64, error)
 	AddRefTx(ctx context.Context, h blob.Hash, accountID int64, kind blob.OwnerKind, ownerID int64) error
+	Open(h blob.Hash) (io.ReadCloser, error)
 }
 
 // AppendedMessage reports a reflected append.
@@ -69,8 +74,30 @@ type AppendedMessage struct {
 //
 // flags use the imap package's normalized vocabulary (bare system flag names,
 // user keywords verbatim) — the same one the rest of the executor speaks.
+//
+// The message's INTERNALDATE is now. Callers that need a specific one — the
+// snooze wake, whose whole purpose is to reset it (snooze.go) — use
+// ApplyAppendAt.
 func (w *WriteExecutor) ApplyAppend(ctx context.Context, accountID, mailboxID int64, raw []byte, flags []string) (AppendedMessage, error) {
+	return w.ApplyAppendAt(ctx, accountID, mailboxID, raw, flags, time.Time{})
+}
+
+// ApplyAppendAt is ApplyAppend with an explicit INTERNALDATE.
+//
+// The zero time means "now", which is what an ordinary create wants and what
+// the IMAP APPEND does when the optional date-time is omitted (RFC 3501
+// §6.3.11: "If a date-time is not specified, the server SHOULD set [...] the
+// current date and time").
+//
+// It exists as a separate entry point rather than an extra parameter on the
+// original because exactly one caller needs it, and making every create site
+// pass a timestamp it does not care about is how a `time.Time{}` eventually
+// gets passed by accident as a real value.
+func (w *WriteExecutor) ApplyAppendAt(ctx context.Context, accountID, mailboxID int64, raw []byte, flags []string, internalDate time.Time) (AppendedMessage, error) {
 	var out AppendedMessage
+	if internalDate.IsZero() {
+		internalDate = time.Now()
+	}
 
 	if w.blobs == nil {
 		return out, errors.New("sync: the write executor has no blob store; appends are not wired")
@@ -101,7 +128,7 @@ func (w *WriteExecutor) ApplyAppend(ctx context.Context, accountID, mailboxID in
 			return ErrAppendNotSupported
 		}
 
-		res, err := c.Append(ctx, mb.Name, raw, flags, time.Now())
+		res, err := c.Append(ctx, mb.Name, raw, flags, internalDate)
 		if err != nil {
 			return fmt.Errorf("appending to %q: %w", mb.Name, err)
 		}
