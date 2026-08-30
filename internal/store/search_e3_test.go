@@ -104,6 +104,39 @@ func e3Corpus(t *testing.T, s *store.Store, n int) (store.Account, store.Mailbox
 	if _, err := s.Pool().Exec(ctx, `ANALYZE messages; ANALYZE message_state`); err != nil {
 		t.Fatalf("ANALYZE: %v", err)
 	}
+
+	// VACUUM the tables after this test's account is dropped, and re-ANALYZE.
+	//
+	// # Why a test has to do this at all
+	//
+	// newAccount already deletes the account on cleanup, which cascades to every
+	// message. But DELETE leaves DEAD TUPLES, and the dev database is SHARED by
+	// every test in this package: after one full run, `messages` holds zero live
+	// rows and ~9,800 dead ones in 45 MB of heap.
+	//
+	// Dead tuples are not merely wasted space here — they change PLANS. The
+	// planner sizes a sequential scan from the table's physical pages, so a table
+	// that is mostly corpses looks expensive to scan and cheap to... scan anyway,
+	// while the statistics say there is nothing to find. That is exactly what
+	// makes TestCollapsePlanStaysBounded and TestSearchSmokeBenchmark — two plan
+	// and latency canaries this file did not write — fail intermittently once
+	// enough corpora have come and gone.
+	//
+	// This corpus is the largest in the package (3,000 messages in the plan
+	// tests, seeded several times per run), so it cleans up after itself rather
+	// than leaving the cost for whichever canary happens to run next. The
+	// cleanup is registered BEFORE the account's own cleanup runs — t.Cleanup is
+	// LIFO, and newAccount registered its delete first, so this runs after it and
+	// vacuums a table the delete has already emptied.
+	t.Cleanup(func() {
+		// Best effort: a failure here must not fail the test that just passed,
+		// and the next run's ANALYZE would recover anyway. It is logged rather
+		// than swallowed so a persistent failure is visible.
+		if _, err := s.Pool().Exec(context.Background(),
+			`VACUUM (ANALYZE) messages; VACUUM (ANALYZE) message_state`); err != nil {
+			t.Logf("vacuuming the E3 corpus: %v", err)
+		}
+	})
 	return acct, inbox, junk, trash
 }
 
