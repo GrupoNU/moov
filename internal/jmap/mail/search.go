@@ -59,33 +59,50 @@ const DefaultSearchWindow = 200
 // the hundred-thousandth row touches the same number of pages as the first,
 // because the cursor RESUMES the index walk instead of counting into it.
 //
-//	A WHOLE WALK to depth N, in one request (3 runs each):
-//	  N        pages   total            per page
-//	  10,000      50   55.9 / 63.7 / 75.3 ms    ~1.3 ms
-//	  26,869     135   158.8 / 159.6 / 166.2 ms ~1.2 ms
-//	  100,000    500   589.2 / 629.0 / 664.0 ms ~1.2 ms
-//	  120,000    600   764.1 ms                 ~1.3 ms
+//	A WHOLE WALK to depth N, in one request, measured through THIS PACKAGE'S
+//	OWN PAGING CODE (adapter_query.go's loop over store.ListAccountMessages,
+//	not a hand-written SQL loop) — 3 runs each, worst single page in brackets:
+//	  N        pages   total                        worst page
+//	  200          1   13 / 11 / 3 ms               [13.2 ms]
+//	  1,000        5   18 / 14 / 14 ms              [ 4.7 ms]
+//	  10,000      50   264 / 167 / 137 ms           [17.5 ms]
+//	  26,869     135   431 / 514 / 377 ms           [19.4 ms]
+//	  50,000     250   1.09 / 0.78 / 0.79 s         [26.7 ms]
+//	  100,000    500   1.73 / 3.11 / 2.27 s         [119 ms]
 //
-// Linear in the depth, flat per page, no knee anywhere. 100,000 costs ~0.6 s of
-// server time in the pathological case where a client asks for it in a SINGLE
-// request — and that case is pathological rather than ordinary, which is the
-// distinction the ceiling is actually protecting:
+// These are ~3x the pure-SQL figures, and the difference is REAL rather than
+// noise: it is the per-page round trip and the row scanning the query plan does
+// not account for. They are the numbers recorded because they are the ones a
+// client actually pays; quoting the SQL timings for a decision about a Go code
+// path would have overstated the headroom threefold.
 //
-//   - A client SCROLLING carries its own cursor and pays ~1.2 ms per page. It
-//     never asks the server for depth at all, at any position in the mailbox.
-//     This is what the PWA does and what every conforming client does.
-//   - A client sending position:100000 in one query pays the 0.6 s once. It is
-//     over the Gmail-class 100 ms interactive bar, and deliberately so: this
-//     ceiling is not a latency budget, it is the wall a runaway request hits.
-//     A request that WANTS the hundred-thousandth row is not an interactive
-//     search, and the honest answer is to serve it slowly rather than to refuse
-//     the owner access to his own mail at row 10,001.
+// Still linear in the depth and still flat per page — the worst page grows only
+// from 13 ms to 27 ms across a 500x range of depth, with the one 119 ms outlier
+// being a cold-cache page rather than a knee. 100,000 costs ~2 s of server time
+// in the pathological case where a client asks for it in a SINGLE request — and
+// that case is pathological rather than ordinary, which is the distinction the
+// ceiling is actually protecting:
+//
+//   - A client SCROLLING carries its own cursor and pays ONE page — 3 to 27 ms,
+//     inside the Gmail-class bar at every depth measured. It never asks the
+//     server for depth at all, at any position in the mailbox. This is what the
+//     PWA does and what every conforming client does, and it is the case the
+//     product's latency promise is about.
+//   - A client sending position:100000 in one query pays ~2 s once. That is well
+//     over the 100 ms interactive bar, and deliberately so: this ceiling is not
+//     a latency budget, it is the wall a runaway request hits. A request that
+//     WANTS the hundred-thousandth row is not an interactive search, and the
+//     honest answer is to serve it slowly rather than to refuse the owner access
+//     to his own mail at row 10,001.
 //
 // So the number the measurements support is 100,000, which is also ADR §6's
-// target and 3.7x the owner's real mailbox. It is NOT raised further: 120,000
-// measured fine too, but a ceiling exists to be a ceiling, and the case for
-// each further order of magnitude has to be made by someone who has a client
-// that needs it.
+// target and 3.7x the owner's real mailbox — whose FULL depth now walks in
+// 0.4-0.5 s, where the old ceiling refused it outright past row 10,000.
+//
+// It is NOT raised further, and the numbers are why: the cost is linear, so
+// 1,000,000 would be ~20 s in one request. A ceiling exists to be a ceiling, and
+// the case for each further order of magnitude has to be made by someone with a
+// client that needs it and a measurement to match.
 //
 // The deeper alternative remains what it always was and is now genuinely
 // sufficient: narrow the filter, or follow Email/changes. Both are index-served
