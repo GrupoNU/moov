@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "../../i18n/I18nProvider";
 import { SHORTCUT_HELP } from "../../keyboard/shortcuts";
 import type { StringKey } from "../../i18n/strings";
+import { usePrefs } from "../../mail/PrefsProvider";
 import styles from "./ShortcutsDialog.module.css";
 
 /**
@@ -28,6 +29,8 @@ export interface ShortcutsDialogProps {
 
 export function ShortcutsDialog({ isOpen, onClose }: ShortcutsDialogProps): React.JSX.Element {
   const { t } = useTranslation();
+  const { prefs } = usePrefs();
+  const shortcutsEnabled = prefs.keyboardShortcuts;
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
 
@@ -105,6 +108,22 @@ export function ShortcutsDialog({ isOpen, onClose }: ShortcutsDialogProps): Reac
             </svg>
           </button>
         </div>
+
+        {/*
+          E5: the honest disclaimer when the map is turned off.
+
+          The sheet is still reachable — the header's help button opens it, and
+          `?` does not while shortcuts are off — so a user who lands here must
+          be told why none of the keys below do anything, rather than being left
+          to conclude the shortcuts are broken. It names the two that DO still
+          work, because those are the ones they will need to get out of here and
+          to search.
+        */}
+        {!shortcutsEnabled && (
+          <p className={styles.disabledNote} role="status">
+            {t("shortcuts.disabled")}
+          </p>
+        )}
 
         <dl className={styles.list}>
           {SHORTCUT_HELP.map((entry) => (

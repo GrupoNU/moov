@@ -17,6 +17,8 @@ import {
   type SelectionScope,
   type ShortcutAction,
 } from "../../keyboard/shortcuts";
+import { usePrefs } from "../../mail/PrefsProvider";
+import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs";
 import {
   fetchMailboxes,
   fetchMessageDetail,
@@ -45,7 +47,12 @@ import {
   type UndoEntry,
 } from "../../mail/undo";
 import { MAX_EMPTY_ROUNDS, shouldContinue, summarize, type EmptyRound } from "../../mail/emptyTrash";
-import { destroyMessages, firstFailureMessage } from "../../mail/write";
+import {
+  destroyMessages,
+  firstFailureMessage,
+  hasFailures,
+  setIdentitySignature,
+} from "../../mail/write";
 import { makeChip } from "../../mail/addresses";
 import { groupByThread, type ThreadGroup } from "../../mail/threading";
 import { KEYWORD_FLAGGED, KEYWORD_SEEN, type Email, type Mailbox, type Thread } from "../../mail/types";
@@ -90,6 +97,7 @@ export function MailScreen(): React.JSX.Element {
   const branding = useBranding();
   const { t, format, locale } = useTranslation();
   const { route, navigate, replace } = useRouter();
+  const { prefs } = usePrefs();
 
   const session = state.status === "authenticated" ? state.session : undefined;
   const accountId = session?.primaryAccounts["urn:ietf:params:jmap:mail"] ?? "";
@@ -123,6 +131,29 @@ export function MailScreen(): React.JSX.Element {
     const stored: BasicCredentials | undefined = loadSession();
     return stored === undefined ? "" : encodeBasicCredentials(stored);
   }, [state.status]);
+
+  /*
+   * E5: density, applied as CSS custom properties on the document ROOT.
+   *
+   * The root rather than a wrapper, because the reading pane, the composer and
+   * every dialog are in the top layer or portaled out of this subtree — a
+   * variable set on a div here would simply not reach them. The same three
+   * values are what `MessageList` derives its virtualization divisor from
+   * (`rowHeightFor`), so the maths and the paint cannot disagree.
+   */
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const root = document.documentElement;
+    const variables = densityVariables(prefs.density);
+    for (const [name, value] of Object.entries(variables)) {
+      root.style.setProperty(name, value);
+    }
+    return () => {
+      // Removed on unmount rather than left behind: the login screen after a
+      // sign-out must not keep the previous account's density.
+      for (const name of Object.keys(variables)) root.style.removeProperty(name);
+    };
+  }, [prefs.density]);
 
   const [mailboxes, setMailboxes] = useState<readonly Mailbox[]>([]);
   const [mailboxError, setMailboxError] = useState<string | undefined>(undefined);
@@ -298,9 +329,34 @@ export function MailScreen(): React.JSX.Element {
     return { kind: "mailbox", mailboxId: activeMailbox.id };
   }, [route, activeMailbox]);
 
+  /**
+   * E5: the inbox-type sort.
+   *
+   * Applied ONLY to the INBOX, which is what the setting is named after and
+   * what Gmail's own six inbox types govern (canon §2.4). Sorting Sent by
+   * "unread first" would be meaningless, and sorting a SEARCH by it would
+   * override the relevance the user asked for.
+   *
+   * The comparator pair is built by `sortForInboxType`, which documents the
+   * polarity read out of the server's `translateKeywordSort`. "default"
+   * yields undefined — no sort argument at all, so a plain inbox load never
+   * pays for a partition the server would compute identically.
+   */
+  const sort = useMemo(() => {
+    if (route.kind !== "mailbox" || activeMailbox?.role !== "inbox") return undefined;
+    return sortForInboxType(prefs.inboxType) as
+      | readonly Record<string, unknown>[]
+      | undefined;
+  }, [route.kind, activeMailbox?.role, prefs.inboxType]);
+
   /** Identifies the list, so the virtualizer resets scroll only on a real change. */
   const listKey =
-    route.kind === "search" ? `search:${normalizeQuery(route.query)}` : `mailbox:${activeMailbox?.id ?? ""}`;
+    route.kind === "search"
+      ? `search:${normalizeQuery(route.query)}`
+      : // The inbox type is part of the list's identity: changing it reorders
+        // every row, so the scroll position from the previous order is
+        // meaningless and must reset rather than land the user mid-list.
+        `mailbox:${activeMailbox?.id ?? ""}:${prefs.inboxType}`;
 
   useEffect(() => {
     if (client === undefined || accountId === "" || filter === undefined) {
@@ -320,6 +376,7 @@ export function MailScreen(): React.JSX.Element {
       try {
         const page = await queryEmails(client, accountId, filter, {
           signal: controller.signal,
+          ...(sort !== undefined ? { sort } : {}),
         });
         if (controller.signal.aborted) return;
         setEmails(page.emails);
@@ -351,7 +408,7 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId, filter, route.kind, t, refreshToken]);
+  }, [client, accountId, filter, route.kind, t, refreshToken, sort]);
 
   // --- P3: identity (the signature and the sending address) ----------------
 
@@ -372,6 +429,44 @@ export function MailScreen(): React.JSX.Element {
       controller.abort();
     };
   }, [client, accountId]);
+
+  /**
+   * E5: saves the signature from the settings sheet.
+   *
+   * It lives here rather than in the sheet because this is where the JMAP
+   * client is, and the sheet is deliberately client-free — everything else it
+   * writes goes through the prefs context. On success the local identity is
+   * updated from the value we sent rather than refetched: the composer reads
+   * `identity.textSignature` and a stale one would append the previous
+   * signature to the very next reply.
+   */
+  const saveSignature = useCallback(
+    async (textSignature: string): Promise<boolean> => {
+      if (client === undefined || accountId === "" || identity === undefined) return false;
+      try {
+        const outcome = await setIdentitySignature(
+          client,
+          accountId,
+          identity.id,
+          textSignature,
+        );
+        if (hasFailures(outcome)) {
+          setToast(`${t("settings.signature.failed")}: ${firstFailureMessage(outcome) ?? ""}`.trim());
+          return false;
+        }
+        setIdentity((current) =>
+          current === undefined ? current : { ...current, textSignature },
+        );
+        return true;
+      } catch (error) {
+        setToast(
+          `${t("settings.signature.failed")}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return false;
+      }
+    },
+    [client, accountId, identity, t],
+  );
 
   // --- P3: optimistic actions ----------------------------------------------
 
@@ -517,6 +612,24 @@ export function MailScreen(): React.JSX.Element {
   }, [projected, targetMessageIds, trashMailboxId]);
 
   /**
+   * Where auto-advance would land, read through a ref.
+   *
+   * `dispatchAction` needs the adjacent conversation, and `siblingGroup` is
+   * defined below it (it depends on the route, which depends on things
+   * declared later). A ref reassigned on every render states "read the latest"
+   * honestly, where hoisting the whole navigation block above the action
+   * dispatcher would tangle two unrelated concerns to satisfy a declaration
+   * order.
+   *
+   * Gmail's own naming is the reason for the inversion at the call site: its
+   * "newer message" is the one ABOVE in a newest-first list, which is what
+   * this codebase calls the "previous" sibling.
+   */
+  const advanceTargetRef = useRef<(direction: "next" | "previous") => ThreadGroup | undefined>(
+    () => undefined,
+  );
+
+  /**
    * Dispatches an action and reports its outcome.
    *
    * The failure path is the point: it names WHAT failed with the server's own
@@ -582,19 +695,41 @@ export function MailScreen(): React.JSX.Element {
       setSelection(EMPTY_SELECTION);
 
       /*
-       * E2 item 8 — auto-advance's DEFAULT, which in Gmail is "back to the
-       * conversation list". Archiving or deleting the message you are reading
-       * must not leave its reading pane open showing a message that is no
-       * longer in this folder. The opt-in that picks the next/previous message
-       * instead arrives with the settings epic; this is only the default.
+       * Auto-advance (canon §2.2, E2's default now wired to E5's preference).
+       *
+       * Gmail's default is "back to the conversation list", which is what E2
+       * shipped; the opt-in offers "older messages" or "newer messages"
+       * instead. The destination is read through `advanceTargetRef` BEFORE
+       * `refresh()` runs, from the list as it still stands: once the refetch
+       * lands, the archived row has left and the same index points one row too
+       * far. That is the off-by-one `runArchiveAndAdvance` documents, and it is
+       * why the order of these two statements matters.
+       *
+       * The direction is INVERTED on the way in, and deliberately so: the list
+       * is newest-first, so Gmail's "newer message" is the row ABOVE, which
+       * this codebase calls the "previous" sibling.
+       *
+       * Falling back to the list when there is no adjacent message is
+       * deliberate: leaving the reader open on a message that is no longer in
+       * this folder is the failure the default exists to prevent, and it must
+       * not come back through the opt-in.
        */
       if (options.autoAdvance === true && targetedOpenMessage) {
-        navigate(withMessage(route, undefined));
+        const next =
+          prefs.autoAdvance === "list"
+            ? undefined
+            : advanceTargetRef.current(prefs.autoAdvance === "newer" ? "previous" : "next");
+        if (next === undefined) {
+          navigate(withMessage(route, undefined));
+        } else {
+          setSelectedId(next.id);
+          navigate(withMessage(route, next.latest.id));
+        }
       }
 
       refresh();
     },
-    [actions, projected, refresh, t, format, openMessageId, navigate, route],
+    [actions, projected, refresh, t, format, openMessageId, navigate, route, prefs.autoAdvance],
   );
 
   const runArchive = useCallback((): void => {
@@ -882,6 +1017,10 @@ export function MailScreen(): React.JSX.Element {
     },
     [groups, openGroupIndex],
   );
+
+  // Kept current for `dispatchAction`'s auto-advance, which runs before this
+  // is declared. See `advanceTargetRef`.
+  advanceTargetRef.current = siblingGroup;
 
   const goToSibling = useCallback(
     (direction: "next" | "previous"): void => {
@@ -1306,6 +1445,14 @@ export function MailScreen(): React.JSX.Element {
           target: event.target,
         },
         keyboardRef.current,
+        /*
+         * E5: the `keyboardShortcuts` preference (D-3 keeps it ON by default,
+         * diverging from Gmail). "Off" still resolves Escape and `/` — see
+         * `isAlwaysOnKey` — because a modal that cannot be dismissed and a
+         * search that cannot be reached are accessibility defects, not
+         * preferences.
+         */
+        { enabled: prefs.keyboardShortcuts },
       );
 
       /*
@@ -1339,7 +1486,7 @@ export function MailScreen(): React.JSX.Element {
       window.removeEventListener("keydown", onKeyDown);
       if (chordTimer.current !== undefined) clearTimeout(chordTimer.current);
     };
-  }, [runAction, composerDraft]);
+  }, [runAction, composerDraft, prefs.keyboardShortcuts]);
 
   /*
    * Toasts clear themselves — but a toast carrying an UNDO offer must outlive
@@ -1363,6 +1510,26 @@ export function MailScreen(): React.JSX.Element {
   // --- render --------------------------------------------------------------
 
   const isReading = openMessageId !== undefined;
+
+  /*
+   * E5: the reading pane (canon §2.4, /9499937 — "No split" / "Right of
+   * inbox" / "Below inbox").
+   *
+   * The three are LAYOUT variants of the same components, chosen by a class on
+   * the grid container, not three code paths:
+   *
+   *   - "right"  — the split P2 shipped: list beside reader, two columns.
+   *   - "bottom" — the same two panes stacked, list above and reader below.
+   *   - "none"   — no split at all: opening a message REPLACES the list, and
+   *                `u` (or the reader's close button) brings it back.
+   *
+   * The decision itself is `paneLayout` in `mail/prefs.ts` — a pure function
+   * with its own tests, because the "none" rule (unmount the list, never hide
+   * it) is a real invariant and this component cannot be rendered in a unit
+   * test without auth, a router, a JMAP client and an EventSource.
+   */
+  const layout = paneLayout(prefs.readingPane, isReading);
+  const { listHidden } = layout;
 
   return (
     <div className={styles.shell}>
@@ -1403,7 +1570,16 @@ export function MailScreen(): React.JSX.Element {
         </div>
       </header>
 
-      <div className={[styles.body, isReading ? styles.reading : ""].filter(Boolean).join(" ")}>
+      <div
+        className={[
+          styles.body,
+          layout.mode === "right" ? styles.reading : "",
+          layout.mode === "bottom" ? styles.readingBottom : "",
+          layout.mode === "full" ? styles.readingFull : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         <nav className={styles.sidebar} aria-label={t("shell.mailboxes")}>
           {mailboxError !== undefined ? (
             <div className={styles.sidebarError}>
@@ -1460,6 +1636,15 @@ export function MailScreen(): React.JSX.Element {
           </div>
         </nav>
 
+        {/*
+          In "No split" the list is UNMOUNTED while a message is open, not
+          hidden: a virtualized list in a zero-height container measures a
+          viewport of 0 and renders a window of nothing, so returning to it
+          would land on an empty list at the wrong scroll offset. `#main` moves
+          onto whichever pane is actually showing, so the skip link never
+          points at nothing.
+        */}
+        {!listHidden && (
         <main className={styles.listColumn} id="main">
           <ActionBar
             selectedCount={selection.selected.size}
@@ -1566,9 +1751,14 @@ export function MailScreen(): React.JSX.Element {
             }
           />
         </main>
+        )}
 
         {isReading && client !== undefined && (
-          <aside className={styles.readerColumn} aria-label={t("list.selectMessage")}>
+          <aside
+            className={styles.readerColumn}
+            aria-label={t("list.selectMessage")}
+            id={listHidden ? "main" : undefined}
+          >
             <ReadingPane
               email={detail.email}
               thread={detail.thread}
@@ -1602,6 +1792,21 @@ export function MailScreen(): React.JSX.Element {
               mailboxes={mailboxes}
               currentMailboxId={activeMailbox?.id}
               inJunk={inJunk}
+              /*
+               * E5 / D-4: the images policy.
+               *
+               * "always" auto-loads remote images THROUGH the HMAC proxy — the
+               * proxy is the precondition that makes Gmail's own default
+               * defensible (canon §7.1: the sender learns nothing about the
+               * reader). "ask" is the per-message opt-in P2 shipped.
+               *
+               * Junk is excluded unconditionally and that exclusion is NOT
+               * expressed here: `inJunk` already drives `allowRemoteImages` in
+               * the reader, and E2's rule that Spam images are unloadable wins
+               * over any preference. Passing the policy through the same prop
+               * would have made a setting able to override a security stance.
+               */
+              autoLoadImages={prefs.imagesPolicy === "always"}
               onNextMessage={siblingGroup("next") === undefined ? undefined : () => {
                 goToSibling("next");
               }}
@@ -1618,6 +1823,8 @@ export function MailScreen(): React.JSX.Element {
         onClose={() => {
           setSettingsOpen(false);
         }}
+        identity={identity}
+        onSaveSignature={saveSignature}
       />
 
       <ShortcutsDialog

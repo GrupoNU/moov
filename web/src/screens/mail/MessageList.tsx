@@ -2,13 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import { formatListDate, initialsFor, machineDate } from "../../mail/format";
+import { usePrefs } from "../../mail/PrefsProvider";
+import { rowHeightFor } from "../../mail/prefs";
 import { displaySubject, senderLabel, type ThreadGroup } from "../../mail/threading";
-import {
-  computeWindow,
-  ROW_HEIGHT,
-  scrollOffsetToReveal,
-  totalHeight,
-} from "../../mail/windowing";
+import { computeWindow, scrollOffsetToReveal, totalHeight } from "../../mail/windowing";
 import styles from "./MessageList.module.css";
 
 /**
@@ -95,9 +92,21 @@ export function MessageList({
   onRowToggleRead,
 }: MessageListProps): React.JSX.Element {
   const { t, locale } = useTranslation();
+  const { prefs } = usePrefs();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(600);
+
+  /*
+   * E5: the row height is DERIVED from the density preference, not a constant.
+   *
+   * This is the number the virtualizer divides by AND the number the
+   * stylesheet draws with (`--row-height`, stamped on the root by
+   * MailScreen from the same source). If the two ever disagree the list drifts
+   * away from its scrollbar — the defect `rowHeight.test.ts` exists for — so
+   * both sides read `rowHeightFor(density)` and neither has its own copy.
+   */
+  const rowHeight = rowHeightFor(prefs.density);
 
   // `now` is captured once per render pass rather than per row, so 200 rows do
   // not construct 200 Dates, and so every row in one paint agrees about what
@@ -153,8 +162,9 @@ export function MessageList({
         scrollTop,
         viewportHeight,
         itemCount: groups.length,
+        rowHeight,
       }),
-    [scrollTop, viewportHeight, groups.length],
+    [scrollTop, viewportHeight, groups.length, rowHeight],
   );
 
   // Keep the selected row in view when selection moves by keyboard.
@@ -164,9 +174,14 @@ export function MessageList({
     if (element === null) return;
     const index = groups.findIndex((group) => group.id === selectedId);
     if (index < 0) return;
-    const offset = scrollOffsetToReveal(index, element.scrollTop, element.clientHeight);
+    const offset = scrollOffsetToReveal(
+      index,
+      element.scrollTop,
+      element.clientHeight,
+      rowHeight,
+    );
     if (offset !== undefined) element.scrollTop = offset;
-  }, [selectedId, groups]);
+  }, [selectedId, groups, rowHeight]);
 
   const selectedIndex = useMemo(
     () => groups.findIndex((group) => group.id === selectedId),
@@ -196,7 +211,7 @@ export function MessageList({
              * virtualized list announce "row 400 of 626" correctly. */
             aria-rowcount={groups.length}
             className={styles.grid}
-            style={{ height: `${totalHeight(groups.length)}px` }}
+            style={{ height: `${totalHeight(groups.length, rowHeight)}px` }}
           >
             {visible.map((group, offset) => {
               const index = range.start + offset;
@@ -211,16 +226,25 @@ export function MessageList({
                     // nothing is selected, so Tab enters the list once.
                     selectedIndex >= 0 ? index === selectedIndex : index === 0
                   }
-                  top={index * ROW_HEIGHT}
+                  top={index * rowHeight}
                   locale={locale}
                   now={now}
                   onSelect={onSelect}
                   onOpen={onOpen}
                   isChecked={selectedIds?.has(group.id) === true}
                   onToggleSelect={onToggleSelect}
-                  onRowArchive={onRowArchive}
-                  onRowDelete={onRowDelete}
-                  onRowToggleRead={onRowToggleRead}
+                  /*
+                   * E5: hover actions are gated by their preference (Gmail's
+                   * single "Disable hover actions" setting, canon §2.2). The
+                   * props are dropped entirely rather than passed with the
+                   * buttons hidden by CSS — the cell is not rendered at all,
+                   * so there is nothing for Tab to reach and no invisible
+                   * control in the accessibility tree.
+                   */
+                  onRowArchive={prefs.hoverActions ? onRowArchive : undefined}
+                  onRowDelete={prefs.hoverActions ? onRowDelete : undefined}
+                  onRowToggleRead={prefs.hoverActions ? onRowToggleRead : undefined}
+                  showSnippet={prefs.showSnippets}
                 />
               );
             })}
@@ -253,6 +277,8 @@ interface MessageRowProps {
   readonly onRowArchive: ((group: ThreadGroup) => void) | undefined;
   readonly onRowDelete: ((group: ThreadGroup) => void) | undefined;
   readonly onRowToggleRead: ((group: ThreadGroup) => void) | undefined;
+  /** E5: the `showSnippets` preference — the preview line next to the subject. */
+  readonly showSnippet: boolean;
 }
 
 function MessageRow({
@@ -270,6 +296,7 @@ function MessageRow({
   onRowArchive,
   onRowDelete,
   onRowToggleRead,
+  showSnippet,
 }: MessageRowProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -281,7 +308,10 @@ function MessageRow({
       ? group.participants.join(", ")
       : senderLabel(latest) ?? t("list.unknownSender");
   const subject = displaySubject(latest.subject) ?? t("list.noSubject");
-  const preview = latest.preview ?? "";
+  // E5: the snippet is dropped from the DOM when the preference is off, not
+  // hidden — a screen reader must not read a preview the sighted user turned
+  // off, and the row's own text is what the setting is about.
+  const preview = showSnippet ? (latest.preview ?? "") : "";
   const date = formatListDate(latest.receivedAt, locale, now);
   const isoDate = machineDate(latest.receivedAt);
 

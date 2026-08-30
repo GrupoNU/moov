@@ -1,17 +1,28 @@
 /*
- * The settings sheet.
+ * The settings sheet (L3 E5 — the full surface).
  *
- * Deliberately the same geometry vocabulary as ShortcutsDialog — same
- * backdrop, same raised card, same close affordance — because they are the two
- * modal sheets in the app and a user should not have to learn two. What
- * differs is the body: rows rather than a definition list.
+ * P1 shipped this as a single scrolling column with one row in it. E5 turns it
+ * into the shape Gmail's settings actually have: a persistent SECTION RAIL on
+ * the left and a scrolling panel on the right, with a search box above both.
+ *
+ * The rail is what makes eight sections navigable — a single column of ~25 rows
+ * is a scroll-hunt, and the previous file's own comment predicted this ("when
+ * it IS long enough, the sections become the tab list without the rows
+ * changing at all"). The rows did not change; only their container did.
+ *
+ * It stays a <dialog> rather than becoming a route: `showModal()` already
+ * supplies inertness, the focus trap and Escape, all three of which a routed
+ * screen would have to give up or re-implement.
  */
 
 .dialog {
   padding: 0;
   border: none;
   background: transparent;
-  max-width: min(34rem, calc(100vw - 2rem));
+  /* Wide enough for a rail plus a readable measure; never wider than the
+   * viewport. */
+  max-width: min(56rem, calc(100vw - 2rem));
+  width: min(56rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 4rem);
   /* The dialog element centres itself with margin:auto in the top layer. */
   margin: auto;
@@ -24,31 +35,45 @@
 }
 
 .content {
+  display: flex;
+  flex-direction: column;
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
-  padding: var(--space-5) var(--space-6) var(--space-6);
   max-height: calc(100dvh - 4rem);
-  overflow-y: auto;
+  /* The PANEL scrolls, not the card: the rail and the search box must stay
+   * put while the settings scroll under them. */
+  overflow: hidden;
 }
 
 .header {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  margin-bottom: var(--space-5);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.headerText {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
 }
 
 .title {
   font-size: var(--text-lg);
   color: var(--text-strong);
+  white-space: nowrap;
 }
 
 .close {
   display: grid;
   place-items: center;
+  flex: none;
   width: 30px;
   height: 30px;
   color: var(--text-muted);
@@ -66,6 +91,124 @@
   background: var(--surface-sunken);
   color: var(--text-strong);
   border-color: var(--border-subtle);
+}
+
+/* --- the search box (D-5) --- */
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 18rem;
+  min-width: 0;
+  max-width: 24rem;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-3);
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: var(--space-2) var(--space-7) var(--space-2) calc(var(--space-3) + 22px);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.searchInput::placeholder {
+  color: var(--text-muted);
+}
+
+.searchClear {
+  position: absolute;
+  right: var(--space-2);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.searchClear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.searchClear:hover {
+  background: var(--surface-default);
+  color: var(--text-strong);
+}
+
+/* --- the two panes --- */
+
+.panes {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.navItem {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  text-align: left;
+  color: var(--text-default);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.navItem:hover {
+  background: var(--surface-sunken);
+}
+
+.navItemActive {
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+}
+
+.panel {
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* --- status strip --- */
+
+.status {
+  flex: none;
+  padding: var(--space-2) var(--space-6);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+}
+
+.statusError {
+  color: var(--text-danger, var(--text-strong));
 }
 
 /* --- sections and rows --- */
@@ -124,8 +267,208 @@
   flex: none;
 }
 
-/* On a narrow sheet the control drops under its label rather than squeezing
- * the description into a column two words wide. */
+/* --- the controls --- */
+
+.select {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  min-width: 12rem;
+}
+
+/*
+ * The switch is a real checkbox with a drawn track, not a div with a click
+ * handler: it keeps Space, the focus ring, the checked state and the
+ * accessible role from the browser.
+ */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 40px;
+  height: 22px;
+  flex: none;
+}
+
+.switchInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switchTrack {
+  width: 40px;
+  height: 22px;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background var(--duration-fast) var(--ease-out);
+  pointer-events: none;
+}
+
+.switchTrack::after {
+  content: "";
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 2px;
+  background: var(--surface-raised);
+  border-radius: 50%;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.switchInput:checked + .switchTrack {
+  background: var(--accent-default, var(--text-strong));
+}
+
+.switchInput:checked + .switchTrack::after {
+  transform: translateX(18px);
+}
+
+.switchInput:focus-visible + .switchTrack {
+  outline: 2px solid var(--focus-ring, var(--text-strong));
+  outline-offset: 2px;
+}
+
+/* --- the honest skeletons (P4) --- */
+
+.skeleton {
+  padding: var(--space-5);
+  background: var(--surface-sunken);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.skeletonTitle {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+}
+
+.skeletonBody {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+/* --- the account section --- */
+
+.identity {
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  text-align: right;
+}
+
+.identityEmail {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.signatureField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(24rem, 100%);
+}
+
+.signatureInput {
+  min-height: 6rem;
+  padding: var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
+.signatureActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.signatureSave {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.signatureSave:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+}
+
+.signatureSave:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.signatureNote {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* --- the search's empty state --- */
+
+.empty {
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+}
+
+.emptyBody {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/*
+ * On a narrow sheet the rail becomes a horizontal strip and the rows stack.
+ * The rail is NOT hidden: it is the only way to reach a section without
+ * scrolling past the seven others.
+ */
+@media (max-width: 44rem) {
+  .panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .nav {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .navItem {
+    white-space: nowrap;
+  }
+
+  .header {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 30rem) {
   .row {
     flex-direction: column;
@@ -135,5 +478,9 @@
 
   .rowControl {
     align-self: flex-start;
+  }
+
+  .identity {
+    text-align: left;
   }
 }

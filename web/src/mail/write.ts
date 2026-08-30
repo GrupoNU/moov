@@ -723,6 +723,41 @@ export async function fetchIdentities(
   }));
 }
 
+/**
+ * Updates an identity's plain-text signature (RFC 8621 §6.3, L3 E5).
+ *
+ * Only `textSignature` is written. `htmlSignature` is deliberately left alone:
+ * it is HTML the server stores and the composer may render, so setting it from
+ * a plain textarea would either mean escaping the user's text into markup they
+ * did not write, or shipping a rich editor for one field. Gmail's own signature
+ * model is rich and multi-signature (canon §2.3, up to 10,000 chars, named
+ * signatures with new-vs-reply defaults) — that is epic E7's scope, and this is
+ * the honest subset: the one field the composer already reads.
+ *
+ * The per-record `notUpdated` entry is returned rather than thrown, matching
+ * every other /set wrapper here, so a caller can name the server's own reason.
+ */
+export async function setIdentitySignature(
+  client: JmapClient,
+  accountId: string,
+  identityId: string,
+  textSignature: string,
+  signal?: AbortSignal,
+): Promise<SetOutcome> {
+  const response = await client.call(
+    [
+      [
+        "Identity/set",
+        { accountId, update: { [identityId]: { textSignature } } },
+        "i",
+      ],
+    ],
+    [CAP_CORE, CAP_SUBMISSION],
+    signal,
+  );
+  return readSetResponse(responseFor(response.methodResponses, "i"));
+}
+
 // ---------------------------------------------------------------------------
 // Mailbox/set — creating a folder from the move menu
 // ---------------------------------------------------------------------------

@@ -77,6 +77,11 @@ export interface ReadingPaneProps {
    * the unblock control is not rendered at all.
    */
   readonly inJunk: boolean;
+  /**
+   * E5 / D-4: load remote images without asking (the `imagesPolicy: "always"`
+   * pole). Junk still overrides it — see {@link MessageBody}.
+   */
+  readonly autoLoadImages?: boolean;
   /** Goes to the next/previous message in the list; absent when there is none. */
   readonly onNextMessage: (() => void) | undefined;
   readonly onPreviousMessage: (() => void) | undefined;
@@ -105,6 +110,7 @@ export function ReadingPane({
   mailboxes,
   currentMailboxId,
   inJunk,
+  autoLoadImages = false,
   onNextMessage,
   onPreviousMessage,
 }: ReadingPaneProps): React.JSX.Element {
@@ -408,6 +414,7 @@ export function ReadingPane({
           email={email}
           signImageUrls={signImages}
           allowRemoteImages={!inJunk}
+          autoLoadImages={autoLoadImages}
         />
         {inJunk && (
           <p className={styles.spamImagesNote} role="note">

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasPendingChord,
   INITIAL_KEYBOARD_STATE,
+  isAlwaysOnKey,
   isTypingTarget,
   resolveShortcut,
   SHORTCUT_HELP,
@@ -269,5 +270,74 @@ describe("E2: the * selection chord", () => {
     const armed = resolveShortcut(key("*")).nextState;
     const target = { tagName: "INPUT" } as unknown as EventTarget;
     expect(hasPendingChord(resolveShortcut(key("a", { target }), armed).nextState)).toBe(false);
+  });
+});
+
+/**
+ * The `keyboardShortcuts` preference (L3 E5, decision D-3).
+ *
+ * Turning shortcuts off must not turn the app into a trap: the two keys that
+ * get a keyboard user OUT of somewhere — Escape and `/` — stay live, and
+ * everything that ACTS on mail goes quiet.
+ */
+describe("the shortcuts-off gate", () => {
+  const off = { enabled: false };
+
+  it("resolves nothing for the acting keys", () => {
+    for (const k of ["e", "#", "!", "z", "s", "c", "r", "f", "x", "j", "k", "u", "o", "_", "]", "["]) {
+      expect(resolveShortcut(key(k), INITIAL_KEYBOARD_STATE, off).action).toBeUndefined();
+    }
+  });
+
+  it("keeps Escape live — a modal must stay dismissable", () => {
+    expect(resolveShortcut(key("Escape"), INITIAL_KEYBOARD_STATE, off).action).toEqual({
+      kind: "closeOverlay",
+    });
+  });
+
+  it("keeps `/` live — search must stay reachable", () => {
+    expect(resolveShortcut(key("/"), INITIAL_KEYBOARD_STATE, off).action).toEqual({
+      kind: "focusSearch",
+    });
+  });
+
+  it("refuses to arm a chord, so `g` cannot swallow the next key", () => {
+    const after = resolveShortcut(key("g"), INITIAL_KEYBOARD_STATE, off);
+    expect(after.action).toBeUndefined();
+    expect(hasPendingChord(after.nextState)).toBe(false);
+  });
+
+  it("does not resolve a chord that was armed before the setting changed", () => {
+    // Armed while ON…
+    const armed = resolveShortcut(key("g")).nextState;
+    expect(hasPendingChord(armed)).toBe(true);
+    // …and now OFF: the pending prefix must not complete into a navigation.
+    const result = resolveShortcut(key("i"), armed, off);
+    expect(result.action).toBeUndefined();
+    expect(hasPendingChord(result.nextState)).toBe(false);
+  });
+
+  it("still ignores modified keys, so the browser keeps Ctrl+R", () => {
+    expect(
+      resolveShortcut(key("r", { ctrlKey: true }), INITIAL_KEYBOARD_STATE, off).action,
+    ).toBeUndefined();
+  });
+
+  it("still refuses to fire inside a text field", () => {
+    const target = { tagName: "INPUT" } as unknown as EventTarget;
+    expect(resolveShortcut(key("e", { target }), INITIAL_KEYBOARD_STATE, off).action).toBeUndefined();
+  });
+
+  it("is ON by default — decision D-3, the signed divergence from Gmail", () => {
+    // Omitting the options object must not silently disable the map.
+    expect(resolveShortcut(key("e")).action).toEqual({ kind: "archive" });
+    expect(resolveShortcut(key("e"), INITIAL_KEYBOARD_STATE, {}).action).toEqual({ kind: "archive" });
+  });
+
+  it("names exactly the two always-on keys", () => {
+    expect(isAlwaysOnKey("Escape")).toBe(true);
+    expect(isAlwaysOnKey("/")).toBe(true);
+    expect(isAlwaysOnKey("e")).toBe(false);
+    expect(isAlwaysOnKey("?")).toBe(false);
   });
 });

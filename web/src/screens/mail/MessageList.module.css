@@ -1,13 +1,24 @@
 /*
  * The virtualized message list.
  *
- * --row-height MUST equal ROW_HEIGHT in mail/windowing.ts. The two are pinned
- * together by a unit test, because a silent divergence between the CSS and the
- * maths is a list whose scrollbar drifts from its content.
+ * --row-height MUST equal the height the virtualizer divides by. The two are
+ * pinned together by a unit test, because a silent divergence between the CSS
+ * and the maths is a list whose scrollbar drifts from its content.
+ *
+ * L3 E5 makes that height a function of the DENSITY preference: MailScreen
+ * stamps `--row-height`, `--row-padding-x` and `--row-gap` on the document
+ * root from `densityVariables()`, and `MessageList` derives its divisor from
+ * `rowHeightFor()` — the same source. The declarations below are FALLBACKS in
+ * the `var(…, …)` sense: they are what the list draws with before the prefs
+ * load resolves, and they are the "default" density's own values, so the
+ * pre-load paint and the post-load paint agree for the overwhelmingly common
+ * case. The literal 72px here is what the unit test pins.
  */
 
 .container {
-  --row-height: 72px;
+  --row-height-fallback: 72px;
+  --row-padding-x-fallback: 16px;
+  --row-gap-fallback: 12px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -38,13 +49,13 @@
   top: 0;
   left: 0;
   right: 0;
-  height: var(--row-height);
+  height: var(--row-height, var(--row-height-fallback));
   display: grid;
   /* checkbox | avatar | sender | subject+preview | meta */
   grid-template-columns: auto auto minmax(9rem, 15rem) 1fr auto;
   align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
+  gap: var(--row-gap, var(--row-gap-fallback));
+  padding: 0 var(--row-padding-x, var(--row-padding-x-fallback));
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
   /* Only the transform is animated on scroll; colour transitions are for
@@ -238,9 +249,9 @@
 .skeletonRow {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: var(--row-height);
-  padding: 0 var(--space-4);
+  gap: var(--row-gap, var(--row-gap-fallback));
+  height: var(--row-height, var(--row-height-fallback));
+  padding: 0 var(--row-padding-x, var(--row-padding-x-fallback));
   border-bottom: 1px solid var(--border-subtle);
 }
 

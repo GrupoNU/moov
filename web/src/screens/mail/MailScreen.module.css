@@ -98,10 +98,65 @@
   min-height: 0;
 }
 
-/* With a message open the list narrows and the reader takes the rest. The
- * list keeps a usable minimum so it never becomes a strip of ellipses. */
+/*
+ * The three reading-pane layouts (E5, canon §2.4 — /9499937).
+ *
+ * All three are the SAME grid with different tracks. Nothing is repositioned
+ * by absolute coordinates and nothing is duplicated per layout: the sidebar
+ * always occupies the first column, and what changes is how the remaining
+ * space is divided between the list and the reader.
+ */
+
+/* "Right of the list" — the split P2 shipped. The list narrows and keeps a
+ * usable minimum so it never becomes a strip of ellipses. */
 .reading {
   grid-template-columns: 260px minmax(20rem, 30rem) minmax(0, 1fr);
+}
+
+/*
+ * "Below the list" — the two panes stacked in the SECOND column.
+ *
+ * A nested grid rather than a third top-level column, so the sidebar keeps its
+ * full height beside both panes (splitting the whole shell into rows would put
+ * the folder list above the reader, which is not what "below the inbox"
+ * means). `minmax(0, …)` on both rows is what lets each pane scroll
+ * independently instead of the taller one forcing the grid open.
+ */
+.readingBottom {
+  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-areas:
+    "sidebar list"
+    "sidebar reader";
+  grid-template-rows: minmax(8rem, 1fr) minmax(10rem, 1.2fr);
+}
+
+.readingBottom .sidebar {
+  grid-area: sidebar;
+}
+
+.readingBottom .listColumn {
+  grid-area: list;
+  min-height: 0;
+}
+
+.readingBottom .readerColumn {
+  grid-area: reader;
+  min-height: 0;
+  /* The divider moves to the top edge, because the reader is now under the
+   * list rather than beside it. */
+  border-left: none;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/*
+ * "No split" — the reader REPLACES the list.
+ *
+ * The list column is not rendered at all in this state (MailScreen unmounts
+ * it), so the grid is simply sidebar + one pane. `u` and the reader's own
+ * close button bring the list back.
+ */
+.readingFull {
+  grid-template-columns: 260px minmax(0, 1fr);
 }
 
 .sidebar {

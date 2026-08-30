@@ -24,11 +24,48 @@ import styles from "./ThemeToggle.module.css";
  * from the browser rather than from JavaScript that would have to reimplement
  * it — and would get it subtly wrong.
  */
-export function ThemeToggle(): React.JSX.Element {
+export interface ThemeToggleProps {
+  /**
+   * The current theme, when a caller owns it.
+   *
+   * L3 E5 makes preferences ACCOUNT-level: the server's `Prefs.theme` is the
+   * source of truth and localStorage becomes a pre-paint cache mirroring it
+   * (that is what the theme module's own header calls it). So the settings
+   * screen passes the value down from the prefs provider.
+   *
+   * Omitted, the control keeps its P1 behaviour and reads localStorage itself
+   * — which is what the login screen and any pre-session surface still need,
+   * since there is no account to have a preference yet.
+   */
+  readonly value?: ThemePreference;
+  /** Called with the chosen theme. Required to make {@link value} meaningful. */
+  readonly onChange?: (theme: ThemePreference) => void;
+}
+
+export function ThemeToggle({ value, onChange }: ThemeToggleProps = {}): React.JSX.Element {
   const { t } = useTranslation();
   const groupName = useId();
-  const [theme, setTheme] = useState<ThemePreference>(() => loadThemePreference());
+  const [uncontrolled, setUncontrolled] = useState<ThemePreference>(() =>
+    loadThemePreference(),
+  );
 
+  const isControlled = value !== undefined;
+  const theme = value ?? uncontrolled;
+
+  const setTheme = (next: ThemePreference): void => {
+    if (!isControlled) setUncontrolled(next);
+    onChange?.(next);
+  };
+
+  /*
+   * The DOM write happens here in BOTH modes, and that is deliberate: the
+   * attribute and the localStorage cache must move the instant the radio does,
+   * whether the value came from local state or from the account. Deferring the
+   * paint to the owner's round trip would make the theme the one setting that
+   * visibly lags — and the cache is what the pre-paint script in index.html
+   * reads on the next load, so it has to stay in step with the choice even
+   * while the save is in flight.
+   */
   useEffect(() => {
     if (typeof document === "undefined") return;
     applyTheme(theme, document.documentElement);

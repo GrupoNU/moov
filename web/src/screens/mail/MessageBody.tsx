@@ -46,6 +46,21 @@ export interface MessageBodyProps {
    * server. Defaults to `true`, so every existing caller keeps the offer.
    */
   readonly allowRemoteImages?: boolean;
+  /**
+   * E5 / D-4: load remote images WITHOUT asking, for every message.
+   *
+   * This is the `imagesPolicy: "always"` pole, and the reason it is
+   * defensible is the proxy: every remote image is fetched through Moov's
+   * HMAC-signed, anti-SSRF proxy, so the sender's server sees our host and
+   * learns nothing about the reader — no IP, no user agent, no read receipt
+   * (canon §4.1.1, which is exactly the condition Gmail states for its own
+   * display-by-default).
+   *
+   * It is deliberately SUBORDINATE to {@link allowRemoteImages}: in Junk the
+   * images stay unloadable no matter what this says. A preference must not be
+   * able to override a security stance.
+   */
+  readonly autoLoadImages?: boolean;
 }
 
 /** Picks the body value for a part, if the server sent one. */
@@ -61,13 +76,21 @@ export function MessageBody({
   email,
   signImageUrls,
   allowRemoteImages = true,
+  autoLoadImages = false,
 }: MessageBodyProps): React.JSX.Element {
   const { t } = useTranslation();
   const [showImages, setShowImages] = useState(false);
-  // Belt AND braces: even if the opt-in state were somehow set (a stale value
-  // surviving a re-key, a future caller flipping the prop), the images stay
-  // blocked. The policy is enforced here rather than only by hiding a button.
-  const imagesShown = showImages && allowRemoteImages;
+  /*
+   * Belt AND braces: even if the opt-in state were somehow set (a stale value
+   * surviving a re-key, a future caller flipping the prop), the images stay
+   * blocked. The policy is enforced here rather than only by hiding a button.
+   *
+   * `allowRemoteImages` is the OUTER conjunct for both routes, which is what
+   * makes the Junk rule absolute: the "always" preference can turn the opt-in
+   * into an automatic yes, and it still cannot turn a forbidden fetch into a
+   * permitted one.
+   */
+  const imagesShown = (showImages || autoLoadImages) && allowRemoteImages;
 
   const textParts = email.textBody ?? [];
   const htmlParts = email.htmlBody ?? [];

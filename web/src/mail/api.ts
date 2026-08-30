@@ -170,9 +170,20 @@ export async function queryEmails(
     readonly limit?: number;
     readonly position?: number;
     readonly signal?: AbortSignal;
+    /**
+     * The comparators to sort by (RFC 8620 §5.5), or undefined for the
+     * server's own default of newest-first.
+     *
+     * This server accepts a single comparator or the PAIR
+     * `[hasKeyword, receivedAt]` and refuses anything else with
+     * `unsupportedSort` — see `mail/prefs.ts` `sortForInboxType`, which is the
+     * only thing that builds one, and which documents the polarity read out of
+     * `internal/jmap/mail/query.go`.
+     */
+    readonly sort?: readonly Record<string, unknown>[] | undefined;
   } = {},
 ): Promise<QueryPage> {
-  const { limit = SEARCH_WINDOW, position = 0, signal } = options;
+  const { limit = SEARCH_WINDOW, position = 0, signal, sort } = options;
 
   const queryArgs: Record<string, unknown> = {
     accountId,
@@ -181,6 +192,9 @@ export async function queryEmails(
     calculateTotal: true,
   };
   if (position > 0) queryArgs.position = position;
+  // Omitted rather than sent as null: a `sort` key the server has to parse and
+  // reject is a round trip spent on a question we did not need to ask.
+  if (sort !== undefined && sort.length > 0) queryArgs.sort = sort;
 
   const response = await client.call(
     [

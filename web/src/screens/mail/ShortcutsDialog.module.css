@@ -117,3 +117,21 @@
   font-size: var(--text-xs);
   color: var(--text-muted);
 }
+
+/*
+ * The "shortcuts are off" note (E5).
+ *
+ * A warning tint rather than an error one: nothing is broken, the user chose
+ * this, and the sheet stays fully readable so they can see what turning it
+ * back on would give them.
+ */
+.disabledNote {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  text-wrap: pretty;
+}

@@ -96,6 +96,113 @@ export const en = {
   "settings.section.appearance": "Appearance",
   "settings.theme.description": "Choose how Moov looks, or follow your system.",
 
+  // --- settings: E5, the full surface ---
+  "settings.search.label": "Search settings",
+  "settings.search.placeholder": "Search settings",
+  "settings.search.clear": "Clear search",
+  "settings.search.empty": "No setting matches that",
+  "settings.search.emptyBody": "Try another word, or clear the search to see every setting.",
+  "settings.nav.label": "Settings sections",
+  "settings.saving": "Saving…",
+  "settings.unavailable":
+    "This server does not store preferences. Your choices apply to this session only.",
+  "settings.saveFailed": "The preference could not be saved",
+
+  "settings.section.general": "General",
+  "settings.section.inbox": "Inbox",
+  "settings.section.account": "Account",
+  "settings.section.filters": "Filters",
+  "settings.section.forwarding": "Forwarding",
+  "settings.section.vacation": "Vacation responder",
+  "settings.section.offline": "Offline",
+
+  "settings.language.label": "Language",
+  "settings.language.description": "The language Moov's interface is written in.",
+  "settings.language.auto": "Match my browser",
+  "settings.language.es": "Español",
+  "settings.language.en": "English",
+
+  "settings.undoSend.label": "Undo send",
+  "settings.undoSend.description":
+    "How long a sent message waits before it actually leaves.",
+  "settings.undoSend.seconds": (seconds: number): string => `${seconds} seconds`,
+
+  "settings.images.label": "Remote images",
+  "settings.images.description":
+    "Images always load through Moov's proxy, so the sender never learns you opened the message. Spam is always excluded.",
+  "settings.images.always": "Always show",
+  "settings.images.ask": "Ask before showing",
+
+  "settings.conversation.label": "Conversation view",
+  "settings.conversation.description":
+    "Group replies into a single conversation. The grouped list arrives with the conversation view in this release.",
+  "settings.hover.label": "Hover actions",
+  "settings.hover.description": "Show archive, delete and read buttons on a row when you point at it.",
+  "settings.autoAdvance.label": "Auto-advance",
+  "settings.autoAdvance.description": "Where to land after you archive or delete a message.",
+  "settings.autoAdvance.list": "Back to the list",
+  "settings.autoAdvance.newer": "Newer message",
+  "settings.autoAdvance.older": "Older message",
+
+  "settings.keyboard.label": "Keyboard shortcuts",
+  "settings.keyboard.description":
+    "Gmail's key vocabulary. Search (/) and Escape keep working either way.",
+  "settings.snippets.label": "Snippets",
+  "settings.snippets.description": "Show the first line of each message next to its subject.",
+
+  "settings.density.label": "Density",
+  "settings.density.description": "How much room each row takes.",
+  "settings.density.default": "Default",
+  "settings.density.comfortable": "Comfortable",
+  "settings.density.compact": "Compact",
+
+  "settings.readingPane.label": "Reading pane",
+  "settings.readingPane.description": "Where an open message appears.",
+  "settings.readingPane.none": "No split",
+  "settings.readingPane.right": "Right of the list",
+  "settings.readingPane.bottom": "Below the list",
+
+  "settings.inboxType.label": "Inbox type",
+  "settings.inboxType.description": "What sorts to the top of your inbox.",
+  "settings.inboxType.default": "Default",
+  "settings.inboxType.unread_first": "Unread first",
+  "settings.inboxType.starred_first": "Starred first",
+
+  "settings.notifications.label": "Desktop notifications",
+  "settings.notifications.description":
+    "Moov notifies while this tab is open, like Gmail on the web does.",
+  "settings.notifications.new": "New mail",
+  "settings.notifications.off": "Off",
+  "settings.notifications.granted": "Your browser allows notifications.",
+  "settings.notifications.denied":
+    "Your browser is blocking notifications for this site. Allow them in the address bar to turn this on.",
+  "settings.notifications.pending": "Your browser will ask for permission.",
+  "settings.notifications.unsupported": "This browser cannot show notifications.",
+  "settings.notifications.pendingEpic":
+    "Notifications will fire on new mail once the offline and notifications work lands.",
+
+  "settings.identity.label": "Sending address",
+  "settings.identity.description": "The name and address your mail is sent from.",
+  "settings.identity.missing": "No sending identity is configured for this account.",
+  "settings.signature.label": "Signature",
+  "settings.signature.description": "Appended to the messages you write.",
+  "settings.signature.save": "Save signature",
+  "settings.signature.saved": "Signature saved",
+  "settings.signature.failed": "The signature could not be saved",
+
+  "settings.filters.soon": "Filters arrive with the Sieve work",
+  "settings.filters.soonBody":
+    "Rules that label, archive, star or delete mail as it arrives — built on Dovecot's own Sieve, so they keep running when Moov is closed.",
+  "settings.forwarding.soon": "Forwarding arrives with the Sieve work",
+  "settings.forwarding.soonBody":
+    "Forwarding to a verified address, and blocking a sender, are Sieve recipes. They land in the same epic as filters.",
+  "settings.vacation.soon": "The vacation responder arrives with the Sieve work",
+  "settings.vacation.soonBody":
+    "An out-of-office reply with a date range, which never answers mailing lists or spam.",
+  "settings.offline.soon": "Offline mode is on its way",
+  "settings.offline.soonBody":
+    "Read, search and reply without a connection, with outgoing mail queued in an Outbox until you are back.",
+
   // --- theme control ---
   "theme.label": "Theme",
   "theme.light": "Light",
@@ -219,6 +326,8 @@ export const en = {
   // --- P2: keyboard ---
   "shortcuts.title": "Keyboard shortcuts",
   "shortcuts.close": "Close",
+  "shortcuts.disabled":
+    "Keyboard shortcuts are off in Settings. Escape and / still work, so you can close this and reach search.",
   "shortcuts.open": "Open the message",
   "shortcuts.next": "Next message",
   "shortcuts.previous": "Previous message",
@@ -510,6 +619,115 @@ export const es: Strings = {
   "settings.section.appearance": "Apariencia",
   "settings.theme.description": "Elegí cómo se ve Moov, o seguí el sistema.",
 
+  "settings.search.label": "Buscar en la configuración",
+  "settings.search.placeholder": "Buscar en la configuración",
+  "settings.search.clear": "Limpiar la búsqueda",
+  "settings.search.empty": "Ningún ajuste coincide",
+  "settings.search.emptyBody":
+    "Probá con otra palabra, o limpiá la búsqueda para ver todos los ajustes.",
+  "settings.nav.label": "Secciones de configuración",
+  "settings.saving": "Guardando…",
+  "settings.unavailable":
+    "Este servidor no guarda preferencias. Tus elecciones valen solo para esta sesión.",
+  "settings.saveFailed": "La preferencia no se pudo guardar",
+
+  "settings.section.general": "General",
+  "settings.section.inbox": "Recibidos",
+  "settings.section.account": "Cuenta",
+  "settings.section.filters": "Filtros",
+  "settings.section.forwarding": "Reenvío",
+  "settings.section.vacation": "Respuesta automática",
+  "settings.section.offline": "Sin conexión",
+
+  "settings.language.label": "Idioma",
+  "settings.language.description": "El idioma en el que está escrita la interfaz de Moov.",
+  "settings.language.auto": "El de mi navegador",
+  "settings.language.es": "Español",
+  "settings.language.en": "English",
+
+  "settings.undoSend.label": "Deshacer envío",
+  "settings.undoSend.description":
+    "Cuánto espera un mensaje enviado antes de salir de verdad.",
+  "settings.undoSend.seconds": (seconds: number): string => `${seconds} segundos`,
+
+  "settings.images.label": "Imágenes remotas",
+  "settings.images.description":
+    "Las imágenes siempre pasan por el proxy de Moov, así el remitente nunca se entera de que abriste el mensaje. En Spam nunca se cargan.",
+  "settings.images.always": "Mostrar siempre",
+  "settings.images.ask": "Preguntar antes de mostrar",
+
+  "settings.conversation.label": "Vista de conversación",
+  "settings.conversation.description":
+    "Agrupa las respuestas en una sola conversación. La lista agrupada llega con la vista de conversación de esta misma entrega.",
+  "settings.hover.label": "Acciones al pasar el cursor",
+  "settings.hover.description":
+    "Mostrar los botones de archivar, borrar y leído en la fila que estás señalando.",
+  "settings.autoAdvance.label": "Avance automático",
+  "settings.autoAdvance.description": "Dónde quedás después de archivar o borrar un mensaje.",
+  "settings.autoAdvance.list": "Volver a la lista",
+  "settings.autoAdvance.newer": "Mensaje más nuevo",
+  "settings.autoAdvance.older": "Mensaje más viejo",
+
+  "settings.keyboard.label": "Atajos de teclado",
+  "settings.keyboard.description":
+    "El vocabulario de teclas de Gmail. La búsqueda (/) y Escape siguen andando igual.",
+  "settings.snippets.label": "Fragmentos",
+  "settings.snippets.description":
+    "Mostrar la primera línea de cada mensaje junto al asunto.",
+
+  "settings.density.label": "Densidad",
+  "settings.density.description": "Cuánto espacio ocupa cada fila.",
+  "settings.density.default": "Normal",
+  "settings.density.comfortable": "Cómoda",
+  "settings.density.compact": "Compacta",
+
+  "settings.readingPane.label": "Panel de lectura",
+  "settings.readingPane.description": "Dónde aparece un mensaje abierto.",
+  "settings.readingPane.none": "Sin dividir",
+  "settings.readingPane.right": "A la derecha de la lista",
+  "settings.readingPane.bottom": "Debajo de la lista",
+
+  "settings.inboxType.label": "Tipo de bandeja",
+  "settings.inboxType.description": "Qué se ordena arriba de todo en tus recibidos.",
+  "settings.inboxType.default": "Predeterminada",
+  "settings.inboxType.unread_first": "No leídos primero",
+  "settings.inboxType.starred_first": "Destacados primero",
+
+  "settings.notifications.label": "Notificaciones de escritorio",
+  "settings.notifications.description":
+    "Moov notifica mientras esta pestaña está abierta, igual que Gmail en la web.",
+  "settings.notifications.new": "Correo nuevo",
+  "settings.notifications.off": "Desactivadas",
+  "settings.notifications.granted": "Tu navegador permite las notificaciones.",
+  "settings.notifications.denied":
+    "Tu navegador está bloqueando las notificaciones de este sitio. Habilitalas desde la barra de direcciones para activarlas.",
+  "settings.notifications.pending": "Tu navegador te va a pedir permiso.",
+  "settings.notifications.unsupported": "Este navegador no puede mostrar notificaciones.",
+  "settings.notifications.pendingEpic":
+    "Las notificaciones van a sonar con el correo nuevo cuando aterrice el trabajo de offline y notificaciones.",
+
+  "settings.identity.label": "Dirección de envío",
+  "settings.identity.description": "El nombre y la dirección desde los que sale tu correo.",
+  "settings.identity.missing": "Esta cuenta no tiene una identidad de envío configurada.",
+  "settings.signature.label": "Firma",
+  "settings.signature.description": "Se agrega a los mensajes que escribís.",
+  "settings.signature.save": "Guardar la firma",
+  "settings.signature.saved": "Firma guardada",
+  "settings.signature.failed": "La firma no se pudo guardar",
+
+  "settings.filters.soon": "Los filtros llegan con la épica de Sieve",
+  "settings.filters.soonBody":
+    "Reglas que etiquetan, archivan, destacan o borran el correo cuando llega — sobre el Sieve del propio Dovecot, así siguen corriendo con Moov cerrado.",
+  "settings.forwarding.soon": "El reenvío llega con la épica de Sieve",
+  "settings.forwarding.soonBody":
+    "Reenviar a una dirección verificada, y bloquear a un remitente, son recetas de Sieve. Aterrizan en la misma épica que los filtros.",
+  "settings.vacation.soon": "La respuesta automática llega con la épica de Sieve",
+  "settings.vacation.soonBody":
+    "Una respuesta de ausencia con rango de fechas, que nunca le contesta a listas de correo ni al spam.",
+  "settings.offline.soon": "El modo sin conexión está en camino",
+  "settings.offline.soonBody":
+    "Leer, buscar y responder sin conexión, con el correo saliente en cola en una bandeja de salida hasta que vuelvas.",
+
   "theme.label": "Tema",
   "theme.light": "Claro",
   "theme.dark": "Oscuro",
@@ -610,6 +828,8 @@ export const es: Strings = {
 
   "shortcuts.title": "Atajos de teclado",
   "shortcuts.close": "Cerrar",
+  "shortcuts.disabled":
+    "Los atajos de teclado están desactivados en Configuración. Escape y / siguen andando, así podés cerrar esto y llegar a la búsqueda.",
   "shortcuts.open": "Abrir el mensaje",
   "shortcuts.next": "Mensaje siguiente",
   "shortcuts.previous": "Mensaje anterior",

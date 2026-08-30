@@ -113,6 +113,43 @@ export function isTypingTarget(target: EventTarget | null | undefined): boolean 
 }
 
 /**
+ * How much of the keyboard map is live (L3 E5, the `keyboardShortcuts` pref).
+ *
+ * The setting is Gmail's "Keyboard shortcuts on/off" (canon §2.7), whose
+ * DEFAULT we diverge from — decision D-3 signed shortcuts ON, where Gmail
+ * ships them off. The off state still has to exist, and this is what it means.
+ */
+export interface ShortcutOptions {
+  /**
+   * When false, only the ALWAYS-ON keys resolve (see {@link isAlwaysOnKey}).
+   *
+   * "Off" cannot mean "the resolver is not called": Escape has to keep
+   * dismissing dialogs and `/` has to keep reaching the search box, or turning
+   * shortcuts off would strand a keyboard user inside a modal with no way out
+   * and no way to search. Gmail keeps the same two reachable for the same
+   * reason.
+   */
+  readonly enabled?: boolean;
+}
+
+/**
+ * The keys that work even with shortcuts turned off.
+ *
+ * Escape, because it is the universal "get me out of here" and a dialog that
+ * cannot be dismissed from the keyboard is an accessibility defect, not a
+ * preference. `/`, because search must stay reachable — it is the one action
+ * with no equivalent affordance a keyboard user can reach without it, and it
+ * is a NAVIGATION key rather than a destructive one.
+ *
+ * Everything else — every key that changes mail — obeys the setting. That is
+ * the line: the off state removes the keys that ACT, never the keys that
+ * navigate out of a corner.
+ */
+export function isAlwaysOnKey(key: string): boolean {
+  return key === "Escape" || key === "/";
+}
+
+/**
  * Resolves a key event into an action, given the chord state.
  *
  * Returns `undefined` when the app should not act — which includes every key
@@ -125,7 +162,10 @@ export function isTypingTarget(target: EventTarget | null | undefined): boolean 
 export function resolveShortcut(
   event: KeyLike,
   state: KeyboardState = INITIAL_KEYBOARD_STATE,
+  options: ShortcutOptions = {},
 ): { readonly action: ShortcutAction | undefined; readonly nextState: KeyboardState } {
+  const enabled = options.enabled ?? true;
+
   // Escape works everywhere, including inside the search field — it is how you
   // get OUT of a text field, so it must be handled before the typing guard.
   if (event.key === "Escape") {
@@ -137,6 +177,18 @@ export function resolveShortcut(
   }
 
   if (isTypingTarget(event.target)) {
+    return { action: undefined, nextState: INITIAL_KEYBOARD_STATE };
+  }
+
+  /*
+   * The off state, applied AFTER the modifier and typing guards so those keep
+   * their meaning, and after Escape so a dialog stays dismissable.
+   *
+   * The chord state is cleared on the way out: a `g` pressed just before the
+   * user turned shortcuts off must not sit live waiting for a second key that
+   * can no longer resolve.
+   */
+  if (!enabled && !isAlwaysOnKey(event.key)) {
     return { action: undefined, nextState: INITIAL_KEYBOARD_STATE };
   }
 

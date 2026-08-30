@@ -1,12 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
+import { JmapClient, type BasicCredentials } from "./api/jmap";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
+import { loadSession } from "./auth/session";
 import { BrandingProvider } from "./branding/BrandingProvider";
 import { I18nProvider, useTranslation } from "./i18n/I18nProvider";
+import { PrefsProvider, usePrefs } from "./mail/PrefsProvider";
 import { RouterProvider } from "./router/RouterProvider";
 import { LoginScreen } from "./screens/login/LoginScreen";
 import { MailScreen } from "./screens/mail/MailScreen";
-import { applyTheme, loadThemePreference } from "./theme/theme";
+import { applyTheme, loadThemePreference, saveThemePreference } from "./theme/theme";
 import styles from "./App.module.css";
 
 /**
@@ -57,11 +60,97 @@ function Router(): React.JSX.Element {
 
     case "authenticated":
       return (
-        <RouterProvider>
-          <MailScreen />
-        </RouterProvider>
+        <SignedIn>
+          <RouterProvider>
+            <MailScreen />
+          </RouterProvider>
+        </SignedIn>
       );
   }
+}
+
+/**
+ * The authenticated shell's providers (L3 E5).
+ *
+ * # Why the preferences load HERE and not inside MailScreen
+ *
+ * Two of them govern things above the mail screen. The LANGUAGE re-scopes
+ * `I18nProvider`, which wraps everything; the THEME is account-level and has to
+ * be reconciled against the pre-paint localStorage cache as soon as there is an
+ * account. Loading them inside MailScreen would put both of those below the
+ * providers they need to change.
+ *
+ * The client is rebuilt from the same stored credential MailScreen uses rather
+ * than shared through a context. That looks like duplication and is deliberate:
+ * `JmapClient` is a thin, stateless-per-request wrapper around `fetch` with an
+ * Authorization header, so a second instance costs nothing, and threading one
+ * through a context would make "which credential is this request using" a
+ * question with a non-local answer — the exact property MailScreen's own
+ * comment says the construction rule exists to preserve.
+ */
+function SignedIn({ children }: { readonly children: React.ReactNode }): React.JSX.Element {
+  const { state } = useAuth();
+  const session = state.status === "authenticated" ? state.session : undefined;
+  const accountId = session?.primaryAccounts["urn:ietf:params:jmap:mail"] ?? "";
+
+  const client = useMemo<JmapClient | undefined>(() => {
+    if (state.status !== "authenticated") return undefined;
+    const stored: BasicCredentials | undefined = loadSession();
+    return stored === undefined ? undefined : new JmapClient(stored);
+  }, [state.status]);
+
+  return (
+    <PrefsProvider client={client} session={session} accountId={accountId}>
+      <LocalizedFromPrefs>{children}</LocalizedFromPrefs>
+    </PrefsProvider>
+  );
+}
+
+/**
+ * Re-scopes the string table to the account's language preference.
+ *
+ * A SECOND `I18nProvider` nested inside the outer one, rather than lifting the
+ * locale into `MoovApp`'s. The outer provider has to render before the session
+ * exists — the login screen and the restoring splash are both localized — and
+ * it cannot depend on a preference that requires an account to fetch. Nesting
+ * makes the account's choice override the browser's detection for exactly the
+ * subtree that has an account, which is the correct scope, and `null` (follow
+ * the browser) falls through to the outer detection with no special case.
+ *
+ * `I18nProvider`'s `locale` prop was reserved for this: its own comment says
+ * "used by tests and by a future user preference".
+ */
+function LocalizedFromPrefs({
+  children,
+}: {
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  const { prefs, isAvailable } = usePrefs();
+  const { locale } = useTranslation();
+
+  /*
+   * Theme reconciliation, once the account's preference is known.
+   *
+   * The pre-paint script in index.html reads localStorage — it must, because
+   * there is no session yet at first paint and a flash of the wrong theme is
+   * the thing it exists to prevent. E5 makes the ACCOUNT the source of truth,
+   * so this adopts the server's value and rewrites the cache to match, which
+   * is what makes the theme follow the user to a new browser.
+   *
+   * Gated on `isAvailable`: a server without the capability must not have its
+   * default silently overwrite a choice the user made locally and that the
+   * cache is legitimately holding.
+   */
+  useEffect(() => {
+    if (!isAvailable || typeof document === "undefined") return;
+    applyTheme(prefs.theme, document.documentElement);
+    saveThemePreference(prefs.theme);
+  }, [isAvailable, prefs.theme]);
+
+  // `?? locale` keeps the browser-detected value when the preference says
+  // "follow the browser", instead of re-running detection with a different
+  // language list.
+  return <I18nProvider locale={prefs.language ?? locale}>{children}</I18nProvider>;
 }
 
 export interface AppProps {
