@@ -218,5 +218,24 @@ function callFor(
       }
       return moveMessages(client, accountId, action.ids, mailboxId);
     }
+
+    /*
+     * E8: a label is a keyword, so it rides the SAME `setKeyword` call as
+     * read and starred — and therefore through `keywordPatchKey`, which is
+     * where the RFC 6901 escaping lives. That is the whole reason labels did
+     * not need their own transport: the one that existed was already correct
+     * once its patch key was built rather than interpolated.
+     */
+    case "label":
+    case "unlabel": {
+      const keyword = action.keyword;
+      if (keyword === undefined) return Promise.resolve(noopOutcome());
+      return setKeyword(client, accountId, action.ids, keyword, action.kind === "label");
+    }
   }
+}
+
+/** The outcome of a call that could not be made. */
+function noopOutcome(): SetOutcome {
+  return { updated: [], destroyed: [], created: {}, failed: {}, newState: undefined };
 }

@@ -1,5 +1,7 @@
 import { useTranslation } from "../../i18n/I18nProvider";
+import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
+import { LabelMenu } from "./LabelMenu";
 import { MoveMenu } from "./MoveMenu";
 import styles from "./ActionBar.module.css";
 
@@ -42,6 +44,15 @@ export interface ActionBarProps {
   readonly onToggleSpam: () => void;
   /** True when the current folder IS Junk, which flips the spam control. */
   readonly inJunk: boolean;
+
+  // --- E8: "Label as" ---
+  readonly labels: readonly Label[];
+  /** The keyword maps of the selected messages, for the menu's tri-state. */
+  readonly labelSelection: readonly (Readonly<Record<string, boolean>> | undefined)[];
+  readonly onToggleLabel: (keyword: string, apply: boolean) => void;
+  readonly onManageLabels: () => void;
+  /** Publishes the menu's `open()` so the `l` shortcut can raise it. */
+  readonly onLabelMenuReady?: ((open: () => void) => void) | undefined;
 }
 
 export function ActionBar({
@@ -62,6 +73,11 @@ export function ActionBar({
   isBusy,
   onToggleSpam,
   inJunk,
+  labels,
+  labelSelection,
+  onToggleLabel,
+  onManageLabels,
+  onLabelMenuReady,
 }: ActionBarProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const hasSelection = selectedCount > 0;
@@ -194,6 +210,28 @@ export function ActionBar({
         triggerContent={
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
             <path d="M2.8 5.4a1.4 1.4 0 0 1 1.4-1.4h3l1.6 2h6a1.4 1.4 0 0 1 1.4 1.4v7.2a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4z" />
+          </svg>
+        }
+      />
+
+      {/*
+        E8: "Label as" (`l`). It sits next to "Move to" (`v`) because the two
+        are the pair a user chooses between — file it in a folder, or tag it
+        across folders — and canon §2.7 binds them to adjacent keys for the
+        same reason.
+      */}
+      <LabelMenu
+        labels={labels}
+        selection={labelSelection}
+        disabled={disabled}
+        onToggle={onToggleLabel}
+        onManage={onManageLabels}
+        onReady={onLabelMenuReady}
+        triggerClassName={styles.action}
+        triggerContent={
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+            <path d="M3.4 8.6V4.4a1 1 0 0 1 1-1h4.2l7.6 7.6a1.2 1.2 0 0 1 0 1.7l-4.5 4.5a1.2 1.2 0 0 1-1.7 0L3.4 9.6z" />
+            <circle cx="6.9" cy="6.9" r="1.1" fill="currentColor" stroke="none" />
           </svg>
         }
       />

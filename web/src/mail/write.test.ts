@@ -12,6 +12,7 @@ import {
   saveDraft,
   sendDraft,
   setKeyword,
+  setKeywords,
   uploadUrlFor,
   type DraftSpec,
 } from "./write";
@@ -477,5 +478,93 @@ describe("uploadUrlFor", () => {
 
   it("percent-encodes the account id", () => {
     expect(uploadUrlFor("/jmap/upload/{accountId}", "a/1")).toBe("/jmap/upload/a%2F1");
+  });
+});
+
+/**
+ * E8 — the JSON-Pointer escaping, asserted at the WIRE.
+ *
+ * `labels.test.ts` proves `keywordPatchKey` escapes correctly. These prove the
+ * write path USES it, which is the half that regresses: the escaping helper can
+ * be perfect and a new call site can still interpolate the key by hand, which
+ * is exactly how the Bulwark bug (research 05 §5.0) reached production.
+ */
+describe("setKeyword escapes the patch key (E8, mechanism G3)", () => {
+  it("sends the ESCAPED pointer for a nested label — not the silently-lost form", async () => {
+    const { client, requests } = scriptedClient(response(["Email/set", { updated: {} }, "s"]));
+    await setKeyword(client, "a", ["e1"], "$label:work/clients", true);
+
+    const call = (requests[0]?.methodCalls as [string, Record<string, unknown>, string][])[0];
+    const patch = (call?.[1].update as Record<string, Record<string, unknown>>).e1;
+
+    /*
+     * The bug shape, stated as the thing that must NOT be sent: an unescaped
+     * `keywords/$label:work/clients` is a pointer to the `clients` MEMBER of
+     * `$label:work`. The server accepts it, nothing errors, and the label never
+     * lands.
+     */
+    expect(patch).not.toHaveProperty("keywords/$label:work/clients");
+    expect(patch).toEqual({ "keywords/$label:work~1clients": true });
+  });
+
+  it("escapes a tilde", async () => {
+    const { client, requests } = scriptedClient(response(["Email/set", { updated: {} }, "s"]));
+    await setKeyword(client, "a", ["e1"], "$label:back~up", false);
+
+    const call = (requests[0]?.methodCalls as [string, Record<string, unknown>, string][])[0];
+    expect((call?.[1].update as Record<string, unknown>).e1).toEqual({
+      "keywords/$label:back~0up": false,
+    });
+  });
+
+  it("leaves a plain system flag untouched — no gratuitous escaping", async () => {
+    const { client, requests } = scriptedClient(response(["Email/set", { updated: {} }, "s"]));
+    await setKeyword(client, "a", ["e1"], "$seen", true);
+
+    const call = (requests[0]?.methodCalls as [string, Record<string, unknown>, string][])[0];
+    expect((call?.[1].update as Record<string, unknown>).e1).toEqual({
+      "keywords/$seen": true,
+    });
+  });
+});
+
+describe("setKeywords — the atomic swap a rename needs", () => {
+  it("adds and removes in ONE patch, so no message can carry both labels", async () => {
+    const { client, requests } = scriptedClient(response(["Email/set", { updated: {} }, "s"]));
+    await setKeywords(client, "a", ["e1", "e2"], {
+      "$label:work": false,
+      "$label:trabajo": true,
+    });
+
+    expect(requests).toHaveLength(1);
+    const call = (requests[0]?.methodCalls as [string, Record<string, unknown>, string][])[0];
+    const update = call?.[1].update as Record<string, Record<string, unknown>>;
+    for (const id of ["e1", "e2"]) {
+      expect(update[id]).toEqual({
+        "keywords/$label:work": false,
+        "keywords/$label:trabajo": true,
+      });
+    }
+  });
+
+  it("escapes every key it builds", async () => {
+    const { client, requests } = scriptedClient(response(["Email/set", { updated: {} }, "s"]));
+    await setKeywords(client, "a", ["e1"], {
+      "$label:a/b": false,
+      "$label:c/d": true,
+    });
+
+    const call = (requests[0]?.methodCalls as [string, Record<string, unknown>, string][])[0];
+    expect((call?.[1].update as Record<string, unknown>).e1).toEqual({
+      "keywords/$label:a~1b": false,
+      "keywords/$label:c~1d": true,
+    });
+  });
+
+  it("makes no request for an empty id list or an empty patch", async () => {
+    const { client, requests } = scriptedClient(response(["Email/set", { updated: {} }, "s"]));
+    await setKeywords(client, "a", [], { "$label:x": true });
+    await setKeywords(client, "a", ["e1"], {});
+    expect(requests).toHaveLength(0);
   });
 });

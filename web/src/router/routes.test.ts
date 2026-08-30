@@ -148,3 +148,55 @@ describe("isRoleAlias", () => {
     expect(isRoleAlias("mc")).toBe(false);
   });
 });
+
+/**
+ * E8 — the label route.
+ *
+ * Its own kind rather than a search with a `label:` operator: the result set is
+ * a `hasKeyword` filter, not a text query, and the operator form would make a
+ * literal search for "label:work" ambiguous. Gmail's own `#label/work` is a
+ * distinct hash for the same reason.
+ */
+describe("the label route", () => {
+  it("parses /label/:name", () => {
+    expect(parseRoute("/label/work")).toEqual({ kind: "label", name: "work" });
+  });
+
+  it("parses /label/:name/:messageId", () => {
+    expect(parseRoute("/label/work/e1")).toEqual({
+      kind: "label",
+      name: "work",
+      messageId: "e1",
+    });
+  });
+
+  it("keeps a NESTED name whole rather than splitting it into two segments", () => {
+    /*
+     * The one that would silently break: "work/clients" un-encoded would parse
+     * as label "work" with message id "clients" — a different destination that
+     * looks plausible enough to ship.
+     */
+    const route = { kind: "label", name: "work/clients" } as const;
+    expect(formatRoute(route)).toBe("/label/work%2Fclients");
+    expect(parseRoute(formatRoute(route))).toEqual(route);
+  });
+
+  it("round-trips unicode names", () => {
+    for (const name of ["Facturación", "日本語", "a b", "work/clients", "back~up"]) {
+      const route = { kind: "label", name } as const;
+      expect(parseRoute(formatRoute(route))).toEqual(route);
+    }
+  });
+
+  it("falls back to the default route for an empty name", () => {
+    expect(parseRoute("/label/")).toEqual(DEFAULT_ROUTE);
+    expect(parseRoute("/label")).toEqual(DEFAULT_ROUTE);
+  });
+
+  it("keeps the label when a message is opened and closed", () => {
+    const base = { kind: "label", name: "work" } as const;
+    const opened = withMessage(base, "e1");
+    expect(opened).toEqual({ kind: "label", name: "work", messageId: "e1" });
+    expect(withMessage(opened, undefined)).toEqual(base);
+  });
+});

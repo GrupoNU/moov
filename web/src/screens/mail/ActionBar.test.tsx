@@ -53,6 +53,12 @@ function renderBar(overrides: Partial<ActionBarProps> = {}) {
     isBusy: false,
     onToggleSpam: vi.fn(),
     inJunk: false,
+    // E8: the bar hosts the "Label as" menu. Empty by default — a bar with no
+    // labels must still render every other control.
+    labels: [],
+    labelSelection: [],
+    onToggleLabel: vi.fn(),
+    onManageLabels: vi.fn(),
     ...overrides,
   };
   render(

@@ -1,0 +1,70 @@
+/*
+ * Label chips (E8).
+ *
+ * They sit INSIDE a row and never style it — canon §4.2: "Chips on rows —
+ * Gmail never tints rows". The row's own background stays free for the states
+ * the row owns (unread, selected, focused).
+ *
+ * Colours arrive as inline custom properties from the closed palette
+ * (`labelColorVariables`), carrying BOTH theme pairs; the swap between them
+ * happens here so a chip follows an OS theme change with no JavaScript.
+ */
+
+.chips {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  /* The chips must not push the subject out of the row: they shrink and the
+     last one truncates before the row grows. */
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.chip {
+  display: inline-block;
+  max-width: 8rem;
+  overflow: hidden;
+  padding: 0.0625rem var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--label-bg);
+  color: var(--label-fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover,
+.clickable:focus-visible {
+  /* The chip's own colours are contrast-checked pairs, so the hover state is a
+     ring rather than a colour change — which would break the guarantee. */
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.overflow {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chip {
+    background: var(--label-bg-dark);
+    color: var(--label-fg-dark);
+  }
+}
+
+:root[data-theme="dark"] .chip {
+  background: var(--label-bg-dark);
+  color: var(--label-fg-dark);
+}

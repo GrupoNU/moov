@@ -388,6 +388,8 @@ export const en = {
   "shortcuts.selectUnread": "Select the unread ones",
   "shortcuts.selectStarred": "Select the starred ones",
   "shortcuts.selectUnstarred": "Select the ones without a star",
+  // E8: Gmail's "label as" key.
+  "shortcuts.labelAs": "Label as",
 
   // --- P3: actions on messages ---
   //
@@ -555,6 +557,72 @@ export const en = {
   "folder.create": "New folder",
   "folder.name": "Folder name",
   "folder.createFailed": "The folder could not be created",
+
+  // --- E8: labels under the 26-keyword ceiling (GC-5) ---
+  //
+  // The honesty strings here are the epic's product requirement, not polish.
+  // Maildir gives 26 durable keywords per folder and the semi-system ones
+  // (`$Forwarded`, `$MDNSent`, `NonJunk`) spend from the same 26, so the UI
+  // states the budget rather than discovering it at the 27th create — which
+  // would succeed, apply, and lose the label weeks later when Dovecot rebuilds
+  // its index. Folders are the unlimited alternative and the copy says so.
+  "label.plural": "Labels",
+  "label.labelAs": "Label as",
+  "label.manage": "Manage labels…",
+  "label.none": "No labels yet",
+  "label.more": (count: number): string => `+${count}`,
+  "label.openLabel": (name: string): string => `Show everything labelled "${name}"`,
+  "label.create": "New label",
+  "label.name": "Label name",
+  "label.color": "Colour",
+  "label.rename": "Rename",
+  "label.delete": "Delete",
+  "label.visibility": "In the sidebar",
+  "label.visibility.show": "Show",
+  "label.visibility.showIfUnread": "Show if unread",
+  "label.visibility.hide": "Hide",
+  "label.applied": "Label applied",
+  "label.removed": "Label removed",
+
+  // The budget, said out loud.
+  "label.budget": (available: number, ceiling: number): string =>
+    `${available} of ${ceiling} available`,
+  "label.budgetFull": "No label slots left",
+  "label.budgetExplained":
+    "A folder holds 26 durable IMAP keywords, and labels share them with the flags other mail apps set. Folders have no such limit — use one for anything you file rather than tag.",
+  "label.createFolderInstead": "Create a folder instead",
+
+  // Validation, one sentence per refusal.
+  "label.error.empty": "Give the label a name.",
+  "label.error.tooLong": "That name is too long.",
+  "label.error.reserved": "That name is reserved by the mail system.",
+  "label.error.duplicate": "A label with that name already exists.",
+  "label.error.control": "That name contains characters a mail server cannot store.",
+  "label.error.full": "There is no keyword slot left for a new label.",
+
+  // Rename and delete are data migrations over every message that carries the
+  // keyword, so they report progress, they can be stopped, and they never
+  // claim to have finished when they stopped early.
+  "label.renameTitle": (name: string): string => `Rename "${name}"`,
+  "label.deleteTitle": (name: string): string => `Delete "${name}"`,
+  "label.deleteConfirm": (name: string): string =>
+    `Remove "${name}" from every message that carries it? The messages themselves are not deleted.`,
+  "label.migrating": (done: number): string => `${done} messages updated…`,
+  "label.migrateDone": (done: number): string => `${done} messages updated`,
+  "label.migrateIncomplete": (done: number): string =>
+    `${done} messages updated — some still carry the old label. Run it again to finish.`,
+  "label.migrateAborted": (done: number): string =>
+    `Stopped after ${done} messages. The rest keep the old label.`,
+  "label.migrateFailed": "The label could not be changed",
+  "label.abort": "Stop",
+
+  // The metadata gap, stated where the user meets it rather than in a doc.
+  "label.localOnly":
+    "Colours and sidebar visibility are stored in this browser, so they do not follow you to another device yet. The labels themselves, and the messages they are on, are shared everywhere.",
+
+  "settings.section.labels": "Labels",
+  "settings.labels.description":
+    "Labels are IMAP keywords, so they cross folders — and a folder holds only 26 of them.",
 } as const;
 
 /**
@@ -900,6 +968,7 @@ export const es: Strings = {
   "shortcuts.selectUnread": "Seleccionar los no leídos",
   "shortcuts.selectStarred": "Seleccionar los destacados",
   "shortcuts.selectUnstarred": "Seleccionar los que no están destacados",
+  "shortcuts.labelAs": "Etiquetar como",
 
   // --- P3: acciones sobre mensajes ---
   "action.markRead": "Marcar como leído",
@@ -1057,6 +1126,59 @@ export const es: Strings = {
   "folder.create": "Carpeta nueva",
   "folder.name": "Nombre de la carpeta",
   "folder.createFailed": "La carpeta no se pudo crear",
+
+  // --- E8: etiquetas bajo el techo de 26 keywords (GC-5) ---
+  "label.plural": "Etiquetas",
+  "label.labelAs": "Etiquetar como",
+  "label.manage": "Administrar etiquetas…",
+  "label.none": "Todavía no hay etiquetas",
+  "label.more": (count: number): string => `+${count}`,
+  "label.openLabel": (name: string): string => `Ver todo lo etiquetado como «${name}»`,
+  "label.create": "Etiqueta nueva",
+  "label.name": "Nombre de la etiqueta",
+  "label.color": "Color",
+  "label.rename": "Renombrar",
+  "label.delete": "Eliminar",
+  "label.visibility": "En la barra lateral",
+  "label.visibility.show": "Mostrar",
+  "label.visibility.showIfUnread": "Mostrar si hay sin leer",
+  "label.visibility.hide": "Ocultar",
+  "label.applied": "Etiqueta aplicada",
+  "label.removed": "Etiqueta quitada",
+
+  "label.budget": (available: number, ceiling: number): string =>
+    `${available} de ${ceiling} disponibles`,
+  "label.budgetFull": "No queda lugar para más etiquetas",
+  "label.budgetExplained":
+    "Una carpeta guarda 26 keywords IMAP duraderas, y las etiquetas las comparten con las marcas que ponen otros clientes de correo. Las carpetas no tienen ese límite: usá una para lo que archivás y una etiqueta para lo que marcás.",
+  "label.createFolderInstead": "Crear una carpeta en su lugar",
+
+  "label.error.empty": "Poné un nombre para la etiqueta.",
+  "label.error.tooLong": "Ese nombre es demasiado largo.",
+  "label.error.reserved": "Ese nombre está reservado por el sistema de correo.",
+  "label.error.duplicate": "Ya existe una etiqueta con ese nombre.",
+  "label.error.control": "Ese nombre tiene caracteres que un servidor de correo no puede guardar.",
+  "label.error.full": "No queda ninguna keyword libre para una etiqueta nueva.",
+
+  "label.renameTitle": (name: string): string => `Renombrar «${name}»`,
+  "label.deleteTitle": (name: string): string => `Eliminar «${name}»`,
+  "label.deleteConfirm": (name: string): string =>
+    `¿Quitar «${name}» de todos los mensajes que la tienen? Los mensajes no se borran.`,
+  "label.migrating": (done: number): string => `${done} mensajes actualizados…`,
+  "label.migrateDone": (done: number): string => `${done} mensajes actualizados`,
+  "label.migrateIncomplete": (done: number): string =>
+    `${done} mensajes actualizados — algunos todavía tienen la etiqueta anterior. Ejecutalo de nuevo para terminar.`,
+  "label.migrateAborted": (done: number): string =>
+    `Se detuvo después de ${done} mensajes. El resto conserva la etiqueta anterior.`,
+  "label.migrateFailed": "La etiqueta no se pudo cambiar",
+  "label.abort": "Detener",
+
+  "label.localOnly":
+    "Los colores y la visibilidad en la barra lateral se guardan en este navegador, así que todavía no te siguen a otro dispositivo. Las etiquetas en sí, y los mensajes que las tienen, sí se ven en todos lados.",
+
+  "settings.section.labels": "Etiquetas",
+  "settings.labels.description":
+    "Las etiquetas son keywords IMAP, así que cruzan carpetas — y una carpeta guarda solo 26.",
 };
 
 /** The locales the app ships with. */

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { JmapClient } from "../api/jmap";
-import { fetchConversationMessages, fetchThreadRows, queryEmails } from "./api";
+import { fetchConversationMessages, fetchThreadRows, queryEmails, toJmapFilter } from "./api";
+import { encodeLabelKeyword } from "./labels";
+import { KEYWORD_ANSWERED, KEYWORD_DRAFT, KEYWORD_FLAGGED, KEYWORD_SEEN } from "./types";
 import { INBOX_TYPES, sortForInboxType } from "./prefs";
 import type { Email, Thread } from "./types";
 
@@ -169,5 +171,64 @@ describe("the conversation reader's two fetch stages", () => {
     expect(await fetchConversationMessages(client, ACCOUNT, [])).toEqual([]);
     expect(await fetchThreadRows(client, ACCOUNT, [])).toEqual([]);
     expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * E8 — the label filter's SHAPE, pinned to what the server accepts.
+ *
+ * `internal/jmap/mail/query.go` translates one `hasKeyword` per filter and
+ * refuses the four system flags for reasons it states: `$seen` is only
+ * expressible as its negation (`notKeyword`), and `$flagged`/`$answered`/
+ * `$draft` live in a bitmask the repertoire has no predicate for. A client that
+ * sent one would get `unsupportedFilter` and the user would see an empty list.
+ *
+ * These tests do not talk to the server; they pin the shape so a change here
+ * that would produce a refusal fails in CI instead of in a browser.
+ */
+describe("the label filter (E8)", () => {
+  it("is a bare hasKeyword — a label is cross-cutting, never folder-scoped", () => {
+    expect(toJmapFilter({ kind: "label", keyword: "$label:work" })).toEqual({
+      hasKeyword: "$label:work",
+    });
+  });
+
+  it("ANDs with inMailbox when a folder is named — the shape searchFilter accepts", () => {
+    expect(toJmapFilter({ kind: "label", keyword: "$label:work", mailboxId: "m1" })).toEqual({
+      operator: "AND",
+      conditions: [{ inMailbox: "m1" }, { hasKeyword: "$label:work" }],
+    });
+  });
+
+  it("carries the keyword VERBATIM, including the slash the pointer escaping hides", () => {
+    /*
+     * The escaping is a JSON-POINTER concern and belongs only to patch keys. A
+     * filter value is a plain string, so escaping it here would ask the server
+     * for a keyword literally named "work~1clients" — which no message has.
+     */
+    const keyword = encodeLabelKeyword("work/clients");
+    expect(toJmapFilter({ kind: "label", keyword })).toEqual({
+      hasKeyword: "$label:work/clients",
+    });
+  });
+
+  it("never produces a hasKeyword the server refuses", () => {
+    /*
+     * Every keyword this filter kind can carry comes from `encodeLabelKeyword`,
+     * so it always starts with `$label:` and can never BE a system flag. This
+     * asserts the property rather than the absence of a call site.
+     */
+    for (const flag of [KEYWORD_SEEN, KEYWORD_FLAGGED, KEYWORD_ANSWERED, KEYWORD_DRAFT]) {
+      const keyword = encodeLabelKeyword(flag);
+      expect(keyword).not.toBe(flag);
+      expect(keyword.startsWith("$label:")).toBe(true);
+    }
+  });
+
+  it("sends the filter through queryEmails unchanged", () => {
+    const { client, sent } = stub({ q: { ids: ["e1"], queryState: "1" }, g: { list: [ROW] } });
+    void queryEmails(client, ACCOUNT, { kind: "label", keyword: "$label:work" });
+    const query = sent.find(([name]) => name === "Email/query");
+    expect(query?.[1].filter).toEqual({ hasKeyword: "$label:work" });
   });
 });

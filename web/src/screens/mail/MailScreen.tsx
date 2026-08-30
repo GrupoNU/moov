@@ -27,6 +27,9 @@ import {
   type MailFilter,
 } from "../../mail/api";
 import { deleteIsPermanent, resolveToggle, type MessageAction } from "../../mail/actions";
+import { encodeLabelKeyword } from "../../mail/labels";
+import type { Label } from "../../mail/labelStore";
+import { visibleLabels } from "../../mail/labelStore";
 import { mailboxSegment, resolveMailbox } from "../../mail/mailboxes";
 import { isSearchable, normalizeQuery, refusalFor } from "../../mail/search";
 import {
@@ -73,12 +76,16 @@ import {
 } from "../compose/composerState";
 import { ActionBar } from "./ActionBar";
 import type { ConversationControls } from "./ConversationView";
+import { LabelList } from "./LabelList";
+import { useLabels } from "./useLabels";
 import { MailboxList } from "./MailboxList";
 import { mailboxLabel } from "./mailboxLabels";
 import { MessageList } from "./MessageList";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
 import { SettingsDialog } from "../settings/SettingsDialog";
+import type { LabelsSectionProps } from "../settings/LabelsSection";
+import type { MigrateResult } from "../../mail/migrateKeyword";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useMessageActions } from "./useMessageActions";
 import { formatFullDate } from "../../mail/format";
@@ -335,6 +342,15 @@ export function MailScreen(): React.JSX.Element {
       if (!isSearchable(query)) return undefined;
       return { kind: "search", text: query };
     }
+    /*
+     * E8: a label view is a `hasKeyword` filter across the WHOLE account, not
+     * scoped to a folder — a label is cross-cutting by definition, and scoping
+     * it would hide exactly the messages the user filed away, which is the one
+     * thing a label is for.
+     */
+    if (route.kind === "label") {
+      return { kind: "label", keyword: encodeLabelKeyword(route.name) };
+    }
     if (activeMailbox === undefined) return undefined;
     return { kind: "mailbox", mailboxId: activeMailbox.id };
   }, [route, activeMailbox]);
@@ -381,6 +397,8 @@ export function MailScreen(): React.JSX.Element {
   const listKey =
     route.kind === "search"
       ? `search:${normalizeQuery(route.query)}:${collapseThreads ? "c" : "m"}`
+      : route.kind === "label"
+      ? `label:${route.name}:${collapseThreads ? "c" : "m"}`
       : // The inbox type is part of the list's identity: changing it reorders
         // every row, so the scroll position from the previous order is
         // meaningless and must reset rather than land the user mid-list.
@@ -571,6 +589,21 @@ export function MailScreen(): React.JSX.Element {
     actions.reset();
     setRefreshToken((token) => token + 1);
   }, [actions]);
+
+  /*
+   * E8: the labels.
+   *
+   * It reads `projected` rather than `emails` so a just-applied label is
+   * discovered from the OPTIMISTIC state — otherwise creating and applying a
+   * label in one gesture would leave the sidebar row missing until the refetch
+   * landed, which reads as the label not having worked.
+   */
+  const labelsApi = useLabels({
+    client,
+    accountId,
+    emails: projected,
+    onChanged: refresh,
+  });
 
   // Keep the selection valid as the list changes underneath it.
   useEffect(() => {
@@ -960,6 +993,139 @@ export function MailScreen(): React.JSX.Element {
       value ? t("action.flag") : t("action.unflag"),
     );
   }, [targetMessageIds, projected, dispatchAction, t]);
+
+  // --- E8: applying and removing labels -------------------------------------
+
+  /**
+   * Applies or removes ONE label across the current target set.
+   *
+   * It goes through the same optimistic machinery as every other action, so a
+   * label paints instantly and rolls back with the server's own words on
+   * failure. The server enforces the 26-keyword ceiling
+   * (`checkKeywordCeiling`), and its refusal arrives as a per-record `SetError`
+   * that `dispatchAction` surfaces verbatim — which is the last line of defence
+   * behind the budget the UI already showed.
+   */
+  const runToggleLabel = useCallback(
+    (keyword: string, apply: boolean): void => {
+      const ids = targetMessageIds();
+      if (ids.length === 0) return;
+      void dispatchAction(
+        { kind: apply ? "label" : "unlabel", ids, keyword },
+        apply ? t("label.applied") : t("label.removed"),
+      );
+    },
+    [targetMessageIds, dispatchAction, t],
+  );
+
+  /** The keyword maps the "Label as" menu reads its tri-state from. */
+  const labelSelection = useMemo<readonly (Readonly<Record<string, boolean>> | undefined)[]>(() => {
+    const ids = new Set(targetMessageIds());
+    return projected.filter((email) => ids.has(email.id)).map((email) => email.keywords);
+  }, [targetMessageIds, projected]);
+
+  /** Navigates to a label's view. */
+  const goToLabel = useCallback(
+    (label: Label): void => {
+      navigate({ kind: "label", name: label.name });
+    },
+    [navigate],
+  );
+
+  /**
+   * The `l` key's target: the action bar's "Label as" menu, published by the
+   * menu itself when it mounts.
+   *
+   * A ref rather than state, so registering it does not re-render the screen —
+   * and so `runAction`'s dependency list does not change on every mount of the
+   * bar, which would recreate the global key handler on every list refresh.
+   */
+  const openLabelMenu = useRef<(() => void) | undefined>(undefined);
+  const registerLabelMenu = useCallback((open: () => void): void => {
+    openLabelMenu.current = open;
+  }, []);
+
+  /** Opens Settings on the labels section — the menu's "Manage labels…". */
+  const openLabelSettings = useCallback((): void => {
+    setSettingsOpen(true);
+  }, []);
+
+  /**
+   * Reports how a rename or delete ended, in the migration's own terms.
+   *
+   * The three outcomes are three different sentences on purpose. "Stopped after
+   * 1,800" and "1,800 updated — some still carry the old label" mean different
+   * things to a user deciding whether to run it again, and collapsing them into
+   * "done" would make a half-finished migration look finished. That is the
+   * failure `emptyTrash` was written to avoid, applied here.
+   */
+  const reportMigration = useCallback(
+    (result: MigrateResult): void => {
+      if (result.failureMessage !== undefined && result.migrated === 0) {
+        setToast(`${t("label.migrateFailed")}: ${result.failureMessage}`);
+        return;
+      }
+      if (result.aborted) {
+        setToast(format("label.migrateAborted", result.migrated));
+        return;
+      }
+      setToast(
+        result.incomplete
+          ? format("label.migrateIncomplete", result.migrated)
+          : format("label.migrateDone", result.migrated),
+      );
+    },
+    [t, format],
+  );
+
+  /** Everything the settings sheet's label manager needs, in one object. */
+  const labelSettings = useMemo<LabelsSectionProps>(
+    () => ({
+      labels: labelsApi.labels,
+      budget: labelsApi.budget,
+      onCreate: labelsApi.create,
+      onSetColor: labelsApi.setColor,
+      onSetVisibility: labelsApi.setVisibility,
+      onRename: (label, newName) => {
+        void labelsApi.rename(label, newName).then(reportMigration);
+      },
+      onDelete: (label) => {
+        // The confirmation says what is and is NOT deleted: removing a label
+        // from 4,000 messages is alarming precisely because it sounds like
+        // deleting 4,000 messages.
+        if (!window.confirm(format("label.deleteConfirm", label.name))) return;
+        void labelsApi.remove(label).then(reportMigration);
+      },
+      migrationStatus: labelsApi.isMigrating
+        ? format("label.migrating", labelsApi.migratedCount)
+        : undefined,
+      onAbortMigration: labelsApi.isMigrating ? labelsApi.abort : undefined,
+      onCreateFolder: undefined,
+    }),
+    [labelsApi, reportMigration, format],
+  );
+
+  /**
+   * The labels the sidebar shows, after `labelListVisibility`.
+   *
+   * `showIfUnread` needs to know whether a label has unread mail. The honest
+   * answer available client-side is "is any UNREAD message in the loaded window
+   * carrying it" — there is no per-keyword unread count in JMAP the way there
+   * is per mailbox, and inventing one would mean a query per label on every
+   * load. So the predicate is bounded by the window and errs toward a shorter
+   * sidebar, which is the failure direction that does not add rows the user did
+   * not ask for.
+   */
+  const sidebarLabels = useMemo(() => {
+    const unread = new Set<string>();
+    for (const email of projected) {
+      if (email.keywords?.[KEYWORD_SEEN] === true) continue;
+      for (const [keyword, value] of Object.entries(email.keywords ?? {})) {
+        if (value) unread.add(keyword);
+      }
+    }
+    return visibleLabels(labelsApi.labels, (label) => unread.has(label.keyword));
+  }, [labelsApi.labels, projected]);
 
   // --- E1: the conversation reader ------------------------------------------
 
@@ -1603,6 +1769,16 @@ export function MailScreen(): React.JSX.Element {
         case "conversationMessage":
           conversationControls.current?.goToMessage(action.direction);
           break;
+        /*
+         * E8 — `l` opens the "Label as" menu rather than applying anything: a
+         * single key cannot name one of up to 26 labels, and Gmail's `l` opens
+         * the picker too. With nothing selected the menu's trigger is disabled
+         * and `open()` returns without doing anything, which is the same
+         * outcome as clicking the greyed-out button.
+         */
+        case "labelAs":
+          openLabelMenu.current?.();
+          break;
       }
     },
     [
@@ -1807,6 +1983,19 @@ export function MailScreen(): React.JSX.Element {
           )}
 
           {/*
+            E8: the labels, as their OWN group below the folders. GC-5's line
+            made visible — folders organise, labels cut across — rather than
+            fifteen more rows in a tree the user would expect to file mail into.
+          */}
+          <LabelList
+            labels={sidebarLabels}
+            selectedKeyword={
+              route.kind === "label" ? encodeLabelKeyword(route.name) : undefined
+            }
+            onSelect={goToLabel}
+          />
+
+          {/*
             The settings entry point.
 
             BOTTOM-LEFT, inside the sidebar but after the folder tree and
@@ -1869,8 +2058,15 @@ export function MailScreen(): React.JSX.Element {
             isBusy={actions.isBusy}
             onToggleSpam={runToggleSpam}
             inJunk={inJunk}
+            labels={labelsApi.labels}
+            labelSelection={labelSelection}
+            onToggleLabel={runToggleLabel}
+            onManageLabels={openLabelSettings}
+            onLabelMenuReady={registerLabelMenu}
           />
           <MessageList
+            labels={labelsApi.labels}
+            onSelectLabel={goToLabel}
             listKey={listKey}
             groups={groups}
             selectedId={selectedId}
@@ -1990,6 +2186,10 @@ export function MailScreen(): React.JSX.Element {
               }}
               onToggleSpam={runToggleSpam}
               onUnsubscribeByMail={openUnsubscribeMail}
+              labels={labelsApi.labels}
+              onToggleLabel={runToggleLabel}
+              onManageLabels={openLabelSettings}
+              onSelectLabel={goToLabel}
               mailboxes={mailboxes}
               currentMailboxId={activeMailbox?.id}
               inJunk={inJunk}
@@ -2042,6 +2242,7 @@ export function MailScreen(): React.JSX.Element {
         }}
         identity={identity}
         onSaveSignature={saveSignature}
+        labels={labelSettings}
       />
 
       <ShortcutsDialog

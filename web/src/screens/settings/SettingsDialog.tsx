@@ -16,6 +16,7 @@ import {
 } from "../../mail/prefs";
 import { searchSettings, type SearchableRow } from "../../mail/settingsSearch";
 import type { Identity } from "../../mail/write";
+import { LabelsSection, type LabelsSectionProps } from "./LabelsSection";
 import {
   SECTION_IDS,
   SECTION_TITLES,
@@ -78,6 +79,19 @@ export interface SettingsDialogProps {
    * writes goes through the prefs context.
    */
   readonly onSaveSignature?: ((textSignature: string) => Promise<boolean>) | undefined;
+  /**
+   * E8: everything the label manager needs, passed whole.
+   *
+   * Passed in for the same reason the signature saver is: the label operations
+   * are JMAP calls and bounded migrations, and the JMAP client lives in
+   * MailScreen. This sheet stays client-free, which is what keeps it testable
+   * without standing up auth and a server.
+   *
+   * Optional, so a caller that has no label plumbing (a test, an embedding)
+   * still renders every other section — the labels section then shows its own
+   * empty state rather than crashing the sheet.
+   */
+  readonly labels?: LabelsSectionProps | undefined;
 }
 
 export function SettingsDialog({
@@ -85,6 +99,7 @@ export function SettingsDialog({
   onClose,
   identity,
   onSaveSignature,
+  labels,
 }: SettingsDialogProps): React.JSX.Element {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -284,6 +299,9 @@ export function SettingsDialog({
                       onSaveSignature={onSaveSignature}
                       showRow={showRow}
                     />
+                  )}
+                  {sectionId === "labels" && showRow("labels") && labels !== undefined && (
+                    <LabelsSection {...labels} />
                   )}
                   {sectionId === "filters" && showRow("filters") && (
                     <Skeleton titleKey="settings.filters.soon" bodyKey="settings.filters.soonBody" />

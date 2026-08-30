@@ -3,10 +3,20 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from "../../i18n/I18nProvider";
 import { formatListDate, initialsFor, machineDate } from "../../mail/format";
 import { usePrefs } from "../../mail/PrefsProvider";
+import { labelsFor, type Label } from "../../mail/labelStore";
 import { rowHeightFor } from "../../mail/prefs";
 import { displaySubject, senderLabel, type ThreadGroup } from "../../mail/threading";
 import { computeWindow, scrollOffsetToReveal, totalHeight } from "../../mail/windowing";
+import { LabelChips } from "./LabelChips";
 import styles from "./MessageList.module.css";
+
+/**
+ * A stable empty array for the labels prop.
+ *
+ * A fresh `[]` at the call site would be a new reference on every render, which
+ * would defeat any memo a row grows later — and this list renders 200 rows.
+ */
+const EMPTY_LABELS: readonly Label[] = [];
 
 /**
  * The virtualized message list (P2 deliverable 3) — the biggest piece.
@@ -74,6 +84,17 @@ export interface MessageListProps {
   readonly onRowArchive?: (group: ThreadGroup) => void;
   readonly onRowDelete?: (group: ThreadGroup) => void;
   readonly onRowToggleRead?: (group: ThreadGroup) => void;
+
+  /**
+   * E8: the labels a row may carry, so each row can resolve its own chips.
+   *
+   * The whole KNOWN set is passed once rather than per-row chips being computed
+   * upstream: a row renders its chips from its own keywords, and passing the
+   * lookup table keeps that a pure function of data the row already has.
+   */
+  readonly labels?: readonly Label[];
+  /** Clicking a chip navigates to that label's view. */
+  readonly onSelectLabel?: (label: Label) => void;
 }
 
 export function MessageList({
@@ -90,6 +111,8 @@ export function MessageList({
   onRowArchive,
   onRowDelete,
   onRowToggleRead,
+  labels,
+  onSelectLabel,
 }: MessageListProps): React.JSX.Element {
   const { t, locale } = useTranslation();
   const { prefs } = usePrefs();
@@ -245,6 +268,8 @@ export function MessageList({
                   onRowDelete={prefs.hoverActions ? onRowDelete : undefined}
                   onRowToggleRead={prefs.hoverActions ? onRowToggleRead : undefined}
                   showSnippet={prefs.showSnippets}
+                  labels={labels ?? EMPTY_LABELS}
+                  onSelectLabel={onSelectLabel}
                 />
               );
             })}
@@ -279,6 +304,9 @@ interface MessageRowProps {
   readonly onRowToggleRead: ((group: ThreadGroup) => void) | undefined;
   /** E5: the `showSnippets` preference — the preview line next to the subject. */
   readonly showSnippet: boolean;
+  /** E8: the known labels, for resolving this row's chips and their colours. */
+  readonly labels: readonly Label[];
+  readonly onSelectLabel: ((label: Label) => void) | undefined;
 }
 
 function MessageRow({
@@ -297,6 +325,8 @@ function MessageRow({
   onRowDelete,
   onRowToggleRead,
   showSnippet,
+  labels,
+  onSelectLabel,
 }: MessageRowProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -312,6 +342,18 @@ function MessageRow({
   // hidden — a screen reader must not read a preview the sighted user turned
   // off, and the row's own text is what the setting is about.
   const preview = showSnippet ? (latest.preview ?? "") : "";
+
+  /*
+   * E8: the row's chips.
+   *
+   * Read off the NEWEST message of the thread, the same one whose subject and
+   * date the row shows. A thread whose messages carry different labels is real
+   * but rare, and a union across the thread would make a row claim a label the
+   * conversation's current state does not have — the row already commits to
+   * "the latest message represents this conversation", and the chips follow
+   * that same rule rather than inventing a second one.
+   */
+  const rowLabels = labelsFor(latest.keywords, labels);
   const date = formatListDate(latest.receivedAt, locale, now);
   const isoDate = machineDate(latest.receivedAt);
 
@@ -438,6 +480,14 @@ function MessageRow({
       </span>
 
       <span role="gridcell" className={styles.body}>
+        {/*
+          E8: the chips come BEFORE the subject, which is where Gmail puts them
+          and is the only position that works: after the subject they would be
+          pushed off the row by any long subject and never seen, which is the
+          same as not rendering them. The row itself is never tinted (canon
+          §4.2) — the chips carry the colour and the row keeps its own states.
+        */}
+        <LabelChips labels={rowLabels} onSelect={onSelectLabel} />
         <span className={styles.subject}>{subject}</span>
         {preview !== "" && (
           <>

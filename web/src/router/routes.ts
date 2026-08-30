@@ -38,6 +38,26 @@ export type Route =
       readonly kind: "search";
       readonly query: string;
       readonly messageId?: string;
+    }
+  /**
+   * E8: every message carrying one user label.
+   *
+   * Its own kind rather than a search with a `label:` operator, for the reason
+   * the search route gave for not being a mailbox: a label view's result set is
+   * a `hasKeyword` filter, not a text query, and dressing it as one would mean
+   * parsing the operator back out on every load and would make an ordinary
+   * search for the literal text "label:work" ambiguous. Gmail's own URL does
+   * the same thing — `#label/work` is a distinct hash, not `#search/label:work`.
+   *
+   * The path carries the DISPLAY NAME (`/label/work`), not the keyword: the
+   * `$label:` prefix is a wire detail no user should see in a URL they might
+   * share, and it is recoverable by `encodeLabelKeyword` at render time.
+   */
+  | {
+      readonly kind: "label";
+      /** The label's display name, un-prefixed. */
+      readonly name: string;
+      readonly messageId?: string;
     };
 
 /** Where an unrecognised or empty URL lands. */
@@ -112,6 +132,22 @@ export function parseRoute(url: string): Route {
       : { kind: "search", query };
   }
 
+  /*
+   * `/label/:name` and `/label/:name/:messageId`. The name is percent-decoded,
+   * so a label containing a slash — "work/clients", the nested convention —
+   * arrives whole rather than splitting into two segments and losing its tail.
+   * `formatRoute` encodes it for the same reason.
+   */
+  if (segments[0] === "label") {
+    const name = segments[1];
+    if (name === undefined || name === "") return DEFAULT_ROUTE;
+    const messageId = segments[2];
+    const decoded = decodeURIComponent(name);
+    return messageId !== undefined && messageId !== ""
+      ? { kind: "label", name: decoded, messageId: decodeURIComponent(messageId) }
+      : { kind: "label", name: decoded };
+  }
+
   if (segments[0] === "mail") {
     const mailbox = segments[1];
     if (mailbox === undefined || mailbox === "") return DEFAULT_ROUTE;
@@ -137,6 +173,13 @@ export function formatRoute(route: Route): string {
   switch (route.kind) {
     case "mailbox": {
       const base = `/mail/${encodeURIComponent(route.mailboxId)}`;
+      return route.messageId !== undefined
+        ? `${base}/${encodeURIComponent(route.messageId)}`
+        : base;
+    }
+    case "label": {
+      // The name IS encoded, which is what keeps "work/clients" one segment.
+      const base = `/label/${encodeURIComponent(route.name)}`;
       return route.messageId !== undefined
         ? `${base}/${encodeURIComponent(route.messageId)}`
         : base;
@@ -172,6 +215,11 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
     return messageId === undefined
       ? { kind: "mailbox", mailboxId: route.mailboxId }
       : { kind: "mailbox", mailboxId: route.mailboxId, messageId };
+  }
+  if (route.kind === "label") {
+    return messageId === undefined
+      ? { kind: "label", name: route.name }
+      : { kind: "label", name: route.name, messageId };
   }
   return messageId === undefined
     ? { kind: "search", query: route.query }

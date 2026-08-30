@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-
 import { useTranslation } from "../../i18n/I18nProvider";
 import { buildMailboxTree } from "../../mail/mailboxes";
 import type { Mailbox } from "../../mail/types";
 import { mailboxLabelKey } from "./mailboxLabels";
+import { PopupMenu } from "./PopupMenu";
 import styles from "./MoveMenu.module.css";
 
 /**
@@ -13,6 +12,11 @@ import styles from "./MoveMenu.module.css";
  * move control (item 3). Two copies of an APG menu-button — with its outside
  * click, its Escape, its roving focus — is two copies of the hardest 60 lines
  * in this screen, and they would have drifted the first time one was fixed.
+ *
+ * E8 took that one step further: those sixty lines now live in
+ * {@link PopupMenu}, because the label menu would have been the third copy. What
+ * remains here is what is actually about MOVING — the folder tree, the
+ * indentation, and closing on choice.
  *
  * Implemented as a `menu`/`menuitem` pattern rather than a `<select>`, because
  * a select cannot show the folder hierarchy with indentation and cannot be
@@ -45,61 +49,20 @@ export function MoveMenu({
   triggerContent,
 }: MoveMenuProps): React.JSX.Element {
   const { t } = useTranslation();
-  const [isOpen, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
-
-  const close = useCallback((): void => {
-    setOpen(false);
-    buttonRef.current?.focus();
-  }, []);
-
-  // Click outside and Escape both dismiss. Both are required: a menu that only
-  // closes on Escape traps a mouse user, and one that only closes on an
-  // outside click traps a keyboard user.
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const onPointerDown = (event: PointerEvent): void => {
-      if (containerRef.current?.contains(event.target as Node) !== true) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        close();
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown, true);
-    };
-  }, [isOpen, close]);
 
   const targets = buildMailboxTree(mailboxes).filter(
     (node) => node.mailbox.id !== currentMailboxId && node.mailbox.myRights.mayAddItems,
   );
 
   return (
-    <div className={styles.menuWrap} ref={containerRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        className={triggerClassName}
-        disabled={disabled}
-        aria-haspopup="menu"
-        aria-expanded={isOpen}
-        aria-label={t("action.moveTo")}
-        title={t("action.moveTo")}
-        onClick={() => {
-          setOpen((open) => !open);
-        }}
-      >
-        {triggerContent}
-      </button>
-
-      {isOpen && (
-        <ul className={styles.menu} role="menu" aria-label={t("action.moveTo")}>
+    <PopupMenu
+      label={t("action.moveTo")}
+      disabled={disabled}
+      triggerClassName={triggerClassName}
+      triggerContent={triggerContent}
+    >
+      {(close) => (
+        <>
           {targets.map((node, index) => (
             <li key={node.mailbox.id} role="none">
               <button
@@ -126,9 +89,9 @@ export function MoveMenu({
               <span className={styles.menuEmpty}>{t("list.empty")}</span>
             </li>
           )}
-        </ul>
+        </>
       )}
-    </div>
+    </PopupMenu>
   );
 }
 

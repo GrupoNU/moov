@@ -1,0 +1,73 @@
+/*
+ * The "Label as" menu's own bits (E8).
+ *
+ * The popup frame, its items' hover and the empty state come from
+ * MoveMenu.module.css — the two menus share one look on purpose. What is here
+ * is what a checkbox menu needs and a choice menu does not: the swatch, the
+ * name that must truncate rather than widen the popup, and the tick column.
+ */
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--color-accent-tint);
+}
+
+/*
+ * The colour swatch reads --label-bg, which the component sets inline from the
+ * closed palette. Both theme pairs travel in the inline style and the SWAP
+ * happens here, so a colour follows a theme change with no JavaScript.
+ */
+.swatch {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--label-bg);
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mark {
+  flex: none;
+  width: 1rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.separator {
+  margin: var(--space-1) 0;
+  border: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .swatch {
+    background: var(--label-bg-dark);
+  }
+}
+
+:root[data-theme="dark"] .swatch {
+  background: var(--label-bg-dark);
+}

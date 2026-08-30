@@ -321,3 +321,104 @@ describe("deleteIsPermanent", () => {
     expect(deleteIsPermanent(email("e1"), undefined)).toBe(false);
   });
 });
+
+/**
+ * E8 — the label/unlabel action kinds.
+ *
+ * They exercise the one part of the overlay that was NOT there before: an
+ * arbitrary keyword map, merged rather than replaced, and inverted from the
+ * message rather than from the patch.
+ */
+describe("label and unlabel", () => {
+  const WORK = "$label:work";
+  const CLIENTS = "$label:clients";
+
+  const labelled = (keywords: Record<string, boolean> = {}): Email => ({
+    id: "e1",
+    keywords,
+    mailboxIds: { m1: true },
+  });
+
+  it("paints the keyword without removing the row", () => {
+    // A label is not a move: the row stays where it is, in every view.
+    const patch = patchFor({ kind: "label", ids: ["e1"], keyword: WORK }, labelled(), "m1");
+    expect(patch).toEqual({ keywords: { [WORK]: true } });
+    expect(patch.removed).toBeUndefined();
+  });
+
+  it("clears the keyword on unlabel", () => {
+    const patch = patchFor({ kind: "unlabel", ids: ["e1"], keyword: WORK }, labelled(), "m1");
+    expect(patch).toEqual({ keywords: { [WORK]: false } });
+  });
+
+  it("is a no-op when no keyword travels, rather than a patch that means nothing", () => {
+    expect(patchFor({ kind: "label", ids: ["e1"] }, labelled(), "m1")).toEqual({});
+  });
+
+  it("inverts from the MESSAGE, so a failed apply on an already-labelled message restores it", () => {
+    /*
+     * The subtle one. Inverting the PATCH would restore "absent" and strip a
+     * label the user never touched — the same class of bug the seen/flagged
+     * inverse was written to avoid.
+     */
+    const already = labelled({ [WORK]: true });
+    const patch = patchFor({ kind: "label", ids: ["e1"], keyword: WORK }, already, "m1");
+    expect(inverseFor(patch, already, "m1")).toEqual({ keywords: { [WORK]: true } });
+
+    const fresh = labelled();
+    const patch2 = patchFor({ kind: "label", ids: ["e1"], keyword: WORK }, fresh, "m1");
+    expect(inverseFor(patch2, fresh, "m1")).toEqual({ keywords: { [WORK]: false } });
+  });
+
+  it("applies the keyword to the email as a SET member, never as false", () => {
+    // The keywords property is an object-as-set (RFC 8621 §4.1.1): a cleared
+    // keyword must be ABSENT, or the chip renderer would list it.
+    const withLabel = applyPatch(labelled({ $seen: true }), { keywords: { [WORK]: true } });
+    expect(withLabel.keywords).toEqual({ $seen: true, [WORK]: true });
+
+    const without = applyPatch(labelled({ $seen: true, [WORK]: true }), {
+      keywords: { [WORK]: false },
+    });
+    expect(without.keywords).toEqual({ $seen: true });
+    expect(Object.keys(without.keywords ?? {})).not.toContain(WORK);
+  });
+
+  it("MERGES two label patches on one message instead of dropping the first", () => {
+    /*
+     * The bug a shallow spread would produce: applying two labels in one visit
+     * to the menu would paint only the second, and the first would flicker back
+     * until the refetch. The menu stays open precisely so this happens.
+     */
+    let overlay = withPatch(EMPTY_OVERLAY, "e1", { keywords: { [WORK]: true } });
+    overlay = withPatch(overlay, "e1", { keywords: { [CLIENTS]: true } });
+    expect(overlay.get("e1")?.keywords).toEqual({ [WORK]: true, [CLIENTS]: true });
+  });
+
+  it("does not let a label patch clobber a concurrent archive on the same message", () => {
+    let overlay = withPatch(EMPTY_OVERLAY, "e1", { mailboxId: "m2", removed: true });
+    overlay = withPatch(overlay, "e1", { keywords: { [WORK]: true } });
+    const patch = overlay.get("e1");
+    expect(patch?.removed).toBe(true);
+    expect(patch?.mailboxId).toBe("m2");
+    expect(patch?.keywords).toEqual({ [WORK]: true });
+  });
+
+  it("survives the round trip through applyOverlay", () => {
+    const overlay = withPatch(EMPTY_OVERLAY, "e1", { keywords: { [WORK]: true } });
+    const [out] = applyOverlay([labelled({ $seen: true })], overlay);
+    expect(out?.keywords).toEqual({ $seen: true, [WORK]: true });
+  });
+
+  it("plans both halves from the same snapshot", () => {
+    const emails = [labelled({ [WORK]: true }), { ...labelled(), id: "e2" }];
+    const { patches, inverses } = planAction(
+      { kind: "label", ids: ["e1", "e2"], keyword: WORK },
+      emails,
+      "m1",
+    );
+    expect(patches.get("e1")?.keywords).toEqual({ [WORK]: true });
+    // e1 already had it, e2 did not — the inverses differ accordingly.
+    expect(inverses.get("e1")?.keywords).toEqual({ [WORK]: true });
+    expect(inverses.get("e2")?.keywords).toEqual({ [WORK]: false });
+  });
+});

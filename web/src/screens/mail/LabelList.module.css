@@ -1,0 +1,95 @@
+/*
+ * The sidebar's label group (E8).
+ *
+ * The row geometry deliberately matches MailboxList's, so the two groups read
+ * as one column rather than as two widgets — what distinguishes them is the
+ * heading and the swatch, not a different shape.
+ *
+ * The row is NEVER tinted with the label's colour (canon §4.2): only the swatch
+ * carries it, so the selected state stays legible on top of any of the twelve.
+ */
+
+.group {
+  margin-top: var(--space-4);
+}
+
+.title {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.row:hover {
+  background: var(--surface-sunken);
+}
+
+.rowActive {
+  background: var(--color-accent-tint);
+  color: var(--text-strong);
+  font-weight: var(--weight-semibold);
+}
+
+.rowActive:hover {
+  background: var(--color-accent-tint-strong);
+}
+
+.swatch {
+  flex: none;
+  /* The same 20px box the folder icons occupy, so the two groups' text aligns
+     on one vertical rule instead of stepping in and out. */
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0 0.25rem;
+  border-radius: var(--radius-sm);
+  background: var(--label-bg);
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .swatch {
+    background: var(--label-bg-dark);
+  }
+}
+
+:root[data-theme="dark"] .swatch {
+  background: var(--label-bg-dark);
+}

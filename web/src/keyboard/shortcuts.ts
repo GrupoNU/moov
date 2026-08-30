@@ -57,7 +57,16 @@ export type ShortcutAction =
    * exist: in a 24-message thread you need to walk the thread without leaving
    * it, and to leave it without walking it.
    */
-  | { readonly kind: "conversationMessage"; readonly direction: "next" | "previous" };
+  | { readonly kind: "conversationMessage"; readonly direction: "next" | "previous" }
+  /**
+   * E8 — `l`: open the "Label as" menu (canon §2.7's application keys:
+   * "`v` move to · `l` label as").
+   *
+   * It OPENS a menu rather than applying anything, which is why it carries no
+   * payload. A single key cannot name one of up to 26 labels, and Gmail's `l`
+   * does exactly this: it opens the picker.
+   */
+  | { readonly kind: "labelAs" };
 
 /**
  * The six selection scopes Gmail's `*` chord offers, verbatim (canon §2.4):
@@ -354,6 +363,11 @@ export function resolveShortcut(
     case "f":
       return { action: { kind: "forward" }, nextState: INITIAL_KEYBOARD_STATE };
 
+    // E8 — Gmail's "label as". Lowercase `l`; it does not shadow the `g l`
+    // chord's second key, which is only reachable with a pending `g`.
+    case "l":
+      return { action: { kind: "labelAs" }, nextState: INITIAL_KEYBOARD_STATE };
+
     // Gmail toggles a row's checkbox with `x`.
     case "x":
       return { action: { kind: "selectRow" }, nextState: INITIAL_KEYBOARD_STATE };
@@ -427,6 +441,7 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: ["["], descriptionKey: "shortcuts.archivePrevious" },
   { keys: ["_"], descriptionKey: "shortcuts.markUnreadFromHere" },
   { keys: ["s"], descriptionKey: "shortcuts.flag" },
+  { keys: ["l"], descriptionKey: "shortcuts.labelAs" },
   { keys: ["x"], descriptionKey: "shortcuts.selectRow" },
   { keys: ["c"], descriptionKey: "shortcuts.compose" },
   { keys: ["r"], descriptionKey: "shortcuts.reply" },

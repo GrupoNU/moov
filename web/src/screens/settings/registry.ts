@@ -33,6 +33,14 @@ export const SECTION_IDS = [
   "appearance",
   "inbox",
   "account",
+  /*
+   * E8. It sits after "account" and before the skeletons because it is a REAL
+   * section — Gmail's own IA puts Labels second, right after General, but ours
+   * earns its place by being the only section here that manages server-side
+   * objects rather than preferences, and grouping it with the account is the
+   * honest reading of what it is.
+   */
+  "labels",
   "filters",
   "forwarding",
   "vacation",
@@ -46,6 +54,7 @@ export const SECTION_TITLES: Readonly<Record<SectionId, PlainStringKey>> = {
   appearance: "settings.section.appearance",
   inbox: "settings.section.inbox",
   account: "settings.section.account",
+  labels: "settings.section.labels",
   filters: "settings.section.filters",
   forwarding: "settings.section.forwarding",
   vacation: "settings.section.vacation",
@@ -271,6 +280,27 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
     labelKey: "settings.signature.label",
     descriptionKey: "settings.signature.description",
     keywords: ["signature", "firma", "footer", "pie"],
+  },
+
+  // --- Labels (E8) ---
+  {
+    id: "labels",
+    sectionId: "labels",
+    labelKey: "settings.section.labels",
+    descriptionKey: "settings.labels.description",
+    keywords: [
+      "labels",
+      "etiquetas",
+      "label",
+      "etiqueta",
+      "tags",
+      "tag",
+      "keywords",
+      "color",
+      "colores",
+      "colours",
+      "chips",
+    ],
   },
 
   // --- the honest skeletons (P4: a named absence, never a dead control) ---

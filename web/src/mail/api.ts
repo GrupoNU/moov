@@ -142,6 +142,24 @@ export interface QueryPage {
 export type MailFilter =
   | { readonly kind: "mailbox"; readonly mailboxId: string }
   | { readonly kind: "search"; readonly text: string; readonly mailboxId?: string }
+  /**
+   * E8: every message carrying one user label, across the whole account.
+   *
+   * This is a `hasKeyword` condition, and the server serves it —
+   * `internal/jmap/mail/query.go`'s `applyHasKeyword` sends everything that is
+   * not a system flag to the keywords array, "which is where the store keeps
+   * user keywords AND where arbitration A6 puts labels — so a label filter is a
+   * keyword filter, by design".
+   *
+   * The four system flags are NOT expressible here and this type cannot carry
+   * them by accident: `$seen` is refused (the repertoire exposes only its
+   * negation, `notKeyword:$seen`), and `$flagged`/`$answered`/`$draft` live in
+   * a bitmask the repertoire has no predicate for. Since every keyword this
+   * kind ever carries is a `$label:` one, the refusals are unreachable — which
+   * `api.test.ts` pins, so a future caller passing `$flagged` fails a test
+   * rather than shipping an `unsupportedFilter` to a user.
+   */
+  | { readonly kind: "label"; readonly keyword: string; readonly mailboxId?: string }
   | { readonly kind: "all" };
 
 /** Builds the JMAP filter object for one of our filters. */
@@ -155,6 +173,24 @@ export function toJmapFilter(filter: MailFilter): Record<string, unknown> | null
       return null;
     case "mailbox":
       return { inMailbox: filter.mailboxId };
+    case "label":
+      /*
+       * The AND with `inMailbox` is the SAME two-condition shape the search
+       * filter uses, and the server's `searchFilter` accepts a conjunction of
+       * one mailbox and one keyword condition. Without a mailbox it is the bare
+       * `hasKeyword`, which is what a label view wants: a label is
+       * cross-cutting by definition, so scoping it to a folder by default would
+       * hide exactly the messages the user filed away.
+       */
+      return filter.mailboxId !== undefined
+        ? {
+            operator: "AND",
+            conditions: [
+              { inMailbox: filter.mailboxId },
+              { hasKeyword: filter.keyword },
+            ],
+          }
+        : { hasKeyword: filter.keyword };
     case "search":
       return filter.mailboxId !== undefined
         ? {

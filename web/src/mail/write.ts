@@ -39,6 +39,7 @@ import {
   type JmapInvocation,
 } from "../api/jmap";
 import { MailApiError, isMethodError, type MethodError } from "./api";
+import { keywordPatchKey } from "./labels";
 import type { Email, EmailAddress } from "./types";
 
 /** The three capabilities a write request needs. */
@@ -162,6 +163,16 @@ function responseFor(
  * Clearing uses `false`, which RFC 8620 §5.3 defines as "remove this key",
  * rather than `null`; the server's `boolPatchValue` accepts both, but `false`
  * is what §4.1.1's object-as-set grammar means.
+ *
+ * # The patch key is BUILT, never interpolated (E8, mechanism G3)
+ *
+ * The key goes through {@link keywordPatchKey}, which applies RFC 6901
+ * escaping. A template literal here was correct for `$seen` and silently wrong
+ * for `$label:work/clients`: the `/` is a JSON-Pointer SEPARATOR, so the patch
+ * would address the `clients` member of `$label:work` — a location the server
+ * accepts and that never carries the label. The label simply never lands, with
+ * no error anywhere (research 05 §5.0). There is now exactly one place in this
+ * client that composes a `keywords/…` key, and it is escaped.
  */
 export async function setKeyword(
   client: JmapClient,
@@ -173,7 +184,48 @@ export async function setKeyword(
 ): Promise<SetOutcome> {
   if (ids.length === 0) return emptyOutcome();
   const update: Record<string, Record<string, unknown>> = {};
-  for (const id of ids) update[id] = { [`keywords/${keyword}`]: value ? true : false };
+  for (const id of ids) update[id] = { [keywordPatchKey(keyword)]: value ? true : false };
+
+  const response = await client.call(
+    [["Email/set", { accountId, update }, "s"]],
+    WRITE_CAPS,
+    signal,
+  );
+  return readSetResponse(responseFor(response.methodResponses, "s"));
+}
+
+/**
+ * Sets and clears SEVERAL keywords on many messages in one request (E8).
+ *
+ * The rename migration needs this and `setKeyword` cannot express it: a rename
+ * must add the new keyword and remove the old one in the SAME `Email/set`
+ * update, or a failure between two calls leaves the message carrying both
+ * labels — which reads as a duplicated label in every client, ours included.
+ * One patch object, both keys, one server-side transaction per record.
+ *
+ * Every key goes through {@link keywordPatchKey}, so a label containing `/`
+ * survives the trip. That is the whole reason this function does not build its
+ * keys inline.
+ */
+export async function setKeywords(
+  client: JmapClient,
+  accountId: string,
+  ids: readonly string[],
+  keywords: Readonly<Record<string, boolean>>,
+  signal?: AbortSignal,
+): Promise<SetOutcome> {
+  if (ids.length === 0 || Object.keys(keywords).length === 0) return emptyOutcome();
+
+  const patch: Record<string, unknown> = {};
+  for (const [keyword, value] of Object.entries(keywords)) {
+    patch[keywordPatchKey(keyword)] = value ? true : false;
+  }
+
+  const update: Record<string, Record<string, unknown>> = {};
+  // The SAME patch object for every id: it is read-only here and the server
+  // sees one identical instruction per record, which is what makes the whole
+  // batch idempotent under a retry.
+  for (const id of ids) update[id] = patch;
 
   const response = await client.call(
     [["Email/set", { accountId, update }, "s"]],

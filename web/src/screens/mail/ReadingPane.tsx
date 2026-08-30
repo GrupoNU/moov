@@ -17,6 +17,9 @@ import { listIdLabel, unsubscribeInfo, type UnsubscribeInfo } from "../../mail/u
 import { ConversationView, type ConversationControls } from "./ConversationView";
 import { AttachmentList, DownloadOriginalButton } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
+import { LabelChips } from "./LabelChips";
+import { LabelMenu } from "./LabelMenu";
+import { labelsFor, type Label } from "../../mail/labelStore";
 import { MoveMenu } from "./MoveMenu";
 import styles from "./ReadingPane.module.css";
 
@@ -75,6 +78,17 @@ export interface ReadingPaneProps {
   readonly onToggleSpam: () => void;
   /** Opens the composer prefilled from a `mailto:` unsubscribe URI. */
   readonly onUnsubscribeByMail: (to: string, subject: string | undefined, body: string | undefined) => void;
+
+  // --- E8: labels ----------------------------------------------------------
+  /** The known labels, for resolving this message's chips and their colours. */
+  readonly labels?: readonly Label[];
+  /** Applies or removes one label on the open message. */
+  readonly onToggleLabel?: ((keyword: string, apply: boolean) => void) | undefined;
+  /** Opens the label manager. */
+  readonly onManageLabels?: (() => void) | undefined;
+  /** Clicking a chip navigates to that label's view. */
+  readonly onSelectLabel?: ((label: Label) => void) | undefined;
+
   readonly mailboxes: readonly Mailbox[];
   /** The folder being viewed, so the move menu can exclude it. */
   readonly currentMailboxId: string | undefined;
@@ -140,6 +154,10 @@ export function ReadingPane({
   onMarkUnread,
   onToggleSpam,
   onUnsubscribeByMail,
+  labels,
+  onToggleLabel,
+  onManageLabels,
+  onSelectLabel,
   mailboxes,
   currentMailboxId,
   inJunk,
@@ -216,7 +234,19 @@ export function ReadingPane({
     >
       <header className={styles.header}>
         <div className={styles.headerTop}>
-          <h1 className={styles.subject}>{subject}</h1>
+          <h1 className={styles.subject}>
+            {subject}
+            {/*
+              E8: the open message's labels, in full — the reader has the room
+              the list row does not, and an open conversation is exactly where
+              the complete set belongs (`max: Infinity`, no "+N").
+            */}
+            <LabelChips
+              labels={labelsFor(email.keywords, labels ?? [])}
+              max={Number.POSITIVE_INFINITY}
+              onSelect={onSelectLabel}
+            />
+          </h1>
           {/*
             Previous/next before close, in that reading order, because that is
             the order they are reached by Tab and the order they sit in every
@@ -348,6 +378,24 @@ export function ReadingPane({
             triggerClassName={styles.secondaryAction}
             triggerContent={t("action.move")}
           />
+
+          {/*
+            E8: "Label as", beside "Move to" — the pair the reader offers for
+            the same reason the action bar does (canon §2.7 binds `v` and `l`
+            adjacently). Rendered only when the host wired the handlers, so an
+            embedding without label plumbing shows no dead control.
+          */}
+          {onToggleLabel !== undefined && onManageLabels !== undefined && (
+            <LabelMenu
+              labels={labels ?? []}
+              selection={[email.keywords]}
+              disabled={false}
+              onToggle={onToggleLabel}
+              onManage={onManageLabels}
+              triggerClassName={styles.secondaryAction}
+              triggerContent={t("label.labelAs")}
+            />
+          )}
 
           {/*
             Mark-unread CLOSES the reader, and that is not a shortcut: leaving

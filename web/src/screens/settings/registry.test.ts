@@ -22,10 +22,26 @@ import {
  * find with the search.
  */
 
-const dialogSource = readFileSync(
-  resolve(process.cwd(), "src/screens/settings/SettingsDialog.tsx"),
-  "utf8",
-);
+/**
+ * The sheet's source, plus every section component it delegates to.
+ *
+ * E8 added the first section whose body lives in its own file: the label
+ * manager is a stateful CRUD surface, not a column of `SettingRow`s, and
+ * inlining it would have doubled `SettingsDialog`. The drift scan therefore
+ * reads the delegates too — otherwise moving a section out of the sheet would
+ * make it look unrendered, which is a false accusation, and the scan's whole
+ * value is that it only ever errs the safe way.
+ *
+ * A section registered here MUST still name its own label key literally in one
+ * of these files, which is why `LabelsSection` renders its title and
+ * description explicitly rather than inheriting the rail's heading.
+ */
+const dialogSource = [
+  "src/screens/settings/SettingsDialog.tsx",
+  "src/screens/settings/LabelsSection.tsx",
+]
+  .map((path) => readFileSync(resolve(process.cwd(), path), "utf8"))
+  .join("\n");
 
 describe("coverage — every preference reaches a control", () => {
   it("gives EVERY server preference a row that writes it", () => {

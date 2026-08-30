@@ -57,7 +57,19 @@ export type MessageActionKind =
    * triggered by the IMAP operation, not by anything we could invent here.
    */
   | "spam"
-  | "notSpam";
+  | "notSpam"
+  /*
+   * E8: applying and removing a user label. They carry the KEYWORD rather than
+   * a label id, because the keyword is the label's identity everywhere — on the
+   * message, on the wire, in Bulwark, in a Sieve rule. An id would need a
+   * mapping that only this browser holds.
+   *
+   * They are two kinds rather than one with a boolean for the same reason
+   * `flag`/`unflag` are: the undo stack keys its wording on the kind, and
+   * "Etiqueta aplicada" / "Etiqueta quitada" are different sentences.
+   */
+  | "label"
+  | "unlabel";
 
 /** One action, already resolved against concrete messages. */
 export interface MessageAction {
@@ -66,6 +78,8 @@ export interface MessageAction {
   readonly ids: readonly string[];
   /** For `move`: the destination mailbox id. Absent otherwise. */
   readonly mailboxId?: string;
+  /** For `label`/`unlabel`: the keyword being applied or removed. */
+  readonly keyword?: string;
 }
 
 /**
@@ -82,6 +96,17 @@ export interface MessagePatch {
   readonly mailboxId?: string;
   /** True when the message should vanish from the current list. */
   readonly removed?: boolean;
+  /**
+   * E8: arbitrary keywords set or cleared — the label deltas.
+   *
+   * A MAP rather than the two named booleans above, because a label's keyword
+   * is not known at compile time. `true` sets it, `false` clears it, and a
+   * keyword absent from the map is untouched — the same "undefined means this
+   * action does not touch it" rule the named members follow, which is what
+   * keeps a label and an archive on the same message from clobbering each
+   * other.
+   */
+  readonly keywords?: Readonly<Record<string, boolean>>;
 }
 
 /** The overlay: patches keyed by message id. */
@@ -110,6 +135,22 @@ export function patchFor(
       return { flagged: true };
     case "unflag":
       return { flagged: false };
+
+    /*
+     * E8: a label does NOT remove the row from the list, even in a label view.
+     * Gmail's rule, and the right one: removing a label while looking at that
+     * label's messages is the one case where the row genuinely no longer
+     * belongs, but making it vanish under the cursor mid-multi-select is worse
+     * than a stale row that the next refresh corrects. The keyword change is
+     * painted; the row stays until the list refetches.
+     */
+    case "label":
+    case "unlabel": {
+      const keyword = action.keyword;
+      if (keyword === undefined) return {};
+      return { keywords: { [keyword]: action.kind === "label" } };
+    }
+
     case "delete":
       /*
        * A delete carries NO destination, and that is not an omission: the
@@ -164,9 +205,24 @@ export function inverseFor(
     flagged?: boolean;
     mailboxId?: string;
     removed?: boolean;
+    keywords?: Record<string, boolean>;
   } = {};
   if (patch.seen !== undefined) inverse.seen = email.keywords?.[KEYWORD_SEEN] === true;
   if (patch.flagged !== undefined) inverse.flagged = email.keywords?.[KEYWORD_FLAGGED] === true;
+  /*
+   * The keyword inverse is read off the EMAIL, exactly like seen/flagged: the
+   * patch alone does not know whether the message already had the label. A
+   * failed "apply" on a message that already carried the keyword must restore
+   * it to present, not to absent — otherwise a rollback would strip a label the
+   * user never touched.
+   */
+  if (patch.keywords !== undefined) {
+    const restored: Record<string, boolean> = {};
+    for (const keyword of Object.keys(patch.keywords)) {
+      restored[keyword] = email.keywords?.[keyword] === true;
+    }
+    inverse.keywords = restored;
+  }
   if (patch.mailboxId !== undefined) {
     const original = Object.keys(email.mailboxIds ?? {})[0] ?? currentMailboxId;
     if (original !== undefined) inverse.mailboxId = original;
@@ -189,7 +245,27 @@ export function withPatch(
 ): Overlay {
   const next = new Map(overlay);
   const existing = next.get(id);
-  next.set(id, existing === undefined ? patch : { ...existing, ...patch });
+  if (existing === undefined) {
+    next.set(id, patch);
+    return next;
+  }
+  /*
+   * The keyword maps are MERGED rather than replaced. A plain `{...a, ...b}`
+   * would make a second label action drop the first one's keyword from the
+   * overlay — applying two labels to one message would leave only the second
+   * painted, and the first would flicker back until the refetch. Everything
+   * else is genuinely last-writer-wins (a message cannot be in two mailboxes),
+   * so only this member needs the deep merge.
+   */
+  const keywords =
+    existing.keywords === undefined && patch.keywords === undefined
+      ? undefined
+      : { ...existing.keywords, ...patch.keywords };
+  next.set(id, {
+    ...existing,
+    ...patch,
+    ...(keywords === undefined ? {} : { keywords }),
+  });
   return next;
 }
 
@@ -256,24 +332,31 @@ export function applyOverlay(
 export function applyPatch(email: Email, patch: MessagePatch): Email {
   let next = email;
 
-  if (patch.seen !== undefined || patch.flagged !== undefined) {
+  if (patch.seen !== undefined || patch.flagged !== undefined || patch.keywords !== undefined) {
     /*
      * Rebuilt by FILTERING rather than by copy-then-delete. A keyword that is
      * cleared must be absent from the object, not present as `false`: the JMAP
      * keywords property is an object-as-SET (RFC 8621 §4.1.1), so `isSeen`
      * reads presence, and a `{$seen: false}` entry would be read as an
      * unrecognised keyword rather than as "unread" by anything that iterates
-     * the keys.
+     * the keys — including E8's chip renderer, which lists a message's labels
+     * by iterating exactly these keys.
      */
     const cleared = new Set<string>();
     if (patch.seen === false) cleared.add(KEYWORD_SEEN);
     if (patch.flagged === false) cleared.add(KEYWORD_FLAGGED);
+    for (const [name, value] of Object.entries(patch.keywords ?? {})) {
+      if (!value) cleared.add(name);
+    }
 
     const keywords: Record<string, boolean> = Object.fromEntries(
       Object.entries(email.keywords ?? {}).filter(([name]) => !cleared.has(name)),
     );
     if (patch.seen === true) keywords[KEYWORD_SEEN] = true;
     if (patch.flagged === true) keywords[KEYWORD_FLAGGED] = true;
+    for (const [name, value] of Object.entries(patch.keywords ?? {})) {
+      if (value) keywords[name] = true;
+    }
     next = { ...next, keywords };
   }
 
