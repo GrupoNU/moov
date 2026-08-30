@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import { useTranslation } from "../../i18n/I18nProvider";
 import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
@@ -71,6 +73,23 @@ export interface ActionBarProps {
   readonly onSnoozeMenuReady?: ((open: () => void) => void) | undefined;
 
   /**
+   * E11 — publishes a `focus()` that moves keyboard focus INTO the bar, for
+   * Gmail's `,` (canon §2.7, "move focus to toolbar").
+   *
+   * It focuses the first ENABLED control rather than the bar itself: a
+   * `role="toolbar"` div is not focusable, and landing on a disabled button
+   * would look like the key did nothing. The toolbar's own roving focus (arrow
+   * keys between buttons) then takes over, which is the APG contract.
+   */
+  readonly onToolbarReady?: ((focus: () => void) => void) | undefined;
+
+  /**
+   * E11 — publishes the overflow menu's `open()` so `.` can raise it, exactly
+   * as `l` and `b` raise theirs.
+   */
+  readonly onMoreMenuReady?: ((open: () => void) => void) | undefined;
+
+  /**
    * E7: forwards the selection as `.eml` attachments (canon §2.3).
    *
    * On the BAR rather than only in the reader because this is the one triage
@@ -118,13 +137,33 @@ export function ActionBar({
   onToggleMute,
   allMuted = false,
   onUnsnooze,
+  onToolbarReady,
+  onMoreMenuReady,
 }: ActionBarProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const hasSelection = selectedCount > 0;
   const disabled = !hasSelection || isBusy;
 
+  /*
+   * E11 — `,` moves focus into the bar (canon §2.7).
+   *
+   * The first ENABLED control is the target. With no selection most buttons
+   * are `disabled`, and focusing one of those would silently do nothing —
+   * the compose button is always enabled, so the key always lands somewhere.
+   */
+  const barRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (onToolbarReady === undefined) return;
+    onToolbarReady(() => {
+      const focusable = barRef.current?.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled])",
+      );
+      focusable?.[0]?.focus();
+    });
+  }, [onToolbarReady]);
+
   return (
-    <div className={styles.bar} role="toolbar" aria-label={t("action.more")}>
+    <div className={styles.bar} role="toolbar" aria-label={t("action.more")} ref={barRef}>
       <button type="button" className={styles.compose} onClick={onCompose}>
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
           <path d="M13.6 3.6l2.8 2.8L7.6 15.2 4 16l.8-3.6z" />
@@ -349,6 +388,7 @@ export function ActionBar({
         <PopupMenu
           label={t("action.more")}
           disabled={disabled}
+          onReady={onMoreMenuReady}
           triggerClassName={styles.action}
           triggerContent={
             <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="currentColor">

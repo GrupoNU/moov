@@ -5,8 +5,11 @@ import {
   INITIAL_KEYBOARD_STATE,
   isAlwaysOnKey,
   isTypingTarget,
+  physicalKey,
   resolveShortcut,
+  SECTION_TITLE_KEYS,
   SHORTCUT_HELP,
+  SHORTCUT_SECTIONS,
   type KeyLike,
 } from "./shortcuts";
 
@@ -21,6 +24,82 @@ function key(k: string, overrides: Partial<KeyLike> = {}): KeyLike {
     ...overrides,
   };
 }
+
+/**
+ * A press on a US-QWERTY layout: `code` and `key` agree.
+ *
+ * The `key(...)` helper above deliberately omits `code` — that is the
+ * pre-E11 call shape, and every existing test keeps using it to prove the
+ * fallback still resolves the whole map. This helper is the layout-aware one.
+ */
+function usKey(k: string, overrides: Partial<KeyLike> = {}): KeyLike {
+  return key(k, { code: US_CODES[k] ?? `Key${k.toUpperCase()}`, shiftKey: SHIFTED.has(k), ...overrides });
+}
+
+/**
+ * The same PHYSICAL press on a Cyrillic (ЙЦУКЕН) layout.
+ *
+ * `code` is the physical key — identical to the US press — while `key` is the
+ * Cyrillic glyph that physical key actually produces. This is exactly the
+ * event a Russian-layout user generates, and before E11 it resolved to
+ * NOTHING: the entire map was dead outside the Latin alphabet.
+ */
+function cyrillicKey(k: string, overrides: Partial<KeyLike> = {}): KeyLike {
+  const code = US_CODES[k] ?? `Key${k.toUpperCase()}`;
+  const glyph = CYRILLIC_GLYPHS[k.toLowerCase()] ?? k;
+  return key(SHIFTED.has(k) ? glyph.toUpperCase() : glyph, {
+    code,
+    shiftKey: SHIFTED.has(k),
+    ...overrides,
+  });
+}
+
+/** The physical position of each non-letter glyph the map binds. */
+const US_CODES: Readonly<Record<string, string>> = {
+  "/": "Slash",
+  "?": "Slash",
+  ";": "Semicolon",
+  ":": "Semicolon",
+  ",": "Comma",
+  ".": "Period",
+  "[": "BracketLeft",
+  "]": "BracketRight",
+  "#": "Digit3",
+  "*": "Digit8",
+  "!": "Digit1",
+  _: "Minus",
+  Enter: "Enter",
+  Escape: "Escape",
+  ArrowUp: "ArrowUp",
+  ArrowDown: "ArrowDown",
+};
+
+/** The glyphs that require Shift on a US layout. */
+const SHIFTED: ReadonlySet<string> = new Set(["?", ":", "#", "*", "!", "_", "I", "U", "A"]);
+
+/** ЙЦУКЕН: what each US letter position actually prints. */
+const CYRILLIC_GLYPHS: Readonly<Record<string, string>> = {
+  a: "ф",
+  b: "и",
+  c: "с",
+  e: "у",
+  f: "а",
+  g: "п",
+  i: "ш",
+  j: "о",
+  k: "л",
+  l: "д",
+  m: "ь",
+  n: "т",
+  o: "щ",
+  p: "з",
+  r: "к",
+  s: "ы",
+  t: "е",
+  u: "г",
+  x: "ч",
+  z: "я",
+};
 
 describe("the Gmail vocabulary", () => {
   it.each([
@@ -230,6 +309,62 @@ describe("discoverability", () => {
     }
   });
 
+  /*
+   * E11: the same completeness check, swept by PHYSICAL key.
+   *
+   * The glyph sweep above cannot see a binding that is only reachable by
+   * position — and after the `event.code` migration that is how every letter
+   * and symbol resolves. Sweeping KeyA-KeyZ and the bound symbol positions,
+   * both shifted and not, is what makes the check real for the new resolver.
+   */
+  it("documents every binding reachable by physical position", () => {
+    const documented = new Set(SHORTCUT_HELP.flatMap((entry) => entry.keys));
+
+    const codes: string[] = [];
+    for (let i = 0; i < 26; i += 1) codes.push(`Key${String.fromCharCode(65 + i)}`);
+    codes.push(
+      "Slash",
+      "Semicolon",
+      "Comma",
+      "Period",
+      "BracketLeft",
+      "BracketRight",
+      "Digit1",
+      "Digit3",
+      "Digit8",
+      "Minus",
+      "Equal",
+      "Backquote",
+    );
+
+    // Aliases of a documented canonical key, exempt for the same reason the
+    // glyph sweep exempts them: a sheet listing every alias is noise.
+    const aliases = new Set(["o"]);
+
+    for (const code of codes) {
+      for (const shiftKey of [false, true]) {
+        // A deliberately non-Latin glyph, so a binding that still leaked
+        // through `event.key` would be invisible here and fail the assertion.
+        const { action, nextState } = resolveShortcut(key("§", { code, shiftKey }));
+        if (action === undefined && !hasPendingChord(nextState)) continue;
+
+        const glyph = physicalKey(key("§", { code, shiftKey }));
+        expect(glyph, `${code}${shiftKey ? "+shift" : ""} resolved but has no glyph`).toBeDefined();
+        if (glyph === undefined || aliases.has(glyph)) continue;
+
+        // Shifted letters are written "Shift"+"X" in the sheet; unshifted and
+        // symbols appear as the glyph itself.
+        const isShiftedLetter = shiftKey && /^[A-Z]$/.test(glyph);
+        const found = isShiftedLetter
+          ? SHORTCUT_HELP.some(
+              (entry) => entry.keys.length === 2 && entry.keys[0] === "Shift" && entry.keys[1] === glyph,
+            )
+          : documented.has(glyph);
+        expect(found, `"${glyph}" (${code}) is bound but missing from SHORTCUT_HELP`).toBe(true);
+      }
+    }
+  });
+
   it("gives every help entry a description key", () => {
     for (const entry of SHORTCUT_HELP) {
       expect(entry.descriptionKey).toMatch(/^shortcuts\./);
@@ -392,6 +527,235 @@ describe("the shortcuts-off gate", () => {
     expect(isAlwaysOnKey("/")).toBe(true);
     expect(isAlwaysOnKey("e")).toBe(false);
     expect(isAlwaysOnKey("?")).toBe(false);
+  });
+});
+
+/**
+ * E11 — layout independence (the `event.code` migration).
+ *
+ * The regression this suite exists for: before E11 every binding matched on
+ * `event.key`, the CHARACTER the layout produces. On a Cyrillic layout the
+ * physical `J` key produces `о`, so `j` never matched and the map was not
+ * degraded but DEAD — for Russian, Greek, Hebrew and every non-QWERTY layout.
+ */
+describe("E11: the map resolves from the PHYSICAL key", () => {
+  const letterBindings: readonly [string, string][] = [
+    ["j", "next"],
+    ["k", "previous"],
+    ["o", "open"],
+    ["u", "back"],
+    ["e", "archive"],
+    ["z", "undo"],
+    ["s", "toggleFlag"],
+    ["c", "compose"],
+    ["r", "reply"],
+    ["f", "forward"],
+    ["l", "labelAs"],
+    ["b", "snooze"],
+    ["m", "toggleMute"],
+    ["x", "selectRow"],
+    ["n", "conversationMessage"],
+    ["p", "conversationMessage"],
+  ];
+
+  it.each(letterBindings)("resolves %s on a US layout", (pressed, expected) => {
+    expect(resolveShortcut(usKey(pressed)).action?.kind).toBe(expected);
+  });
+
+  /* The heart of the fix: same physical keys, Cyrillic glyphs. */
+  it.each(letterBindings)("resolves the %s POSITION on a Cyrillic layout", (pressed, expected) => {
+    const event = cyrillicKey(pressed);
+    // Guard the fixture itself: if `key` were still Latin the test would pass
+    // for the wrong reason and prove nothing.
+    expect(event.key).not.toBe(pressed);
+    expect(resolveShortcut(event).action?.kind).toBe(expected);
+  });
+
+  it("resolves the g chord from positions, not glyphs", () => {
+    // `g` prints `п` and `i` prints `ш`; the chord must still reach Inbox.
+    const armed = resolveShortcut(cyrillicKey("g")).nextState;
+    expect(armed.pendingG).toBe(true);
+    expect(resolveShortcut(cyrillicKey("i"), armed).action).toEqual({
+      kind: "goToMailbox",
+      role: "inbox",
+    });
+  });
+
+  it("resolves the * chord from positions, not glyphs", () => {
+    const armed = resolveShortcut(usKey("*")).nextState;
+    expect(armed.pendingStar).toBe(true);
+    // `a` prints `ф` on ЙЦУКЕН; `* a` must still select everything.
+    expect(resolveShortcut(cyrillicKey("a"), armed).action).toEqual({
+      kind: "selectBy",
+      scope: "all",
+    });
+  });
+
+  it("distinguishes shifted from unshifted on the SAME physical key", () => {
+    // Semicolon: `;` expands, `:` collapses. One position, two meanings —
+    // which only works because shift state is read alongside the code.
+    expect(resolveShortcut(usKey(";")).action).toEqual({
+      kind: "expandConversation",
+      expand: true,
+    });
+    expect(resolveShortcut(usKey(":")).action).toEqual({
+      kind: "expandConversation",
+      expand: false,
+    });
+  });
+
+  it("resolves the shifted symbol bindings by position on ANY layout", () => {
+    // These are the ones that move most between layouts: on a German keyboard
+    // `#` is its own key and `/` is Shift+7. Resolving by position is what
+    // keeps them reachable at all.
+    const shifted: readonly [string, string, string][] = [
+      ["Digit3", "#", "delete"],
+      ["Digit1", "!", "toggleSpam"],
+      ["Minus", "_", "markUnreadFromHere"],
+      ["Slash", "?", "help"],
+    ];
+    for (const [code, glyph, expected] of shifted) {
+      // The glyph the layout prints is deliberately NOT the US one.
+      const event = key("§", { code, shiftKey: true });
+      expect(resolveShortcut(event).action?.kind, `${code} (${glyph})`).toBe(expected);
+    }
+  });
+
+  it("resolves the unshifted symbol bindings by position", () => {
+    const plain: readonly [string, string][] = [
+      ["Slash", "focusSearch"],
+      ["BracketLeft", "archiveAndAdvance"],
+      ["BracketRight", "archiveAndAdvance"],
+      ["Comma", "focusToolbar"],
+      ["Period", "moreActions"],
+    ];
+    for (const [code, expected] of plain) {
+      expect(resolveShortcut(key("щ", { code })).action?.kind, code).toBe(expected);
+    }
+  });
+
+  it("keeps Enter, Escape and the arrows on `key`, where the character IS the semantics", () => {
+    // No `code` at all: these must still resolve, because binding them to a
+    // position would only split Enter from NumpadEnter for nothing.
+    expect(resolveShortcut(key("Enter")).action?.kind).toBe("open");
+    expect(resolveShortcut(key("Escape")).action?.kind).toBe("closeOverlay");
+    expect(resolveShortcut(key("ArrowDown")).action?.kind).toBe("next");
+    expect(resolveShortcut(key("ArrowUp")).action?.kind).toBe("previous");
+  });
+
+  it("still refuses modifiers and typing targets when resolving by code", () => {
+    // The guards must not have been bypassed by the new resolution path.
+    expect(resolveShortcut(cyrillicKey("e", { ctrlKey: true })).action).toBeUndefined();
+    const target = { tagName: "INPUT" } as unknown as EventTarget;
+    expect(resolveShortcut(cyrillicKey("e", { target })).action).toBeUndefined();
+  });
+
+  it("honours the shortcuts-off gate for the always-on keys by POSITION", () => {
+    const off = { enabled: false };
+    // `/` must stay reachable on a Cyrillic layout too, or turning shortcuts
+    // off strands a non-Latin user with no way to search.
+    expect(resolveShortcut(key(".", { code: "Slash" }), INITIAL_KEYBOARD_STATE, off).action).toEqual(
+      { kind: "focusSearch" },
+    );
+    expect(resolveShortcut(cyrillicKey("e"), INITIAL_KEYBOARD_STATE, off).action).toBeUndefined();
+  });
+
+  it("falls back to `key` when the event carries no code", () => {
+    // The pre-E11 call shape, which every other test in this file uses. It has
+    // to keep working: a synthetic event without `code` is still an event.
+    expect(resolveShortcut(key("j")).action?.kind).toBe("next");
+    expect(resolveShortcut(key("j", { code: "" })).action?.kind).toBe("next");
+  });
+
+  it("ignores codes it does not bind rather than guessing", () => {
+    expect(resolveShortcut(key("q", { code: "KeyQ" })).action).toBeUndefined();
+    expect(resolveShortcut(key("F5", { code: "F5" })).action).toBeUndefined();
+  });
+});
+
+/**
+ * E11 — the Gmail map gaps that have a referent in our architecture.
+ *
+ * Canon §2.7. Skipped deliberately: Tasks, chat, tabs/sections and multiple
+ * inboxes, none of which exist here.
+ */
+describe("E11: the closed map gaps", () => {
+  it("splits Shift+I and Shift+U into a DIRECTIONAL pair, as Gmail does", () => {
+    /*
+     * This replaces a `toggleRead` binding that was our invention, not
+     * Gmail's. The bug it hid: with a mixed selection a toggle has no defined
+     * meaning, so "mark these fourteen read" was decided by whichever row
+     * happened to be first.
+     */
+    expect(resolveShortcut(usKey("I")).action).toEqual({ kind: "markRead", read: true });
+    expect(resolveShortcut(usKey("U")).action).toEqual({ kind: "markRead", read: false });
+  });
+
+  it("does not let the unshifted letters shadow the read pair", () => {
+    // `u` alone leaves the reader and `i` alone is unbound; only the SHIFTED
+    // presses mark read/unread.
+    expect(resolveShortcut(usKey("u")).action?.kind).toBe("back");
+    expect(resolveShortcut(usKey("i")).action).toBeUndefined();
+  });
+
+  it("binds , to the toolbar and . to the more-actions menu", () => {
+    expect(resolveShortcut(usKey(",")).action).toEqual({ kind: "focusToolbar" });
+    expect(resolveShortcut(usKey(".")).action).toEqual({ kind: "moreActions" });
+  });
+
+  it("makes . OPEN a menu rather than apply anything — it carries no payload", () => {
+    expect(Object.keys(resolveShortcut(usKey(".")).action ?? {})).toEqual(["kind"]);
+  });
+
+  it("obeys the shortcuts-off setting for the new keys", () => {
+    const off = { enabled: false };
+    for (const k of [",", ".", "I", "U"]) {
+      expect(resolveShortcut(usKey(k), INITIAL_KEYBOARD_STATE, off).action).toBeUndefined();
+    }
+  });
+
+  it("does not fire the new keys while typing", () => {
+    const target = { tagName: "INPUT" } as unknown as EventTarget;
+    for (const k of [",", ".", "I", "U"]) {
+      expect(resolveShortcut(usKey(k, { target })).action).toBeUndefined();
+    }
+  });
+});
+
+/** E11 — the sheet's grouping (canon §2.7: Gmail's cheat sheet is grouped). */
+describe("E11: the help sheet's sections", () => {
+  it("gives every entry a section from the declared set", () => {
+    for (const entry of SHORTCUT_HELP) {
+      expect(SHORTCUT_SECTIONS, entry.descriptionKey).toContain(entry.section);
+    }
+  });
+
+  it("names every section it renders", () => {
+    for (const section of SHORTCUT_SECTIONS) {
+      expect(SECTION_TITLE_KEYS[section]).toMatch(/^shortcuts\.section/);
+    }
+  });
+
+  it("leaves no section empty — an empty heading is a lie about the map", () => {
+    for (const section of SHORTCUT_SECTIONS) {
+      expect(
+        SHORTCUT_HELP.filter((entry) => entry.section === section).length,
+        section,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("documents the new bindings", () => {
+    const rows = SHORTCUT_HELP.map((entry) => entry.keys.join(" "));
+    expect(rows).toContain(",");
+    expect(rows).toContain(".");
+    expect(rows).toContain("Shift I");
+    expect(rows).toContain("Shift U");
+    // The composer keys are documented even though the global resolver does
+    // not own them — the user does not care which module implements a key.
+    expect(rows).toContain("Ctrl Enter");
+    expect(rows).toContain("Ctrl Shift C");
+    expect(rows).toContain("Ctrl Shift B");
   });
 });
 

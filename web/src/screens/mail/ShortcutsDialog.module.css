@@ -59,6 +59,23 @@
   border-color: var(--border-subtle);
 }
 
+/* E11: the grouped sheet. The heading carries the group; the rule under it is
+ * what makes the grouping readable at a glance rather than only on reading. */
+.section + .section {
+  margin-top: var(--space-5);
+}
+
+.sectionTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 var(--space-2);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
 .list {
   margin: 0;
   display: grid;

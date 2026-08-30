@@ -2653,6 +2653,22 @@ export function MailScreen(): React.JSX.Element {
     snoozeMenuRef.current = open;
   }, []);
 
+  /*
+   * E11 — the two application keys of canon §2.7 that reach the toolbar.
+   *
+   * Same ref-not-state discipline as the menus above, and for the same reason:
+   * registering a handle must not re-render the screen or rebuild the global
+   * key handler on every list refresh.
+   */
+  const focusToolbarRef = useRef<(() => void) | undefined>(undefined);
+  const registerToolbar = useCallback((focus: () => void): void => {
+    focusToolbarRef.current = focus;
+  }, []);
+  const moreMenuRef = useRef<(() => void) | undefined>(undefined);
+  const registerMoreMenu = useCallback((open: () => void): void => {
+    moreMenuRef.current = open;
+  }, []);
+
   // --- P3: opening the composer --------------------------------------------
 
   /** The wording the quoting module needs, resolved from the string table. */
@@ -3029,8 +3045,16 @@ export function MailScreen(): React.JSX.Element {
         case "delete":
           runDelete();
           break;
-        case "toggleRead":
-          runToggleRead();
+        /*
+         * E11 — `Shift+I` / `Shift+U`, the DIRECTIONAL read pair (canon §2.7).
+         *
+         * `runToggleRead` already took a `force`, which is what makes this a
+         * two-line change: the toggle was never the underlying operation, only
+         * the binding. With a mixed selection the direction is now the user's,
+         * not a coin-flip decided by whichever row happened to be first.
+         */
+        case "markRead":
+          runToggleRead(action.read);
           break;
         case "toggleFlag":
           runToggleFlag();
@@ -3115,6 +3139,22 @@ export function MailScreen(): React.JSX.Element {
          */
         case "labelAs":
           openLabelMenu.current?.();
+          break;
+
+        /*
+         * E11 — `,` and `.` (canon §2.7).
+         *
+         * Both are NAVIGATION into controls that already existed and were
+         * mouse-only. `.` opens the overflow menu the same way `l` and `b`
+         * open theirs; when the bar does not render one (no forward-as-
+         * attachment on this server) the handle is undefined and the key
+         * no-ops, which is the honest outcome — there is no menu to open.
+         */
+        case "focusToolbar":
+          focusToolbarRef.current?.();
+          break;
+        case "moreActions":
+          moreMenuRef.current?.();
           break;
       }
     },
@@ -3512,6 +3552,9 @@ export function MailScreen(): React.JSX.Element {
             onToggleLabel={runToggleLabel}
             onManageLabels={openLabelSettings}
             onLabelMenuReady={registerLabelMenu}
+            /* E11: the handles behind `,` and `.` (canon §2.7). */
+            onToolbarReady={registerToolbar}
+            onMoreMenuReady={registerMoreMenu}
             /*
              * E7: forward the selection as `.eml` attachments. Works on the
              * list rows directly — the whole message is downloaded as a blob,

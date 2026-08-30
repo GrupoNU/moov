@@ -433,7 +433,19 @@ export const en = {
   "shortcuts.reply": "Reply",
   "shortcuts.replyAll": "Reply to everyone",
   "shortcuts.forward": "Forward",
-  "shortcuts.toggleRead": "Mark read or unread",
+  // E11: Gmail's directional pair (canon §2.7), replacing the single toggle
+  // that used to live here — with a mixed selection a toggle has no meaning.
+  "shortcuts.markRead": "Mark as read",
+  "shortcuts.markUnread": "Mark as unread",
+  // E11: the application keys that reach the toolbar and its overflow.
+  "shortcuts.focusToolbar": "Move focus to the toolbar",
+  "shortcuts.moreActions": "Open the more-actions menu",
+  // E11: the composer's own keys. Handled by the composer, not the global
+  // resolver — inside a text field the typing guard refuses everything — but
+  // documented here because the user does not care which module owns a key.
+  "shortcuts.send": "Send the message",
+  "shortcuts.focusCc": "Add or focus Cc",
+  "shortcuts.focusBcc": "Add or focus Bcc",
   "shortcuts.goInbox": "Go to Inbox",
   "shortcuts.goSent": "Go to Sent",
   "shortcuts.goDrafts": "Go to Drafts",
@@ -442,8 +454,9 @@ export const en = {
   "shortcuts.help": "Show this help",
   "shortcuts.sectionNavigate": "Moving around",
   "shortcuts.sectionActions": "Acting on mail",
+  "shortcuts.sectionSelection": "Selecting",
+  "shortcuts.sectionCompose": "Writing",
   "shortcuts.sectionJump": "Jumping to a folder",
-  "shortcuts.comingSoon": "Arriving in the next release",
   "action.notYet": "This action arrives in the next release",
 
   // --- E2: the rest of Gmail's triage vocabulary ---
@@ -1240,7 +1253,13 @@ export const es: Strings = {
   "shortcuts.reply": "Responder",
   "shortcuts.replyAll": "Responder a todos",
   "shortcuts.forward": "Reenviar",
-  "shortcuts.toggleRead": "Marcar como leído o sin leer",
+  "shortcuts.markRead": "Marcar como leído",
+  "shortcuts.markUnread": "Marcar como no leído",
+  "shortcuts.focusToolbar": "Mover el foco a la barra de acciones",
+  "shortcuts.moreActions": "Abrir el menú de más acciones",
+  "shortcuts.send": "Enviar el mensaje",
+  "shortcuts.focusCc": "Agregar o enfocar Cc",
+  "shortcuts.focusBcc": "Agregar o enfocar Cco",
   "shortcuts.goInbox": "Ir a la Bandeja de entrada",
   "shortcuts.goSent": "Ir a Enviados",
   "shortcuts.goDrafts": "Ir a Borradores",
@@ -1249,8 +1268,9 @@ export const es: Strings = {
   "shortcuts.help": "Mostrar esta ayuda",
   "shortcuts.sectionNavigate": "Moverse",
   "shortcuts.sectionActions": "Actuar sobre el correo",
+  "shortcuts.sectionSelection": "Seleccionar",
+  "shortcuts.sectionCompose": "Redactar",
   "shortcuts.sectionJump": "Saltar a una carpeta",
-  "shortcuts.comingSoon": "Llega en la próxima versión",
   "action.notYet": "Esta acción llega en la próxima versión",
 
   // --- E2: el resto del vocabulario de triage de Gmail ---

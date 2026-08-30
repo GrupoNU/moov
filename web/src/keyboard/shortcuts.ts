@@ -25,7 +25,13 @@ export type ShortcutAction =
   | { readonly kind: "focusSearch" }
   | { readonly kind: "archive" }
   | { readonly kind: "delete" }
-  | { readonly kind: "toggleRead" }
+  /**
+   * `Shift+I` / `Shift+U` — mark the selection read or unread (canon §2.7).
+   *
+   * DIRECTIONAL, not a toggle: Gmail binds two keys, and with a mixed
+   * selection a toggle has no defined meaning. See the resolver's `case "I"`.
+   */
+  | { readonly kind: "markRead"; readonly read: boolean }
   | { readonly kind: "toggleFlag" }
   | { readonly kind: "goToMailbox"; readonly role: string }
   | { readonly kind: "help" }
@@ -95,7 +101,22 @@ export type ShortcutAction =
    * something that cannot exist, and the failure would be a silently dead
    * chord.
    */
-  | { readonly kind: "goToSnoozed" };
+  | { readonly kind: "goToSnoozed" }
+  /**
+   * E11 — `,`: move focus into the action toolbar (canon §2.7).
+   *
+   * Gmail's "move focus to toolbar". It is the keyboard's way INTO the row of
+   * controls that the mouse reaches by pointing, and without it every toolbar
+   * button is only reachable by tabbing past everything above it.
+   */
+  | { readonly kind: "focusToolbar" }
+  /**
+   * E11 — `.`: open the "more actions" (⋯) menu for the selection.
+   *
+   * Like `l` and `b` it OPENS rather than applies, for the same reason: the
+   * overflow menu is a list, and one key cannot name one of its items.
+   */
+  | { readonly kind: "moreActions" };
 
 /**
  * The six selection scopes Gmail's `*` chord offers, verbatim (canon §2.4):
@@ -138,12 +159,137 @@ export const CHORD_TIMEOUT_MS = 1200;
 /** The subset of a KeyboardEvent this module needs — so tests need no DOM. */
 export interface KeyLike {
   readonly key: string;
+  /**
+   * The PHYSICAL key (`KeyboardEvent.code`), which is what letter and symbol
+   * bindings resolve from — see {@link physicalKey}.
+   *
+   * Optional so that the pre-E11 call shape still compiles and still works:
+   * when absent, resolution falls back to `key`, which is correct on a US
+   * layout and is what every existing test exercises.
+   */
+  readonly code?: string;
   readonly ctrlKey: boolean;
   readonly metaKey: boolean;
   readonly altKey: boolean;
   readonly shiftKey: boolean;
   readonly target?: EventTarget | null;
 }
+
+/**
+ * The physical-key glyph a binding resolves from (E11).
+ *
+ * # The bug this fixes
+ *
+ * Before E11 every binding read `event.key` — the CHARACTER the layout
+ * produces. On a Cyrillic layout the physical `J` key produces `о`, so `j`
+ * never matched and the ENTIRE map was dead: not degraded, dead. The same held
+ * for Greek, Hebrew, Dvorak and every non-QWERTY layout. A keyboard-first mail
+ * client that only works in one alphabet is not keyboard-first.
+ *
+ * # The rule
+ *
+ * Letters and symbols resolve from `code` (the physical position), which is
+ * layout-INDEPENDENT: `KeyJ` is the same key on every layout, whatever it
+ * prints. Named keys — Enter, Escape, the arrows — keep resolving from `key`,
+ * because there the character IS the semantics and `code` would only add
+ * numpad/main-row duplication for nothing.
+ *
+ * This is what Gmail does, and it is why Gmail's shortcuts work on a Russian
+ * layout while the naive implementation does not.
+ *
+ * # The documented consequence
+ *
+ * Bindings are pinned to the US-QWERTY PHYSICAL POSITION. On a layout where
+ * `?` is not Shift+Slash, `?` is still the key in the Slash position — the
+ * glyph printed on the user's keycap may differ from the glyph in the help
+ * sheet. That is the trade every implementation makes, Gmail included: the
+ * alternative (resolving symbols by glyph) is what breaks letters, because a
+ * layout moves them all at once.
+ *
+ * Returns `undefined` when the event carries no physical key we bind, so the
+ * caller falls back to `key`.
+ */
+export function physicalKey(event: KeyLike): string | undefined {
+  const code = event.code;
+  if (code === undefined || code === "") return undefined;
+
+  // Letters: `KeyA`…`KeyZ`. Shift selects the upper-case glyph, which is how
+  // the map distinguishes `a` (chord target) from `A` (reply all) and `i`
+  // (chord target) from `I` (mark read).
+  if (code.length === 4 && code.startsWith("Key")) {
+    const letter = code.charAt(3);
+    if (letter >= "A" && letter <= "Z") {
+      return event.shiftKey ? letter : letter.toLowerCase();
+    }
+  }
+
+  const symbol = PHYSICAL_SYMBOLS[code];
+  if (symbol !== undefined) return event.shiftKey ? symbol.shifted : symbol.plain;
+
+  return undefined;
+}
+
+/**
+ * The physical symbol keys the map binds, with and without Shift.
+ *
+ * Only the positions this app actually binds are listed — a full US-layout
+ * table would invite bindings to be added here rather than in the resolver,
+ * where the reasoning lives.
+ *
+ * The unshifted glyphs are the US-QWERTY legends; per {@link physicalKey} that
+ * is the canonical position, not a claim about the user's keycaps.
+ */
+const PHYSICAL_SYMBOLS: Readonly<Record<string, { readonly plain: string; readonly shifted: string }>> = {
+  // `/` focuses search; Shift+/ is `?`, the help sheet.
+  Slash: { plain: "/", shifted: "?" },
+  // `;` expands a conversation, `:` collapses it — one physical key, and Gmail
+  // gives its two glyphs opposite meanings, which only works via `code`.
+  Semicolon: { plain: ";", shifted: ":" },
+  // `,` focuses the toolbar, `.` opens the more-actions menu (E11).
+  Comma: { plain: ",", shifted: "<" },
+  Period: { plain: ".", shifted: ">" },
+  BracketLeft: { plain: "[", shifted: "{" },
+  BracketRight: { plain: "]", shifted: "}" },
+  // Shift+3 is `#` (delete) and Shift+8 is `*` (the selection chord) on a US
+  // layout; on most others those glyphs live elsewhere entirely, which is the
+  // whole reason they resolve by position.
+  Digit3: { plain: "3", shifted: "#" },
+  Digit8: { plain: "8", shifted: "*" },
+  // Shift+1 is `!` — report spam.
+  Digit1: { plain: "1", shifted: "!" },
+  // Shift+- is `_`, mark-unread-from-here.
+  Minus: { plain: "-", shifted: "_" },
+  Equal: { plain: "=", shifted: "+" },
+  Backquote: { plain: "`", shifted: "~" },
+};
+
+/**
+ * The glyph a binding matches on: the physical key when we have one, the
+ * character otherwise.
+ *
+ * Named keys (Enter, Escape, ArrowUp/Down) bypass this entirely — see
+ * {@link physicalKey} — so they are returned untouched from `key`.
+ */
+function bindingKey(event: KeyLike): string {
+  if (NAMED_KEYS.has(event.key)) return event.key;
+  return physicalKey(event) ?? event.key;
+}
+
+/**
+ * Keys whose SEMANTICS are the character, not the position.
+ *
+ * Enter is Enter on every layout; so are Escape and the arrows. Resolving them
+ * by `code` would gain nothing and would split Enter from NumpadEnter.
+ */
+const NAMED_KEYS: ReadonlySet<string> = new Set([
+  "Enter",
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Tab",
+]);
 
 /**
  * True when the event originated somewhere the user is typing.
@@ -222,6 +368,13 @@ export function resolveShortcut(
     return { action: { kind: "closeOverlay" }, nextState: INITIAL_KEYBOARD_STATE };
   }
 
+  /*
+   * E11: from here down the map matches on the PHYSICAL key, so the whole
+   * vocabulary survives a non-QWERTY layout. Computed once — every branch
+   * below, chords included, reads this instead of `event.key`.
+   */
+  const pressed = bindingKey(event);
+
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return { action: undefined, nextState: state };
   }
@@ -238,14 +391,14 @@ export function resolveShortcut(
    * user turned shortcuts off must not sit live waiting for a second key that
    * can no longer resolve.
    */
-  if (!enabled && !isAlwaysOnKey(event.key)) {
+  if (!enabled && !isAlwaysOnKey(pressed)) {
     return { action: undefined, nextState: INITIAL_KEYBOARD_STATE };
   }
 
   // The `g` chord's second key. Checked first so a live prefix cannot be
   // shadowed by a single-key binding of the same letter.
   if (state.pendingG) {
-    const key = event.key.toLowerCase();
+    const key = pressed.toLowerCase();
     // E4: `g b` is the one chord target that is not a role — the Snoozed
     // folder is found by name, so it gets its own action.
     if (key === "b") {
@@ -268,14 +421,14 @@ export function resolveShortcut(
    * reader and select nothing.
    */
   if (state.pendingStar) {
-    const scope = STAR_CHORD_TARGETS[event.key.toLowerCase()];
+    const scope = STAR_CHORD_TARGETS[pressed.toLowerCase()];
     return {
       action: scope !== undefined ? { kind: "selectBy", scope } : undefined,
       nextState: INITIAL_KEYBOARD_STATE,
     };
   }
 
-  switch (event.key) {
+  switch (pressed) {
     case "g":
       return { action: undefined, nextState: { ...INITIAL_KEYBOARD_STATE, pendingG: true } };
 
@@ -375,11 +528,33 @@ export function resolveShortcut(
         nextState: INITIAL_KEYBOARD_STATE,
       };
 
-    // Gmail's read/unread toggles are the `Shift`-less pair on the same keys
-    // as the chord targets, which is why they are only reachable with no
-    // pending `g`.
+    /*
+     * E11 — Gmail's read/unread PAIR (canon §2.7: `Shift+I/U`).
+     *
+     * Before E11 `Shift+I` toggled and `Shift+U` was unbound, which is not what
+     * Gmail does and is worse than it looks in bulk: with a mixed selection a
+     * toggle has no defined meaning, so "mark these fourteen read" was a
+     * coin-flip per row. Gmail binds two keys precisely because the operation
+     * is directional. The test that pinned the toggle was updated to Gmail
+     * semantics rather than preserved — it pinned our bug, not a contract.
+     */
     case "I":
-      return { action: { kind: "toggleRead" }, nextState: INITIAL_KEYBOARD_STATE };
+      return { action: { kind: "markRead", read: true }, nextState: INITIAL_KEYBOARD_STATE };
+
+    case "U":
+      return { action: { kind: "markRead", read: false }, nextState: INITIAL_KEYBOARD_STATE };
+
+    /*
+     * E11 — the two application keys of canon §2.7 that had no binding.
+     *
+     * `,` moves focus to the toolbar and `.` opens the overflow menu. Both are
+     * NAVIGATION into controls that already exist and were mouse-only.
+     */
+    case ",":
+      return { action: { kind: "focusToolbar" }, nextState: INITIAL_KEYBOARD_STATE };
+
+    case ".":
+      return { action: { kind: "moreActions" }, nextState: INITIAL_KEYBOARD_STATE };
 
     case "s":
       return { action: { kind: "toggleFlag" }, nextState: INITIAL_KEYBOARD_STATE };
@@ -460,7 +635,41 @@ export interface ShortcutHelpEntry {
   readonly keys: readonly string[];
   /** The i18n key describing what it does. */
   readonly descriptionKey: string;
+  /**
+   * Which section of the sheet the row belongs to (E11).
+   *
+   * Gmail's cheat sheet is grouped, and for a map this size the grouping is
+   * the difference between a reference and a wall: forty rows in press order
+   * is not something anyone reads twice.
+   */
+  readonly section: ShortcutSection;
 }
+
+/**
+ * The sheet's sections, in render order (E11, modelled on Gmail's own sheet).
+ *
+ * "jump" is kept separate from "navigate" because the `g` chords are a
+ * different MOTION — moving between folders rather than within a list — and
+ * grouping them together is what made the old flat list unreadable.
+ */
+export type ShortcutSection = "navigate" | "actions" | "selection" | "compose" | "jump";
+
+export const SHORTCUT_SECTIONS: readonly ShortcutSection[] = [
+  "navigate",
+  "actions",
+  "selection",
+  "compose",
+  "jump",
+];
+
+/** The i18n key for a section's heading. */
+export const SECTION_TITLE_KEYS: Readonly<Record<ShortcutSection, string>> = {
+  navigate: "shortcuts.sectionNavigate",
+  actions: "shortcuts.sectionActions",
+  selection: "shortcuts.sectionSelection",
+  compose: "shortcuts.sectionCompose",
+  jump: "shortcuts.sectionJump",
+};
 
 /**
  * The help sheet's contents.
@@ -470,49 +679,74 @@ export interface ShortcutHelpEntry {
  * but is undiscoverable is a shortcut only its author uses.
  */
 export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
-  { keys: ["j"], descriptionKey: "shortcuts.next" },
-  { keys: ["k"], descriptionKey: "shortcuts.previous" },
-  { keys: ["Enter"], descriptionKey: "shortcuts.open" },
-  { keys: ["u"], descriptionKey: "shortcuts.back" },
+  // --- Moving around ---
+  { keys: ["j"], descriptionKey: "shortcuts.next", section: "navigate" },
+  { keys: ["k"], descriptionKey: "shortcuts.previous", section: "navigate" },
+  { keys: ["Enter"], descriptionKey: "shortcuts.open", section: "navigate" },
+  { keys: ["u"], descriptionKey: "shortcuts.back", section: "navigate" },
   // E1: the conversation keys. They sit next to j/k precisely because the
   // distinction between them is the thing a reader has to learn — j/k move
   // between conversations, n/p move inside one.
-  { keys: ["n"], descriptionKey: "shortcuts.conversationNext" },
-  { keys: ["p"], descriptionKey: "shortcuts.conversationPrevious" },
-  { keys: [";"], descriptionKey: "shortcuts.expandAll" },
-  { keys: [":"], descriptionKey: "shortcuts.collapseAll" },
-  { keys: ["/"], descriptionKey: "shortcuts.search" },
-  { keys: ["e"], descriptionKey: "shortcuts.archive" },
-  { keys: ["#"], descriptionKey: "shortcuts.delete" },
-  { keys: ["!"], descriptionKey: "shortcuts.spam" },
-  { keys: ["z"], descriptionKey: "shortcuts.undo" },
-  { keys: ["]"], descriptionKey: "shortcuts.archiveNext" },
-  { keys: ["["], descriptionKey: "shortcuts.archivePrevious" },
-  { keys: ["_"], descriptionKey: "shortcuts.markUnreadFromHere" },
-  { keys: ["s"], descriptionKey: "shortcuts.flag" },
-  { keys: ["l"], descriptionKey: "shortcuts.labelAs" },
+  { keys: ["n"], descriptionKey: "shortcuts.conversationNext", section: "navigate" },
+  { keys: ["p"], descriptionKey: "shortcuts.conversationPrevious", section: "navigate" },
+  { keys: [";"], descriptionKey: "shortcuts.expandAll", section: "navigate" },
+  { keys: [":"], descriptionKey: "shortcuts.collapseAll", section: "navigate" },
+  { keys: ["/"], descriptionKey: "shortcuts.search", section: "navigate" },
+  // E11: the two application keys that reach the toolbar and its overflow.
+  { keys: [","], descriptionKey: "shortcuts.focusToolbar", section: "navigate" },
+  { keys: ["."], descriptionKey: "shortcuts.moreActions", section: "navigate" },
+  { keys: ["?"], descriptionKey: "shortcuts.help", section: "navigate" },
+  { keys: ["Esc"], descriptionKey: "shortcuts.close", section: "navigate" },
+
+  // --- Acting on mail ---
+  { keys: ["e"], descriptionKey: "shortcuts.archive", section: "actions" },
+  { keys: ["#"], descriptionKey: "shortcuts.delete", section: "actions" },
+  { keys: ["!"], descriptionKey: "shortcuts.spam", section: "actions" },
+  { keys: ["z"], descriptionKey: "shortcuts.undo", section: "actions" },
+  { keys: ["]"], descriptionKey: "shortcuts.archiveNext", section: "actions" },
+  { keys: ["["], descriptionKey: "shortcuts.archivePrevious", section: "actions" },
+  { keys: ["_"], descriptionKey: "shortcuts.markUnreadFromHere", section: "actions" },
+  { keys: ["s"], descriptionKey: "shortcuts.flag", section: "actions" },
+  { keys: ["l"], descriptionKey: "shortcuts.labelAs", section: "actions" },
   // E4: the triage pair, next to the other verbs that make a row leave the
   // list — which is what they have in common with archive and delete.
-  { keys: ["b"], descriptionKey: "shortcuts.snooze" },
-  { keys: ["m"], descriptionKey: "shortcuts.mute" },
-  { keys: ["x"], descriptionKey: "shortcuts.selectRow" },
-  { keys: ["c"], descriptionKey: "shortcuts.compose" },
-  { keys: ["r"], descriptionKey: "shortcuts.reply" },
-  { keys: ["Shift", "A"], descriptionKey: "shortcuts.replyAll" },
-  { keys: ["f"], descriptionKey: "shortcuts.forward" },
-  { keys: ["Shift", "I"], descriptionKey: "shortcuts.toggleRead" },
-  { keys: ["g", "i"], descriptionKey: "shortcuts.goInbox" },
-  { keys: ["g", "s"], descriptionKey: "shortcuts.goSent" },
-  { keys: ["g", "d"], descriptionKey: "shortcuts.goDrafts" },
-  { keys: ["g", "a"], descriptionKey: "shortcuts.goArchive" },
-  { keys: ["g", "t"], descriptionKey: "shortcuts.goTrash" },
-  { keys: ["g", "b"], descriptionKey: "shortcuts.goSnoozed" },
-  { keys: ["*", "a"], descriptionKey: "shortcuts.selectAll" },
-  { keys: ["*", "n"], descriptionKey: "shortcuts.selectNone" },
-  { keys: ["*", "r"], descriptionKey: "shortcuts.selectRead" },
-  { keys: ["*", "u"], descriptionKey: "shortcuts.selectUnread" },
-  { keys: ["*", "t"], descriptionKey: "shortcuts.selectStarred" },
-  { keys: ["*", "s"], descriptionKey: "shortcuts.selectUnstarred" },
-  { keys: ["?"], descriptionKey: "shortcuts.help" },
-  { keys: ["Esc"], descriptionKey: "shortcuts.close" },
+  { keys: ["b"], descriptionKey: "shortcuts.snooze", section: "actions" },
+  { keys: ["m"], descriptionKey: "shortcuts.mute", section: "actions" },
+  // E11: the directional read/unread pair, replacing the old single toggle.
+  { keys: ["Shift", "I"], descriptionKey: "shortcuts.markRead", section: "actions" },
+  { keys: ["Shift", "U"], descriptionKey: "shortcuts.markUnread", section: "actions" },
+
+  // --- Selecting ---
+  { keys: ["x"], descriptionKey: "shortcuts.selectRow", section: "selection" },
+  { keys: ["*", "a"], descriptionKey: "shortcuts.selectAll", section: "selection" },
+  { keys: ["*", "n"], descriptionKey: "shortcuts.selectNone", section: "selection" },
+  { keys: ["*", "r"], descriptionKey: "shortcuts.selectRead", section: "selection" },
+  { keys: ["*", "u"], descriptionKey: "shortcuts.selectUnread", section: "selection" },
+  { keys: ["*", "t"], descriptionKey: "shortcuts.selectStarred", section: "selection" },
+  { keys: ["*", "s"], descriptionKey: "shortcuts.selectUnstarred", section: "selection" },
+
+  // --- Writing ---
+  { keys: ["c"], descriptionKey: "shortcuts.compose", section: "compose" },
+  { keys: ["r"], descriptionKey: "shortcuts.reply", section: "compose" },
+  { keys: ["Shift", "A"], descriptionKey: "shortcuts.replyAll", section: "compose" },
+  { keys: ["f"], descriptionKey: "shortcuts.forward", section: "compose" },
+  /*
+   * E11 — the in-composer keys (canon §2.7's compose row).
+   *
+   * They are documented here but NOT resolved by `resolveShortcut`: inside a
+   * text field the typing guard refuses everything, correctly, so the composer
+   * handles them itself. Documenting them anyway is the point of a cheat sheet
+   * — the user does not care which module implements the key.
+   */
+  { keys: ["Ctrl", "Enter"], descriptionKey: "shortcuts.send", section: "compose" },
+  { keys: ["Ctrl", "Shift", "C"], descriptionKey: "shortcuts.focusCc", section: "compose" },
+  { keys: ["Ctrl", "Shift", "B"], descriptionKey: "shortcuts.focusBcc", section: "compose" },
+
+  // --- Jumping to a folder ---
+  { keys: ["g", "i"], descriptionKey: "shortcuts.goInbox", section: "jump" },
+  { keys: ["g", "s"], descriptionKey: "shortcuts.goSent", section: "jump" },
+  { keys: ["g", "d"], descriptionKey: "shortcuts.goDrafts", section: "jump" },
+  { keys: ["g", "a"], descriptionKey: "shortcuts.goArchive", section: "jump" },
+  { keys: ["g", "t"], descriptionKey: "shortcuts.goTrash", section: "jump" },
+  { keys: ["g", "b"], descriptionKey: "shortcuts.goSnoozed", section: "jump" },
 ];

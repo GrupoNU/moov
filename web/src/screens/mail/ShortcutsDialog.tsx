@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
-import { SHORTCUT_HELP } from "../../keyboard/shortcuts";
+import { SECTION_TITLE_KEYS, SHORTCUT_HELP, SHORTCUT_SECTIONS } from "../../keyboard/shortcuts";
 import type { StringKey } from "../../i18n/strings";
 import { usePrefs } from "../../mail/PrefsProvider";
 import styles from "./ShortcutsDialog.module.css";
@@ -125,37 +125,53 @@ export function ShortcutsDialog({ isOpen, onClose }: ShortcutsDialogProps): Reac
           </p>
         )}
 
-        <dl className={styles.list}>
-          {SHORTCUT_HELP.map((entry) => (
-            <div className={styles.entry} key={entry.descriptionKey}>
-              <dt className={styles.keys}>
-                {entry.keys.map((key, index) => (
-                  <span key={key}>
-                    <kbd className={styles.key}>{key}</kbd>
-                    {/* "then" between the two halves of a chord, so `g i` does
-                        not read as "press g and i together". */}
-                    {index < entry.keys.length - 1 && (
-                      <span className={styles.thenText} aria-hidden="true">
-                        {" "}
-                      </span>
-                    )}
-                  </span>
-                ))}
-              </dt>
-              <dd className={styles.description}>
-                {t(entry.descriptionKey as StringKey & PlainDescriptionKey)}
-              </dd>
-            </div>
-          ))}
-        </dl>
-
         {/*
-          The "coming soon: e, #" footnote that used to live here was removed
-          in E2: both keys have been wired since P3, and a help sheet that
-          disclaims a working shortcut is worse than one that says nothing —
-          it teaches the user not to try. `shortcuts.comingSoon` stays in the
-          string table for the next real deferral.
+          E11: grouped like Gmail's own cheat sheet.
+
+          Forty-odd rows in press order is a wall, not a reference. The
+          sections come from the map itself (`entry.section`), so a new binding
+          lands in a group by declaring one rather than by being inserted in
+          the right place in a flat list — which is the kind of ordering nobody
+          maintains.
+
+          Each section is its own <dl>: a single definition list broken up by
+          headings would put the <h3>s between <dt>/<dd> pairs, which is
+          invalid and makes a screen reader announce one long list.
         */}
+        {SHORTCUT_SECTIONS.map((section) => {
+          const entries = SHORTCUT_HELP.filter((entry) => entry.section === section);
+          if (entries.length === 0) return null;
+          return (
+            <section className={styles.section} key={section}>
+              <h3 className={styles.sectionTitle}>
+                {t(SECTION_TITLE_KEYS[section] as StringKey & PlainDescriptionKey)}
+              </h3>
+              <dl className={styles.list}>
+                {entries.map((entry) => (
+                  <div className={styles.entry} key={entry.descriptionKey}>
+                    <dt className={styles.keys}>
+                      {entry.keys.map((key, index) => (
+                        <span key={key}>
+                          <kbd className={styles.key}>{key}</kbd>
+                          {/* "then" between the two halves of a chord, so `g i`
+                              does not read as "press g and i together". */}
+                          {index < entry.keys.length - 1 && (
+                            <span className={styles.thenText} aria-hidden="true">
+                              {" "}
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </dt>
+                    <dd className={styles.description}>
+                      {t(entry.descriptionKey as StringKey & PlainDescriptionKey)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          );
+        })}
       </div>
     </dialog>
   );
