@@ -59,9 +59,15 @@ type queryRequest struct {
 	Limit          *uint64         `json:"limit"`
 	CalculateTotal bool            `json:"calculateTotal"`
 
-	// CollapseThreads is RFC 8621 §4.4's extra argument. It is parsed so the
-	// handler can refuse it explicitly rather than ignore it — see
-	// handleEmailQuery.
+	// CollapseThreads is RFC 8621 §4.4.3's extra argument: "If true, Emails in
+	// the same Thread as a previous Email in the list (given the filter and sort
+	// order) will be removed from the list."
+	//
+	// It is SERVED since L3 epic E1 (store.ListCollapsedMessages). It used to be
+	// refused with "this server has no thread index yet" — true when written and
+	// stale from migration 0004 onward, which is how a refusal outlives its
+	// reason. The one combination still refused says exactly why, and a test
+	// pins the message; see collapseRefusal.
 	CollapseThreads bool `json:"collapseThreads"`
 }
 
@@ -137,17 +143,6 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 		return nil, merr
 	}
 
-	// §4.4.3 thread collapsing needs the thread of every candidate, and the
-	// store has no thread column (see thread.go) — deriving threads for a
-	// result window would be a query per row, which is precisely the unbounded
-	// work L2 §4.3 forbids. unsupportedFilter is the RFC's channel for "valid
-	// but I cannot process it"; the alternative of ignoring the argument would
-	// return a list with duplicate threads the client asked to have collapsed.
-	if req.CollapseThreads {
-		return nil, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
-			WithDescription("collapseThreads is not supported: this server has no thread index yet")
-	}
-
 	filter, merr := translateFilter(req.Filter)
 	if merr != nil {
 		return nil, merr
@@ -161,6 +156,11 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 	if order.byRelevance && filter.text == "" {
 		return nil, jmap.NewMethodError(jmap.CodeUnsupportedSort).
 			WithDescription("the %q sort requires a text, from, to or subject filter to rank against", SortRelevance)
+	}
+	// §4.4.3 collapseThreads. The ONE combination this server cannot collapse,
+	// stated with its actual reason (see collapseRefusal).
+	if merr := collapseRefusal(req, order); merr != nil {
+		return nil, merr
 	}
 
 	state, err := d.State.EmailState(ctx, caller.AccountID)
@@ -181,7 +181,15 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 		return nil, merr
 	}
 
-	matches, err := d.Search.SearchEmails(ctx, caller.AccountID, filter, order, reach)
+	// The collapsed and uncollapsed reads are separate repertoire shapes with
+	// separate bounds (search.go SearchThreads), not one shape with a flag, so
+	// the choice is made here rather than pushed down as an argument.
+	var matches []int64
+	if req.CollapseThreads {
+		matches, err = d.Search.SearchThreads(ctx, caller.AccountID, filter, order, reach)
+	} else {
+		matches, err = d.Search.SearchEmails(ctx, caller.AccountID, filter, order, reach)
+	}
 	if err != nil {
 		return nil, serverFail("searching emails", err)
 	}
@@ -233,7 +241,7 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 	}
 
 	if req.CalculateTotal {
-		total, merr := d.queryTotal(ctx, caller.AccountID, filter, uint64(len(matches)))
+		total, merr := d.queryTotal(ctx, caller.AccountID, filter, uint64(len(matches)), reach)
 		if merr != nil {
 			return nil, merr
 		}
@@ -242,6 +250,51 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 	}
 
 	return resp, nil
+}
+
+// collapseRefusal decides whether this request's collapseThreads can be honored.
+//
+// # What is served
+//
+// Everything the date-ordered repertoire serves: the folder view
+// (inMailbox, with or without the [hasKeyword, receivedAt] pair a real client
+// opens every folder with), the account-wide `filter: null` listing, and
+// full-text search — each with the date-range and unread narrowing, collapsed in
+// the database inside a bounded window (store.ListCollapsedMessages).
+//
+// # What is refused, and why it is not the old reason
+//
+// Exactly one shape: collapseThreads together with the "relevance" sort.
+//
+// That sort is not a general relevance ranking — it is a bounded re-rank of the
+// store.RankCandidateWindow most recent matches (S3 mitigation #102, documented
+// at SortRelevance). Its output order is therefore not the index's order, so
+// there is no keyset cursor that can resume it, so there is no SECOND window to
+// collapse into. A collapsed relevance list could be served for its first window
+// and could never be paged, and a list that silently stops paging hides mail —
+// which is the failure this file refuses things to avoid.
+//
+// unsupportedSort is the right code rather than unsupportedFilter: §5.5 defines
+// it as "The 'sort' is syntactically valid, but it includes a property the
+// server does not support sorting on", and it is the SORT, not the filter, that
+// makes this combination unanswerable. The client's remedy is named in the
+// message — drop the sort, keep the collapse — which is a request this server
+// serves.
+//
+// The old refusal ("this server has no thread index yet") was correct when it
+// was written and became false the day migration 0004 landed, and nothing made
+// it say so. That is why this one names a structural property of the sort rather
+// than the absence of a feature: a reason that cannot go stale without the code
+// changing underneath it.
+func collapseRefusal(req *queryRequest, order sortSpec) *jmap.MethodError {
+	if !req.CollapseThreads || !order.byRelevance {
+		return nil
+	}
+	return jmap.NewMethodError(jmap.CodeUnsupportedSort).
+		WithDescription("collapseThreads cannot be combined with the %q sort: that sort ranks a bounded "+
+			"window of recent matches rather than an index order, so a collapsed result has no cursor to "+
+			"page with; request the same filter with the %q sort to collapse it",
+			SortRelevance, SortReceivedAt)
 }
 
 // queryTotal answers calculateTotal, or declines to.
@@ -268,23 +321,45 @@ func (d *Deps) handleEmailQuery(ctx context.Context, args json.RawMessage) (any,
 // total and WRONG with a capped one. Bulwark shows the ids it gets.
 //
 // The one case where an exact total is both cheap and correct is served: when
-// the window was not truncated, the number of matches IS the total, because
-// the search returned every match there was.
-func (d *Deps) queryTotal(ctx context.Context, accountID int64, f searchFilter, matched uint64) (*uint64, *jmap.MethodError) {
-	// The window is store.MaxSearchLimit deep. A result set shorter than the
-	// window was exhausted, so its length is the exact total — no count query
-	// at all, and no cap involved.
-	//
-	// searchWindow() is a small positive constant (200 by default, and
-	// RegisterQueryMethods rejects anything larger), so the conversion is
-	// exact; the guard is written out rather than asserted so gosec can see it.
-	window := d.searchWindow()
-	if window > 0 && matched < uint64(window) {
+// the search was NOT truncated, the number of matches IS the total, because it
+// returned every match there was.
+//
+// # There are TWO bounds, and the test is against the tighter of them
+//
+// A search can be cut short by either:
+//
+//   - the WINDOW, store.MaxSearchLimit deep, which is how far the repertoire
+//     will look at all; or
+//   - the REACH, position+limit clamped to MaxQueryReach, which is how far THIS
+//     request asked it to look.
+//
+// A result is exhausted only if it is shorter than BOTH. Checking only the
+// window was a bug, and a silent one: SearchEmails and SearchThreads return at
+// most `reach` ids, so a request with limit:1 comes back with one id — trivially
+// fewer than the 200-deep window — and the server reported total:1 for a mailbox
+// holding thousands. Nothing caught it because every existing calculateTotal
+// test used the default limit, where reach equals the window and the two bounds
+// coincide. L3 epic E1's collapsed-query tests used limit:1 and it surfaced on
+// the first run.
+//
+// Checking only reach would break the other direction just as quietly: a
+// window-truncated result that happens to be shorter than a large requested
+// reach would be reported as complete.
+func (d *Deps) queryTotal(ctx context.Context, accountID int64, f searchFilter, matched uint64, reach int) (*uint64, *jmap.MethodError) {
+	// Both are small positive ints — searchWindow() is a constant that
+	// RegisterQueryMethods bounds, and queryReach clamps reach to MaxQueryReach
+	// — so the conversions are exact. The guards are written out rather than
+	// asserted so gosec can see them.
+	bound := d.searchWindow()
+	if reach > 0 && reach < bound {
+		bound = reach
+	}
+	if bound > 0 && matched < uint64(bound) {
 		total := matched
 		return &total, nil
 	}
 
-	// The window was filled, so the true total is >= the window and unknown
+	// The tighter bound was filled, so the true total is >= it and unknown
 	// without an exact count this server does not offer (S3 H5). The capped
 	// count would report the ceiling, which is not "the total number of Emails
 	// in the results". Omit.

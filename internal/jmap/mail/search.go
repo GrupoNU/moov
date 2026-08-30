@@ -59,6 +59,24 @@ type SearchReader interface {
 	// scales with what the caller actually asked for and never with the size of
 	// the mailbox.
 	SearchEmails(ctx context.Context, accountID int64, f searchFilter, s sortSpec, reach int) ([]int64, error)
+
+	// SearchThreads is SearchEmails with RFC 8621 §4.4.3 collapseThreads
+	// applied: it returns at most ONE id per thread — the newest matching
+	// message of each — in the same sort order, bounded by the same reach.
+	//
+	// It is a separate method rather than a flag on SearchEmails because the two
+	// are different store shapes with different bounds, not one shape with a
+	// parameter: the collapsed one scans a wider window than it returns
+	// (store.CollapseWindow) precisely because collapsing shrinks a page by an
+	// amount only the data knows. A boolean would hide that difference behind a
+	// signature that promises the same cost either way.
+	//
+	// Its short-result contract is the SAME as SearchEmails': fewer than reach
+	// ids means the result set is exhausted, so queryTotal's one exact case
+	// stays exact. Honoring that is the implementation's job — it must page
+	// until it has reach conversations or the mail runs out, never stop at a
+	// window boundary.
+	SearchThreads(ctx context.Context, accountID int64, f searchFilter, s sortSpec, reach int) ([]int64, error)
 }
 
 // searchHit is one result with the key its order depends on.

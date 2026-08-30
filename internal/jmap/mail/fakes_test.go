@@ -29,6 +29,10 @@ type fakeReaders struct {
 	// (newest first), and the change feed, oldest first.
 	hits         []searchHit
 	searchWindow int
+	// hitThreads maps a seeded hit to its conversation, for the collapsed
+	// query (E1). Absent means "its own thread", so a test that does not care
+	// about threading needs no setup and sees collapse behave as a no-op.
+	hitThreads map[int64]int64
 	// lastReach records the reach the handler asked for, so a test can assert
 	// that paging requests exactly the depth they need.
 	lastReach    int
@@ -233,6 +237,63 @@ func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s
 		return out, nil
 	}
 	return sortIDsStable(hits, s.ascending, s.keyword != "", s.keywordFirst), nil
+}
+
+// SearchThreads answers the collapsed query (RFC 8621 §4.4.3) out of the same
+// corpus, using hitThread to decide which hits share a conversation.
+//
+// It models the CONTRACT rather than the store's window mechanics: keep the
+// first hit of each thread in the sorted order, honor reach, and report a short
+// list when the corpus runs out. That is what the handler above it depends on —
+// the windowing, the cross-page dedupe and the SQL are the store's own, and
+// internal/store/collapse_test.go is where they are proven.
+//
+// A test that seeds no threads gets one thread per message, which makes a
+// collapsed query behave exactly like an uncollapsed one. That is the correct
+// default: every pre-E1 test asserting a query's shape must keep passing when it
+// is run with collapseThreads.
+func (f *fakeReaders) SearchThreads(_ context.Context, _ int64, _ searchFilter, s sortSpec, reach int) ([]int64, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.lastReach = reach
+	hits := append([]searchHit(nil), f.hits...)
+	if window := f.searchWindow; window > 0 && len(hits) > window {
+		hits = hits[:window]
+	}
+
+	// Collapse in the SORTED order, because §4.4.3 removes "Emails in the same
+	// Thread as a PREVIOUS Email in the list (given the filter and sort order)"
+	// — which is a statement about the list's order, not the corpus's.
+	ordered := sortIDsStable(hits, s.ascending, s.keyword != "", s.keywordFirst)
+	byID := make(map[int64]searchHit, len(hits))
+	for _, h := range hits {
+		byID[h.id] = h
+	}
+
+	seen := map[int64]bool{}
+	out := make([]int64, 0, len(ordered))
+	for _, id := range ordered {
+		thread := f.hitThread(id)
+		if seen[thread] {
+			continue
+		}
+		seen[thread] = true
+		out = append(out, id)
+		if reach > 0 && len(out) >= reach {
+			break
+		}
+	}
+	return out, nil
+}
+
+// hitThread reports which conversation a seeded hit belongs to. Unseeded
+// messages are each their own thread.
+func (f *fakeReaders) hitThread(id int64) int64 {
+	if t, ok := f.hitThreads[id]; ok {
+		return t
+	}
+	return id
 }
 
 // ChangedSince replays the seeded feed from a cursor, honoring the limit the

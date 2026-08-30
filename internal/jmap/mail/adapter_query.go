@@ -202,6 +202,117 @@ func (a *Adapter) fetchPage(
 	}
 }
 
+// SearchThreads answers a collapsed Email/query (RFC 8621 §4.4.3).
+//
+// # Why this is a paging WALK and not one call
+//
+// The store's collapsed shape scans a bounded window of MESSAGES and returns the
+// conversations found in it (store.ListCollapsedMessages). How many
+// conversations that is depends entirely on the data: a folder of singleton
+// threads yields a full page from one window, and a mailing-list folder can
+// yield three. So a single call cannot honor this method's contract, which is
+// the same one SearchEmails has — "fewer than reach means the result set is
+// exhausted", the property Email/query's exact-total case rests on.
+//
+// The walk is therefore over WINDOWS, each one bounded, each one resuming the
+// message-level keyset cursor the previous window ended at. That is the same
+// discipline the uncollapsed walk follows: depth costs more bounded pages, never
+// a deeper query.
+//
+// # The one bound this walk adds
+//
+// maxCollapsePasses. The uncollapsed walk terminates because every page it gets
+// is full or final; the collapsed walk can receive a page of ONE conversation
+// from a full window and legitimately need another. A pathological account — a
+// single thread with a hundred thousand messages — would otherwise walk it all
+// to fill a page of 50. The cap turns that into a short answer, which is the
+// same honest boundedness the anchor and total paths already have, rather than a
+// request that runs until it times out.
+func (a *Adapter) SearchThreads(ctx context.Context, accountID int64, f searchFilter, s sortSpec, reach int) ([]int64, error) {
+	if reach <= 0 {
+		return []int64{}, nil
+	}
+	// The relevance sort has no collapsed form. query.go refuses the
+	// combination before it reaches here (a bounded re-rank has no cursor to
+	// resume, so there is no second page to collapse into); the assertion is
+	// kept so that relaxing the refusal without a store shape surfaces here
+	// rather than silently serving an uncollapsed list.
+	if s.byRelevance {
+		return nil, errCollapseNeedsDateOrder
+	}
+
+	var (
+		hits   []searchHit
+		cursor *store.SearchCursor
+	)
+	for pass := 0; len(hits) < reach && pass < maxCollapsePasses; pass++ {
+		want := reach - len(hits)
+		if want > store.MaxSearchLimit {
+			want = store.MaxSearchLimit
+		}
+
+		res, err := a.store.ListCollapsedMessages(ctx, store.CollapsedQuery{
+			AccountID:  accountID,
+			MailboxID:  f.mailboxID,
+			Text:       f.text,
+			Since:      f.since,
+			Until:      f.before,
+			UnreadOnly: f.unreadOnly,
+			Keyword:    f.keyword,
+			After:      cursor,
+			Limit:      want,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, r := range res.Rows {
+			hits = append(hits, searchHit{
+				id:   r.MessageID,
+				date: r.Date,
+				// Same as the uncollapsed path: the keywords ride along on the
+				// row, so the §4.4.2 hasKeyword comparator costs no extra query.
+				//
+				// It is evaluated on the SURVIVING message — the thread's newest
+				// matching one — which is the only honest reading of a keyword
+				// comparator over a collapsed list: the row the client sees is
+				// that message, so the keyword it sorts by must be that
+				// message's. A thread-wide "any member has it" would sort a row
+				// by a property the row does not display.
+				hasKeyword: s.keyword != "" && hasKeyword(r, s.keyword),
+			})
+		}
+
+		// The result set is exhausted when the WINDOW was not filled — not when
+		// the page was short. Conflating the two is what would stop the walk
+		// early and hide conversations, which is precisely why the store reports
+		// the two separately.
+		if !res.WindowExhausted || res.NextCursor == nil {
+			break
+		}
+		cursor = res.NextCursor
+	}
+
+	return sortIDsStable(hits, s.ascending, s.keyword != "", s.keywordFirst), nil
+}
+
+// maxCollapsePasses bounds the collapsed walk.
+//
+// Each pass scans store.CollapseWindow (1,000) messages, so this caps one
+// Email/query at 32,000 messages examined — more than the pilot's largest real
+// account holds (26,869) and far more than any page of 200 conversations needs
+// unless the average thread runs to 160 messages in one folder.
+//
+// Reaching it returns a SHORT list rather than an error, which is the same
+// contract a truncated window already has: the client sees fewer ids and pages
+// on, and the response's `limit` property tells it a server bound applied.
+const maxCollapsePasses = 32
+
+// errCollapseNeedsDateOrder guards an unreachable combination — see the comment
+// at its only use in SearchThreads.
+var errCollapseNeedsDateOrder = errors.New(
+	"mail: collapseThreads requires the date-ordered path; a bounded relevance window has no cursor to collapse across")
+
 // hasKeyword reports whether a store row carries a JMAP keyword.
 //
 // It has to consult BOTH places a keyword can live, which is a consequence of

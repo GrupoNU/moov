@@ -797,14 +797,18 @@ func TestQueryRefusesWithoutCaller(t *testing.T) {
 	}
 }
 
-// collapseThreads is refused rather than ignored: silently returning a list
-// with duplicate threads is a wrong answer to the question asked.
-func TestQueryCollapseThreadsIsRefused(t *testing.T) {
+// collapseThreads is SERVED since L3 epic E1 (collapse_test.go holds the
+// behavior). This test used to assert the opposite — that the argument was
+// refused with "this server has no thread index yet" — and it is kept, inverted,
+// rather than deleted: the refusal it pinned was correct when written and became
+// false the day migration 0004 created the index, with nothing in the codebase
+// noticing for two epics. Leaving the inversion here is the marker that says so.
+func TestQueryCollapseThreadsIsServedNotRefused(t *testing.T) {
 	f := newFakeReaders()
-	merr := queryError(t, f, fmt.Sprintf(
+	resp := query(t, f, fmt.Sprintf(
 		`{"accountId":%q,"filter":{"inMailbox":"m1"},"collapseThreads":true}`, testAccountJMAPID()))
-	if merr.Code != jmap.CodeUnsupportedFilter {
-		t.Errorf("code = %q, want unsupportedFilter", merr.Code)
+	if _, ok := resp["ids"].([]any); !ok {
+		t.Fatalf("the collapsed query did not return an id list: %+v", resp)
 	}
 }
 
