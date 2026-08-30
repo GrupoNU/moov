@@ -161,6 +161,15 @@ export function MailScreen(): React.JSX.Element {
   const [isLoadingMailboxes, setLoadingMailboxes] = useState(true);
 
   const [emails, setEmails] = useState<readonly Email[]>([]);
+  /**
+   * E1: the `Thread/get` results that rode the list's own batch.
+   *
+   * Non-empty only on the collapsed path, where they carry each row's TRUE
+   * conversation size. On the uncollapsed path they stay empty and the rows
+   * fall back to counting what is in the window — which `sizeIsExact` reports
+   * honestly rather than hiding.
+   */
+  const [listThreads, setListThreads] = useState<readonly Thread[]>([]);
   const [isLoadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | undefined>(undefined);
   const [truncated, setTruncated] = useState(false);
@@ -350,14 +359,35 @@ export function MailScreen(): React.JSX.Element {
       | undefined;
   }, [route.kind, activeMailbox?.role, prefs.inboxType]);
 
+  /**
+   * E1: whether the LIST asks the server to collapse threads (RFC 8621 §4.4.3).
+   *
+   * Tied to the same `conversationView` preference that gates the reader, which
+   * is what makes the setting mean one thing: on, mail is organised by
+   * conversation everywhere; off, by message everywhere.
+   *
+   * Server-side collapse is categorically better than the client-side grouping
+   * it replaces, and for a reason worth naming: the client can only group what
+   * is inside the window it fetched, so a row's count meant "in this window"
+   * rather than "in this conversation". The server collapses in the database
+   * over the whole folder, and `Thread/get` rides the same batch with the real
+   * sizes. `groupByThread` still runs on the result — a collapsed list is
+   * already one message per thread, so it becomes an identity pass that
+   * attaches the reported sizes.
+   */
+  const collapseThreads = prefs.conversationView;
+
   /** Identifies the list, so the virtualizer resets scroll only on a real change. */
   const listKey =
     route.kind === "search"
-      ? `search:${normalizeQuery(route.query)}`
+      ? `search:${normalizeQuery(route.query)}:${collapseThreads ? "c" : "m"}`
       : // The inbox type is part of the list's identity: changing it reorders
         // every row, so the scroll position from the previous order is
         // meaningless and must reset rather than land the user mid-list.
-        `mailbox:${activeMailbox?.id ?? ""}:${prefs.inboxType}`;
+        // So is the collapse mode: turning conversation view on or off changes
+        // what a row IS, and an offset into the old list means nothing in the
+        // new one.
+        `mailbox:${activeMailbox?.id ?? ""}:${prefs.inboxType}:${collapseThreads ? "c" : "m"}`;
 
   useEffect(() => {
     if (client === undefined || accountId === "" || filter === undefined) {
@@ -375,12 +405,45 @@ export function MailScreen(): React.JSX.Element {
 
     void (async () => {
       try {
-        const page = await queryEmails(client, accountId, filter, {
-          signal: controller.signal,
-          ...(sort !== undefined ? { sort } : {}),
-        });
+        let page;
+        try {
+          page = await queryEmails(client, accountId, filter, {
+            signal: controller.signal,
+            ...(sort !== undefined ? { sort } : {}),
+            collapseThreads,
+          });
+        } catch (error) {
+          /*
+           * E1: a server that will not collapse THIS query still has a list to
+           * give, so ask again without the collapse rather than showing
+           * nothing.
+           *
+           * The server documents exactly one refusable combination (collapse
+           * with the `relevance` sort) and this client never sends it — so in
+           * practice this path is for a server OLDER than the collapse
+           * support, which answers `unsupportedFilter`/`unsupportedSort` for
+           * an argument it does not know. That is the whole capability probe:
+           * one retry, driven by the server's own answer, instead of a version
+           * check that would have to be kept in step by hand.
+           *
+           * The fallback list is grouped client-side, so its counts become
+           * window-bounded — `sizeIsExact` carries that difference rather than
+           * the UI pretending the two paths are the same.
+           */
+          const refusedCollapse =
+            collapseThreads &&
+            error instanceof MailApiError &&
+            error.methodError !== undefined &&
+            refusalFor(error.methodError.type, error.methodError.description) !== undefined;
+          if (!refusedCollapse || controller.signal.aborted) throw error;
+          page = await queryEmails(client, accountId, filter, {
+            signal: controller.signal,
+            ...(sort !== undefined ? { sort } : {}),
+          });
+        }
         if (controller.signal.aborted) return;
         setEmails(page.emails);
+        setListThreads(page.threads);
         setTruncated(page.truncated);
         setResultTotal(page.total);
       } catch (error) {
@@ -395,11 +458,13 @@ export function MailScreen(): React.JSX.Element {
           );
           if (declined !== undefined) {
             setEmails([]);
+            setListThreads([]);
             setRefusal(error.methodError.description ?? t("search.unsupportedBody"));
             return;
           }
         }
         setEmails([]);
+        setListThreads([]);
         setListError(error instanceof Error ? error.message : String(error));
       } finally {
         if (!controller.signal.aborted) setLoadingList(false);
@@ -409,7 +474,7 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId, filter, route.kind, t, refreshToken, sort]);
+  }, [client, accountId, filter, route.kind, t, refreshToken, sort, collapseThreads]);
 
   // --- P3: identity (the signature and the sending address) ----------------
 
@@ -485,7 +550,21 @@ export function MailScreen(): React.JSX.Element {
    */
   const projected = useMemo(() => actions.project(emails), [actions, emails]);
 
-  const groups = useMemo(() => groupByThread(projected), [projected]);
+  /*
+   * E1: the rows.
+   *
+   * `groupByThread` runs on BOTH paths and that is deliberate. On the collapsed
+   * path the server already returned one message per conversation, so grouping
+   * is an identity pass whose real job is attaching the `Thread/get` sizes; on
+   * the uncollapsed path it does the grouping itself and the sizes are absent,
+   * which it reports through `sizeIsExact`. One row shape, one code path
+   * downstream — the selection, the keyboard and the actions never have to ask
+   * which query produced the list.
+   */
+  const groups = useMemo(
+    () => groupByThread(projected, listThreads),
+    [projected, listThreads],
+  );
 
   /** Refetches the list from the server after a write. */
   const refresh = useCallback((): void => {
@@ -577,7 +656,33 @@ export function MailScreen(): React.JSX.Element {
    * message in it — so archiving a conversation archives the conversation, not
    * just its newest message, which is what "archive" means in every mail
    * client and what a user who selects one row expects.
+   *
+   * E1 made this subtler and it is worth being explicit about, because getting
+   * it wrong would be silent: on the COLLAPSED path the server returns exactly
+   * one message per conversation, so `group.messages` holds one member and
+   * `group.messages.map(id)` would archive the newest reply and leave the rest
+   * of the thread in the inbox. The `Thread/get` that rides the list's batch is
+   * what closes that — it carries every member id — and it is consulted first,
+   * with the window's own messages as the fallback for the uncollapsed path.
    */
+  const threadMembers = useMemo(() => {
+    const byThread = new Map<string, readonly string[]>();
+    for (const thread of listThreads) byThread.set(thread.id, thread.emailIds);
+    return byThread;
+  }, [listThreads]);
+
+  /**
+   * Every message id one row stands for.
+   *
+   * The single place that answers "what is this conversation, really", so the
+   * toolbar, the hover actions and `_` cannot drift apart on it.
+   */
+  const idsOfGroup = useCallback(
+    (group: ThreadGroup): readonly string[] =>
+      threadMembers.get(group.id) ?? group.messages.map((message) => message.id),
+    [threadMembers],
+  );
+
   const targetMessageIds = useCallback(
     (): readonly string[] => {
       const groupIds = actionTargets(selection, selectedId);
@@ -585,11 +690,11 @@ export function MailScreen(): React.JSX.Element {
       const out: string[] = [];
       for (const group of groups) {
         if (!wanted.has(group.id)) continue;
-        for (const message of group.messages) out.push(message.id);
+        for (const id of idsOfGroup(group)) out.push(id);
       }
       return out;
     },
-    [selection, selectedId, groups],
+    [selection, selectedId, groups, idsOfGroup],
   );
 
   // --- P3: running an action ------------------------------------------------
@@ -1335,11 +1440,9 @@ export function MailScreen(): React.JSX.Element {
     const groupIds = idsFromHere(orderedIds, selectedId);
     if (groupIds.length === 0) return;
     const wanted = new Set(groupIds);
-    const ids = groups
-      .filter((group) => wanted.has(group.id))
-      .flatMap((group) => group.messages.map((message) => message.id));
+    const ids = groups.filter((group) => wanted.has(group.id)).flatMap(idsOfGroup);
     void dispatchAction({ kind: "markUnread", ids }, t("action.markUnread"));
-  }, [orderedIds, selectedId, groups, dispatchAction, t]);
+  }, [orderedIds, selectedId, groups, idsOfGroup, dispatchAction, t]);
 
   /** The `* a`/`* n`/`* r`/`* u`/`* s`/`* t` chords. */
   const runSelectBy = useCallback(
@@ -1793,7 +1896,7 @@ export function MailScreen(): React.JSX.Element {
                 setToast(t("action.failedTitle"));
                 return;
               }
-              const ids = group.messages.map((message) => message.id);
+              const ids = idsOfGroup(group);
               void dispatchAction(
                 { kind: "archive", ids, mailboxId: archiveId },
                 format("action.doneArchived", ids.length),
@@ -1801,7 +1904,7 @@ export function MailScreen(): React.JSX.Element {
               );
             }}
             onRowDelete={(group) => {
-              const ids = group.messages.map((message) => message.id);
+              const ids = idsOfGroup(group);
               const permanent =
                 trashMailboxId !== undefined &&
                 group.messages.every((message) => deleteIsPermanent(message, trashMailboxId));
@@ -1821,7 +1924,7 @@ export function MailScreen(): React.JSX.Element {
               );
             }}
             onRowToggleRead={(group) => {
-              const ids = group.messages.map((message) => message.id);
+              const ids = idsOfGroup(group);
               // The row's own state decides the direction, so the icon and
               // what the click does can never disagree.
               const value = group.hasUnread;

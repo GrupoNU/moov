@@ -1,5 +1,6 @@
 /**
- * Grouping a message list into conversations (P2 deliverable 4).
+ * Grouping a message list into conversations (P2 deliverable 4, completed by
+ * L3 epic E1).
  *
  * The server does the hard half: it computes real JWZ-simplified `threadId`s
  * over References/In-Reply-To (L2-sync-engine §2.3), and the pilot's own
@@ -7,20 +8,27 @@
  * this module does NOT re-derive threading — it groups an already-ordered list
  * by the id the server assigned.
  *
- * # Why grouping happens on the client
+ * # Two paths, and why both still exist
  *
- * `Email/query` has no `collapseThreads` on this server: it answers
- * `unsupportedFilter` (verified against the live pilot). The list therefore
- * arrives as individual messages and is collapsed here. That is a real
- * limitation with one real consequence, stated honestly in the UI rather than
- * hidden: a thread's size reflects the messages IN THIS RESULT WINDOW, not the
- * thread's total size, because the other messages may be in another folder or
- * beyond the window. `Thread/get` gives the true total, and the reading pane
- * uses it — the list does not, because doing so would cost one request per
- * visible row.
+ * **Collapsed (E1, the normal path).** `Email/query` now honours
+ * `collapseThreads` (RFC 8621 §4.4.3), collapsing IN THE DATABASE inside a
+ * bounded window. The list then arrives with one message per conversation and
+ * a `Thread/get` riding the same batch, so each row knows its conversation's
+ * TRUE size. {@link groupByThread}'s `threadSizes` argument carries it.
+ *
+ * **Uncollapsed (the fallback).** When the server declines to collapse — or
+ * when the conversation-view preference is off — the list arrives as
+ * individual messages and is grouped here. That path has one honest
+ * limitation, which is exactly why the collapsed one was built: a thread's
+ * size then reflects the messages IN THIS RESULT WINDOW, not the thread's
+ * total, because the rest may be in another folder or past the window.
+ *
+ * {@link ThreadGroup.sizeIsExact} distinguishes the two, so the UI can show a
+ * count it can stand behind rather than one that quietly means something
+ * different depending on which path served it.
  */
 
-import type { Email } from "./types";
+import type { Email, Thread } from "./types";
 import { isFlagged, isSeen } from "./types";
 
 /** One row in the list: a single message, or a collapsed conversation. */
@@ -34,8 +42,24 @@ export interface ThreadGroup {
   readonly latest: Email;
   /** Every message of this thread present in the window, newest first. */
   readonly messages: readonly Email[];
-  /** How many messages are in the window. 1 means "not a conversation". */
+  /**
+   * How many messages the conversation has. 1 means "not a conversation".
+   *
+   * Its MEANING depends on {@link sizeIsExact}: the thread's true total when
+   * the server collapsed and reported it, otherwise only how many of its
+   * messages are in this result window.
+   */
   readonly size: number;
+  /**
+   * True when {@link size} is the conversation's real size, straight from
+   * `Thread/get`.
+   *
+   * False on the client-grouped path, where the count is bounded by the fetch
+   * window. The UI uses this to decide whether it may state a number as a
+   * fact — a badge reading "3" that silently means "3 of maybe 24" is the kind
+   * of small lie that makes a whole list untrustworthy.
+   */
+  readonly sizeIsExact: boolean;
   /** True when ANY message in the group is unread — the row renders unread. */
   readonly hasUnread: boolean;
   /** True when ANY message is flagged. */
@@ -56,8 +80,18 @@ export interface ThreadGroup {
  * idea of order to drift from the server's.
  *
  * @param emails messages in server order (newest first for the default sort)
+ * @param threads the `Thread/get` results that rode the same batch, when the
+ *   query collapsed. Their `emailIds.length` is the conversation's TRUE size;
+ *   a thread absent from this list falls back to the window count, with
+ *   `sizeIsExact` false to say so.
  */
-export function groupByThread(emails: readonly Email[]): readonly ThreadGroup[] {
+export function groupByThread(
+  emails: readonly Email[],
+  threads: readonly Thread[] = [],
+): readonly ThreadGroup[] {
+  const sizeByThread = new Map<string, number>();
+  for (const thread of threads) sizeByThread.set(thread.id, thread.emailIds.length);
+
   /*
    * `order` holds the buckets themselves rather than their keys.
    *
@@ -100,11 +134,23 @@ export function groupByThread(emails: readonly Email[]): readonly ThreadGroup[] 
         participants.push(sender);
       }
     }
+    /*
+     * The server's count wins when there is one, and it is never SMALLER than
+     * what we hold: the window can only ever contain a subset of a thread. A
+     * server count below the window count would mean the two disagree about
+     * membership, so the larger is taken and the claim of exactness dropped —
+     * a number that is at least true beats a smaller one that is not.
+     */
+    const reported = sizeByThread.get(key);
+    const windowed = messages.length;
+    const exact = reported !== undefined && reported >= windowed;
+
     return {
       id: key,
       latest,
       messages,
-      size: messages.length,
+      size: exact ? (reported ?? windowed) : windowed,
+      sizeIsExact: exact,
       hasUnread: messages.some((m) => !isSeen(m)),
       hasFlagged: messages.some(isFlagged),
       hasAttachment: messages.some((m) => m.hasAttachment === true),

@@ -413,8 +413,25 @@ function MessageRow({
             visually-hidden text below, so it is not colour-only information. */}
         {group.hasUnread && <span className={styles.unreadDot} aria-hidden="true" />}
         <span className={styles.senderText}>{sender}</span>
+        {/*
+          E1: the conversation's size.
+
+          The TOOLTIP depends on where the number came from. With server-side
+          collapse it is the thread's real total (`Thread/get` rode the list's
+          batch) and may be stated as a fact. On the client-grouped fallback it
+          counts only the messages inside the fetched window, so the wording
+          says so — a "3" that silently means "3 of maybe 24" is the kind of
+          small lie that makes a whole list untrustworthy.
+        */}
         {group.size > 1 && (
-          <span className={styles.threadCount} title={format("list.threadSize", group.size)}>
+          <span
+            className={styles.threadCount}
+            title={
+              group.sizeIsExact
+                ? format("list.threadSize", group.size)
+                : format("list.threadSizeInWindow", group.size)
+            }
+          >
             {group.size}
           </span>
         )}
@@ -539,7 +556,13 @@ function MessageRow({
         {group.hasUnread ? t("list.unread") : ""}
         {group.hasFlagged ? ` ${t("list.flagged")}` : ""}
         {group.hasAttachment ? ` ${t("list.attachment")}` : ""}
-        {group.size > 1 ? ` ${format("list.threadSize", group.size)}` : ""}
+        {group.size > 1
+          ? ` ${
+              group.sizeIsExact
+                ? format("list.threadSize", group.size)
+                : format("list.threadSizeInWindow", group.size)
+            }`
+          : ""}
       </span>
     </div>
   );

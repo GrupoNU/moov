@@ -124,6 +124,18 @@ export interface QueryPage {
    * certainly more messages that this API cannot reach.
    */
   readonly truncated: boolean;
+  /**
+   * E1: each returned message's thread, when the query collapsed threads.
+   *
+   * `Thread/get` rides the same batch as the query and the row fetch, so a
+   * collapsed list costs ONE request and the rows arrive knowing their TRUE
+   * conversation size — not the size within the fetched window, which is all
+   * client-side grouping can ever know (see `mail/threading.ts`).
+   *
+   * Empty when the query did not collapse, which is what makes the caller's
+   * two paths distinguishable without a second flag.
+   */
+  readonly threads: readonly Thread[];
 }
 
 /** A filter the server's repertoire accepts. */
@@ -181,9 +193,27 @@ export async function queryEmails(
      * `internal/jmap/mail/query.go`.
      */
     readonly sort?: readonly Record<string, unknown>[] | undefined;
+    /**
+     * E1: collapse the result to one row per CONVERSATION (RFC 8621 §4.4.3).
+     *
+     * The server serves this for every filter shape this client sends —
+     * inMailbox, the `[hasKeyword, receivedAt]` pair, `filter:null` and
+     * full-text search — collapsing in the database inside a bounded window
+     * (`store.ListCollapsedMessages`). It refuses exactly ONE combination,
+     * collapse together with the `relevance` sort, because that sort ranks a
+     * bounded recent window rather than an index order and so has no cursor to
+     * page a collapsed result with. This client never sends that pair.
+     *
+     * Collapsing SERVER-side is categorically better than the client-side
+     * grouping it replaces, and for a reason worth stating: a client can only
+     * group the messages inside the window it fetched, so a thread's row shows
+     * the count IN THAT WINDOW rather than the thread's real size. The server
+     * knows the whole thread.
+     */
+    readonly collapseThreads?: boolean;
   } = {},
 ): Promise<QueryPage> {
-  const { limit = SEARCH_WINDOW, position = 0, signal, sort } = options;
+  const { limit = SEARCH_WINDOW, position = 0, signal, sort, collapseThreads = false } = options;
 
   const queryArgs: Record<string, unknown> = {
     accountId,
@@ -195,28 +225,62 @@ export async function queryEmails(
   // Omitted rather than sent as null: a `sort` key the server has to parse and
   // reject is a round trip spent on a question we did not need to ask.
   if (sort !== undefined && sort.length > 0) queryArgs.sort = sort;
+  // Likewise omitted when false: `collapseThreads:false` is the RFC default,
+  // so sending it says nothing the server did not already assume.
+  if (collapseThreads) queryArgs.collapseThreads = true;
 
-  const response = await client.call(
+  /*
+   * The batch: query → rows → threads, joined by back-references so the server
+   * resolves all three without a round trip between them.
+   *
+   * The `Thread/get` is added ONLY for a collapsed query. On an uncollapsed
+   * list it would fetch one thread per message — hundreds of them — to answer
+   * a question the list does not ask.
+   */
+  const invocations: JmapInvocation[] = [
+    ["Email/query", queryArgs, "q"],
     [
-      ["Email/query", queryArgs, "q"],
-      [
-        "Email/get",
-        {
-          accountId,
-          ...backRef("ids", { resultOf: "q", name: "Email/query", path: "/ids" }),
-          properties: LIST_PROPERTIES,
-        },
-        "g",
-      ],
+      "Email/get",
+      {
+        accountId,
+        ...backRef("ids", { resultOf: "q", name: "Email/query", path: "/ids" }),
+        properties: LIST_PROPERTIES,
+      },
+      "g",
     ],
-    [CAP_CORE, CAP_MAIL],
-    signal,
-  );
+  ];
+  if (collapseThreads) {
+    invocations.push([
+      "Thread/get",
+      {
+        accountId,
+        ...backRef("ids", { resultOf: "g", name: "Email/get", path: "/list/*/threadId" }),
+      },
+      "th",
+    ]);
+  }
+
+  const response = await client.call(invocations, [CAP_CORE, CAP_MAIL], signal);
 
   const responses = response.methodResponses;
 
   const queryResult = responseFor(responses, "q");
   const getResult = responseFor(responses, "g");
+
+  /*
+   * The threads are a NICETY, exactly as in `fetchMessageDetail`: they carry
+   * the conversation sizes the rows display, and a list that renders without
+   * them is a list showing "1" where it should show "4" — degraded, never
+   * broken. So a failure here is swallowed rather than failing the whole list.
+   */
+  let threads: readonly Thread[] = [];
+  if (collapseThreads) {
+    try {
+      threads = (responseFor(responses, "th").list ?? []) as readonly Thread[];
+    } catch {
+      threads = [];
+    }
+  }
 
   const ids = (queryResult.ids ?? []) as readonly string[];
   const total = typeof queryResult.total === "number" ? queryResult.total : undefined;
@@ -237,6 +301,7 @@ export async function queryEmails(
     queryState: typeof queryResult.queryState === "string" ? queryResult.queryState : "",
     total,
     truncated: ids.length >= SEARCH_WINDOW,
+    threads,
   };
 }
 

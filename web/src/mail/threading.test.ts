@@ -132,6 +132,83 @@ describe("senderLabel", () => {
   });
 });
 
+/**
+ * E1: the collapsed path, where the server returns one message per
+ * conversation and a `Thread/get` carries the real sizes.
+ *
+ * The distinction these pin is the one the UI shows the user: a count that IS
+ * the conversation's size versus a count that is only what fits in the window.
+ */
+describe("groupByThread with server thread sizes", () => {
+  it("reports the server's size and marks it exact", () => {
+    // The collapsed shape: ONE message back, but the thread has 24.
+    const groups = groupByThread(
+      [email("e24", { threadId: "t1" })],
+      [{ id: "t1", emailIds: Array.from({ length: 24 }, (_, i) => `e${i + 1}`) }],
+    );
+    expect(groups[0]?.size).toBe(24);
+    expect(groups[0]?.sizeIsExact).toBe(true);
+  });
+
+  it("falls back to the window count, NOT exact, when no thread came back", () => {
+    const groups = groupByThread([
+      email("e2", { threadId: "t1" }),
+      email("e1", { threadId: "t1" }),
+    ]);
+    expect(groups[0]?.size).toBe(2);
+    expect(groups[0]?.sizeIsExact).toBe(false);
+  });
+
+  it("ignores a thread whose reported size is smaller than the window holds", () => {
+    /*
+     * The two disagreeing about membership should never happen — a window is a
+     * subset of a thread — but if it does, the LARGER number is at least true
+     * and the claim of exactness is dropped rather than reporting a count
+     * below the rows actually on screen.
+     */
+    const groups = groupByThread(
+      [email("e2", { threadId: "t1" }), email("e1", { threadId: "t1" })],
+      [{ id: "t1", emailIds: ["e1"] }],
+    );
+    expect(groups[0]?.size).toBe(2);
+    expect(groups[0]?.sizeIsExact).toBe(false);
+  });
+
+  it("is an identity pass over an already-collapsed list", () => {
+    // One message per thread in, one row per thread out, order preserved.
+    const groups = groupByThread(
+      [
+        email("b1", { threadId: "tB" }),
+        email("a1", { threadId: "tA" }),
+        email("c1", { threadId: "tC" }),
+      ],
+      [
+        { id: "tA", emailIds: ["a1", "a0"] },
+        { id: "tB", emailIds: ["b1"] },
+        { id: "tC", emailIds: ["c1", "c0", "c-1"] },
+      ],
+    );
+    expect(groups.map((g) => g.id)).toEqual(["tB", "tA", "tC"]);
+    expect(groups.map((g) => g.size)).toEqual([1, 2, 3]);
+    expect(groups.every((g) => g.sizeIsExact)).toBe(true);
+  });
+
+  it("leaves unread and flagged aggregation to the messages in hand", () => {
+    /*
+     * A collapsed row can only know the state of the message the server
+     * returned — the newest. That is a real limit of the collapsed path and it
+     * is left visible rather than papered over: `hasUnread` means "the message
+     * on this row is unread", which is what the row displays.
+     */
+    const groups = groupByThread(
+      [email("e2", { threadId: "t1", seen: true })],
+      [{ id: "t1", emailIds: ["e1", "e2"] }],
+    );
+    expect(groups[0]?.hasUnread).toBe(false);
+    expect(groups[0]?.size).toBe(2);
+  });
+});
+
 describe("displaySubject", () => {
   it.each([
     ["Re: Hola", "Hola"],

@@ -242,6 +242,10 @@ export const en = {
   "list.flagged": "Starred",
   "list.unread": "Unread",
   "list.threadSize": (count: number): string => `${count} messages in this conversation`,
+  // E1: the same count when it came from client-side grouping, which can only
+  // see the fetched window. Said plainly rather than presented as the total.
+  "list.threadSizeInWindow": (count: number): string =>
+    `${count} messages from this conversation in these results`,
   "list.noSubject": "(no subject)",
   "list.unknownSender": "(unknown sender)",
   // The honest ceiling message. The server answers at most 200 rows and has no
@@ -779,6 +783,8 @@ export const es: Strings = {
   "list.flagged": "Destacado",
   "list.unread": "Sin leer",
   "list.threadSize": (count: number): string => `${count} mensajes en esta conversación`,
+  "list.threadSizeInWindow": (count: number): string =>
+    `${count} mensajes de esta conversación en estos resultados`,
   "list.noSubject": "(sin asunto)",
   "list.unknownSender": "(remitente desconocido)",
   "list.truncated": (shown: number): string =>
