@@ -332,7 +332,7 @@
 }
 
 .switchInput:focus-visible + .switchTrack {
-  outline: 2px solid var(--focus-ring, var(--text-strong));
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 

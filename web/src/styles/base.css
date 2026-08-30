@@ -125,9 +125,26 @@ a {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+    /*
+     * E11: `animation: none` rather than a 0.01ms duration.
+     *
+     * The duration trick is the widely-copied recipe and it is WRONG for the
+     * case that matters most here — an infinite spinner. `animation-duration:
+     * 0.01ms` with `iteration-count: 1` leaves the element at the animation's
+     * END state, which for a spinner is a rotation the user never asked for
+     * and, worse, still schedules work. `animation: none` removes the
+     * animation outright and leaves the element in its authored, static state
+     * — a spinner becomes a still ring, which is exactly the non-animated
+     * fallback a reduced-motion user should get.
+     *
+     * Transitions keep a near-zero duration rather than `none`, deliberately:
+     * `transitionend` still fires, so any state change that waits for a
+     * transition to finish still completes. Removing them outright is how a
+     * reduced-motion user ends up with a dialog that never finishes opening.
+     */
+    animation: none !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
     scroll-behavior: auto !important;
   }
 }

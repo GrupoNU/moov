@@ -46,7 +46,7 @@
 .clickable:focus-visible {
   /* The chip's own colours are contrast-checked pairs, so the hover state is a
      ring rather than a colour change — which would break the guarantee. */
-  outline: 2px solid var(--color-accent);
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: 1px;
 }
 

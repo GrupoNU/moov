@@ -156,13 +156,13 @@
 }
 
 .swatchActive {
-  outline: 2px solid var(--color-accent);
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: 1px;
 }
 
 /* Keyboard focus has to be visible on a control whose input is off-screen. */
 .swatchLabel input:focus-visible + .swatch {
-  outline: 2px solid var(--color-accent);
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
