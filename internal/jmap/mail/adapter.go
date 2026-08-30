@@ -78,12 +78,20 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 		State:     a,
 		// J3's readers are the same adapter: Search goes through the store's
 		// typed repertoire and Changes through the sync_log/message_state feed.
-		Search:     a,
-		Changes:    a,
-		Snippets:   a,
-		Identities: identities,
-		Prefs:      prefs,
-		Limits:     limits,
+		Search:   a,
+		Changes:  a,
+		Snippets: a,
+		// Thread/changes (L3 epic E4) reads the threads table migration 0009
+		// created. It is the same adapter, and it is named here rather than
+		// left to the daemon so that a deployment built through NewDeps —
+		// which is every deployment and every integration test — answers the
+		// method for real. A build that genuinely cannot (an older schema)
+		// clears the field, and handleThreadChanges degrades to the refusal it
+		// gave through J3.
+		ThreadChanges: a,
+		Identities:    identities,
+		Prefs:         prefs,
+		Limits:        limits,
 	}, nil
 }
 

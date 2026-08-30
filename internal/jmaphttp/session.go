@@ -142,6 +142,7 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 //     The W-A3 undo window remains a separate, server-side grace applied to
 //     every send; it is still not advertised here, because it is not a
 //     client-schedulable delay.
+//
 //   - submissionExtensions: {}. §1.3.2 scopes it to extensions "the client
 //     may use" by putting parameters in the envelope; this server passes none
 //     through, so the truthful set is empty regardless of what Postfix's EHLO

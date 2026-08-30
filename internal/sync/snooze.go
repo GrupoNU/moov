@@ -459,11 +459,11 @@ func (w *WriteExecutor) ensureSnoozeMailbox(ctx context.Context, accountID int64
 				return mb, nil
 			}
 		}
-		return store.Mailbox{}, fmt.Errorf("%w: %v", ErrSnoozeUnavailable, cerr)
+		return store.Mailbox{}, fmt.Errorf("%w: %w", ErrSnoozeUnavailable, cerr)
 	}
 	mb, err = w.store.GetMailbox(ctx, res.MailboxID)
 	if err != nil {
-		return store.Mailbox{}, fmt.Errorf("%w: %v", ErrSnoozeUnavailable, err)
+		return store.Mailbox{}, fmt.Errorf("%w: %w", ErrSnoozeUnavailable, err)
 	}
 	return mb, nil
 }

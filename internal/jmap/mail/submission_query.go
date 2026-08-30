@@ -98,12 +98,12 @@ func (f submissionFilter) matches(r SubmissionRow) bool {
 // submissionQueryRequest is the §5.5 arguments object, narrowed to what this
 // method accepts.
 type submissionQueryRequest struct {
-	AccountID  string          `json:"accountId"`
-	Filter     json.RawMessage `json:"filter"`
-	Sort       json.RawMessage `json:"sort"`
-	Position   int             `json:"position"`
-	Limit      *uint64         `json:"limit"`
-	CalculateTotal bool        `json:"calculateTotal"`
+	AccountID      string          `json:"accountId"`
+	Filter         json.RawMessage `json:"filter"`
+	Sort           json.RawMessage `json:"sort"`
+	Position       int             `json:"position"`
+	Limit          *uint64         `json:"limit"`
+	CalculateTotal bool            `json:"calculateTotal"`
 }
 
 // handleSubmissionQuery implements EmailSubmission/query.
@@ -195,8 +195,8 @@ func (d *Deps) handleSubmissionQuery(ctx context.Context, args json.RawMessage) 
 	}
 
 	out := map[string]any{
-		"accountId":     req.AccountID,
-		"queryState":    state,
+		"accountId":  req.AccountID,
+		"queryState": state,
 		// §5.5: "canCalculateChanges: This is true if the server supports
 		// calling EmailSubmission/queryChanges". It does not — the method is
 		// not registered — so the truthful value is false, which is what stops

@@ -492,32 +492,48 @@ func TestConformanceMailboxQuery(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RFC 8621 §3.2 — Thread/changes (L3 epic E1: a deliberate decline)
+// RFC 8621 §3.2 — Thread/changes (L3 epic E1 declined it; E4 implements it)
 // ---------------------------------------------------------------------------
 
-// §5.2 defines cannotCalculateChanges for exactly this case, and §3.2 makes
-// Thread/changes a standard method — so the conforming answer to "I cannot
-// compute this" is the refusal, not the method's absence.
+// §3.2 makes Thread/changes a standard method, and this server answers it as of
+// L3 epic E4 — migration 0009's threads table supplies the per-conversation
+// created_at and the merge tombstone the E1 decline rested on lacking.
 //
-// The reasoning for declining rather than implementing is on handleThreadChanges:
-// this server stores threads as a column on messages, so it cannot distinguish a
-// thread created since the client's state from one the client already holds, and
-// a thread destroyed by a merge leaves no record at all.
-func TestConformanceThreadChangesDeclinesRatherThanVanishes(t *testing.T) {
+// What this asserts is the property that survived the change of answer: the
+// method must never be UNREGISTERED. §3.6.1's unknownMethod is a statement
+// about the server that a client generalizes to the whole surface, and it is
+// the one answer that was wrong before and is still wrong now.
+//
+// The behavior itself is covered clause by clause in conformance_e4_test.go,
+// and the one case that is still not exact — a thread destroyed by tombstoning
+// its last message — is registered in the gap list at the bottom of this file.
+func TestConformanceThreadChangesIsAnswered(t *testing.T) {
 	f, _ := newConformanceFixture(t)
 
+	// A cursor this server never issued is the one input that must still be
+	// refused, with the code §5.2 defines for it.
 	name, args := dispatchConformance(t, f, "Thread/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":"1-1"}`, f.accountID()))
-
+		fmt.Sprintf(`{"accountId":%q,"sinceState":"not-a-cursor"}`, f.accountID()))
 	if name != "error" {
-		t.Fatalf("Thread/changes answered: %v", args)
+		t.Fatalf("a foreign state string was accepted: %v", args)
 	}
 	if args["type"] == "unknownMethod" {
-		t.Error("Thread/changes is unregistered, so a client reads the whole server as partial; " +
-			"§5.2's cannotCalculateChanges is the conforming way to decline")
+		t.Fatal("Thread/changes is unregistered, so a client reads the whole server as partial")
 	}
 	if args["type"] != "cannotCalculateChanges" {
 		t.Errorf("got %v, want cannotCalculateChanges", args["type"])
+	}
+
+	// A cursor this server DID issue is answered, not refused.
+	name, args = dispatchConformance(t, f, "Thread/changes",
+		fmt.Sprintf(`{"accountId":%q,"sinceState":"0-0"}`, f.accountID()))
+	if name == "error" {
+		t.Fatalf("Thread/changes refused a valid cursor: %v", args)
+	}
+	for _, key := range []string{"created", "updated", "destroyed", "newState", "hasMoreChanges"} {
+		if _, ok := args[key]; !ok {
+			t.Errorf("the response has no %q; §5.2 requires all five", key)
+		}
 	}
 }
 
@@ -779,21 +795,33 @@ func TestConformancePhase2Gaps(t *testing.T) {
 	// gap in this list would be the same lie as omitting an open one.
 	gaps := []struct{ name, reason string }{
 		{"VacationResponse", "phase 3; the capability is not advertised"},
-		{"Thread_changes", "answered with cannotCalculateChanges BY DESIGN (L3 epic E1): threads are a " +
-			"column on messages rather than rows, so created-vs-updated cannot be told apart and a " +
-			"thread destroyed by a merge leaves no record; closed by the threads table L3 epic E4 " +
-			"needs anyway — conforming, not missing"},
+		// Thread/changes moved OUT of this register in L3 epic E4: migration
+		// 0009's threads table supplies the created_at and the merge tombstone
+		// the decline rested on lacking, and the method now answers for real
+		// (conformance_e4_test.go). One residual case remains and is listed
+		// here in its place, because it is a gap rather than a decline.
+		{"Thread_changes_destroyed_by_emptying", "Thread/changes reports created, updated and " +
+			"destroyed-by-MERGE exactly (L3 epic E4); a thread destroyed by tombstoning its LAST " +
+			"message is not reported destroyed, because deciding it needs a per-thread live-member " +
+			"count on the write path (the fan-out L2 §4.3 forbids). The client was already told every " +
+			"one of those messages died, and Thread/get answers notFound for the id — one request " +
+			"later, the same signal"},
 		{"Mailbox_query_name_filter", "RFC 8621 §2.3's name condition is a substring test, and this " +
 			"server's Mailbox names are the LEAF only (the IMAP path is split into name+parentId), so " +
 			"the substring semantics are unsettled; parentId, role, hasAnyRole and isSubscribed are served"},
 		{"Mailbox_query_sortAsTree_filterAsTree", "RFC 8621 §2.3's two tree arguments are declined by " +
 			"name rather than ignored: this server returns a flat list and the client composes the tree " +
 			"from parentId"},
-		{"EmailSubmission_query", "not registered: no known client queries submissions, and a /query " +
-			"surface without an index behind it would advertise ordering it cannot honor; " +
-			"revisited when a real client asks"},
-		{"FUTURERELEASE_delayed_send", "maxDelayedSend is advertised 0 (truthful): Postfix offers no " +
-			"client-schedulable release; the W-A3 undo window is a server-side grace, not FUTURERELEASE"},
+		// EmailSubmission/query and delayed send both moved OUT of this
+		// register in L3 epic E4 — the first is registered (the Scheduled
+		// view), the second is implemented over the outbox rather than over
+		// FUTURERELEASE. What remains of each is listed below.
+		{"EmailSubmission_query_id_filters", "EmailSubmission/query is registered (L3 epic E4) and " +
+			"answers §7.3's undoStatus, before and after. The three ID conditions — identityIds, " +
+			"emailIds, threadIds — are refused with unsupportedFilter rather than served by an " +
+			"unmeasured scan (the S3 measure-or-refuse rule); the Scheduled view needs none of them"},
+		{"EmailSubmission_queryChanges", "not registered, and pre-announced by /query's " +
+			"canCalculateChanges:false — a client is told before it asks"},
 		{"Email_queryChanges", "answered with cannotCalculateChanges BY DESIGN (ADR §2), " +
 			"pre-announced via canCalculateChanges:false — conforming, not missing"},
 		{"cross_account", "one account per credential in phase 1; the official suite's " +

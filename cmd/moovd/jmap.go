@@ -180,15 +180,6 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 	deps.Triage = triage
 
-	// Thread/changes (E4) reads the threads table migration 0009 created. It
-	// is the same Adapter that answers every other read; naming it here rather
-	// than in NewDeps keeps the "this deployment tracks thread changes" wiring
-	// fact explicit, which is what handleThreadChanges falls back from when it
-	// is absent.
-	if tc, ok := deps.Changes.(mail.ThreadChangeReader); ok {
-		deps.ThreadChanges = tc
-	}
-
 	// The cancel half of the submission counters (W4b): an undo never reaches
 	// the outbox, so the JMAP layer is the only place it can be counted.
 	deps.SubmissionObserver = submissionMetrics{m}

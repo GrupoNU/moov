@@ -74,10 +74,18 @@ func (f *fakeSubmissions) Enqueue(_ context.Context, _ int64, spec SubmissionSpe
 	f.stateN++
 	f.windows = append(f.windows, spec.UndoWindow)
 	now := f.nowFn()
+	// A scheduled submission's release is the requested instant, not
+	// now+window — the same rule the real adapter applies (E4), reproduced here
+	// so a handler test that asserts on the resulting row is asserting against
+	// production semantics rather than the fake's convenience.
+	sendAt := now.Add(spec.UndoWindow)
+	if !spec.SendAt.IsZero() {
+		sendAt = spec.SendAt
+	}
 	row := &SubmissionRow{
 		ID: f.next, EmailID: spec.EmailID, IdentityID: spec.IdentityID,
 		MailFrom: spec.MailFrom, RcptTo: spec.RcptTo,
-		SendAt: now.Add(spec.UndoWindow), UndoStatus: "pending",
+		SendAt: sendAt, UndoStatus: "pending",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	f.rows[row.ID] = row

@@ -444,10 +444,11 @@ const (
 // any human send, and §7.5 names tooManyRecipients for the refusal.
 const maxRecipients = 100
 
-// Schedule send (L3 epic E4, canon §2.3, support.google.com/mail/answer
-// /9214606).
+// MaxDelayedSend is how far ahead this server accepts a scheduled send — the
+// value it advertises as RFC 8621 §1.3.2's maxDelayedSend (L3 epic E4, canon
+// §2.3, support.google.com/mail/answer/9214606).
 //
-// # MaxDelayedSend — the capability, flipped from 0 to a real value
+// # The capability, flipped from 0 to a real value
 //
 // RFC 8621 §1.3.2 defines maxDelayedSend as "the number in seconds of the
 // maximum delay the server supports in sending (see the EmailSubmission
@@ -659,7 +660,7 @@ func scheduledSubmission(row SubmissionRow) bool {
 // # The canon
 //
 // Gmail, on scheduled sends (canon §2.3, support.google.com/mail/answer
-// /9214606): cancelling a scheduled message means "it becomes a draft".
+// /9214606): canceling a scheduled message means "it becomes a draft".
 //
 // # What our flow did, and why it was wrong for a schedule
 //
@@ -676,7 +677,7 @@ func scheduledSubmission(row SubmissionRow) bool {
 // worse, the message would not be a DRAFT, so the user could not edit the mail
 // they scheduled. Gmail's own answer is the opposite: a scheduled message stays
 // a draft in Drafts (its Scheduled view is a filter over pending submissions,
-// not a folder the message is moved into), and cancelling simply removes the
+// not a folder the message is moved into), and canceling simply removes the
 // schedule.
 //
 // So for a scheduled submission the implicit Email/set is SUPPRESSED, server
