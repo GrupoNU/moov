@@ -58,7 +58,17 @@ export type Route =
       /** The label's display name, un-prefixed. */
       readonly name: string;
       readonly messageId?: string;
-    };
+    }
+  /**
+   * E9: the Outbox — mail composed offline, waiting for a connection.
+   *
+   * Its own kind, and not a mailbox, because nothing in it is a server object:
+   * a queued message has no JMAP id, no thread and no mailbox, so every code
+   * path that resolves `mailboxId` against the fetched folder list would have
+   * to special-case it. It carries no `messageId` for the same reason — there
+   * is no message to open, only a queue entry to retry or discard.
+   */
+  | { readonly kind: "outbox" };
 
 /** Where an unrecognised or empty URL lands. */
 export const DEFAULT_ROUTE: Route = { kind: "mailbox", mailboxId: "inbox" };
@@ -148,6 +158,9 @@ export function parseRoute(url: string): Route {
       : { kind: "label", name: decoded };
   }
 
+  // E9: a single fixed segment; there is nothing to parameterise.
+  if (segments[0] === "outbox") return { kind: "outbox" };
+
   if (segments[0] === "mail") {
     const mailbox = segments[1];
     if (mailbox === undefined || mailbox === "") return DEFAULT_ROUTE;
@@ -195,6 +208,8 @@ export function formatRoute(route: Route): string {
           : "/search";
       return `${base}${suffix}`;
     }
+    case "outbox":
+      return "/outbox";
   }
 }
 
@@ -221,6 +236,12 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
       ? { kind: "label", name: route.name }
       : { kind: "label", name: route.name, messageId };
   }
+  /*
+   * E9: the Outbox holds no messages the reader can open, so it absorbs the
+   * request rather than inventing a route. Returning the outbox unchanged is
+   * the honest answer to "open message X in this list": there is no such list.
+   */
+  if (route.kind === "outbox") return route;
   return messageId === undefined
     ? { kind: "search", query: route.query }
     : { kind: "search", query: route.query, messageId };
@@ -228,5 +249,5 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
 
 /** The message currently open in a route, if any. */
 export function openMessageId(route: Route): string | undefined {
-  return route.messageId;
+  return route.kind === "outbox" ? undefined : route.messageId;
 }

@@ -14,6 +14,7 @@ import {
   type Thread,
 } from "../../mail/types";
 import { listIdLabel, unsubscribeInfo, type UnsubscribeInfo } from "../../mail/unsubscribe";
+import { useOffline } from "../../offline/OfflineProvider";
 import { ConversationView, type ConversationControls } from "./ConversationView";
 import { AttachmentList, DownloadOriginalButton } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
@@ -46,6 +47,14 @@ export interface ReadingPaneProps {
   readonly thread: Thread | undefined;
   readonly isLoading: boolean;
   readonly error: string | undefined;
+  /**
+   * E9: this message has no cached body and there is no network to fetch one.
+   *
+   * Distinct from `error` on purpose: nothing failed. The message exists, it is
+   * simply not on this device, which is a fact about the cache the user can act
+   * on ("reconnect and it will be here") rather than a fault to report.
+   */
+  readonly offlineUnavailable?: boolean;
   readonly onClose: () => void;
   /** Used for attachment and raw-message downloads, which need auth headers. */
   readonly client: JmapClient;
@@ -139,6 +148,7 @@ export function ReadingPane({
   thread,
   isLoading,
   error,
+  offlineUnavailable = false,
   onClose,
   client,
   accountId,
@@ -172,6 +182,12 @@ export function ReadingPane({
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const [originalOpen, setOriginalOpen] = useState(false);
+  /*
+   * E9: read here, at the top, because every early return below it is a hook
+   * boundary — calling `useOffline` next to the attachment list it serves would
+   * be a conditional hook.
+   */
+  const { isOnline } = useOffline();
 
   // The remote-image signer the secure HTML renderer uses (W-A4): the ONLY
   // path by which a message's remote image can ever be fetched, and it goes
@@ -203,6 +219,25 @@ export function ReadingPane({
     );
   }
 
+  /*
+   * E9: offline, and this message's body was never stored.
+   *
+   * Checked BEFORE the `email === undefined` branch below, because that branch
+   * says "failed to load" — which would be a lie here. Nothing failed: the mail
+   * exists on the server and simply is not on this device, and saying exactly
+   * that is what lets the user stop trying.
+   */
+  if (offlineUnavailable) {
+    return (
+      <div className={styles.pane}>
+        <div className={styles.centered}>
+          <p className={styles.errorTitle}>{t("offline.body.unavailable")}</p>
+          <p className={styles.mutedText}>{t("offline.body.unavailableBody")}</p>
+        </div>
+      </div>
+    );
+  }
+
   if (email === undefined) {
     return (
       <div className={styles.pane}>
@@ -215,6 +250,13 @@ export function ReadingPane({
 
   const subject = displaySubject(email.subject) ?? t("list.noSubject");
   const attachments = email.attachments ?? [];
+  /*
+   * Read from the OfflineProvider rather than taken as a prop: this is the only
+   * thing in this component that cares about connectivity, and threading a
+   * boolean through the reader's already-long prop list to reach one paragraph
+   * would cost more than it explains.
+   */
+  const isOffline = !isOnline;
   const threadSize = thread?.emailIds.length ?? 1;
   const isoDate = machineDate(email.receivedAt);
   const unsubscribe = unsubscribeInfo(email);
@@ -513,13 +555,25 @@ export function ReadingPane({
         would attribute them to the wrong sender.
       */}
       {!conversationView && attachments.length > 0 && (
-        <AttachmentList
-          attachments={attachments}
-          email={email}
-          client={client}
-          accountId={accountId}
-          blobToken={blobToken}
-        />
+        <>
+          <AttachmentList
+            attachments={attachments}
+            email={email}
+            client={client}
+            accountId={accountId}
+            blobToken={blobToken}
+          />
+          {/*
+            E9 / canon §2.10: attachments are NOT cached, and Gmail declares the
+            same limitation ("attachments not previewable" offline). Declaring
+            it here — on the list of files that will not open — rather than in a
+            settings page nobody reads is the difference between a documented
+            limit and a broken button.
+          */}
+          {isOffline && (
+            <p className={styles.offlineNote}>{t("offline.attachments.unavailable")}</p>
+          )}
+        </>
       )}
 
       <div className={styles.bodyRegion}>

@@ -181,8 +181,57 @@ export const en = {
     "Your browser is blocking notifications for this site. Allow them in the address bar to turn this on.",
   "settings.notifications.pending": "Your browser will ask for permission.",
   "settings.notifications.unsupported": "This browser cannot show notifications.",
-  "settings.notifications.pendingEpic":
-    "Notifications will fire on new mail once the offline and notifications work lands.",
+  /*
+   * E9b: the sender name a notification falls back to when the message carries
+   * no From at all. Rare, and it must never render as an empty title bar.
+   */
+  "notification.unknownSender": "Unknown sender",
+  "notification.noSubject": "(no subject)",
+
+  // --- E9b: connection honesty (the pill above the list) ---
+  //
+  // Two states, worded to be actionable rather than alarming. "Offline" says
+  // what the user is seeing (saved mail); "reconnecting" promises what is
+  // happening, which is true — the stream heals itself.
+  "connection.offline": "No connection — showing saved mail",
+  "connection.reconnecting": "Reconnecting…",
+
+  // --- E9b: offline ---
+  "offline.banner.stale":
+    "You are offline. This is the mail saved on this device, and it may not be up to date.",
+  "offline.search.label": (count: number): string =>
+    `${String(count)} result${count === 1 ? "" : "s"} in saved mail. Offline search covers only what is stored on this device.`,
+  "offline.body.unavailable": "This message was not saved for offline reading",
+  "offline.body.unavailableBody":
+    "Only the messages you opened while online are stored on this device. It will be here as soon as you reconnect.",
+  "offline.attachments.unavailable":
+    "Attachments cannot be opened offline — they are not stored on this device.",
+  "offline.empty.title": "No saved mail on this device",
+  "offline.empty.body":
+    "You are offline and nothing has been stored yet. Connect once and the mail you read will be available here.",
+  /*
+   * The named gap, stated on screen rather than left to be discovered — E8's
+   * precedent for a limitation with a known durable home.
+   */
+  "offline.depthPending":
+    "Moov saves the 200 most recent messages per folder and the messages you open. Choosing how much to save is coming with the next preferences release.",
+
+  // --- E9b: the Outbox ---
+  "outbox.name": "Outbox",
+  "outbox.queued": "Waiting to send",
+  "outbox.sending": "Sending…",
+  "outbox.failed": "Could not be sent",
+  "outbox.retry": "Try again",
+  "outbox.discard": "Discard",
+  "outbox.queuedToast":
+    "No connection — the message is in your Outbox and will go out when you reconnect.",
+  "outbox.queueFailed":
+    "The message could not be stored on this device. Copy your text before closing this window.",
+  "outbox.sentToast": (count: number): string =>
+    `${String(count)} message${count === 1 ? "" : "s"} from the Outbox sent`,
+  "outbox.empty": "Nothing is waiting to be sent.",
+  "outbox.explain":
+    "These messages were written offline. They go out on their own as soon as there is a connection.",
 
   "settings.identity.label": "Sending address",
   "settings.identity.description": "The name and address your mail is sent from.",
@@ -796,8 +845,42 @@ export const es: Strings = {
     "Tu navegador está bloqueando las notificaciones de este sitio. Habilitalas desde la barra de direcciones para activarlas.",
   "settings.notifications.pending": "Tu navegador te va a pedir permiso.",
   "settings.notifications.unsupported": "Este navegador no puede mostrar notificaciones.",
-  "settings.notifications.pendingEpic":
-    "Las notificaciones van a sonar con el correo nuevo cuando aterrice el trabajo de offline y notificaciones.",
+  "notification.unknownSender": "Remitente desconocido",
+  "notification.noSubject": "(sin asunto)",
+
+  "connection.offline": "Sin conexión — mostrando datos guardados",
+  "connection.reconnecting": "Reconectando…",
+
+  "offline.banner.stale":
+    "Estás sin conexión. Este es el correo guardado en este dispositivo, y puede no estar actualizado.",
+  "offline.search.label": (count: number): string =>
+    `${String(count)} resultado${count === 1 ? "" : "s"} en el correo guardado. La búsqueda sin conexión solo alcanza lo que está en este dispositivo.`,
+  "offline.body.unavailable": "Este mensaje no está guardado para leer sin conexión",
+  "offline.body.unavailableBody":
+    "Solo se guardan los mensajes que abriste con conexión. Va a estar acá apenas te reconectes.",
+  "offline.attachments.unavailable":
+    "Los adjuntos no se pueden abrir sin conexión — no se guardan en este dispositivo.",
+  "offline.empty.title": "No hay correo guardado en este dispositivo",
+  "offline.empty.body":
+    "Estás sin conexión y todavía no se guardó nada. Conectate una vez y el correo que leas va a quedar disponible acá.",
+  "offline.depthPending":
+    "Moov guarda los 200 mensajes más recientes de cada carpeta y los que abrís. Elegir cuánto guardar llega con la próxima entrega de preferencias.",
+
+  "outbox.name": "Bandeja de salida",
+  "outbox.queued": "Esperando para enviarse",
+  "outbox.sending": "Enviando…",
+  "outbox.failed": "No se pudo enviar",
+  "outbox.retry": "Reintentar",
+  "outbox.discard": "Descartar",
+  "outbox.queuedToast":
+    "Sin conexión — el mensaje quedó en la bandeja de salida y va a salir cuando te reconectes.",
+  "outbox.queueFailed":
+    "No se pudo guardar el mensaje en este dispositivo. Copiá el texto antes de cerrar esta ventana.",
+  "outbox.sentToast": (count: number): string =>
+    `Se ${count === 1 ? "envió" : "enviaron"} ${String(count)} mensaje${count === 1 ? "" : "s"} de la bandeja de salida`,
+  "outbox.empty": "No hay nada esperando para enviarse.",
+  "outbox.explain":
+    "Estos mensajes se escribieron sin conexión. Salen solos apenas haya conexión.",
 
   "settings.identity.label": "Dirección de envío",
   "settings.identity.description": "El nombre y la dirección desde los que sale tu correo.",

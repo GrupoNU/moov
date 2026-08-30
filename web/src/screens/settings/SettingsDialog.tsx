@@ -600,19 +600,21 @@ function InboxSection({ prefs, showRow }: SectionProps): React.JSX.Element {
 /**
  * The notifications row (GC-2).
  *
- * # Why the permission state is shown even though nothing fires yet
+ * # What the toggle now drives
  *
- * Epic E9b delivers the actual notification on an SSE event. Shipping the row
- * without it risks exactly the dead control P4 forbids — so the toggle does
- * something REAL today: turning it on requests the browser permission and the
- * row reports the honest outcome (granted / denied / will-ask / unsupported).
- * A denied browser is stated as such rather than left looking like our bug,
- * which is the failure mode every notification opt-in has.
+ * E9b landed the firing side: `mail/notify.ts` decides which messages are
+ * genuinely new and whether a toast may be shown, and `MailScreen` constructs
+ * the `Notification` on the SSE refresh path. So this row is a live control end
+ * to end — the placeholder that said otherwise is deleted rather than reworded.
  *
- * The preference itself is what E9b consumes. Gmail's third mode ("important
- * mail only") is absent on purpose — it needs the importance classifier, which
- * is AI-phase, and a mode whose classifier does not exist is the dead control
- * in another costume (GC-2).
+ * Turning it on requests the browser permission and the row reports the honest
+ * outcome (granted / denied / will-ask / unsupported). A denied browser is
+ * stated as such rather than left looking like our bug, which is the failure
+ * mode every notification opt-in has.
+ *
+ * Gmail's third mode ("important mail only") is absent on purpose — it needs
+ * the importance classifier, which is AI-phase, and a mode whose classifier
+ * does not exist is the dead control in another costume (GC-2).
  */
 function NotificationsRow({ prefs }: { readonly prefs: PrefsApi }): React.JSX.Element {
   const { t } = useTranslation();
@@ -660,11 +662,6 @@ function NotificationsRow({ prefs }: { readonly prefs: PrefsApi }): React.JSX.El
           }))}
         />
         <span className={styles.signatureNote}>{note}</span>
-        {prefs.prefs.notifications === "new" && (
-          <span className={styles.signatureNote}>
-            {t("settings.notifications.pendingEpic")}
-          </span>
-        )}
       </div>
     </SettingRow>
   );

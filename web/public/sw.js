@@ -21,10 +21,29 @@
  *   - Only Vite's content-hashed `/assets/*` are cache-first, which is safe
  *     precisely because their names change when their content does.
  *
- * There is no offline mode here. That is a later epic, and pretending
- * otherwise — precaching the shell and letting it boot into an app with no
- * data — would produce a broken-looking client rather than an honest
- * "you're offline" page.
+ * # E9b: the shell IS cached now, and why that reverses the note above
+ *
+ * The original version of this file refused to cache `index.html`, on the
+ * grounds that booting the app with no data produces a broken-looking client
+ * rather than an honest offline page. That reasoning was right for E9a and is
+ * wrong now, for one reason: there IS data. `src/offline/` gives the app an
+ * IndexedDB cache of mailboxes, headers and read bodies, so a shell served from
+ * cache boots into real mail rather than into an empty frame.
+ *
+ * So navigation is still NETWORK-FIRST — a working network always wins, and a
+ * deploy still takes effect on the next load — but the fallback ladder now has
+ * three rungs instead of one:
+ *
+ *   1. the network;
+ *   2. the cached `index.html`, which boots the app against IndexedDB;
+ *   3. `offline.html`, if the shell was never cached (a first visit that went
+ *      offline before the worker finished installing).
+ *
+ * The shell is re-cached on every successful navigation, which is what keeps it
+ * in step with the deployed build: the hashed asset URLs inside it change on
+ * each deploy, so a stale shell would reference chunks that 404. Storing the
+ * copy the network just served means the shell and the assets it names are
+ * always the same generation.
  */
 
 /*
@@ -37,12 +56,24 @@
  * rewrite it, and a build step that silently failed would ship the
  * placeholder. A constant a human edits cannot half-work.
  */
-const CACHE_VERSION = "v1";
+// v2 (E9b): the app shell joins the cache, so the version is bumped to retire
+// every v1 cache and start the shell entry clean.
+const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moov-";
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 
 /** The offline page, precached at install so it is there when it is needed. */
 const OFFLINE_URL = "/offline.html";
+
+/**
+ * The app shell's cache key.
+ *
+ * A FIXED key rather than the request URL, because every route in this app —
+ * `/mail/inbox`, `/search`, `/label/work` — is served the same `index.html` by
+ * Caddy. Keying by URL would store one copy per route the user happened to
+ * visit online, and would miss on any route they had not.
+ */
+const SHELL_URL = "/index.html";
 
 /*
  * Paths this worker must never see, let alone cache.
@@ -80,6 +111,19 @@ self.addEventListener("install", (event) => {
       // `reload` bypasses the HTTP cache, so a worker installing right after a
       // deploy cannot precache the PREVIOUS offline page.
       await cache.add(new Request(OFFLINE_URL, { cache: "reload" }));
+      /*
+       * E9b: precache the shell too, so the very first offline visit after
+       * installation boots the app rather than the fallback page. It is a
+       * SEPARATE `catch` because a failure here must not fail the install —
+       * losing the shell costs offline boot, while losing the whole worker
+       * costs offline detection as well.
+       */
+      try {
+        const shell = await fetch(new Request(SHELL_URL, { cache: "reload" }));
+        if (shell.ok) await cache.put(SHELL_URL, shell);
+      } catch {
+        // Offline during install. The next successful navigation stores it.
+      }
       // Take over as soon as this worker is ready rather than waiting for
       // every tab to close. Safe here because the worker holds no state a
       // previous version could disagree with.
@@ -134,22 +178,37 @@ self.addEventListener("fetch", (event) => {
 });
 
 /**
- * Navigations: the network, always, with the offline page as the only
- * fallback.
+ * Navigations: network-first, then the cached shell, then the offline page.
  *
- * Note what is NOT here: a cached copy of `index.html`. Serving a stale shell
- * would boot the app against a JMAP server it may no longer match, which is a
- * far more confusing failure than an honest offline page.
+ * The network still WINS whenever it works, which is what keeps a deploy taking
+ * effect on the next load instead of after an eviction. The difference from
+ * E9a is what happens when it does not: the app shell boots against the
+ * IndexedDB cache (see `src/offline/`) instead of a dead-end page.
+ *
+ * A successful navigation refreshes the stored shell, so the copy on disk
+ * always names the same hashed assets as the running build. A stale shell would
+ * reference chunks that no longer exist, which fails as a blank page — worse
+ * than being offline.
  */
 async function handleNavigation(request) {
+  const cache = await caches.open(CACHE_NAME);
   try {
-    return await fetch(request);
+    const response = await fetch(request);
+    if (response.ok) {
+      // Store a CLONE: the original is consumed by the browser rendering it.
+      cache.put(SHELL_URL, response.clone()).catch(() => {
+        // A full quota must not fail the navigation the user is waiting on.
+      });
+    }
+    return response;
   } catch {
-    const cache = await caches.open(CACHE_NAME);
+    const shell = await cache.match(SHELL_URL);
+    if (shell !== undefined) return shell;
+
     const offline = await cache.match(OFFLINE_URL);
     if (offline !== undefined) return offline;
-    // The offline page itself is missing (a failed install). Say so plainly
-    // rather than letting the browser show its own error page.
+    // Both are missing (a failed install that then went offline). Say so
+    // plainly rather than letting the browser show its own error page.
     return new Response("Offline", {
       status: 503,
       headers: { "Content-Type": "text/plain; charset=utf-8" },

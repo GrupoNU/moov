@@ -1,0 +1,83 @@
+/*
+ * The connection pill.
+ *
+ * Absolutely positioned inside the list column so it OVERLAYS the rows rather
+ * than pushing them down. A bar that reflows the list every time a phone
+ * changes cell would move the virtualizer's viewport under the user's finger,
+ * which is worse than the silence it replaces.
+ */
+
+.region {
+  /* Always present so its content is ANNOUNCED when it changes; the empty
+   * region must not intercept clicks on the rows beneath it. */
+  position: absolute;
+  top: var(--space-2);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  max-width: calc(100% - var(--space-6));
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-full);
+  border: 1px solid;
+  box-shadow: var(--shadow-md);
+  /* The text can be long in Spanish; wrapping beats truncating a warning. */
+  text-align: center;
+  animation: pill-in var(--duration-base) var(--ease-out);
+}
+
+.offline {
+  background: var(--color-warning-tint);
+  border-color: var(--color-warning-border);
+  color: var(--text-default);
+}
+
+.reconnecting {
+  background: var(--color-info-tint);
+  border-color: var(--color-info-border);
+  color: var(--text-default);
+}
+
+/* A small status dot, purely decorative — the text already says everything. */
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.reconnecting .dot {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Motion is decoration here; the colour and the text carry the meaning. */
+@media (prefers-reduced-motion: reduce) {
+  .pill,
+  .reconnecting .dot {
+    animation: none;
+  }
+}

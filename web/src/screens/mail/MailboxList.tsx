@@ -44,6 +44,24 @@ export interface MailboxListProps {
    */
   readonly onEmptyTrash?: ((trash: Mailbox) => void) | undefined;
   readonly isEmptyingTrash?: boolean;
+  /**
+   * E9: the Outbox, as a virtual folder.
+   *
+   * Absent means the queue is empty and the row is not drawn at all — Gmail's
+   * shape (canon §2.10), and the right one: an always-visible Outbox that is
+   * always empty is a control that means nothing almost all of the time.
+   *
+   * It is NOT a `Mailbox`, and the type says so. A queued message has no JMAP
+   * id, no unread count and no rights, so passing a fabricated Mailbox through
+   * the tree would make every consumer's `mailboxes.find(...)` able to return a
+   * folder the server has never heard of.
+   */
+  readonly outbox?: {
+    readonly count: number;
+    readonly hasFailures: boolean;
+    readonly isSelected: boolean;
+    readonly onSelect: () => void;
+  };
 }
 
 /**
@@ -130,6 +148,7 @@ export function MailboxList({
   isLoading = false,
   onEmptyTrash,
   isEmptyingTrash = false,
+  outbox,
 }: MailboxListProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const roleName = useRoleName();
@@ -157,7 +176,79 @@ export function MailboxList({
             : {})}
         />
       ))}
+      {outbox !== undefined && <OutboxRow {...outbox} />}
     </ul>
+  );
+}
+
+/**
+ * The Outbox row (E9).
+ *
+ * Its own component rather than a branch inside `MailboxRow`, because almost
+ * nothing it draws is the same: there is no `Mailbox`, no href a middle-click
+ * could usefully open in a tab (the queue is local to this browser), and the
+ * badge counts messages WAITING rather than messages unread. Squeezing it into
+ * the folder row would mean five `?? undefined` branches inside a component
+ * that is currently easy to read.
+ *
+ * It renders at `aria-level={1}`, as a sibling of the top-level folders, which
+ * is where it belongs: it is a destination, not a child of the inbox.
+ */
+function OutboxRow({
+  count,
+  hasFailures,
+  isSelected,
+  onSelect,
+}: {
+  readonly count: number;
+  readonly hasFailures: boolean;
+  readonly isSelected: boolean;
+  readonly onSelect: () => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+
+  return (
+    <li role="treeitem" aria-level={1} aria-selected={isSelected} className={styles.item}>
+      <button
+        type="button"
+        className={[styles.row, isSelected ? styles.selected : ""].filter(Boolean).join(" ")}
+        onClick={onSelect}
+        style={{ paddingLeft: "var(--space-3)" }}
+        {...(isSelected ? { "aria-current": "page" as const } : {})}
+      >
+        <svg
+          className={styles.icon}
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          {/* An outbound tray: the inbox icon's arrow, reversed. */}
+          <path d="M2.5 11.5h4l1.2 2h4.6l1.2-2h4" />
+          <path d="M4.3 4.2h11.4l1.8 7.3v4a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-4z" />
+          <path d="M10 9.5V3.8m0 0L8 5.9m2-2.1l2 2.1" />
+        </svg>
+        <span className={styles.name}>{t("outbox.name")}</span>
+        {count > 0 && (
+          <span className={styles.badge} aria-hidden="true">
+            {count}
+          </span>
+        )}
+        {/*
+          The accessible name states what the number COUNTS. A bare "2" read
+          aloud after a folder name is indistinguishable from an unread count,
+          and these are messages that have not gone out — a different and more
+          urgent fact. A failure is announced as such rather than as a number.
+        */}
+        <span className="visually-hidden">
+          {hasFailures ? t("outbox.failed") : t("outbox.queued")}
+        </span>
+      </button>
+    </li>
   );
 }
 

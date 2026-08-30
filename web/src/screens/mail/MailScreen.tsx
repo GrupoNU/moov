@@ -19,6 +19,27 @@ import {
 } from "../../keyboard/shortcuts";
 import { usePrefs } from "../../mail/PrefsProvider";
 import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs";
+import { connectionState, shouldRecycleStream } from "../../mail/connection";
+import {
+  EMPTY_ARRIVAL_STATE,
+  mailboxNotifiable,
+  newArrivals,
+  notificationContent,
+  shouldNotify,
+  type ArrivalState,
+} from "../../mail/notify";
+import { useOffline } from "../../offline/OfflineProvider";
+import { bootMode, type BootMode } from "../../offline/boot";
+import { searchOffline } from "../../offline/search";
+import {
+  drainOutbox,
+  newOutboxId,
+  pendingCount,
+  retryItem,
+  showsOutbox,
+  type OutboxItem,
+  type SendAttempt,
+} from "../../offline/outbox";
 import {
   fetchMailboxes,
   fetchMessageDetail,
@@ -54,7 +75,9 @@ import {
   destroyMessages,
   firstFailureMessage,
   hasFailures,
+  sendDraft,
   setIdentitySignature,
+  type DraftSpec,
 } from "../../mail/write";
 import { makeChip } from "../../mail/addresses";
 import { groupByThread, type ThreadGroup } from "../../mail/threading";
@@ -62,7 +85,11 @@ import { KEYWORD_FLAGGED, KEYWORD_SEEN, type Email, type Mailbox, type Thread } 
 import { fetchIdentities, type Identity } from "../../mail/write";
 import { encodeBasicCredentials } from "../../api/jmap";
 import { useRouter } from "../../router/RouterProvider";
-import { withMessage, type Route } from "../../router/routes";
+import {
+  openMessageId as routeMessageId,
+  withMessage,
+  type Route,
+} from "../../router/routes";
 import { parseComposeRequest, urlWithoutCompose } from "../../pwa/mailto";
 import { Composer } from "../compose/Composer";
 import {
@@ -75,6 +102,8 @@ import {
   type QuotingStrings,
 } from "../compose/composerState";
 import { ActionBar } from "./ActionBar";
+import { ConnectionPill } from "./ConnectionPill";
+import { OutboxView } from "./OutboxView";
 import type { ConversationControls } from "./ConversationView";
 import { LabelList } from "./LabelList";
 import { useLabels } from "./useLabels";
@@ -163,11 +192,28 @@ export function MailScreen(): React.JSX.Element {
     };
   }, [prefs.density]);
 
-  const [mailboxes, setMailboxes] = useState<readonly Mailbox[]>([]);
+  /**
+   * The mailbox list as the SERVER last gave it.
+   *
+   * E9 renamed this from `mailboxes` because the name now belongs to the
+   * derived value below: everything downstream must read the list that is
+   * actually on screen, which offline is the cached one. Splitting them here —
+   * rather than at nineteen call sites — is what makes it impossible for one
+   * consumer to read live data while the sidebar next to it draws the cache.
+   */
+  const [liveMailboxes, setMailboxes] = useState<readonly Mailbox[]>([]);
   const [mailboxError, setMailboxError] = useState<string | undefined>(undefined);
   const [isLoadingMailboxes, setLoadingMailboxes] = useState(true);
 
-  const [emails, setEmails] = useState<readonly Email[]>([]);
+  /**
+   * The message window as the SERVER last gave it.
+   *
+   * Renamed alongside `liveMailboxes` for the same reason: `emails` below is
+   * the derived value every consumer reads, so that the list, the selection,
+   * the keyboard and the actions cannot disagree about whether they are looking
+   * at live mail or the cache.
+   */
+  const [liveEmails, setEmails] = useState<readonly Email[]>([]);
   /**
    * E1: the `Thread/get` results that rode the list's own batch.
    *
@@ -218,6 +264,52 @@ export function MailScreen(): React.JSX.Element {
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
+  // --- E9: offline, connection honesty, notifications ----------------------
+
+  const offline = useOffline();
+  /*
+   * The three write-through helpers, destructured.
+   *
+   * Each is a `useCallback` in the provider, so it is stable while the cache
+   * is — but `offline.cacheHeaders` as a dependency is a MEMBER expression, and
+   * the exhaustive-deps rule cannot see through one: it asks for the whole
+   * `offline` object instead, which changes whenever the outbox does. Depending
+   * on that would refetch the mailbox list and the message window every time a
+   * queued message changed state. Destructuring names exactly what these
+   * effects use.
+   */
+  const { cacheMailboxes, cacheHeaders, cacheBody } = offline;
+
+  /**
+   * True once a real request has failed with a network error.
+   *
+   * This is the signal that promotes the app to cached rendering when
+   * `navigator.onLine` lies (a captive portal reports online). It is CLEARED by
+   * any successful fetch, so one blip does not pin the app in offline mode.
+   */
+  const [requestFailed, setRequestFailed] = useState(false);
+
+  /** True between the stream dying and its next confirmed state event. */
+  const [streamDead, setStreamDead] = useState(false);
+  /** When the stream last proved it was alive — the staleness watchdog's input. */
+  const lastStreamEventRef = useRef(0);
+
+  /**
+   * The arrival detector's memory, in a ref rather than state.
+   *
+   * It must not trigger a render: it changes on every refresh, and rendering
+   * because we noticed nothing new would be a render for nothing. It is also
+   * read inside the same effect that writes it, which state would make stale.
+   */
+  const arrivalRef = useRef<ArrivalState>(EMPTY_ARRIVAL_STATE);
+
+  /** Cached mail rendered when the network is gone (mode "cached"). */
+  const [cachedEmails, setCachedEmails] = useState<readonly Email[]>([]);
+  const [cachedMailboxes, setCachedMailboxes] = useState<readonly Mailbox[]>([]);
+  const [cachedDetail, setCachedDetail] = useState<Email | undefined>(undefined);
+  /** True when the reader is showing a message the cache does not have. */
+  const [detailUncached, setDetailUncached] = useState(false);
+
   // --- scoped tokens + real-time push (closes P2 gap 4) ---------------------
 
   /*
@@ -266,6 +358,14 @@ export function MailScreen(): React.JSX.Element {
     const handle = connectPush({
       url: withAccessToken(client.eventSourceUrlFor(), pushToken),
       onStateChange: () => {
+        /*
+         * E9: a state event is the only proof the stream is alive. It clears
+         * the "dead" flag — so the pill goes away on its own, without a
+         * "connected" signal the server does not send — and stamps the
+         * watchdog's clock.
+         */
+        lastStreamEventRef.current = Date.now();
+        setStreamDead(false);
         if (debounce !== undefined) clearTimeout(debounce);
         debounce = setTimeout(() => {
           setRefreshToken((token) => token + 1);
@@ -274,14 +374,91 @@ export function MailScreen(): React.JSX.Element {
       onDead: () => {
         // The browser gave up on the stream — with this server that means
         // the token died (restart or revocation). A fresh mint reconnects.
+        // E9: and the user is told, rather than the inbox silently freezing.
+        setStreamDead(true);
         void tokenManagerRef.current?.refreshNow();
       },
     });
+    /*
+     * E9: the stream is alive from the moment it opens, as far as the watchdog
+     * is concerned. Without this stamp a freshly opened connection looks "never
+     * heard from", and the first `visibilitychange` would recycle a stream that
+     * is perfectly healthy.
+     */
+    lastStreamEventRef.current = Date.now();
+    setStreamDead(false);
     return () => {
       if (debounce !== undefined) clearTimeout(debounce);
       handle.close();
     };
   }, [client, pushToken]);
+
+  /*
+   * E9 / G3: `recycleStaleSSE` on `visibilitychange`.
+   *
+   * The case a timer cannot cover: an iOS home-screen PWA freezes its timers
+   * when backgrounded, so a watchdog implemented as `setInterval` sleeps
+   * exactly when the connection is being torn down. `visibilitychange` is
+   * guaranteed to fire on the way back, which makes it the moment to ask
+   * whether the stream is still worth trusting.
+   *
+   * The DECISION is `shouldRecycleStream` (pure, tested); this effect is the
+   * wiring around it. Recycling means minting a fresh token — which re-runs the
+   * effect above and therefore reopens the stream — and refetching, because
+   * whatever arrived while the tab slept is not in the list.
+   */
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVisibility = (): void => {
+      const recycle = shouldRecycleStream({
+        visibility: document.visibilityState === "visible" ? "visible" : "hidden",
+        streamDead,
+        lastEventAt: lastStreamEventRef.current,
+        now: Date.now(),
+        online: typeof navigator === "undefined" || navigator.onLine,
+      });
+      if (!recycle) return;
+      void tokenManagerRef.current?.refreshNow();
+      setRefreshToken((token) => token + 1);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [streamDead]);
+
+  /*
+   * E9: coming back online forces a refresh.
+   *
+   * The stream's own retry may take a while to notice, and the list on screen
+   * is by definition stale — it was rendered from cache, or frozen at the
+   * moment the network went. Refetching immediately is what makes reconnection
+   * feel instant rather than eventual.
+   */
+  useEffect(() => {
+    if (!offline.isOnline) return;
+    setRequestFailed(false);
+    setRefreshToken((token) => token + 1);
+  }, [offline.isOnline]);
+
+  /*
+   * E9: what the screen actually renders.
+   *
+   * ONE switch, here, rather than a conditional at every consumer. The rule is
+   * simple and worth stating because getting it wrong is invisible: while the
+   * live path works these are exactly the server's values, and the moment it
+   * does not, EVERYTHING downstream — the sidebar, the list, the grouping, the
+   * selection, the keyboard — moves to the cache together. A screen that drew
+   * a cached sidebar next to a live list would be lying about one of them.
+   *
+   * `offlineMailboxes`/`offlineEmails` are the cached copies loaded further
+   * down; the mode that chooses between them is computed there too, so this
+   * pair is deliberately written in terms of the same two raw inputs
+   * (`isOnline`, `requestFailed`) rather than reading a value declared later.
+   */
+  const useCache = !offline.isOnline || requestFailed;
+  const mailboxes = useCache && cachedMailboxes.length > 0 ? cachedMailboxes : liveMailboxes;
+  const emails = useCache && cachedMailboxes.length > 0 ? cachedEmails : liveEmails;
 
   // --- mailboxes -----------------------------------------------------------
 
@@ -295,10 +472,17 @@ export function MailScreen(): React.JSX.Element {
         if (!controller.signal.aborted) {
           setMailboxes(list);
           setMailboxError(undefined);
+          // E9: browsing IS the sync. The sidebar the user just saw is the
+          // sidebar they get offline, with no background job to disagree with.
+          cacheMailboxes(list);
+          setRequestFailed(false);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
           setMailboxError(error instanceof Error ? error.message : String(error));
+          // E9: a failed fetch is what promotes us to cached rendering when
+          // `navigator.onLine` is lying (a captive portal reports online).
+          setRequestFailed(true);
         }
       } finally {
         if (!controller.signal.aborted) setLoadingMailboxes(false);
@@ -312,7 +496,7 @@ export function MailScreen(): React.JSX.Element {
      * write) bumps it, and the sidebar's unread counts are exactly what push
      * exists to keep live.
      */
-  }, [client, accountId, refreshToken]);
+  }, [client, accountId, refreshToken, cacheMailboxes]);
 
   /** The mailbox the route names, once the list has loaded. */
   const activeMailbox = useMemo<Mailbox | undefined>(() => {
@@ -464,8 +648,20 @@ export function MailScreen(): React.JSX.Element {
         setListThreads(page.threads);
         setTruncated(page.truncated);
         setResultTotal(page.total);
+        setRequestFailed(false);
+        /*
+         * E9 write-through: the window the user is looking at becomes the
+         * window they get offline. Only a MAILBOX view caches — a search result
+         * is a computed set, not a folder's contents, and storing it under a
+         * mailbox id would make the cached "inbox" whatever the user last
+         * searched for.
+         */
+        if (filter.kind === "mailbox") {
+          cacheHeaders(filter.mailboxId, page.emails);
+        }
       } catch (error) {
         if (controller.signal.aborted) return;
+        setRequestFailed(true);
         // An unsupportedFilter is a REFUSAL, not a failure: the server is
         // telling us its repertoire cannot answer this shape. Rendering it as
         // an empty list would be a lie, so it gets its own explanation.
@@ -492,7 +688,17 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId, filter, route.kind, t, refreshToken, sort, collapseThreads]);
+  }, [
+    client,
+    accountId,
+    filter,
+    route.kind,
+    t,
+    refreshToken,
+    sort,
+    collapseThreads,
+    cacheHeaders,
+  ]);
 
   // --- P3: identity (the signature and the sending address) ----------------
 
@@ -618,7 +824,9 @@ export function MailScreen(): React.JSX.Element {
 
   // --- the open message ----------------------------------------------------
 
-  const openMessageId = route.messageId;
+  // E9: the Outbox route carries no message — its rows are queue entries, not
+  // server objects. `routeMessageId` answers that uniformly for every route.
+  const openMessageId = routeMessageId(route);
 
   useEffect(() => {
     if (client === undefined || accountId === "" || openMessageId === undefined) {
@@ -639,6 +847,13 @@ export function MailScreen(): React.JSX.Element {
             ...(result.email !== undefined ? { email: result.email } : {}),
             ...(result.thread !== undefined ? { thread: result.thread } : {}),
           });
+          /*
+           * E9: a body is cached because the user OPENED it, never
+           * speculatively. Pre-fetching bodies would multiply every sync by the
+           * average message size for mail nobody may ever read — a cost paid on
+           * a phone's data plan for a guess.
+           */
+          if (result.email !== undefined) cacheBody(result.email);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -651,7 +866,175 @@ export function MailScreen(): React.JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [client, accountId, openMessageId]);
+  }, [client, accountId, openMessageId, cacheBody]);
+
+  // --- E9: rendering from the cache -----------------------------------------
+
+  /**
+   * What the shell is showing right now: live data, the cache, or an honest
+   * empty state.
+   *
+   * `hasCache` is answered by whether the cached mailbox list is non-empty
+   * rather than by asking the store, because that is the value the sidebar
+   * actually renders — a mode that claimed a cache the sidebar could not draw
+   * would be a spinner with extra steps.
+   */
+  const mode: BootMode = bootMode({
+    online: offline.isOnline,
+    requestFailed,
+    hasCache: cachedMailboxes.length > 0,
+  });
+  const isOfflineMode = mode !== "online";
+
+  /*
+   * E9 / GC-2: fire a desktop notification for genuinely new mail.
+   *
+   * Runs on the LIVE window only. Rendering from the cache must never notify:
+   * the cached list is by definition mail that already arrived, and announcing
+   * it on reconnection would toast the user about messages they read yesterday.
+   *
+   * Both decisions are pure and tested (`mail/notify.ts`); what is left here is
+   * the construction and the click handler, which is all that genuinely needs a
+   * browser.
+   */
+  useEffect(() => {
+    if (typeof Notification === "undefined" || typeof document === "undefined") return;
+    // Only the inbox-shaped views notify, and only from live data.
+    if (useCache || route.kind !== "mailbox") return;
+
+    const { arrivals, state } = newArrivals(liveEmails, arrivalRef.current);
+    arrivalRef.current = state;
+    if (arrivals.length === 0) return;
+
+    const allowed = shouldNotify({
+      mode: prefs.notifications,
+      permission: Notification.permission,
+      attention: {
+        hasFocus: document.hasFocus(),
+        isVisible: document.visibilityState === "visible",
+      },
+      mailboxNotifiable: mailboxNotifiable(activeMailbox?.role),
+    });
+    if (!allowed) return;
+
+    for (const email of arrivals) {
+      const content = notificationContent(
+        email,
+        t("notification.unknownSender"),
+        t("notification.noSubject"),
+      );
+      try {
+        const toast = new Notification(content.title, {
+          body: content.body,
+          tag: content.tag,
+          icon: content.icon,
+        });
+        toast.onclick = () => {
+          /*
+           * Focus the window FIRST, then navigate. The other order leaves the
+           * app on the right message in a window still behind the user's
+           * editor, which reads as the click having done nothing.
+           */
+          window.focus();
+          navigate(withMessage(route, email.id));
+          toast.close();
+        };
+      } catch {
+        // Some browsers throw rather than no-op when notifications are
+        // unavailable despite a granted permission (an iOS PWA without the
+        // right entitlement). Losing a toast must never break the refresh.
+      }
+    }
+    /*
+     * `route` and `navigate` are read by the click handler but deliberately NOT
+     * dependencies: including them would re-run the detector whenever the user
+     * opened a message, and the arrival ref would then be advanced by a render
+     * that observed nothing new. `liveEmails` changing is the only event that
+     * means "the window was refetched".
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveEmails, useCache, prefs.notifications, activeMailbox?.role, t]);
+
+  /*
+   * Load the cache whenever the live path is not working.
+   *
+   * Runs on the ROUTE, so navigating between folders offline reads each
+   * folder's cached window — the sidebar is not decoration in this mode, the
+   * folders it lists genuinely open.
+   */
+  useEffect(() => {
+    const cache = offline.cache;
+    if (cache === undefined) return undefined;
+    let cancelled = false;
+
+    void (async () => {
+      const boxes = await cache.mailboxes();
+      if (cancelled) return;
+      setCachedMailboxes(boxes);
+
+      if (offline.isOnline && !requestFailed) return;
+
+      if (route.kind === "search") {
+        /*
+         * Offline search: a plain text match over what is stored, labelled as
+         * such in the UI. Deliberately NOT the operator language of canon §2.5
+         * — see `offline/search.ts` on why imitating the server's search badly
+         * is worse than not imitating it.
+         */
+        const [headers, bodies] = await Promise.all([cache.allHeaders(), cache.allBodies()]);
+        if (cancelled) return;
+        setCachedEmails(searchOffline(route.query, headers, bodies));
+        return;
+      }
+
+      if (route.kind === "mailbox") {
+        // The route may still carry a role alias ("inbox"); resolve it against
+        // the CACHED list, which is the only list that exists in this mode.
+        const resolved = resolveMailbox(boxes, route.mailboxId);
+        const found = await cache.headers(resolved?.id ?? route.mailboxId);
+        if (cancelled) return;
+        setCachedEmails(found);
+        return;
+      }
+
+      /*
+       * A label view offline. The keywords are on the cached headers, so this
+       * is answerable — unlike a server-side filter, which is not.
+       */
+      if (route.kind === "label") {
+        const keyword = encodeLabelKeyword(route.name);
+        const headers = await cache.allHeaders();
+        if (cancelled) return;
+        setCachedEmails(headers.filter((email) => email.keywords?.[keyword] === true));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [offline.cache, offline.isOnline, requestFailed, route, refreshToken]);
+
+  /** The cached body of the open message, and whether there is one at all. */
+  useEffect(() => {
+    const cache = offline.cache;
+    if (cache === undefined || openMessageId === undefined || !isOfflineMode) {
+      setCachedDetail(undefined);
+      setDetailUncached(false);
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      const found = await cache.body(openMessageId);
+      if (cancelled) return;
+      setCachedDetail(found);
+      // The honest per-message state: the list renders happily from cache while
+      // THIS message's body was never stored.
+      setDetailUncached(found === undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [offline.cache, openMessageId, isOfflineMode]);
 
   // --- P3: multi-select ----------------------------------------------------
 
@@ -1372,6 +1755,154 @@ export function MailScreen(): React.JSX.Element {
     [replace],
   );
 
+  // --- E9: the Outbox -------------------------------------------------------
+
+  const goToOutbox = useCallback((): void => {
+    navigate({ kind: "outbox" });
+    setSearchText("");
+  }, [navigate]);
+
+  /**
+   * Sends everything the queue is holding.
+   *
+   * The transport is the ORDINARY send path (`sendDraft`), which is what keeps
+   * the undo window the server's business: a drained message gets its
+   * `EmailSubmission` and its `sendAt` exactly like a message sent online, so
+   * there is no second local delay to race `cancelSubmission`.
+   *
+   * A missing client or identity is a TRANSIENT failure, not a permanent one:
+   * it means this tab is not ready yet, which the next trigger may fix. Marking
+   * such an item permanently failed would strand a perfectly good message.
+   */
+  const drainQueue = useCallback(async (): Promise<void> => {
+    const store = offline.outbox;
+    if (store === undefined || client === undefined || accountId === "") return;
+
+    const items = await store.list();
+    if (items.length === 0) return;
+
+    const result = await drainOutbox(
+      items,
+      async (item: OutboxItem): Promise<SendAttempt> => {
+        if (identity === undefined) {
+          return { kind: "failed", error: t("send.failedTitle"), permanent: false };
+        }
+        try {
+          const sent = await sendDraft(client, accountId, item.spec, {
+            identityId: item.identityId,
+            sentMailboxId: item.sentMailboxId,
+          });
+          if (sent.submission === undefined) {
+            /*
+             * The server accepted the request and refused the message. That is
+             * a judgement about THIS message — a bad address, a policy refusal
+             * — so retrying it would only reproduce the refusal.
+             */
+            return {
+              kind: "failed",
+              error: firstFailureMessage(sent.outcome) ?? t("send.failedTitle"),
+              permanent: true,
+            };
+          }
+          return { kind: "sent" };
+        } catch (error) {
+          // A thrown error is the network, not the message.
+          return {
+            kind: "failed",
+            error: error instanceof Error ? error.message : String(error),
+            permanent: false,
+          };
+        }
+      },
+      async (item) => {
+        await store.put(item);
+      },
+    );
+
+    for (const id of result.sent) await store.remove(id);
+    await offline.reloadOutbox();
+    if (result.sent.length > 0) {
+      setToast(format("outbox.sentToast", result.sent.length));
+      refresh();
+    }
+  }, [
+    offline,
+    client,
+    accountId,
+    identity,
+    t,
+    format,
+    refresh,
+  ]);
+
+  /*
+   * Drain when the connection comes back.
+   *
+   * Both triggers the spec names land here: the `online` event (through
+   * `offline.isOnline`) and SSE recovery (through `streamDead` clearing). The
+   * `sending` state in the queue is what makes a double trigger safe — the
+   * second drain finds nothing drainable.
+   */
+  useEffect(() => {
+    if (!offline.isOnline || streamDead) return;
+    void drainQueue();
+  }, [offline.isOnline, streamDead, drainQueue]);
+
+  const retryOutboxItem = useCallback(
+    (item: OutboxItem): void => {
+      void (async () => {
+        await offline.outbox?.put(retryItem(item));
+        await offline.reloadOutbox();
+        await drainQueue();
+      })();
+    },
+    [offline, drainQueue],
+  );
+
+  const discardOutboxItem = useCallback(
+    (item: OutboxItem): void => {
+      // The one place a queued message is allowed to disappear: the user asked.
+      if (!window.confirm(t("draft.discardConfirm"))) return;
+      void (async () => {
+        await offline.outbox?.remove(item.id);
+        await offline.reloadOutbox();
+      })();
+    },
+    [offline, t],
+  );
+
+  /**
+   * Queues a message the composer could not send because there is no network.
+   *
+   * Returns false when the write did NOT commit, which the composer treats as
+   * a refusal to close: a message that is neither sent nor stored must not
+   * vanish behind a dialog that closed as if it had worked.
+   */
+  const queueForLater = useCallback(
+    async (spec: DraftSpec): Promise<boolean> => {
+      const store = offline.outbox;
+      if (store === undefined || identity === undefined) return false;
+      const stored = await store.put({
+        id: newOutboxId(),
+        accountId,
+        state: "queued",
+        spec,
+        identityId: identity.id,
+        sentMailboxId: roleMailboxId("sent"),
+        queuedAt: Date.now(),
+        attempts: 0,
+        lastError: undefined,
+        subject: spec.subject,
+        recipients: spec.to.map((address) => address.email),
+      });
+      if (!stored) return false;
+      await offline.reloadOutbox();
+      setToast(t("outbox.queuedToast"));
+      return true;
+    },
+    [offline, identity, accountId, roleMailboxId, t],
+  );
+
   // --- P3: opening the composer --------------------------------------------
 
   /** The wording the quoting module needs, resolved from the string table. */
@@ -1908,6 +2439,12 @@ export function MailScreen(): React.JSX.Element {
   const layout = paneLayout(prefs.readingPane, isReading);
   const { listHidden } = layout;
 
+  /** E9: what the pill says, if anything. */
+  const connection = connectionState({ online: offline.isOnline, streamDead });
+  /** E9: the Outbox appears only when it holds something (Gmail's shape). */
+  const outboxVisible = showsOutbox(offline.outboxItems);
+  const inOutbox = route.kind === "outbox";
+
   return (
     <div className={styles.shell}>
       <header className={styles.header}>
@@ -1979,6 +2516,24 @@ export function MailScreen(): React.JSX.Element {
                */
               onEmptyTrash={inTrash ? confirmEmptyTrash : undefined}
               isEmptyingTrash={isEmptyingTrash}
+              /*
+               * E9: the Outbox, as a VIRTUAL folder the list draws only when
+               * it holds something — which is Gmail's own shape (canon §2.10)
+               * and the right one: a permanently visible Outbox that is always
+               * empty is a control that means nothing 99% of the time.
+               */
+              {...(outboxVisible
+                ? {
+                    outbox: {
+                      count: pendingCount(offline.outboxItems),
+                      hasFailures: offline.outboxItems.some(
+                        (item) => item.state === "failed",
+                      ),
+                      isSelected: inOutbox,
+                      onSelect: goToOutbox,
+                    },
+                  }
+                : {})}
             />
           )}
 
@@ -2036,6 +2591,47 @@ export function MailScreen(): React.JSX.Element {
         */}
         {!listHidden && (
         <main className={styles.listColumn} id="main">
+          {/*
+            E9: the connection pill floats over the column (absolutely
+            positioned) so it never reflows the virtualized list beneath it.
+          */}
+          <ConnectionPill state={connection} />
+
+          {/*
+            E9: the Outbox is a view, not a filtered list — its rows are queue
+            entries with no server identity, so none of the list's machinery
+            (selection, keyboard, actions) applies to them. Rendering it here
+            rather than as a route of its own keeps the shell, the sidebar and
+            the reader exactly where they were.
+          */}
+          {inOutbox ? (
+            <OutboxView
+              items={offline.outboxItems}
+              onRetry={retryOutboxItem}
+              onDiscard={discardOutboxItem}
+            />
+          ) : (
+          <>
+          {/*
+            E9: the staleness banner. It states WHY the list may be out of date,
+            which the pill alone does not — the pill says "offline", this says
+            "so what you are looking at is saved mail".
+          */}
+          {isOfflineMode && mode === "cached" && (
+            <div className={styles.noticeWarn} role="status">
+              <span>{t("offline.banner.stale")}</span>
+            </div>
+          )}
+          {/*
+            E9: offline search results are labelled as covering only the cache.
+            Silence here would let a user conclude their mail does not contain
+            something it does contain.
+          */}
+          {isOfflineMode && route.kind === "search" && (
+            <div className={styles.noticeInfo} role="status">
+              {format("offline.search.label", groups.length)}
+            </div>
+          )}
           <ActionBar
             selectedCount={selection.selected.size}
             totalCount={groups.length}
@@ -2145,9 +2741,17 @@ export function MailScreen(): React.JSX.Element {
                 labelName={route.kind === "label" ? route.name : undefined}
                 query={route.kind === "search" ? route.query : ""}
                 hasRefusal={refusal !== undefined}
+                /*
+                 * E9: offline with nothing stored is its OWN empty state. "No
+                 * messages" would be a claim about the mailbox; the truth is a
+                 * claim about this device.
+                 */
+                offlineEmpty={mode === "empty"}
               />
             }
           />
+          </>
+          )}
         </main>
         )}
 
@@ -2158,10 +2762,25 @@ export function MailScreen(): React.JSX.Element {
             id={listHidden ? "main" : undefined}
           >
             <ReadingPane
-              email={detail.email}
+              /*
+               * E9: offline, the reader falls back to the cached body — which
+               * exists only for messages the user actually opened while online.
+               */
+              email={isOfflineMode ? (cachedDetail ?? detail.email) : detail.email}
               thread={detail.thread}
-              isLoading={isLoadingDetail}
+              /*
+               * Never a spinner offline: there is no request in flight to wait
+               * for, and a spinner that can never resolve is the worst of the
+               * three possible states.
+               */
+              isLoading={isOfflineMode ? false : isLoadingDetail}
               error={detailError}
+              /*
+               * The honest per-message state. The list may be rendering happily
+               * from cache while THIS message's body was never stored, and that
+               * deserves its own explanation rather than an empty pane.
+               */
+              offlineUnavailable={isOfflineMode && detailUncached}
               onClose={closeMessage}
               client={client}
               accountId={accountId}
@@ -2273,6 +2892,16 @@ export function MailScreen(): React.JSX.Element {
           }}
           onNotify={setToast}
           onChanged={refresh}
+          /*
+           * E9: where a send goes when there is no network.
+           *
+           * Passed only when the queue actually exists — a browser without
+           * usable storage gets `undefined`, and the composer then reports the
+           * send failure honestly rather than promising an Outbox that cannot
+           * hold anything.
+           */
+          {...(offline.outbox !== undefined ? { onQueueOffline: queueForLater } : {})}
+          isOnline={offline.isOnline}
         />
       )}
 
@@ -2383,12 +3012,15 @@ function EmptyState({
   query,
   hasRefusal,
   labelName,
+  offlineEmpty = false,
 }: {
   readonly isSearch: boolean;
   readonly query: string;
   readonly hasRefusal: boolean;
   /** E8: the label being viewed, when the route is a label view. */
   readonly labelName?: string | undefined;
+  /** E9: offline with nothing cached — a fact about the device, not the mailbox. */
+  readonly offlineEmpty?: boolean;
 }): React.JSX.Element | null {
   const { t, format } = useTranslation();
   const branding = useBranding();
@@ -2396,6 +3028,21 @@ function EmptyState({
   // A refusal has its own banner; a second "nothing found" beneath it would
   // contradict it.
   if (hasRefusal) return null;
+
+  /*
+   * E9: offline with an empty cache takes priority over every other wording.
+   * Saying "this folder has no messages" here would be a lie about the server,
+   * when the truth is that this device has not stored anything yet.
+   */
+  if (offlineEmpty) {
+    return (
+      <div className={styles.empty}>
+        <BrandMark branding={branding} size="lg" iconOnly />
+        <p className={styles.emptyTitle}>{t("offline.empty.title")}</p>
+        <p className={styles.emptyBody}>{t("offline.empty.body")}</p>
+      </div>
+    );
+  }
 
   /*
    * E8: a label view's empty state names the LABEL. "This folder has no

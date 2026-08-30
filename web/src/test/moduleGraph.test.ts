@@ -77,6 +77,13 @@ const NOT_APP_CODE = [
   // The adversarial HTML corpus: a fixture, imported by sanitize.test.ts. It
   // is data for a test, not a feature that lost its caller.
   "mail/html/corpus.ts",
+  /*
+   * E9b's in-memory IndexedDB. jsdom ships none, and the epic may add no npm
+   * dependency, so the offline cache's tests need a shim — which is a test
+   * FIXTURE by construction: shipping it to a browser that has the real API
+   * would be a bug. Same category as the corpus above.
+   */
+  "test/fakeIndexedDB.ts",
 ];
 
 /** Extensions a bare specifier may resolve to, in the order Vite tries them. */

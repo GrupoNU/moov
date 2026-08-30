@@ -65,6 +65,18 @@ export interface ComposerProps {
   readonly onNotify: (message: string) => void;
   /** Called after a send or discard so the list can refresh. */
   readonly onChanged: () => void;
+  /**
+   * E9: queues this message for later instead of sending it now.
+   *
+   * Present only when the browser has durable storage for the Outbox. Resolves
+   * FALSE when the queue write did not commit, which is treated as a refusal to
+   * close — see {@link Composer}'s send path. Absent means there is no Outbox,
+   * and an offline send fails honestly rather than promising a queue that
+   * cannot hold anything.
+   */
+  readonly onQueueOffline?: (spec: DraftSpec) => Promise<boolean>;
+  /** E9: `navigator.onLine`, so Send can queue rather than fail. */
+  readonly isOnline?: boolean;
 }
 
 export function Composer({
@@ -80,6 +92,8 @@ export function Composer({
   onClose,
   onNotify,
   onChanged,
+  onQueueOffline,
+  isOnline = true,
 }: ComposerProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -399,6 +413,35 @@ export function Composer({
     // about to send as a draft.
     scheduler.cancel();
 
+    /*
+     * E9: with no network, Send means "put it in the Outbox".
+     *
+     * Checked BEFORE the request rather than as a catch on its failure, and
+     * that is deliberate: a `sendDraft` that fails mid-flight may or may not
+     * have reached the server, and queueing a message that might already be
+     * sent is how a recipient gets it twice. `navigator.onLine === false` is
+     * the one signal that means the request provably never left.
+     */
+    if (!isOnline && onQueueOffline !== undefined) {
+      try {
+        const queued = await onQueueOffline(current);
+        if (!queued) {
+          // The write did not commit. Do NOT close: the text on screen is the
+          // only copy left, and the message says so.
+          setSendError(t("outbox.queueFailed"));
+          return;
+        }
+        onChanged();
+        onClose();
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : String(error));
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+      }
+      return;
+    }
+
     try {
       const result = await sendDraft(client, accountId, current, {
         identityId: identity.id,
@@ -432,7 +475,19 @@ export function Composer({
       sendingRef.current = false;
       setSending(false);
     }
-  }, [client, accountId, identity, sentMailboxId, scheduler, t, onNotify, onChanged, onClose]);
+  }, [
+    client,
+    accountId,
+    identity,
+    sentMailboxId,
+    scheduler,
+    t,
+    onNotify,
+    onChanged,
+    onClose,
+    isOnline,
+    onQueueOffline,
+  ]);
 
   /** The countdown. One interval, cleared on every exit path. */
   useEffect(() => {

@@ -606,3 +606,17 @@ a.attachmentName:focus-visible {
   display: flex;
   margin-top: var(--space-3);
 }
+
+/*
+ * E9: the offline attachment note.
+ *
+ * Sits directly under the attachment list it qualifies, muted rather than
+ * warning-coloured — this is a documented limitation of offline mode (canon
+ * §2.10, which Gmail shares), not a fault the user needs to act on.
+ */
+.offlineNote {
+  margin: 0;
+  padding: 0 var(--space-5) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}

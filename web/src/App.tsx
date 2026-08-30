@@ -6,6 +6,7 @@ import { loadSession } from "./auth/session";
 import { BrandingProvider } from "./branding/BrandingProvider";
 import { I18nProvider, useTranslation } from "./i18n/I18nProvider";
 import { PrefsProvider, usePrefs } from "./mail/PrefsProvider";
+import { OfflineProvider } from "./offline/OfflineProvider";
 import { RouterProvider } from "./router/RouterProvider";
 import { LoginScreen } from "./screens/login/LoginScreen";
 import { MailScreen } from "./screens/mail/MailScreen";
@@ -99,10 +100,20 @@ function SignedIn({ children }: { readonly children: React.ReactNode }): React.J
     return stored === undefined ? undefined : new JmapClient(stored);
   }, [state.status]);
 
+  /*
+   * E9: the offline layer wraps the preferences rather than the other way
+   * round, and the order is deliberate. The cache is keyed by ACCOUNT and
+   * nothing else — it must not be torn down and rebuilt when a preference
+   * changes, which is what nesting it inside `PrefsProvider` would risk the
+   * moment someone adds a prefs-derived key to it. Outside, its lifetime is
+   * exactly the account's.
+   */
   return (
-    <PrefsProvider client={client} session={session} accountId={accountId}>
-      <LocalizedFromPrefs>{children}</LocalizedFromPrefs>
-    </PrefsProvider>
+    <OfflineProvider accountId={accountId}>
+      <PrefsProvider client={client} session={session} accountId={accountId}>
+        <LocalizedFromPrefs>{children}</LocalizedFromPrefs>
+      </PrefsProvider>
+    </OfflineProvider>
   );
 }
 
