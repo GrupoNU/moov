@@ -75,6 +75,27 @@ func (s submissionMetrics) SubmissionCanceled() {
 	s.m.IncSubmission(metrics.SubmissionCanceled)
 }
 
+// triageMetrics adapts the metric set to the two E4 observer seams, in the
+// same shape and for the same reason: neither internal/sync nor the store
+// imports internal/metrics, so this is where the vocabularies meet.
+type triageMetrics struct{ m *metrics.Metrics }
+
+// SnoozeWoken implements sync.SnoozeObserver.
+func (t triageMetrics) SnoozeWoken() {
+	if t.m == nil {
+		return
+	}
+	t.m.IncSnoozeWoken()
+}
+
+// MuteApplied implements sync.MuteObserver.
+func (t triageMetrics) MuteApplied() {
+	if t.m == nil {
+		return
+	}
+	t.m.IncMuteApplied()
+}
+
 // outboxComponent owns the running executor's lifecycle.
 type outboxComponent struct {
 	cancel context.CancelFunc
@@ -100,10 +121,22 @@ func startOutbox(
 	observer submit.Observer,
 	logger *slog.Logger,
 ) (*outboxComponent, error) {
+	// The write executor that files the \Sent copy also retires a scheduled
+	// send's draft. The assertion is structural rather than a second parameter:
+	// *sync.WriteExecutor satisfies both interfaces, and a deployment that
+	// somehow passed a SentMailbox that is not one keeps the pre-E4 behavior
+	// (a leftover draft) instead of failing to start.
+	drafts, _ := sent.(submit.DraftRetirer)
+
 	outbox, err := submit.NewOutbox(st, transport, sent, raws, submit.Options{
 		Logger:   logger,
 		Notifier: notifier,
 		Observer: observer,
+		// The scheduled-send draft retirer (L3 epic E4). It is the SAME write
+		// executor that files the \Sent copy — `sent` above is that object —
+		// so the two post-send IMAP operations share one connection instead of
+		// opening a second one per scheduled message.
+		Drafts: drafts,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building the outbox: %w", err)

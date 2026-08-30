@@ -75,6 +75,18 @@ func (a *SubmissionAdapter) SubmissionsChangedSince(ctx context.Context, account
 
 // Enqueue implements SubmissionStore: the row lands queued with not_before =
 // now + the undo window (W-A3 — the window IS the row, no timer exists).
+//
+// A SCHEDULED submission (L3 epic E4) uses the requested instant as
+// not_before instead, which is the whole implementation of schedule send: the
+// outbox executor's claim query already takes only rows whose not_before has
+// passed, so a message scheduled for Tuesday is simply a row the executor does
+// not see until Tuesday. No second queue, no timer, no new state.
+//
+// The undo window is NOT added on top of a schedule. A scheduled send is
+// cancelable for its whole life — the cancel CAS requires state='queued' and
+// no acceptance, which holds until the executor claims it at the scheduled
+// hour — so the grace the window exists to provide is already there, several
+// orders of magnitude over.
 func (a *SubmissionAdapter) Enqueue(ctx context.Context, accountID int64, spec SubmissionSpec) (SubmissionRow, error) {
 	payload, err := json.Marshal(submit.IntentEnvelope{
 		IdentityID: spec.IdentityID,
@@ -85,6 +97,9 @@ func (a *SubmissionAdapter) Enqueue(ctx context.Context, accountID int64, spec S
 		return SubmissionRow{}, fmt.Errorf("encoding the submission payload: %w", err)
 	}
 	notBefore := time.Now().Add(spec.UndoWindow)
+	if !spec.SendAt.IsZero() {
+		notBefore = spec.SendAt
+	}
 	in, err := a.store.EnqueueSendIntent(ctx, accountID, spec.EmailID, spec.MessageRFCID, payload, notBefore)
 	if err != nil {
 		return SubmissionRow{}, err

@@ -69,6 +69,22 @@ type RawSource interface {
 	RawMessage(ctx context.Context, accountID, messageID int64) (io.ReadCloser, error)
 }
 
+// DraftRetirer removes the draft a SCHEDULED submission held until its send
+// moment (L3 epic E4, canon §2.3). The sync engine's write executor implements
+// it; nil means the executor behaves exactly as it did before scheduled sends
+// existed, which is what keeps every pre-E4 construction site valid.
+//
+// It is a separate seam from SentMailbox rather than another method on it,
+// because the two answer different questions and a deployment can genuinely
+// want one without the other: SentMailbox is required for every send,
+// DraftRetirer only for scheduled ones.
+type DraftRetirer interface {
+	// RetireDraft destroys the draft. It is called ONCE, after the send and
+	// after the Sent copy, and its failure is never fatal — see
+	// retireScheduledDraft.
+	RetireDraft(ctx context.Context, accountID, messageID int64) error
+}
+
 // Notifier receives account-changed notifications. *sync.Broker satisfies it,
 // nil-safety included on the caller's side (notify()).
 type Notifier interface {
@@ -139,6 +155,12 @@ type Options struct {
 
 	// Observer, when set, is told once per terminal outcome (W4b metrics).
 	Observer Observer
+
+	// Drafts, when set, retires the draft a SCHEDULED submission held until
+	// its send moment (L3 epic E4). nil leaves the pre-E4 behavior, in which
+	// a scheduled message's draft would remain in Drafts after the send —
+	// see retireScheduledDraft.
+	Drafts DraftRetirer
 }
 
 func (o Options) withDefaults() Options {
@@ -173,6 +195,7 @@ type Outbox struct {
 	transport Transport
 	sent      SentMailbox
 	raws      RawSource
+	drafts    DraftRetirer
 	opts      Options
 	log       *slog.Logger
 
@@ -200,6 +223,7 @@ func NewOutbox(queue Queue, transport Transport, sent SentMailbox, raws RawSourc
 		transport:        transport,
 		sent:             sent,
 		raws:             raws,
+		drafts:           opts.Drafts,
 		opts:             opts,
 		log:              opts.Logger.With("component", "outbox"),
 		executing:        map[int64]bool{},
@@ -433,6 +457,26 @@ func (o *Outbox) postSend(ctx context.Context, in *store.SendIntent, log *slog.L
 		in.AppendedAt = &now
 	}
 
+	// The scheduled-send draft (L3 epic E4, canon §2.3).
+	//
+	// An ordinary send's draft is filed into Sent by the §7.5 implicit
+	// Email/set at submission time. A SCHEDULED send's is NOT — the JMAP layer
+	// suppresses that so the message stays a draft the user can still edit and
+	// still cancel back to (holdsItsDraft, internal/jmap/mail/submission.go).
+	//
+	// Which means at THIS moment, and only for a scheduled send, the draft is
+	// still sitting in Drafts while the transmitted copy has just landed in
+	// Sent. Leaving it there would give the user two copies of every scheduled
+	// message: one in Sent that went out, one in Drafts that looks unsent.
+	//
+	// So the draft is retired here, after the send and after the Sent copy, in
+	// that order — the same "never before the 250" discipline every other post
+	// -send step follows. A failure is logged and NOT retried: the mail is
+	// sent, the Sent copy is filed, and a stale draft is a cosmetic leftover
+	// the user can delete. Re-queueing the whole intent for it would risk the
+	// one thing this executor exists to prevent.
+	o.retireScheduledDraft(ctx, in, log)
+
 	if err := o.queue.CompleteIntent(ctx, in.ID); err != nil {
 		log.Warn("completing the intent failed; will retry", "error", err)
 		o.requeue(ctx, in, "completing: "+err.Error(), log)
@@ -441,6 +485,49 @@ func (o *Outbox) postSend(ctx context.Context, in *store.SendIntent, log *slog.L
 	log.Info("submission complete", "message_rfc_id", in.MessageRFCID)
 	o.notify(in.AccountID)
 }
+
+// retireScheduledDraft deletes the draft of a submission that held it until
+// the send moment.
+//
+// It is a no-op unless three things hold, and each guard is load-bearing:
+//
+//   - a DraftRetirer is wired. Without one the executor is the pre-E4
+//     executor, and every existing construction site stays valid.
+//   - the submission was SCHEDULED. An ordinary send's draft was already moved
+//     to Sent by the implicit Email/set; destroying "it" would destroy the
+//     sent message.
+//   - the intent still names a draft.
+func (o *Outbox) retireScheduledDraft(ctx context.Context, in *store.SendIntent, log *slog.Logger) {
+	if o.drafts == nil || in.EmailID == 0 || !ScheduledIntent(*in) {
+		return
+	}
+	if err := o.drafts.RetireDraft(ctx, in.AccountID, in.EmailID); err != nil {
+		log.Warn("the scheduled message was sent but its draft could not be retired; "+
+			"it remains in Drafts as a duplicate of the Sent copy",
+			"account_id", in.AccountID, "email_id", in.EmailID, "error", err)
+	}
+}
+
+// ScheduledIntent reports whether a send intent is a FUTURE release rather
+// than an ordinary undo-window send.
+//
+// The test is the same one the JMAP layer applies (scheduledSubmission): a
+// not_before more than the maximum undo window past the row's creation. It is
+// derived from the ROW rather than passed as a flag because the row is what
+// survives a restart — a boolean in the payload would have to be written by
+// the enqueuing code and trusted by the executor, and the two would drift the
+// first time somebody enqueued through another path.
+//
+// maxUndoWindow is duplicated here rather than imported: internal/submit must
+// not depend on internal/jmap (the dependency runs the other way), and the
+// pair is pinned by a test in cmd/moovd — the same arrangement the three
+// submission-result constants already have.
+func ScheduledIntent(in store.SendIntent) bool {
+	return in.NotBefore.After(in.CreatedAt.Add(maxUndoWindow))
+}
+
+// maxUndoWindow mirrors mail.MaxUndoWindow. See ScheduledIntent.
+const maxUndoWindow = 30 * time.Second
 
 // prepare derives the transmitted bytes and the envelope from the intent —
 // the deterministic function message.go documents.

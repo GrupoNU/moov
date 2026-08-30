@@ -123,6 +123,14 @@ type SubmissionSpec struct {
 	MessageRFCID string
 	// UndoWindow delays the release (W-A3).
 	UndoWindow time.Duration
+
+	// SendAt, when non-zero, is a client-requested FUTURE release (RFC 8621
+	// §7.1's sendAt on create, gated by maxDelayedSend). It overrides
+	// UndoWindow: a message scheduled for Tuesday does not also get a ten
+	// second grace on top.
+	//
+	// L3 epic E4, canon §2.3: Gmail's schedule send.
+	SendAt time.Time
 }
 
 // SubmissionStore is the queue as the JMAP layer sees it. The store-backed
@@ -237,6 +245,10 @@ func RegisterSubmissionMethods(registry *jmap.Registry, deps *Deps) {
 	registry.Register("EmailSubmission/get", jmap.CapSubmission, deps.handleSubmissionGet)
 	registry.RegisterMulti("EmailSubmission/set", jmap.CapSubmission, deps.handleSubmissionSet)
 	registry.Register("EmailSubmission/changes", jmap.CapSubmission, deps.handleSubmissionChanges)
+	// EmailSubmission/query (RFC 8621 §7.3), added in L3 epic E4: the smallest
+	// honest surface for a Scheduled view (submission_query.go states why a
+	// Scheduled FOLDER would have been the wrong shape).
+	registry.Register("EmailSubmission/query", jmap.CapSubmission, deps.handleSubmissionQuery)
 	// The §6 methods, mounted by their own registrar so identities can also be
 	// served without the outbox (identity.go).
 	RegisterIdentityMethods(registry, deps)
@@ -432,6 +444,61 @@ const (
 // any human send, and §7.5 names tooManyRecipients for the refusal.
 const maxRecipients = 100
 
+// Schedule send (L3 epic E4, canon §2.3, support.google.com/mail/answer
+// /9214606).
+//
+// # MaxDelayedSend — the capability, flipped from 0 to a real value
+//
+// RFC 8621 §1.3.2 defines maxDelayedSend as "the number in seconds of the
+// maximum delay the server supports in sending (see the EmailSubmission
+// object's sendAt property) [...] 0 if the server does not support delayed
+// send." Through W3 this server advertised 0, and the session's own comment
+// stated why: FUTURERELEASE (RFC 4865) is a SUBMISSION-SERVER capability, and
+// Postfix does not offer it, so the server refused to claim a delay it could
+// not hand to the MTA.
+//
+// That reasoning was right about the MTA and wrong about the question. §1.3.2
+// asks what the JMAP SERVER supports, not what its onward relay supports, and
+// this server holds the message itself: the outbox is a transactional queue
+// whose `not_before` column is exactly a scheduled release, executed by our
+// own daemon (internal/submit). The delay never involves Postfix at all —
+// Postfix sees the message when the hour arrives, as an ordinary submission.
+//
+// So the truthful value is not 0; it is however long this server is willing to
+// hold a message. Advertising 0 while implementing the delay would be the same
+// untruthfulness in the other direction, which the J1 rule forbids equally.
+//
+// # 30 days
+//
+// Gmail publishes no maximum horizon (canon §2.3 cites the 100-scheduled cap
+// and the cancel-to-draft behavior; no ceiling appears on the page). 30 days is
+// Moov's number and it is chosen on operational grounds rather than product
+// ones: a queued submission pins the draft it references and holds an SMTP
+// envelope validated at create time, and a year-long hold would mean sending
+// mail from an envelope whose recipients, identity and credentials were checked
+// a year earlier. A month is long enough for every "send this Monday morning"
+// use and short enough that the frozen envelope is still recognizably current.
+const MaxDelayedSend = 30 * 24 * time.Hour
+
+// maxScheduledPerAccount is the canon's own cap, verbatim: Gmail allows "max
+// 100 scheduled" (canon §2.3, /9214606).
+//
+// It is adopted rather than invented because the number is a published product
+// constant of the reference implementation, and the plan's P1 says to adopt
+// Gmail's mechanics where Gmail has them. §7.5 has no dedicated SetError for
+// "too many scheduled", so the refusal uses `overQuota` — RFC 8620 §5.3's own
+// type for "The create would exceed a server-defined limit on the number or
+// total size of objects of this type."
+const maxScheduledPerAccount = 100
+
+// setErrOverQuota is RFC 8620 §5.3's overQuota SetError type.
+const setErrOverQuota = "overQuota"
+
+// MaxScheduledPerAccount is the scheduled-send cap, exported for the session
+// object that advertises it. Declared == applied: the value the session
+// publishes is the constant the create path enforces, not a second copy.
+func MaxScheduledPerAccount() int { return maxScheduledPerAccount }
+
 // submissionSetExtra is EmailSubmission/set's two §7.5 extra arguments.
 type submissionSetExtra struct {
 	OnSuccessUpdateEmail  map[string]json.RawMessage `json:"onSuccessUpdateEmail"`
@@ -470,6 +537,10 @@ func (d *Deps) handleSubmissionSet(ctx context.Context, args json.RawMessage) ([
 	// reference, prefixed with #").
 	emailOf := map[string]int64{}
 
+	// scheduled marks the references whose submission is a FUTURE release, so
+	// the §7.5 implicit Email/set can be suppressed for them (holdsItsDraft).
+	scheduled := map[string]bool{}
+
 	// ---- create -----------------------------------------------------------
 	createIDs := make([]string, 0, len(req.Create))
 	for cid := range req.Create {
@@ -501,6 +572,12 @@ func (d *Deps) handleSubmissionSet(ctx context.Context, args json.RawMessage) ([
 		created.Record(cid, wire)
 		emailOf["#"+cid] = row.EmailID
 		emailOf[wire] = row.EmailID
+		if scheduledSubmission(row) {
+			// A SCHEDULED send keeps its draft (L3 epic E4, canon §2.3: "cancel
+			// reverts to draft"). See holdsItsDraft below.
+			scheduled["#"+cid] = true
+			scheduled[wire] = true
+		}
 	}
 
 	// ---- update (undoStatus -> canceled) ----------------------------------
@@ -558,10 +635,63 @@ func (d *Deps) handleSubmissionSet(ctx context.Context, args json.RawMessage) ([
 	resp.NewState = newState
 
 	results := []jmap.NamedResult{{Name: "EmailSubmission/set", Result: resp}}
-	if implicit := d.applyOnSuccess(ctx, req.AccountID, extra, emailOf); implicit != nil {
+	if implicit := d.applyOnSuccess(ctx, req.AccountID, extra, emailOf, scheduled); implicit != nil {
 		results = append(results, *implicit)
 	}
 	return results, nil
+}
+
+// scheduledSubmission reports whether a freshly created submission is a future
+// release rather than an ordinary undo-window send.
+//
+// The test is the row's own sendAt against the maximum undo window, not
+// against "now": a submission released ten seconds from now is an ordinary
+// send with a grace period, and one released in an hour is a schedule. Any
+// threshold inside [MaxUndoWindow, ∞) separates the two, and the top of the
+// undo contract is the one place the boundary is already defined — so the two
+// notions cannot drift apart when the undo window's domain changes.
+func scheduledSubmission(row SubmissionRow) bool {
+	return row.SendAt.After(time.Now().Add(MaxUndoWindow))
+}
+
+// holdsItsDraft is the rule that makes cancel-reverts-to-draft true.
+//
+// # The canon
+//
+// Gmail, on scheduled sends (canon §2.3, support.google.com/mail/answer
+// /9214606): cancelling a scheduled message means "it becomes a draft".
+//
+// # What our flow did, and why it was wrong for a schedule
+//
+// The §7.5 implicit Email/set runs SYNCHRONOUSLY when the submission is
+// created (see the file header), and the canonical client flow uses it to move
+// the message into Sent and drop $draft. For an ordinary send that is exactly
+// right: the undo window is seconds, the message is on its way, and the ten
+// seconds during which a cancel leaves a message sitting in Sent is a
+// documented, sub-minute wrinkle the client repairs.
+//
+// For a SCHEDULED send it is wrong in a way no client repair can fix. The mail
+// would sit in Sent for three days, telling the user it was already sent, and
+// a cancel on day two would have to un-send something that never went — and,
+// worse, the message would not be a DRAFT, so the user could not edit the mail
+// they scheduled. Gmail's own answer is the opposite: a scheduled message stays
+// a draft in Drafts (its Scheduled view is a filter over pending submissions,
+// not a folder the message is moved into), and cancelling simply removes the
+// schedule.
+//
+// So for a scheduled submission the implicit Email/set is SUPPRESSED, server
+// side. Not "the client should not send it" — suppressed here — because §7.5
+// makes the server responsible for performing it, and a client that copies the
+// ordinary flow (which is every client, including the ones that predate this
+// feature) must not be able to file a scheduled message into Sent three days
+// early. Suppression is the only place the rule can be enforced once.
+//
+// The consequence the caller sees: the Email/set response is absent (or covers
+// only the non-scheduled submissions of the same batch), which §7.5 permits —
+// it prescribes the implicit call for the changes requested, and a change that
+// would break the object's own semantics is not performed.
+func holdsItsDraft(ref string, scheduled map[string]bool) bool {
+	return scheduled[ref]
 }
 
 // applyOnSuccess performs §7.5's implicit Email/set for the onSuccess
@@ -573,7 +703,7 @@ func (d *Deps) handleSubmissionSet(ctx context.Context, args json.RawMessage) ([
 // call would carry and running the real handler, so the two are one code path
 // and cannot diverge (the reuse rule 5 of the brief names as "through W1's
 // machinery").
-func (d *Deps) applyOnSuccess(ctx context.Context, accountID string, extra submissionSetExtra, emailOf map[string]int64) *jmap.NamedResult {
+func (d *Deps) applyOnSuccess(ctx context.Context, accountID string, extra submissionSetExtra, emailOf map[string]int64, scheduled map[string]bool) *jmap.NamedResult {
 	update := map[string]json.RawMessage{}
 	for ref, patch := range extra.OnSuccessUpdateEmail {
 		emailID, ok := emailOf[ref]
@@ -582,10 +712,19 @@ func (d *Deps) applyOnSuccess(ctx context.Context, accountID string, extra submi
 			// for a failed or unknown one applies to nothing.
 			continue
 		}
+		if holdsItsDraft(ref, scheduled) {
+			continue
+		}
 		update[EncodeEmailID(emailID)] = patch
 	}
 	var destroy []string
 	for _, ref := range extra.OnSuccessDestroyEmail {
+		if holdsItsDraft(ref, scheduled) {
+			// A scheduled message must remain a draft until it is sent, so
+			// destroying it now would delete mail the user still expects to
+			// go out — and, per the canon, still expects to be able to edit.
+			continue
+		}
 		if emailID, ok := emailOf[ref]; ok && emailID != 0 {
 			destroy = append(destroy, EncodeEmailID(emailID))
 		}
@@ -634,10 +773,23 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 			} `json:"rcptTo"`
 		} `json:"envelope"`
 		UndoStatus *string `json:"undoStatus"`
+		SendAt     *string `json:"sendAt"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return zero, &setError{Type: setErrInvalidProperties,
 			Description: "a create must be an EmailSubmission object (RFC 8621 §7.5)"}
+	}
+
+	// sendAt on create: the client-requested future release (§7.1, gated by
+	// the maxDelayedSend this server now advertises). Validated BEFORE
+	// anything else touches the store, so a bad timestamp costs no work.
+	var sendAt time.Time
+	if obj.SendAt != nil {
+		t, serr := parseSendAt(*obj.SendAt)
+		if serr != nil {
+			return zero, serr
+		}
+		sendAt = t
 	}
 
 	// identityId: required (§7.1), and it must name an identity of this
@@ -710,6 +862,26 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 		EmailID:    emailID,
 		IdentityID: identity.WireID(),
 		UndoWindow: d.undoWindowFor(ctx, caller.AccountID),
+		SendAt:     sendAt,
+	}
+
+	// The scheduled cap (canon §2.3). Counted only for a scheduled create, so
+	// an ordinary send never pays for the query — and counted BEFORE the
+	// envelope work below for the same reason the timestamp was: a refusal
+	// should cost as little as possible.
+	if !sendAt.IsZero() {
+		scheduled, err := d.countScheduled(ctx, caller.AccountID)
+		if err != nil {
+			return zero, &setError{Type: setErrServerFail,
+				Description: "counting the account's scheduled sends failed"}
+		}
+		if scheduled >= maxScheduledPerAccount {
+			return zero, &setError{Type: setErrOverQuota,
+				Description: fmt.Sprintf(
+					"this account already has %d scheduled sends; the limit is %d "+
+						"(the same ceiling Gmail applies). Cancel one to schedule another.",
+					scheduled, maxScheduledPerAccount)}
+		}
 	}
 
 	// The envelope: given, or derived per §7.1.2: "If the envelope property
@@ -806,6 +978,68 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 		return zero, &setError{Type: setErrServerFail, Description: "enqueuing the submission failed"}
 	}
 	return row, nil
+}
+
+// parseSendAt validates a client-requested future release (RFC 8621 §7.1's
+// sendAt on create, canon §2.3).
+//
+// Three answers, each with the RFC's own vocabulary:
+//
+//   - a malformed timestamp is invalidProperties;
+//   - a time in the PAST (or now) is accepted as "send immediately", NOT
+//     refused. §7.1 makes sendAt "the date the submission was/will be
+//     released", and a client that computed a schedule a moment too late means
+//     "go now" — refusing would turn a harmless clock skew into a failed send.
+//     It returns the zero time, which the caller reads as "no schedule", so
+//     the ordinary undo window applies and the user still gets their undo.
+//   - beyond MaxDelayedSend is refused with invalidProperties naming the
+//     advertised limit, which is what makes the capability enforceable rather
+//     than decorative: declared == applied (the J1 rule).
+func parseSendAt(s string) (time.Time, *setError) {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
+	if err != nil {
+		return time.Time{}, &setError{Type: setErrInvalidProperties, Properties: []string{"sendAt"},
+			Description: `sendAt must be a UTCDate such as "2026-09-01T08:00:00Z" (RFC 8620 §1.4)`}
+	}
+	t = t.UTC()
+	now := time.Now().UTC()
+	if !t.After(now) {
+		return time.Time{}, nil
+	}
+	if t.After(now.Add(MaxDelayedSend)) {
+		return time.Time{}, &setError{Type: setErrInvalidProperties, Properties: []string{"sendAt"},
+			Description: fmt.Sprintf("sendAt is further ahead than this server's maxDelayedSend of %d seconds",
+				int(MaxDelayedSend.Seconds()))}
+	}
+	return t, nil
+}
+
+// countScheduled reports how many of the account's submissions are pending
+// with a future release — the population the canon's cap of 100 bounds.
+//
+// It counts through the same ListSubmissions the /get path uses rather than a
+// dedicated store query, and that is a deliberate limit worth naming: the list
+// is bounded by maxObjectsInGet, so on an account holding more submissions than
+// that ceiling the count is of the newest window rather than of everything.
+// Since the cap is 100 and the ceiling is 500, an account can never approach
+// the cap without every scheduled row being inside the window — the count is
+// exact for every state the cap can actually refuse.
+func (d *Deps) countScheduled(ctx context.Context, accountID int64) (int, error) {
+	rows, err := d.Submissions.ListSubmissions(ctx, accountID, d.Limits.MaxObjectsInGet)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	n := 0
+	for _, r := range rows {
+		if r.Destroyed || r.UndoStatus != "pending" {
+			continue
+		}
+		if r.SendAt.After(now) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // invalidRecipients returns the addresses that cannot be sent to: not an

@@ -168,6 +168,27 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 	deps.Prefs = prefs
 
+	// The triage surface (L3 epic E4): snooze and mute under Moov's vendor
+	// triage capability. It needs BOTH the store and the write executor, since
+	// snoozing is a MOVE in Dovecot and mute's key resolution is a store read
+	// (triage_adapter.go states why one object rather than two).
+	triage, err := mail.NewTriageAdapter(st, writer)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, fmt.Errorf("building the triage adapter: %w", err)
+	}
+	deps.Triage = triage
+
+	// Thread/changes (E4) reads the threads table migration 0009 created. It
+	// is the same Adapter that answers every other read; naming it here rather
+	// than in NewDeps keeps the "this deployment tracks thread changes" wiring
+	// fact explicit, which is what handleThreadChanges falls back from when it
+	// is absent.
+	if tc, ok := deps.Changes.(mail.ThreadChangeReader); ok {
+		deps.ThreadChanges = tc
+	}
+
 	// The cancel half of the submission counters (W4b): an undo never reaches
 	// the outbox, so the JMAP layer is the only place it can be counted.
 	deps.SubmissionObserver = submissionMetrics{m}
@@ -191,7 +212,10 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		// Moov's vendor preference capability (E0), advertised because
 		// RegisterPrefsMethods is called below — advertised == registered, the
 		// same J1 rule the submission flag follows.
-		Prefs:   true,
+		Prefs: true,
+		// Moov's vendor triage capability (E4: snooze and mute), advertised
+		// because RegisterTriageMethods is called below — the J1 rule again.
+		Triage:  true,
 		Metrics: m,
 		// Push (W4a): the broker says WHEN, the mail adapter says WHAT. The
 		// State reader is deliberately the SAME object that answers Email/get
@@ -220,6 +244,8 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	mail.RegisterSubmissionMethods(srv.Registry(), deps)
 	// E0's preference methods, under the vendor capability.
 	mail.RegisterPrefsMethods(srv.Registry(), deps)
+	// E4's snooze and mute methods, under the vendor triage capability.
+	mail.RegisterTriageMethods(srv.Registry(), deps)
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),

@@ -86,6 +86,14 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		accountCapabilities[jmap.CapPrefs] = prefsAccountCapability()
 		primaryAccounts[jmap.CapPrefs] = id.AccountID
 	}
+	if s.cfg.Triage {
+		// Moov's vendor triage capability (L3 epic E4): snooze and mute. Same
+		// three-place advertisement as preferences, for the same discoverability
+		// reason.
+		capabilities[jmap.CapTriage] = triageCapability()
+		accountCapabilities[jmap.CapTriage] = triageAccountCapability()
+		primaryAccounts[jmap.CapTriage] = id.AccountID
+	}
 
 	return map[string]any{
 		"capabilities": capabilities,
@@ -117,20 +125,30 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 // submissionAccountCapability is the urn:ietf:params:jmap:submission account
 // capability object (RFC 8621 §1.3.2), truthful per the J1 rule:
 //
-//   - maxDelayedSend: 0. §1.3.2 defines it as "the number in seconds of the
-//     maximum delay the server supports in sending ... 0 if the server does
-//     not support delayed send" — meaning CLIENT-requested future release
-//     (FUTURERELEASE, RFC 4865), which Postfix submission does not offer and
-//     this server does not fake. The W-A3 undo window is a server-side grace
-//     applied to every send, visible through undoStatus "pending" and sendAt;
-//     it is not a client-schedulable delay and is not advertised as one.
+//   - maxDelayedSend: mail.MaxDelayedSend in seconds. §1.3.2 defines it as
+//     "the number in seconds of the maximum delay the server supports in
+//     sending ... 0 if the server does not support delayed send".
+//
+//     Through W3 this was 0, and the reasoning was that FUTURERELEASE (RFC
+//     4865) is a submission-SERVER capability Postfix does not offer. L3 epic
+//     E4 corrected that: the delay is served by this server's own transactional
+//     outbox — a scheduled submission is a row whose not_before is in the
+//     future, and Postfix only ever sees the message at the scheduled hour, as
+//     an ordinary submission. So the honest value is how long this server will
+//     hold a message, and advertising 0 while implementing the delay would be
+//     as untruthful as the reverse. mail.MaxDelayedSend carries the reasoning
+//     for the number itself.
+//
+//     The W-A3 undo window remains a separate, server-side grace applied to
+//     every send; it is still not advertised here, because it is not a
+//     client-schedulable delay.
 //   - submissionExtensions: {}. §1.3.2 scopes it to extensions "the client
 //     may use" by putting parameters in the envelope; this server passes none
 //     through, so the truthful set is empty regardless of what Postfix's EHLO
 //     says to the backend.
 func submissionAccountCapability() map[string]any {
 	return map[string]any{
-		"maxDelayedSend":       0,
+		"maxDelayedSend":       int(mail.MaxDelayedSend.Seconds()),
 		"submissionExtensions": map[string]any{},
 	}
 }
@@ -184,6 +202,40 @@ func prefsAccountCapability() map[string]any {
 		"inboxTypeValues":     mail.InboxTypeChoices(),
 		"notificationsValues": mail.NotificationsChoices(),
 		"themeValues":         mail.ThemeChoices(),
+	}
+}
+
+// triageCapability is the server-wide value of Moov's vendor triage
+// capability (L3 epic E4).
+//
+// Like the preference capability, it carries what a client cannot discover any
+// other way — and here that is a genuinely load-bearing fact rather than a
+// version number: the NAME of the folder snoozed mail lives in.
+//
+// GC-10 makes snoozing a MOVE to a real IMAP folder, and there is no RFC 6154
+// SPECIAL-USE attribute for snoozed mail (internal/sync/snooze.go states why
+// inventing one was refused). So a client cannot resolve the Snoozed folder by
+// role the way it resolves Trash; it has to know the name. Publishing it here
+// means the client reads it from the session instead of hard-coding the same
+// string a second time — and if the name ever changes, or a role appears, the
+// session tells the truth without a client release.
+func triageCapability() map[string]any {
+	return map[string]any{
+		"snoozeMailboxName": mail.SnoozeMailboxName,
+	}
+}
+
+// triageAccountCapability carries the per-account triage limits.
+//
+// maxScheduledSends is the schedule-send cap (canon §2.3's 100) and
+// maxDelayedSendSeconds repeats the submission capability's horizon, because a
+// client building a "schedule for..." picker needs both and reading one of them
+// out of a different capability's object would be a cross-capability
+// dependency §1.8 does not promise.
+func triageAccountCapability() map[string]any {
+	return map[string]any{
+		"maxScheduledSends":     mail.MaxScheduledPerAccount(),
+		"maxDelayedSendSeconds": int(mail.MaxDelayedSend.Seconds()),
 	}
 }
 

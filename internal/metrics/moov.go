@@ -75,6 +75,29 @@ type Metrics struct {
 	// number nobody alerts on per-account.
 	Submissions *Counter
 
+	// --- Triage (L3 epic E4)
+
+	// SnoozesWoken counts snoozed messages returned to their origin folder by
+	// the waker. It is the one number that says the feature is ALIVE: a
+	// snooze that is never woken is indistinguishable, from the outside, from
+	// a message the user filed away — so a flat line here while
+	// moov_snoozes_pending is non-zero is the signature of a broken waker.
+	SnoozesWoken *Counter
+
+	// MutesApplied counts replies the engine archived because their
+	// conversation is muted. Deliberately NOT split by escape hatch: the
+	// hatches are per-message decisions whose detail belongs to the structured
+	// logs (which name the hatch on every let-through), and a label per hatch
+	// would invite alerting on a ratio that is a property of the user's mail
+	// rather than of the system.
+	MutesApplied *Counter
+
+	// ScheduledSends is the number of submissions currently waiting for a
+	// FUTURE release, per account — a gauge rather than a counter because the
+	// question worth asking is "how many are queued right now", which is also
+	// what the canon's cap of 100 bounds.
+	ScheduledSends *Gauge
+
 	// --- Sync engine (E5/E6)
 
 	// SyncLagSeconds is how long ago each account last completed a sync pass.
@@ -139,6 +162,13 @@ func NewWithRegistry(r *Registry) *Metrics {
 
 		Submissions: r.Counter("moov_submissions_total",
 			"EmailSubmission terminal outcomes by result (sent, failed, canceled)."),
+
+		SnoozesWoken: r.Counter("moov_snoozes_woken_total",
+			"Snoozed messages returned to their origin folder by the waker."),
+		MutesApplied: r.Counter("moov_mutes_applied_total",
+			"Replies archived because their conversation is muted."),
+		ScheduledSends: r.Gauge("moov_scheduled_sends",
+			"Submissions currently waiting for a future release, per account."),
 
 		SyncLagSeconds: r.Gauge("moov_sync_lag_seconds",
 			"Seconds since each account's most recent sync checkpoint."),
@@ -234,6 +264,23 @@ const (
 // make the failure rate report retries rather than lost mail.
 func (m *Metrics) IncSubmission(result string) {
 	m.Submissions.Inc(Labels{"result": result})
+}
+
+// IncSnoozeWoken counts one snoozed message returned to its folder (L3 E4).
+func (m *Metrics) IncSnoozeWoken() { m.SnoozesWoken.Inc(nil) }
+
+// IncMuteApplied counts one reply archived by the mute rule (L3 E4).
+func (m *Metrics) IncMuteApplied() { m.MutesApplied.Inc(nil) }
+
+// SetScheduledSends records how many submissions an account has waiting for a
+// future release (L3 E4).
+//
+// A gauge SET at collection time rather than incremented on every schedule,
+// for the same reason SyncLagSeconds is: the number is a property of the queue
+// at this instant, and a counter pair (scheduled/unscheduled) would drift the
+// first time a process restarted mid-window.
+func (m *Metrics) SetScheduledSends(accountID int64, n int) {
+	m.ScheduledSends.Set(Labels{"account_id": strconv.FormatInt(accountID, 10)}, float64(n))
 }
 
 // statusClass buckets an HTTP status into its class ("2xx", "4xx", ...).

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GrupoNU/moov/internal/jmap"
+	"github.com/GrupoNU/moov/internal/jmap/mail"
 )
 
 // The W3 HTTP surface: the real §6.1 upload endpoint, the submission
@@ -229,12 +230,17 @@ func TestSessionAdvertisesSubmissionExactlyWhenMounted(t *testing.T) {
 	if !ok {
 		t.Fatal("account lacks the submission accountCapability")
 	}
-	// §1.3.2 truth: no client-schedulable delayed send (the W-A3 undo window
-	// is a server-side grace, not FUTURERELEASE), no extensions passed
-	// through.
-	if subCap["maxDelayedSend"] != float64(0) {
-		t.Errorf("maxDelayedSend = %v, want 0", subCap["maxDelayedSend"])
+	// §1.3.2 truth, as of L3 epic E4: this server DOES support a client
+	// -schedulable delayed send, because the delay is served by its own
+	// transactional outbox rather than by FUTURERELEASE on the relay. The
+	// advertised number must be the constant the create path enforces —
+	// declared == applied, the J1 rule — so it is compared against
+	// mail.MaxDelayedSend rather than against a literal, which is what makes
+	// changing the horizon a one-place edit instead of a two-place drift.
+	if want := float64(int(mail.MaxDelayedSend.Seconds())); subCap["maxDelayedSend"] != want {
+		t.Errorf("maxDelayedSend = %v, want %v (mail.MaxDelayedSend)", subCap["maxDelayedSend"], want)
 	}
+	// No extensions passed through, unchanged.
 	if ext, ok := subCap["submissionExtensions"].(map[string]any); !ok || len(ext) != 0 {
 		t.Errorf("submissionExtensions = %v, want {}", subCap["submissionExtensions"])
 	}

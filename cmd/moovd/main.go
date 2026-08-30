@@ -131,7 +131,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	broker := syncengine.NewBroker()
 
 	startCtx, cancelStart := context.WithTimeout(ctx, syncStartTimeout)
-	components, err := startSync(startCtx, cfg, logger, broker)
+	components, err := startSync(startCtx, cfg, logger, m, broker)
 	if err != nil {
 		cancelStart()
 		return fmt.Errorf("starting sync: %w", err)

@@ -12,6 +12,7 @@ import (
 	"github.com/GrupoNU/moov/internal/config"
 	"github.com/GrupoNU/moov/internal/crypto"
 	"github.com/GrupoNU/moov/internal/imap"
+	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
 	syncengine "github.com/GrupoNU/moov/internal/sync"
 )
@@ -28,6 +29,16 @@ import (
 type syncComponents struct {
 	store      *store.Store
 	supervisor *syncengine.Supervisor
+
+	// writer is the engine's own write executor (L3 epic E4): the mute
+	// archiver and the snooze waker both apply changes to Dovecot, and neither
+	// is a client request, so neither may go through the JMAP component's
+	// executor. nil when it could not be built, which degrades those two
+	// features loudly and leaves the rest of the engine untouched.
+	writer *syncengine.WriteExecutor
+
+	// waker returns snoozed mail when its time comes. nil without a writer.
+	waker *syncengine.Waker
 }
 
 // startSync builds the sync supervisor, or returns nil when it is not enabled.
@@ -35,7 +46,7 @@ type syncComponents struct {
 // It returns a nil *syncComponents and a nil error for the disabled case, which
 // is deliberate: "not configured" is a normal state for a daemon that has not
 // been provisioned yet, not a failure to report.
-func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, broker *syncengine.Broker) (*syncComponents, error) {
+func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, m *metrics.Metrics, broker *syncengine.Broker) (*syncComponents, error) {
 	if !cfg.Sync.Enabled {
 		logger.Info("sync supervisor disabled", "hint", "MOOV_SYNC_ENABLED=1 enables it")
 		return nil, nil //nolint:nilnil // "disabled" is a valid, non-error outcome
@@ -81,6 +92,32 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, brok
 	dialer := &accountDialer{keyring: keyring, serverName: cfg.Sync.IMAPServerName, logger: logger}
 	connector := syncengine.ConnectorFunc(dialer.connect)
 
+	// The engine's own write executor (L3 epic E4). It is SEPARATE from the
+	// JMAP component's, and that is deliberate rather than an oversight: the
+	// two components already keep separate stores and separate connection
+	// pools, and the sync side needs the executor for two operations no client
+	// asked for — archiving a muted thread's reply, and returning a snoozed
+	// message when its hour comes. Sharing one executor across components
+	// would mean the sync engine's mute archiving competes for the same cached
+	// per-account IMAP connection a user's clicks are using, which is exactly
+	// the contention that made deleting a folder slow (W4b).
+	//
+	// A failure to build it is NOT fatal: mute and snooze wake stop working
+	// (loudly), the rest of the engine syncs mail as before.
+	writer, werr := syncengine.NewWriteExecutor(st, connector, syncengine.WriteOptions{
+		Logger: logger,
+		Broker: broker,
+		Blobs:  blobs,
+	})
+	if werr != nil {
+		logger.Warn("the engine's write executor could not be built; "+
+			"muted threads will not be archived and snoozes will not wake", "error", werr)
+	} else {
+		archiver := syncengine.NewMuteArchiver(st, writer)
+		archiver.Observer = triageMetrics{m}
+		opts.Mutes = archiver
+	}
+
 	supOpts := syncengine.SupervisorOptions{
 		Options:     opts,
 		Connector:   connector,
@@ -112,15 +149,39 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, brok
 		return nil, fmt.Errorf("building sync supervisor: %w", err)
 	}
 
+	comp := &syncComponents{store: st, supervisor: sup, writer: writer}
+
+	// The snooze waker (L3 epic E4). It rides with the sync engine rather than
+	// with the JMAP server because it is engine work: nothing a client asked
+	// for is in flight, and it must keep running on a deployment that serves no
+	// HTTP at all. It shares the engine's executor for the same reason the mute
+	// archiver does.
+	if writer != nil {
+		waker, kerr := syncengine.NewWaker(st, writer, syncengine.WakerOptions{
+			Logger:   logger,
+			Observer: triageMetrics{m},
+		})
+		if kerr != nil {
+			logger.Warn("the snooze waker could not be built; snoozed mail will not return on its own",
+				"error", kerr)
+		} else {
+			comp.waker = waker
+		}
+	}
+
 	logger.Info("sync supervisor configured",
-		"blob_root", cfg.Sync.BlobRoot, "watcher", cfg.Sync.WatcherEnabled)
-	return &syncComponents{store: st, supervisor: sup}, nil
+		"blob_root", cfg.Sync.BlobRoot, "watcher", cfg.Sync.WatcherEnabled,
+		"triage", writer != nil)
+	return comp, nil
 }
 
 // close releases the components' resources.
 func (c *syncComponents) close() {
 	if c == nil {
 		return
+	}
+	if c.writer != nil {
+		c.writer.Close()
 	}
 	c.store.Close()
 }
@@ -206,10 +267,21 @@ func (d *accountDialer) password(account store.Account) (string, error) {
 }
 
 // runSync runs the supervisor until ctx ends, reporting the outcome.
+//
+// The waker runs ALONGSIDE it, in its own goroutine, and its failure is
+// deliberately not the supervisor's: a waker that cannot reach the database
+// must not stop mail from syncing. It shares ctx, so shutdown stops both.
 func runSync(ctx context.Context, c *syncComponents, logger *slog.Logger) error {
 	if c == nil {
 		<-ctx.Done()
 		return ctx.Err()
+	}
+	if c.waker != nil {
+		go func() {
+			if err := c.waker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("snooze waker stopped", "error", err)
+			}
+		}()
 	}
 
 	err := c.supervisor.Run(ctx)

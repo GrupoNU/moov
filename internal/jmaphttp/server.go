@@ -112,6 +112,12 @@ type Config struct {
 	// touching any standards-conforming client (capabilities.go).
 	Prefs bool
 
+	// Triage advertises and accepts Moov's vendor triage capability
+	// (jmap.CapTriage, L3 epic E4: snooze and mute). Same rule again: it must
+	// be set exactly when RegisterTriageMethods was called on this server's
+	// registry.
+	Triage bool
+
 	// Notifier and State power the EventSource endpoint (W4a, RFC 8620 §7.3).
 	//
 	// Both are required for push: Notifier says WHEN an account changed
@@ -219,7 +225,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 
 	// The capability set the engine accepts in "using" is exactly the set the
 	// session advertises — one list, used twice, so they cannot drift.
-	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(cfg.Submission, cfg.Prefs), cfg.Logger)
+	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(cfg.Submission, cfg.Prefs, cfg.Triage), cfg.Logger)
 
 	maxSSE := cfg.MaxSSEPerAccount
 	if maxSSE <= 0 {
@@ -306,14 +312,18 @@ func fillLimitDefaults(l jmap.Limits) jmap.Limits {
 // advertised in the Session object AND accepted in a request's "using" list.
 // The submission capability joins exactly when the deployment mounts the
 // submission methods (Config.Submission), and Moov's vendor preference
-// capability exactly when it mounts those (Config.Prefs).
-func supportedCapabilities(submission, prefs bool) []string {
+// capability exactly when it mounts those (Config.Prefs), and its vendor
+// triage capability exactly when it mounts those (Config.Triage).
+func supportedCapabilities(submission, prefs, triage bool) []string {
 	caps := []string{jmap.CapCore, jmap.CapMail}
 	if submission {
 		caps = append(caps, jmap.CapSubmission)
 	}
 	if prefs {
 		caps = append(caps, jmap.CapPrefs)
+	}
+	if triage {
+		caps = append(caps, jmap.CapTriage)
 	}
 	return caps
 }
