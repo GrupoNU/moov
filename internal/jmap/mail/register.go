@@ -29,6 +29,12 @@ type Deps struct {
 	// Changes feeds Email/changes and Mailbox/changes (J3).
 	Changes ChangesReader
 
+	// Snippets answers SearchSnippet/get (RFC 8621 §5, L3 epic E3). Required
+	// by RegisterQueryMethods: a search surface that cannot say WHY a message
+	// matched is the half of E3 the plan calls exceeding both references, so
+	// it is mounted with the query family rather than optionally.
+	Snippets SnippetReader
+
 	// Writer applies Email/set mutations (W1). It stays nil on a read-only
 	// deployment, in which case RegisterSetMethods must not be called — the
 	// session then keeps advertising the truth the old way.
@@ -168,6 +174,9 @@ func RegisterQueryMethods(registry *jmap.Registry, deps *Deps) {
 	if deps.Search == nil || deps.Changes == nil || deps.State == nil {
 		panic("mail: RegisterQueryMethods requires Search, Changes and State readers")
 	}
+	if deps.Snippets == nil {
+		panic("mail: RegisterQueryMethods requires a Snippets reader for SearchSnippet/get")
+	}
 	// A window deeper than the store's own cap cannot be honored: the store
 	// clamps, and Email/query would then believe an exhausted result set was a
 	// truncated one. Failing at startup beats serving a wrong total.
@@ -197,6 +206,12 @@ func RegisterQueryMethods(registry *jmap.Registry, deps *Deps) {
 	// The full decision — why it is declined rather than implemented, and what
 	// would close it — is on handleThreadChanges.
 	registry.Register("Thread/changes", jmap.CapMail, deps.handleThreadChanges)
+
+	// SearchSnippet/get (RFC 8621 §5), added in L3 epic E3. It belongs to the
+	// query family rather than the get family despite its name: it takes a
+	// FILTER, it is meaningless without a search, and §5 defines it entirely in
+	// terms of "the same filter as passed to Email/query".
+	registry.Register("SearchSnippet/get", jmap.CapMail, deps.handleSearchSnippetGet)
 }
 
 // RegisterSetMethods registers the write-family mail methods (W1: Email/set;

@@ -55,6 +55,13 @@ func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFil
 	if reach <= 0 {
 		return []int64{}, nil
 	}
+	if len(f.or) > 0 {
+		return a.searchUnion(ctx, accountID, f, s, reach, a.SearchEmails)
+	}
+	f, err := a.resolveExclusions(ctx, accountID, f)
+	if err != nil {
+		return nil, err
+	}
 
 	// The relevance path is NOT paged, and that is a product decision rather
 	// than an omission.
@@ -75,6 +82,7 @@ func (a *Adapter) SearchEmails(ctx context.Context, accountID int64, f searchFil
 			Until:      f.before,
 			UnreadOnly: f.unreadOnly,
 			Keyword:    f.keyword,
+			Narrow:     narrowing(f),
 			Limit:      store.MaxSearchLimit,
 		})
 		if err != nil {
@@ -159,20 +167,27 @@ func (a *Adapter) fetchPage(
 			Until:      f.before,
 			UnreadOnly: f.unreadOnly,
 			Keyword:    f.keyword,
+			Narrow:     narrowing(f),
 			After:      cursor,
 			Limit:      limit,
 		})
 
 	case f.accountWide:
 		// RFC 8620 §5.5 `filter: null` — the whole account, newest first (J4).
-		// translateFilter refuses to pair an account-wide filter with
-		// unread/keyword conditions, so the date bounds are the only narrowing
-		// this shape can carry.
+		//
+		// Since E3 the shape carries the same narrowing its two siblings do: the
+		// account-wide method grew Since, UnreadOnly and Narrow so that a
+		// condition could not be answerable on the folder path and silently
+		// dropped here. The keyword predicate is still the exception, and
+		// answerable() still refuses it without a text condition.
 		return a.store.ListAccountMessages(ctx, store.AccountListQuery{
-			AccountID: accountID,
-			Until:     f.before,
-			After:     cursor,
-			Limit:     limit,
+			AccountID:  accountID,
+			Since:      f.since,
+			Until:      f.before,
+			UnreadOnly: f.unreadOnly,
+			Narrow:     narrowing(f),
+			After:      cursor,
+			Limit:      limit,
 		})
 
 	default:
@@ -196,6 +211,7 @@ func (a *Adapter) fetchPage(
 			Since:      f.since,
 			Until:      f.before,
 			UnreadOnly: f.unreadOnly,
+			Narrow:     narrowing(f),
 			After:      cursor,
 			Limit:      limit,
 		})
@@ -240,6 +256,27 @@ func (a *Adapter) SearchThreads(ctx context.Context, accountID int64, f searchFi
 	if s.byRelevance {
 		return nil, errCollapseNeedsDateOrder
 	}
+	if len(f.or) > 0 {
+		// A collapsed OR is a union of collapsed branches. It is NOT the
+		// collapse of a union, and the difference is real: collapsing after the
+		// merge would need each branch's thread ids, which the branch does not
+		// return. Collapsing first means a conversation appearing in two
+		// branches is represented by two different messages, which the
+		// deduplication below cannot see — so a collapsed OR can list one
+		// conversation twice.
+		//
+		// It is served anyway rather than refused, and the reason is that the
+		// duplicate is BOUNDED and VISIBLE (two rows of the same subject, at
+		// most one per branch) while the refusal would remove OR from every
+		// conversation view — which is where a user searches. The exact fix is
+		// a thread-id-returning branch, named here so it is a known gap rather
+		// than a surprise.
+		return a.searchUnion(ctx, accountID, f, s, reach, a.SearchThreads)
+	}
+	f, err := a.resolveExclusions(ctx, accountID, f)
+	if err != nil {
+		return nil, err
+	}
 
 	var (
 		hits   []searchHit
@@ -259,6 +296,7 @@ func (a *Adapter) SearchThreads(ctx context.Context, accountID int64, f searchFi
 			Until:      f.before,
 			UnreadOnly: f.unreadOnly,
 			Keyword:    f.keyword,
+			Narrow:     narrowing(f),
 			After:      cursor,
 			Limit:      want,
 		})

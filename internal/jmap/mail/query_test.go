@@ -178,12 +178,7 @@ func TestQueryUnsupportedFiltersAreRefusedByName(t *testing.T) {
 		mustName  string
 		errorCode jmap.ErrorCode
 	}{{
-		name:      "OR is not a validated shape",
-		filter:    `{"operator":"OR","conditions":[{"text":"a"},{"text":"b"}]}`,
-		mustName:  "OR",
-		errorCode: jmap.CodeUnsupportedFilter,
-	}, {
-		name:      "NOT is not a validated shape",
+		name:      "NOT is the complement of a match set, which no index produces",
 		filter:    `{"operator":"NOT","conditions":[{"text":"a"}]}`,
 		mustName:  "NOT",
 		errorCode: jmap.CodeUnsupportedFilter,
@@ -198,39 +193,56 @@ func TestQueryUnsupportedFiltersAreRefusedByName(t *testing.T) {
 		mustName:  "header",
 		errorCode: jmap.CodeUnsupportedFilter,
 	}, {
-		name:      "hasAttachment is a store gap, not a silent pass",
-		filter:    `{"inMailbox":"m1","hasAttachment":true}`,
-		mustName:  "hasAttachment",
-		errorCode: jmap.CodeUnsupportedFilter,
-	}, {
-		name:      "minSize has no index",
-		filter:    `{"inMailbox":"m1","minSize":1000}`,
-		mustName:  "minSize",
-		errorCode: jmap.CodeUnsupportedFilter,
-	}, {
-		name:      "inMailboxOtherThan needs a negated mailbox predicate",
-		filter:    `{"inMailboxOtherThan":["m1"]}`,
-		mustName:  "inMailboxOtherThan",
-		errorCode: jmap.CodeUnsupportedFilter,
-	}, {
 		name:      "thread keyword conditions need the thread index",
 		filter:    `{"someInThreadHaveKeyword":"$flagged"}`,
 		mustName:  "someInThreadHaveKeyword",
-		errorCode: jmap.CodeUnsupportedFilter,
-	}, {
-		name:      "$flagged is a bitmask flag with no predicate",
-		filter:    `{"text":"x","hasKeyword":"$flagged"}`,
-		mustName:  "$flagged",
 		errorCode: jmap.CodeUnsupportedFilter,
 	}, {
 		name:      "a date-only filter cannot be enumerated",
 		filter:    `{"after":"2026-01-01T00:00:00Z"}`,
 		mustName:  "inMailbox",
 		errorCode: jmap.CodeUnsupportedFilter,
+	}, {
+		// The E3 boundedness rule, at the seam a client will actually hit: an
+		// OR branch that would scan the account alone scans it inside the OR
+		// too, because a disjunction only ever widens.
+		name:      "an OR branch that is not answerable alone is refused by branch",
+		filter:    `{"operator":"OR","conditions":[{"text":"a"},{"hasAttachment":true}]}`,
+		mustName:  "branch 1",
+		errorCode: jmap.CodeUnsupportedFilter,
+	}, {
+		name:      "an OR of too many branches multiplies the work of one request",
+		filter:    `{"operator":"OR","conditions":[{"text":"a"},{"text":"b"},{"text":"c"},{"text":"d"},{"text":"e"}]}`,
+		mustName:  "OR",
+		errorCode: jmap.CodeUnsupportedFilter,
+	}, {
+		name:      "a negated user keyword would scan the whole account",
+		filter:    `{"text":"x","notKeyword":"$MoovL7"}`,
+		mustName:  "notKeyword",
+		errorCode: jmap.CodeUnsupportedFilter,
+	}, {
+		name:      "a filter that requires and excludes the same flag matches nothing",
+		filter:    `{"text":"x","hasKeyword":"$flagged","notKeyword":"$flagged"}`,
+		mustName:  "$flagged",
+		errorCode: jmap.CodeUnsupportedFilter,
 	}}
-	// NOTE: `filter: null` used to belong in this list. J4 implemented it
-	// (store.ListAccountMessages), so it is now ACCEPTED — see
-	// TestQueryNullFilterEnumeratesTheAccount below.
+	// NOTE on what USED to be in this list, and why each left it. A refusal
+	// that outlives its reason is the failure collapseRefusal was written to
+	// avoid, so the departures are recorded rather than deleted:
+	//
+	//   filter: null           — J4 implemented it (store.ListAccountMessages).
+	//                            See TestQueryNullFilterEnumeratesTheAccount.
+	//   OR                     — L3 epic E3 serves it as a union of bounded
+	//                            searches. The boundedness RULE it is served
+	//                            under is two cases up, and the general shape
+	//                            is TestQueryOrIsAUnionOfBoundedBranches.
+	//   hasAttachment, minSize,
+	//   maxSize, cc, bcc,
+	//   inMailboxOtherThan     — E3 gave each a store predicate
+	//                            (store.Narrowing); cc and bcc additionally got
+	//                            an index in migration 0008.
+	//   hasKeyword:"$flagged"  — E3 added the bitmask predicate, which is what
+	//                            makes Gmail's `is:starred` answerable.
 
 	f := newFakeReaders()
 	for _, tc := range cases {

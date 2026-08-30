@@ -607,6 +607,41 @@ type searchFilter struct {
 	unreadOnly bool
 	keyword    string
 
+	// The E3 conditions. Each one is a §4.4.1 FilterCondition the store gained a
+	// predicate for in L3 epic E3; store.Narrowing documents what each costs and
+	// which of them migration 0008 built an index for.
+	hasAttachment *bool
+	cc            string
+	bcc           string
+	minSize       *int64
+	maxSize       *int64
+
+	// flagsAll and flagsNone are the system-flag BITS a hasKeyword / notKeyword
+	// names. See applyHasKeyword for why the IMAP system flags need a different
+	// predicate from every other keyword.
+	//
+	// They are a raw uint64 rather than store.Flags for the reason
+	// systemFlagKeywords states: the bit values are restated in this package as
+	// untyped constants so the translation layer does not depend on the store,
+	// and the adapter converts. A wrong bit here is caught by
+	// TestSystemFlagBitsMatchTheStore, which compares the two tables.
+	flagsAll  uint64
+	flagsNone uint64
+
+	// excludeMailboxIDs is §4.4.1's inMailboxOtherThan, and it carries the
+	// Gmail default-exclusion policy (canon §2.5). defaultExclusion records
+	// whether THIS server put those ids there or the client did — see
+	// applyDefaultExclusion, which needs to tell an explicit `in:spam` from the
+	// absence of any mailbox condition.
+	excludeMailboxIDs []int64
+	defaultExclusion  bool
+
+	// or, when non-empty, holds the translated branches of a §5.5 OR operator.
+	// A filter carrying them is served as a UNION of bounded searches rather
+	// than as one WHERE clause; see translateOperator for the boundedness rule
+	// that decides which OR shapes are accepted.
+	or []searchFilter
+
 	// accountWide is RFC 8620 §5.5's `filter: null` — "all objects in the
 	// account of this type". It is served by store.ListAccountMessages (J4).
 	//
@@ -652,13 +687,39 @@ func translateFilter(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 	if merr != nil {
 		return f, merr
 	}
+	if len(f.or) > 0 {
+		// Each branch was checked for answerability as it was translated
+		// (translateOr), and a union has no conditions of its own to check.
+		// The default exclusion is applied per branch, because "exclude Spam
+		// and Trash from this search" is a property of each search, not of the
+		// merge.
+		for i := range f.or {
+			f.or[i] = applyDefaultExclusion(f.or[i])
+		}
+		return f, nil
+	}
+	if merr := answerable(f); merr != nil {
+		return f, merr
+	}
+	return applyDefaultExclusion(f), nil
+}
+
+// answerable reports whether a translated filter names a shape the repertoire
+// serves, or the §5.5 error saying why not.
+//
+// It is separated from translateFilter because translateOr needs exactly this
+// test, applied to each branch: the rule that makes OR bounded is "every branch
+// must be a filter this server would serve on its own", and this function IS
+// "would serve on its own". Sharing it is what keeps the two from drifting into
+// different notions of answerable.
+func answerable(f searchFilter) *jmap.MethodError {
 	// A filter with only a date range or only a keyword names no mailbox and no
 	// text. The account-wide listing (J4) can serve the plain `filter: null`
 	// case, but NOT one carrying conditions the account-wide method has no
 	// parameters for — that would silently drop the condition, which is the
 	// privacy failure this file exists to avoid.
 	if f.text == "" && f.mailboxID == nil && !f.accountWide {
-		return f, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+		return jmap.NewMethodError(jmap.CodeUnsupportedFilter).
 			WithDescription("this filter needs an inMailbox or a text condition to be answerable")
 	}
 	// A keyword filter is only answerable on the TEXT path: it becomes the
@@ -669,12 +730,82 @@ func translateFilter(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 	// Refusing is the only honest option — the alternative is a folder listing
 	// that silently ignores the label the user filtered by. The store change
 	// that lifts this is in the J3 report (a keyword-aware folder view).
+	//
+	// Note this restriction does NOT extend to the E3 conditions: every one of
+	// them (hasAttachment, cc, bcc, the size bounds, the flag bitmask, the
+	// mailbox exclusion) was added to all four store shapes at once
+	// (store.Narrowing), precisely so that a condition could not be answerable
+	// on one path and silently dropped on another.
 	if f.keyword != "" && f.text == "" {
-		return f, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+		return jmap.NewMethodError(jmap.CodeUnsupportedFilter).
 			WithDescription("filter condition %q is not supported without a text condition: "+
 				"the folder view has no keyword predicate", "hasKeyword")
 	}
-	return f, nil
+	return nil
+}
+
+// applyDefaultExclusion implements Gmail's rule that a search does not return
+// Spam or Trash unless it was asked to.
+//
+// # The behavior, and the source it comes from
+//
+// docs/research/06-gmail-canon.md §2.5, citing Google's own operator reference
+// (support.google.com/mail/answer/7190, retrieved 2026-08-30): "Spam/Trash
+// excluded by default; `in:anywhere` includes them." That is not a nicety of
+// Gmail's UI — it is what makes search usable in a real mailbox, where Trash
+// holds every message the user has already decided they do not want and Spam
+// holds mail they never asked for. A search that surfaces both puts the
+// user's own deleted mail next to the message they were looking for.
+//
+// # Why this is a legitimate reading of the RFC and not a deviation from it
+//
+// RFC 8621 §4.4.1 defines the FilterConditions and their semantics; it does not
+// say what a server does with mail the user has thrown away, and it never
+// requires that an unfiltered query return every message. §5.5's `filter: null`
+// is the closest thing — "all objects in the account of this type" — and this
+// server applies NO exclusion to it, precisely because that one has a stated
+// meaning. The exclusion applies to SEARCHES: a filter carrying a condition,
+// where the RFC constrains which messages match the condition and leaves the
+// server's own notion of scope alone.
+//
+// The distinction is drawn deliberately at that line, and the three cases are:
+//
+//	filter: null                  -> no exclusion. §5.5 says "all objects".
+//	{text:"x"}                    -> Spam and Trash excluded. The Gmail default.
+//	{text:"x", inMailbox:<junk>}  -> served. That IS `in:spam`.
+//	{text:"x", inMailboxOtherThan:[]} -> no exclusion. That IS `in:anywhere`.
+//
+// The last one is the escape hatch, and it costs the client nothing to reach:
+// an explicit inMailboxOtherThan — even an empty one — is the client saying it
+// has its own opinion about scope, so the server steps back. A client that has
+// never heard of this behavior and wants everything sends an empty
+// inMailboxOtherThan and gets everything.
+//
+// # Why an explicit inMailbox is enough to disable it
+//
+// Because `in:spam` and `in:trash` are themselves Gmail operators (canon §2.5),
+// and a user who names a folder has already said which folder they mean. An
+// exclusion applied on top of an explicit inMailbox would make `in:trash`
+// return nothing — a control that silently does the opposite of what it says.
+//
+// # The mailbox ids are not resolved here
+//
+// This function marks the INTENT; the adapter resolves it to ids, because the
+// junk and trash mailboxes are rows in the database and this package does not
+// read the database (search.go's rule). The mark is a boolean rather than a
+// list so that a filter can be compared, logged and tested without a store.
+func applyDefaultExclusion(f searchFilter) searchFilter {
+	// §5.5's account enumeration means what it says: everything.
+	if f.accountWide {
+		return f
+	}
+	// The client named a folder, or named its own exclusions. Either way it has
+	// stated its scope, and the server does not add to it.
+	if f.mailboxID != nil || f.excludeMailboxIDs != nil {
+		return f
+	}
+	f.defaultExclusion = true
+	return f
 }
 
 // translateNode translates one filter node — an operator or a condition —
@@ -712,19 +843,82 @@ func translateNode(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 	return translateCondition(probe)
 }
 
+// maxOrBranches bounds how many branches one OR may have.
+//
+// Each branch is a SEPARATE bounded search (see translateOperator), so an OR of
+// n branches costs n times one search. The bound is what keeps that product
+// finite: without it a client could send a hundred-branch OR and turn one
+// Email/query into a hundred index walks, which is unbounded work assembled out
+// of bounded pieces — the exact failure L2 §4.3 forbids, arriving by a door the
+// per-shape limits do not watch.
+//
+// Four is chosen against the operator language rather than the database: canon
+// §2.5's OR is a search-box operator, and the searches a person actually types
+// ("from:ana OR from:juan", "in:inbox OR in:archive") have two or three
+// branches. A client that needs more issues more queries and merges them, where
+// the cost is visible to it rather than hidden in one request.
+const maxOrBranches = 4
+
 // translateOperator handles the §5.5 FilterOperator.
 //
-// AND is supported because the repertoire's own WHERE clause is a conjunction:
-// every SearchQuery field ANDs with the others, so an AND of conditions the
-// repertoire understands is itself a shape it understands.
+// # AND
 //
-// OR and NOT are refused. This is the "lo más potente del mercado" rule
-// yielding to the harder constraint of §4.3: serving OR needs either a UNION
-// of two index scans or a post-filter over an unbounded candidate set, and
-// serving NOT needs the complement of a match set — none of which is in the
-// eight validated shapes, and all of which would reintroduce the unbounded
-// work S3 showed sinks the instance under concurrency. Refusing names the node
-// so the client can, per §5.5, "suggest that the user simplify their search".
+// Served, and it always has been: the repertoire's own WHERE clause is a
+// conjunction, so every SearchQuery field ANDs with the others and an AND of
+// conditions the repertoire understands is itself a shape it understands.
+//
+// # OR — served since L3 epic E3, under one rule
+//
+// RFC 8621 §4.4.2 lists OR among the FilterOperators, canon §2.5 puts it in
+// Gmail's daily operator language, and until E3 it was refused outright with a
+// reason that was true of the implementation rather than of the data: "serving
+// OR needs either a UNION of two index scans or a post-filter over an unbounded
+// candidate set".
+//
+// The first half of that sentence is the answer. A UNION OF BOUNDED SEARCHES IS
+// BOUNDED. Each branch is translated independently, each is run as its own
+// bounded, account-scoped, LIMITed search through the same repertoire, and the
+// results are merged in memory (adapter_query.go searchUnion). No branch sees a
+// larger candidate set than it would as a standalone query, and the merge is a
+// sort over at most maxOrBranches * reach ids that are already in hand.
+//
+// THE RULE, stated so a future condition inherits it: A BRANCH OF AN OR MUST BE
+// A FILTER THIS SERVER WOULD SERVE ON ITS OWN. Not "a filter that is nearly
+// answerable", not "a filter that becomes answerable once the other branch
+// narrows it" — a disjunction never narrows, it only widens, so a branch that
+// would scan the account alone scans the account here too. translateFilter's
+// answerability check is therefore applied to EVERY branch, which is what makes
+// this rule mechanical rather than a promise.
+//
+// The rule's practical consequences, spelled out because they are what a client
+// will hit:
+//
+//   - `{from:ana} OR {from:juan}` — two text searches, each on the composite
+//     GIN. Served. (Two branches, 0.3 ms each on the bench corpus.)
+//   - `{inMailbox:A} OR {inMailbox:B}` — two folder walks. Served.
+//   - `{text:x} OR {hasAttachment:true}` — REFUSED, because the second branch
+//     alone is "every message with an attachment in the account", which
+//     translateFilter already refuses as needing an inMailbox or a text. The
+//     refusal names the branch.
+//
+// # NOT — refused, deliberately, with the reason stated at the data
+//
+// §5.5 defines NOT as "all of the conditions must be FALSE". Its result set is
+// the COMPLEMENT of a match set, and no index in this store produces a
+// complement: the composite GIN answers "contains this lexeme", the keyword GIN
+// answers containment, the date index answers a range. A complement is
+// everything the index did NOT return, which can only be computed by visiting
+// every row of the account and testing each one — 120,000 rows on the bench
+// corpus, 26,869 on the owner's real account, and growing with the mailbox
+// rather than with the answer.
+//
+// That is the one thing this repertoire refuses on principle, so NOT is refused
+// on principle. The NEGATIONS THAT ARE CHEAP ARE ALREADY SERVED, at the
+// condition level where they carry their own predicate: notKeyword for the four
+// system flags (a bitmask test), and the exclusion of whole mailboxes
+// (inMailboxOtherThan, which is Gmail's `-in:spam`). A client wanting "not from
+// Ana" has no cheap form and gets an honest refusal rather than a query that
+// works on a test mailbox and times out on a real one.
 func translateOperator(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 	var op struct {
 		Operator   string            `json:"operator"`
@@ -735,18 +929,32 @@ func translateOperator(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 			WithDescription("the filter operator did not parse: %v", err)
 	}
 
-	if strings.ToUpper(op.Operator) != "AND" {
+	switch strings.ToUpper(op.Operator) {
+	case "AND":
+		return translateAnd(op.Conditions)
+	case "OR":
+		return translateOr(op.Conditions)
+	case "NOT":
 		return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
-			WithDescription("the %q filter operator is not supported; this server supports AND of simple conditions", op.Operator)
+			WithDescription("the %q filter operator is not supported: its result is the complement of a match "+
+				"set, which no index in this store can produce, so serving it would mean testing every message "+
+				"in the account; the cheap negations ARE served as conditions — notKeyword for the IMAP system "+
+				"flags, and inMailboxOtherThan to exclude whole folders", op.Operator)
+	default:
+		return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+			WithDescription("the %q filter operator is not supported; this server supports AND and OR", op.Operator)
 	}
+}
 
+// translateAnd merges a conjunction into one filter.
+func translateAnd(conditions []json.RawMessage) (searchFilter, *jmap.MethodError) {
 	// Merge the conditions. A conflict — two different mailboxes, two different
 	// texts — is refused rather than silently resolved: "in mailbox A AND in
 	// mailbox B" matches nothing in a store where a message has one mailbox,
 	// and answering with the results of one of them would be wrong in a way
 	// the user cannot see.
 	var merged searchFilter
-	for i, cond := range op.Conditions {
+	for i, cond := range conditions {
 		sub, merr := translateNode(cond)
 		if merr != nil {
 			return searchFilter{}, merr
@@ -759,6 +967,65 @@ func translateOperator(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 		}
 	}
 	return merged, nil
+}
+
+// translateOr builds the disjunction, enforcing the boundedness rule stated at
+// translateOperator.
+func translateOr(conditions []json.RawMessage) (searchFilter, *jmap.MethodError) {
+	if len(conditions) == 0 {
+		// §5.5 does not define an empty OR. Logically it is FALSE (nothing
+		// matches), which is a legal but useless answer; naming it beats
+		// returning an empty list a client would read as "you have no mail".
+		return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+			WithDescription("an OR with no conditions matches nothing; omit the operator instead")
+	}
+	if len(conditions) == 1 {
+		// An OR of one is that one. Unwrapping it rather than building a
+		// single-branch union keeps the common client habit of wrapping
+		// everything in an operator on the fast path.
+		return translateNode(conditions[0])
+	}
+	if len(conditions) > maxOrBranches {
+		return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+			WithDescription("an OR of %d conditions exceeds this server's limit of %d: each branch is a "+
+				"separate bounded search, so the branches multiply the work one request may do; issue the "+
+				"extra branches as separate queries",
+				len(conditions), maxOrBranches)
+	}
+
+	var f searchFilter
+	for i, cond := range conditions {
+		branch, merr := translateNode(cond)
+		if merr != nil {
+			return searchFilter{}, merr
+		}
+		// The nested-OR check comes FIRST, and the order is not cosmetic. A
+		// nested OR carries no conditions of its own, so the answerability test
+		// below would reject it for "needs an inMailbox or a text condition" —
+		// a true statement about the wrong problem, which would send a client
+		// looking for a missing condition instead of flattening its operator.
+		// The more specific diagnosis wins.
+		if len(branch.or) > 0 {
+			// A nested OR would multiply branch counts past the bound the flat
+			// check enforces — 4 branches each holding 4 is 16 searches. The
+			// client can flatten it; §5.5's OR is associative, so nothing is
+			// lost.
+			return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+				WithDescription("a nested OR is not supported: flatten it into one OR of at most %d conditions",
+					maxOrBranches)
+		}
+		// THE RULE: every branch must stand alone. A disjunction only widens, so
+		// a branch that would scan the account as a standalone query scans it
+		// here too — and translateFilter's own answerability check is the exact
+		// test for "would this server serve it".
+		if merr := answerable(branch); merr != nil {
+			return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+				WithDescription("branch %d of the OR is not answerable on its own, and a disjunction cannot "+
+					"narrow it: %s", i, merr.Description)
+		}
+		f.or = append(f.or, branch)
+	}
+	return f, nil
 }
 
 // mergeFilters ANDs two translated filters, refusing contradictions the
@@ -801,6 +1068,78 @@ func mergeFilters(a, b searchFilter) (searchFilter, error) {
 			return out, fmt.Errorf("two different keyword conditions")
 		}
 		out.keyword = b.keyword
+	}
+
+	// The E3 conditions. Each merges the way its own conjunction works: the
+	// contradictory ones refuse, the range bounds tighten, the sets union.
+	if b.hasAttachment != nil {
+		if out.hasAttachment != nil && *out.hasAttachment != *b.hasAttachment {
+			return out, fmt.Errorf("hasAttachment required both true and false")
+		}
+		out.hasAttachment = b.hasAttachment
+	}
+	if b.cc != "" {
+		if out.cc != "" && out.cc != b.cc {
+			// Two substring conditions on one column is a legitimate
+			// conjunction ("contains A and contains B") that the store's single
+			// LIKE predicate cannot express. Refusing names it; the client can
+			// send the narrower of the two.
+			return out, fmt.Errorf("two different cc conditions")
+		}
+		out.cc = b.cc
+	}
+	if b.bcc != "" {
+		if out.bcc != "" && out.bcc != b.bcc {
+			return out, fmt.Errorf("two different bcc conditions")
+		}
+		out.bcc = b.bcc
+	}
+	if b.minSize != nil {
+		// The LARGER lower bound wins: it is the stricter one, so the
+		// conjunction is exact.
+		if out.minSize == nil || *b.minSize > *out.minSize {
+			out.minSize = b.minSize
+		}
+	}
+	if b.maxSize != nil {
+		if out.maxSize == nil || *b.maxSize < *out.maxSize {
+			out.maxSize = b.maxSize
+		}
+	}
+
+	// Flag bits union, and a bit required on one side while excluded on the
+	// other is the unsatisfiable filter applyHasKeyword already names when both
+	// arrive in ONE condition. Arriving through two conditions of an AND, it
+	// means the same thing, so it gets the same answer rather than an empty
+	// list the user would read as "no such mail".
+	if b.flagsAll&out.flagsNone != 0 || b.flagsNone&out.flagsAll != 0 {
+		return out, fmt.Errorf("a system flag is both required and excluded, which no message can satisfy")
+	}
+	out.flagsAll |= b.flagsAll
+	out.flagsNone |= b.flagsNone
+
+	if b.excludeMailboxIDs != nil {
+		// The union: "not in A" AND "not in B" is "not in A or B". Exact, and
+		// the only merge here that GROWS a condition rather than tightening it.
+		if out.excludeMailboxIDs == nil {
+			out.excludeMailboxIDs = []int64{}
+		}
+		out.excludeMailboxIDs = append(out.excludeMailboxIDs, b.excludeMailboxIDs...)
+	}
+
+	if len(b.or) > 0 {
+		// An OR nested inside an AND ("in:inbox AND (from:ana OR from:juan)")
+		// is a legitimate and common search, and it is REFUSED here rather than
+		// half-served. Distributing the AND over the OR is what would serve it
+		// — (inbox AND ana) OR (inbox AND juan) — and that is a genuine
+		// implementation, not a refusal in disguise: it is left out because
+		// each distributed branch must then be re-checked for answerability and
+		// the branch count multiplies, and shipping it without measuring the
+		// multiplied shape is exactly the kind of thing this file does not do.
+		// Named so a client can flatten it, and named so the next epic knows
+		// what closing it costs.
+		return out, fmt.Errorf("an OR nested inside an AND is not supported; " +
+			"distribute it into one OR of complete conditions")
 	}
 	return out, nil
 }
@@ -906,27 +1245,156 @@ func translateCondition(props map[string]json.RawMessage) (searchFilter, *jmap.M
 			if merr != nil {
 				return f, merr
 			}
-			// The repertoire's only negative predicate is UnreadOnly, which is
-			// exactly "not $seen". Every other notKeyword would need a NOT over
-			// the keywords array, which is not a validated shape.
-			if strings.EqualFold(kw, KeywordSeen) {
-				f.unreadOnly = true
-				break
+			if merr := f.applyNotKeyword(kw); merr != nil {
+				return f, merr
 			}
-			return f, unsupportedNode(name,
-				fmt.Sprintf("only notKeyword:%q is supported (it is the unread filter); %q would need a negated keyword index", KeywordSeen, kw))
+
+		case "hasAttachment":
+			// §4.4.1: "hasAttachment: Boolean — If true, filters on Emails
+			// where the attachments property is not empty; if false, filters on
+			// Emails where it IS empty."
+			//
+			// Served by messages.has_attachments, the boolean the parser sets at
+			// ingest. It is a filter on the walk each shape already performs
+			// (store.Narrowing: 2.0 ms on the folder view, 0.6 ms on the text
+			// path) rather than an index of its own.
+			var b bool
+			if err := json.Unmarshal(raw, &b); err != nil {
+				return f, unsupportedNode(name, "not a boolean")
+			}
+			if f.hasAttachment != nil && *f.hasAttachment != b {
+				return f, unsupportedNode(name, "a second, contradictory hasAttachment condition")
+			}
+			f.hasAttachment = &b
+
+		case "cc", "bcc":
+			// §4.4.1: "cc: String — Looks for the text in the Cc header field of
+			// the message"; bcc likewise for Bcc.
+			//
+			// # These two are EXACT, unlike from/to/subject above
+			//
+			// The text conditions three cases up are answered with a
+			// whole-message tsvector match — documented over-matching, because
+			// the store has one tsvector and no per-field index. These do NOT
+			// inherit that: migration 0008 gave each its own trigram index, so
+			// `cc:ana@x.test` matches the Cc header and only the Cc header.
+			//
+			// The inconsistency is deliberate and runs in the SAFE direction —
+			// stricter than the RFC requires, never looser — and it exists
+			// because the alternative for each was worse:
+			//
+			//   * answering `cc` from the tsvector would also return every
+			//     message that merely MENTIONS the address in its body, and
+			//     someone filtering by cc is looking for the mail where a
+			//     specific person was copied;
+			//   * `bcc` had no over-match option at all. Bcc is not in the
+			//     tsvector (migration 0002 puts only from/to/cc in weight band
+			//     B), so it was an index or a refusal.
+			//
+			// The match is an unanchored, case-insensitive substring, which is
+			// what makes a partial address ("ana", "@example.test") useful in a
+			// search box. store.Narrowing escapes the LIKE metacharacters so a
+			// term containing % or _ stays literal.
+			text, merr := stringNode(name, raw)
+			if merr != nil {
+				return f, merr
+			}
+			target := &f.cc
+			if name == "bcc" {
+				target = &f.bcc
+			}
+			if *target != "" && *target != text {
+				return f, unsupportedNode(name, "a second, different address condition")
+			}
+			*target = text
+
+		case "minSize", "maxSize":
+			// §4.4.1: "minSize: UnsignedInt — The size of the Email in octets is
+			// greater than or equal to this number"; "maxSize: UnsignedInt — ...
+			// is less than this number". Inclusive lower, exclusive upper.
+			//
+			// The store filters on messages.raw_size, which IS the JMAP
+			// Email.size property (adapter.go maps one to the other) — so this
+			// filters on the number the client sees rather than on a proxy for
+			// it, and E3 needed no size column because the store already had the
+			// right one.
+			var n uint64
+			if err := json.Unmarshal(raw, &n); err != nil {
+				// §4.4.1 types these UnsignedInt, so a negative or fractional
+				// value is not a size this server can act on. Naming the node
+				// beats coercing it.
+				return f, unsupportedNode(name, "not an unsigned integer")
+			}
+			if n > 1<<62 {
+				// Beyond any message a mail system will hold, and past the point
+				// where the int64 the store column uses stays exact.
+				return f, unsupportedNode(name, "implausibly large")
+			}
+			v := int64(n) //nolint:gosec // bounded on the line above
+			if name == "minSize" {
+				f.minSize = &v
+			} else {
+				f.maxSize = &v
+			}
+
+		case "inMailboxOtherThan":
+			// §4.4.1: "inMailboxOtherThan: Id[] — A list of Mailbox ids. The
+			// Email must be in at least one Mailbox not in this list."
+			//
+			// In Moov a message is in EXACTLY ONE mailbox (session.go advertises
+			// maxMailboxesPerEmail:1, and W1 enforces it), so "in at least one
+			// mailbox not in this list" reduces to "its mailbox is not in this
+			// list" — an exclusion, which is the predicate the store implements.
+			// The reduction is exact rather than approximate BECAUSE of that
+			// advertised limit; on a server with multi-mailbox messages it would
+			// not be, and this comment is here so a future multi-mailbox model
+			// revisits it rather than inheriting it.
+			//
+			// It is also the mechanism behind this server's Gmail-default
+			// exclusion of Spam and Trash; applyDefaultExclusion owns that
+			// policy and explains it against the canon.
+			var wire []string
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				return f, unsupportedNode(name, "not an array of mailbox ids")
+			}
+			// A non-nil empty slice, so that "the client sent []" is
+			// distinguishable from "the client sent nothing" — the difference
+			// between Gmail's `in:anywhere` and an ordinary search, which
+			// applyDefaultExclusion decides on exactly this test. json
+			// unmarshals `[]` to an empty non-nil slice and `null` to nil, but
+			// only when the destination starts nil, so it is made explicit here
+			// rather than relied upon.
+			if f.excludeMailboxIDs == nil {
+				f.excludeMailboxIDs = []int64{}
+			}
+			for _, w := range wire {
+				id, err := DecodeMailboxID(w)
+				if err != nil {
+					// Unlike inMailbox, an unknown id here is HARMLESS: it names
+					// a mailbox to exclude, and a mailbox that does not exist
+					// holds nothing, so excluding it excludes nothing. Refusing
+					// would reject a filter whose meaning is perfectly clear.
+					// The id is dropped and the rest of the list still applies.
+					continue
+				}
+				f.excludeMailboxIDs = append(f.excludeMailboxIDs, id)
+			}
+			// An explicit inMailboxOtherThan is the CLIENT's exclusion, so it
+			// suppresses the server's default one — including when the client
+			// sends an empty list, which is exactly how a client asks for
+			// Gmail's `in:anywhere`.
+			f.defaultExclusion = false
 
 		default:
-			// Everything else in §4.4.1 — inMailboxOtherThan, minSize, maxSize,
-			// the three inThread keyword conditions, cc, bcc, body, header,
-			// hasAttachment — has no shape in the repertoire. §5.5's
-			// unsupportedFilter is precisely "The filter is syntactically
-			// valid, but the server cannot process it."
+			// Everything else in §4.4.1 — the three inThread keyword conditions,
+			// body, header, attachments — has no shape in the repertoire. §5.5's
+			// unsupportedFilter is precisely "The filter is syntactically valid,
+			// but the server cannot process it."
 			//
-			// hasAttachment and cc/bcc are the ones worth closing first: the
-			// store HAS a has_attachments column and a cc column, so they are a
-			// store-method away rather than an index away. Named in the J3
-			// report.
+			// `body` and `header` are the ones a future epic would close: both
+			// need a per-field index the single generated tsvector cannot
+			// provide, which is the same gap that makes from/to/subject
+			// over-match. The J3 report names what each would cost.
 			return f, unsupportedNode(name, "not supported by this server")
 		}
 	}
@@ -935,38 +1403,113 @@ func translateCondition(props map[string]json.RawMessage) (searchFilter, *jmap.M
 }
 
 // applyHasKeyword maps a §4.4.1 hasKeyword onto the repertoire.
+//
+// # The two places a keyword can live, and why that decides the predicate
+//
+// Arbitration A6 puts user labels in message_state.keywords, a text[] with its
+// own GIN index. But the four IMAP SYSTEM flags — \Seen, \Answered, \Flagged,
+// \Draft — are bits in message_state.flags, never strings in that array,
+// because they are a fixed closed set and a bitmask filter costs nothing
+// (migration 0002 says so where the column is declared).
+//
+// So `hasKeyword:"$flagged"` and `hasKeyword:"$MoovL7"` are the same JMAP
+// condition over two different physical representations, and translating both
+// to the array predicate would answer "no" for every system flag — silently,
+// with a list that quietly ignores the condition the user typed.
+//
+// Before L3 epic E3 that was handled by REFUSING the system flags: "an IMAP
+// system flag stored as a bitmask; the repertoire has no predicate for it".
+// True when written. E3 added the predicate (store.Narrowing FlagsAll /
+// FlagsNone), which is what makes `is:starred` — a CORE Gmail search operator
+// (canon §2.5) — answerable at all.
 func (f *searchFilter) applyHasKeyword(kw string) *jmap.MethodError {
-	// $seen is the system flag the store keeps as a bit, and the repertoire
-	// exposes only its negative (UnreadOnly). "has $seen" is therefore NOT
-	// expressible: there is no ReadOnly field, and inverting UnreadOnly is not
-	// a thing a caller may do.
-	if strings.EqualFold(kw, KeywordSeen) {
-		return unsupportedNode("hasKeyword",
-			fmt.Sprintf("%q is not filterable; the repertoire exposes only its negation (notKeyword:%q)", KeywordSeen, KeywordSeen))
+	// A system flag becomes a bit in the mask rather than an entry in the
+	// keyword field. systemFlagForKeywordBit is the same table jmapKeywords
+	// renders WITH, so the two directions cannot disagree.
+	if bit, ok := systemFlagBit(kw); ok {
+		if f.flagsNone&bit != 0 {
+			// "has $flagged AND not $flagged" matches nothing. §4.4.1 makes a
+			// multi-property condition a conjunction, so this is a filter the
+			// client can express and no message can satisfy — and answering it
+			// with an empty list would be CORRECT but indistinguishable from
+			// "you have no flagged mail". Naming it is more useful.
+			return unsupportedNode("hasKeyword",
+				fmt.Sprintf("%q is required and excluded by the same filter, which no message can satisfy", kw))
+		}
+		f.flagsAll |= bit
+		return nil
 	}
 
 	// Everything else goes to the keywords array, which is where the store
 	// keeps user keywords AND where arbitration A6 puts labels — so a label
 	// filter is a keyword filter, by design.
-	//
-	// The system flags other than \Seen ($flagged, $answered, $draft) live in
-	// the flags bitmask, not the keywords array, so filtering on them would
-	// need a bitmask predicate the repertoire does not expose. They are refused
-	// rather than silently missed: a client filtering for $flagged must not get
-	// a list that quietly ignores the condition.
-	switch {
-	case strings.EqualFold(kw, KeywordFlagged),
-		strings.EqualFold(kw, KeywordAnswered),
-		strings.EqualFold(kw, KeywordDraft):
-		return unsupportedNode("hasKeyword",
-			fmt.Sprintf("%q is an IMAP system flag stored as a bitmask; the repertoire has no predicate for it", kw))
-	}
-
-	if f.keyword != "" && f.keyword != kw {
+	if f.keyword != "" && !strings.EqualFold(f.keyword, kw) {
+		// Still refused: the array predicate is `keywords @> ARRAY[$n]`, a
+		// single-element containment, and two of them would need either a
+		// two-element array (which is a different condition — containment of
+		// BOTH, expressible, but not what one @> with one parameter does) or a
+		// second predicate the shapes were not measured with. One label at a
+		// time, named rather than dropped.
 		return unsupportedNode("hasKeyword", "a second, different keyword condition")
 	}
 	f.keyword = kw
 	return nil
+}
+
+// applyNotKeyword maps a §4.4.1 notKeyword onto the repertoire.
+//
+// §4.4.1: "notKeyword: String — A keyword that must not be in the Email's
+// keywords property."
+//
+// Before E3 exactly one was served — notKeyword:$seen, which is the unread
+// filter and which the store expresses with the literal `(flags & 1) = 0` that
+// matches the message_state_unread partial index character for character. E3
+// extends it to the other three SYSTEM flags through the same bitmask
+// predicate that hasKeyword now uses.
+//
+// It stops there. A negated USER keyword (`notKeyword:"$MoovL7"`) stays refused,
+// and the reason is the boundedness rule rather than effort: the keywords array
+// has a GIN index that answers containment, and NOT containment is its
+// complement — a set the index cannot produce, so the predicate degrades to a
+// filter over every message in the account. That is the unbounded scan the
+// repertoire exists to make unrepresentable, and it is exactly the shape S3
+// measured an instance collapsing under.
+func (f *searchFilter) applyNotKeyword(kw string) *jmap.MethodError {
+	if strings.EqualFold(kw, KeywordSeen) {
+		// The unread filter keeps its own field rather than becoming a
+		// FlagsNone bit: it is spelled as the literal the partial index is
+		// built on, and routing it through the generic mask would lose that
+		// index for the single most common filter in the product.
+		f.unreadOnly = true
+		return nil
+	}
+	if bit, ok := systemFlagBit(kw); ok {
+		if f.flagsAll&bit != 0 {
+			return unsupportedNode("notKeyword",
+				fmt.Sprintf("%q is required and excluded by the same filter, which no message can satisfy", kw))
+		}
+		f.flagsNone |= bit
+		return nil
+	}
+	return unsupportedNode("notKeyword",
+		fmt.Sprintf("only the IMAP system flags are negatable (%q, %q, %q, %q); %q lives in the keyword array, "+
+			"whose index answers containment but not its complement — negating it would scan the whole account",
+			KeywordSeen, KeywordFlagged, KeywordAnswered, KeywordDraft, kw))
+}
+
+// systemFlagBit returns the flag BIT a JMAP keyword names, if it names one.
+//
+// It is systemFlagForKeyword's untyped twin: that one returns a store.Flags for
+// callers that already hold store rows, this one returns the raw bit for the
+// translation layer, which must not depend on the store (search.go's rule).
+// Both read the same systemFlagKeywords table, so they cannot disagree.
+func systemFlagBit(keyword string) (uint64, bool) {
+	for _, f := range systemFlagKeywords {
+		if strings.EqualFold(f.keyword, keyword) {
+			return f.bit, true
+		}
+	}
+	return 0, false
 }
 
 // stringNode decodes a string-valued filter property.

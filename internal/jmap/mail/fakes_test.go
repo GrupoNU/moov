@@ -35,7 +35,17 @@ type fakeReaders struct {
 	hitThreads map[int64]int64
 	// lastReach records the reach the handler asked for, so a test can assert
 	// that paging requests exactly the depth they need.
-	lastReach    int
+	lastReach int
+	// lastFilter records the TRANSLATED filter the handler passed down (E3),
+	// so a test can prove a condition survived translation instead of being
+	// silently dropped — which is the whole failure mode query.go refuses
+	// filters to avoid, and which no assertion on the RESULT ids can catch
+	// while the fakes ignore the filter.
+	lastFilter searchFilter
+	// snippets is the corpus SearchSnippet/get answers from, keyed by message
+	// id. Absent means "this message did not match", which the handler renders
+	// as RFC 8621 §5's nulls.
+	snippets map[int64]SnippetView
 	changes      []ChangeRow
 	newestChange time.Time
 
@@ -217,11 +227,12 @@ func (f *fakeReaders) ThreadState(context.Context, int64) (string, error)  { ret
 // to tell "the result set ended" from "the bound applied". The seeded corpus is
 // additionally capped by searchWindow when a test sets one, which is how the
 // pre-paging window behavior is still exercised.
-func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s sortSpec, reach int) ([]int64, error) {
+func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, filter searchFilter, s sortSpec, reach int) ([]int64, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	f.lastReach = reach
+	f.lastFilter = filter
 	hits := append([]searchHit(nil), f.hits...)
 	if window := f.searchWindow; window > 0 && len(hits) > window {
 		hits = hits[:window]
@@ -252,11 +263,37 @@ func (f *fakeReaders) SearchEmails(_ context.Context, _ int64, _ searchFilter, s
 // collapsed query behave exactly like an uncollapsed one. That is the correct
 // default: every pre-E1 test asserting a query's shape must keep passing when it
 // is run with collapseThreads.
-func (f *fakeReaders) SearchThreads(_ context.Context, _ int64, _ searchFilter, s sortSpec, reach int) ([]int64, error) {
+// Snippets answers SearchSnippet/get out of the seeded corpus.
+//
+// Like the search fakes it models the CONTRACT: a message with a seeded snippet
+// comes back marked, one without is simply absent, and a filter carrying no
+// text yields nothing at all — which is what §5.1's "SHOULD return null for
+// both properties" reduces to at this seam. The ESCAPING is what the handler
+// owns and what snippet_test.go proves; the store's marking is proven in
+// internal/store.
+func (f *fakeReaders) Snippets(_ context.Context, _ int64, filter searchFilter, ids []int64) ([]SnippetView, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.lastFilter = filter
+	if filter.text == "" {
+		return nil, nil
+	}
+	out := make([]SnippetView, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := f.snippets[id]; ok {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeReaders) SearchThreads(_ context.Context, _ int64, filter searchFilter, s sortSpec, reach int) ([]int64, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	f.lastReach = reach
+	f.lastFilter = filter
 	hits := append([]searchHit(nil), f.hits...)
 	if window := f.searchWindow; window > 0 && len(hits) > window {
 		hits = hits[:window]
@@ -516,7 +553,7 @@ func (f *fakeReaders) pathOf(accountID, id int64) string {
 func (f *fakeReaders) deps() *Deps {
 	return &Deps{
 		Mailboxes: f, Emails: f, Threads: f, Blobs: f, State: f,
-		Search: f, Changes: f, SearchWindow: f.searchWindow,
+		Search: f, Changes: f, Snippets: f, SearchWindow: f.searchWindow,
 		Writer: f, Mailboxer: f, Creator: f,
 		Limits: jmap.DefaultLimits(),
 	}

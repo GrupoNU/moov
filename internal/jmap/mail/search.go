@@ -29,17 +29,68 @@ const DefaultSearchWindow = 200
 // # Why there is a ceiling at all
 //
 // Keyset paging makes each page cost the same as the first, but a client that
-// asks for position:1000000 still makes the server walk a million rows to
-// answer honestly. The repertoire's promise is bounded work per request
-// (L2 §4.3), so the reach is bounded too — and the bound is stated in the
-// response through the §5.5 `limit` property, exactly as the window cap was.
+// asks for position:1000000 in ONE request still makes the server walk a
+// million rows to answer honestly. The repertoire's promise is bounded work per
+// request (L2 §4.3), so the reach is bounded too — and the bound is stated in
+// the response through the §5.5 `limit` property, exactly as the window cap is.
 //
-// 10,000 is chosen against the product, not the database: it is deeper than
-// any human scrolls a message list, and it is the same order of magnitude
-// Gmail's own "older" pagination stops offering. A client that needs to walk
-// an entire 26k-message mailbox should narrow the filter or follow
-// Email/changes, both of which are index-served at any depth.
-const MaxQueryReach = 10000
+// # 100,000 — decision D-7 of the L3 plan, resolved with numbers
+//
+// The previous value was 10,000, "chosen against the product, not the
+// database: deeper than any human scrolls". That reasoning was wrong in a way
+// the plan caught and made a signed decision out of (D-7, risk 3): the owner's
+// real account holds 26,869 messages, so the ceiling cut his own mailbox off at
+// 37% of it, and ADR §6 names 100,000 as the target. The plan's instruction was
+// to resolve it with measurements rather than judgment, and this is that
+// resolution.
+//
+// MEASURED on a purpose-built corpus — 120,000 messages on the account under
+// test plus 20,000 on a second account (so a missing account scope shows as
+// wrong rows, not as a passing test), PostgreSQL 17.4, the dev instance, in the
+// exact shape adapter_query.go issues: LIMIT 200 pages resumed by a row-value
+// keyset cursor, ORDER BY (date DESC, id DESC).
+//
+//	ONE PAGE, at depth:          plan                      time     buffers
+//	  depth 0      (first page)  Index Scan messages_acct_date   0.92 ms   631
+//	  depth 100,000              Index Scan messages_acct_date   1.55 ms   628
+//
+// Identical buffer counts and sub-2 ms at both ends: the keyset cursor's
+// constant-cost claim is not an argument here, it is a measurement. A page at
+// the hundred-thousandth row touches the same number of pages as the first,
+// because the cursor RESUMES the index walk instead of counting into it.
+//
+//	A WHOLE WALK to depth N, in one request (3 runs each):
+//	  N        pages   total            per page
+//	  10,000      50   55.9 / 63.7 / 75.3 ms    ~1.3 ms
+//	  26,869     135   158.8 / 159.6 / 166.2 ms ~1.2 ms
+//	  100,000    500   589.2 / 629.0 / 664.0 ms ~1.2 ms
+//	  120,000    600   764.1 ms                 ~1.3 ms
+//
+// Linear in the depth, flat per page, no knee anywhere. 100,000 costs ~0.6 s of
+// server time in the pathological case where a client asks for it in a SINGLE
+// request — and that case is pathological rather than ordinary, which is the
+// distinction the ceiling is actually protecting:
+//
+//   - A client SCROLLING carries its own cursor and pays ~1.2 ms per page. It
+//     never asks the server for depth at all, at any position in the mailbox.
+//     This is what the PWA does and what every conforming client does.
+//   - A client sending position:100000 in one query pays the 0.6 s once. It is
+//     over the Gmail-class 100 ms interactive bar, and deliberately so: this
+//     ceiling is not a latency budget, it is the wall a runaway request hits.
+//     A request that WANTS the hundred-thousandth row is not an interactive
+//     search, and the honest answer is to serve it slowly rather than to refuse
+//     the owner access to his own mail at row 10,001.
+//
+// So the number the measurements support is 100,000, which is also ADR §6's
+// target and 3.7x the owner's real mailbox. It is NOT raised further: 120,000
+// measured fine too, but a ceiling exists to be a ceiling, and the case for
+// each further order of magnitude has to be made by someone who has a client
+// that needs it.
+//
+// The deeper alternative remains what it always was and is now genuinely
+// sufficient: narrow the filter, or follow Email/changes. Both are index-served
+// at any depth.
+const MaxQueryReach = 100000
 
 // SearchReader answers Email/query over the store's typed search repertoire.
 //

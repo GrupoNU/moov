@@ -79,6 +79,7 @@ func NewDeps(st *store.Store, blobs *blob.Store, limits jmap.Limits) (*Deps, err
 		// typed repertoire and Changes through the sync_log/message_state feed.
 		Search:     a,
 		Changes:    a,
+		Snippets:   a,
 		Identities: identities,
 		Prefs:      prefs,
 		Limits:     limits,
