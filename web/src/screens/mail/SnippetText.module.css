@@ -1,0 +1,26 @@
+/*
+ * The search highlight (E3).
+ *
+ * `<mark>` has a browser default (black on yellow) that ignores the theme and
+ * fails contrast on our dark surfaces, so it is restyled — but restyled as a
+ * HIGHLIGHT, never removed: the mark is the answer to "why is this row here",
+ * and it is the only cue a result list gives.
+ *
+ * The tint is the accent's, so the highlight reads as "the app found this"
+ * rather than as a foreign yellow, and it is drawn with `color-mix` against
+ * the surface so it follows the theme with no second declaration.
+ */
+
+.mark {
+  /* No background-clip tricks: a plain tint keeps the text legible at the
+     small sizes a list row uses. */
+  background: var(--color-accent-tint-strong);
+  color: inherit;
+  /* The default `<mark>` also bolds nothing; a subtle weight bump makes the
+     match findable in a preview line scanned at speed. */
+  font-weight: 600;
+  border-radius: 2px;
+  /* Horizontal only: vertical padding would grow the line box and break the
+     fixed row height the virtualizer depends on. */
+  padding: 0 1px;
+}
