@@ -7,7 +7,9 @@ import { labelsFor, type Label } from "../../mail/labelStore";
 import { rowHeightFor } from "../../mail/prefs";
 import { displaySubject, senderLabel, type ThreadGroup } from "../../mail/threading";
 import { computeWindow, scrollOffsetToReveal, totalHeight } from "../../mail/windowing";
+import type { SearchSnippet } from "../../mail/snippet";
 import { LabelChips } from "./LabelChips";
+import { SnippetText } from "./SnippetText";
 import styles from "./MessageList.module.css";
 
 /**
@@ -95,7 +97,23 @@ export interface MessageListProps {
   readonly labels?: readonly Label[];
   /** Clicking a chip navigates to that label's view. */
   readonly onSelectLabel?: (label: Label) => void;
+
+  /**
+   * E3: the search snippets, keyed by message id (RFC 8621 §5).
+   *
+   * A row looks its OWN up rather than being handed one, for the same reason
+   * the labels are passed as a table: the lookup is a pure function of data
+   * the row already has, and per-row props would re-render every row whenever
+   * any one snippet arrived.
+   *
+   * Absent outside a search — which is exactly when there are no snippets — so
+   * the ordinary list path costs nothing for this.
+   */
+  readonly snippets?: ReadonlyMap<string, SearchSnippet>;
 }
+
+/** A stable empty map, for the same reason `EMPTY_LABELS` exists. */
+const EMPTY_SNIPPETS: ReadonlyMap<string, SearchSnippet> = new Map();
 
 export function MessageList({
   groups,
@@ -113,6 +131,7 @@ export function MessageList({
   onRowToggleRead,
   labels,
   onSelectLabel,
+  snippets,
 }: MessageListProps): React.JSX.Element {
   const { t, locale } = useTranslation();
   const { prefs } = usePrefs();
@@ -270,6 +289,7 @@ export function MessageList({
                   showSnippet={prefs.showSnippets}
                   labels={labels ?? EMPTY_LABELS}
                   onSelectLabel={onSelectLabel}
+                  snippet={(snippets ?? EMPTY_SNIPPETS).get(group.latest.id)}
                 />
               );
             })}
@@ -307,6 +327,8 @@ interface MessageRowProps {
   /** E8: the known labels, for resolving this row's chips and their colours. */
   readonly labels: readonly Label[];
   readonly onSelectLabel: ((label: Label) => void) | undefined;
+  /** E3: this row's search snippet, when the search produced one. */
+  readonly snippet: SearchSnippet | undefined;
 }
 
 function MessageRow({
@@ -327,6 +349,7 @@ function MessageRow({
   showSnippet,
   labels,
   onSelectLabel,
+  snippet,
 }: MessageRowProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -488,13 +511,33 @@ function MessageRow({
           §4.2) — the chips carry the colour and the row keeps its own states.
         */}
         <LabelChips labels={rowLabels} onSelect={onSelectLabel} />
-        <span className={styles.subject}>{subject}</span>
-        {preview !== "" && (
+        {/*
+          E3: the subject and preview render through `SnippetText`, which shows
+          the server's highlighted version when there is one and falls back to
+          the row's own text otherwise. The snippet is NEVER treated as markup
+          — see `SnippetText` — so a hostile one renders as inert characters.
+        */}
+        <span className={styles.subject}>
+          <SnippetText raw={snippet?.subject} fallback={subject} />
+        </span>
+        {/*
+          The preview line shows when the row HAS one, or when a search matched
+          inside the body.
+
+          The second half is deliberate: `preview` is "" while the E5
+          `showSnippets` preference is off, and a search snippet still appears
+          then, because it is not a preview — it is the answer to "why is this
+          row in my results". Gmail does the same; the setting is about idle
+          browsing, not about hiding the reason a search matched.
+        */}
+        {(preview !== "" || snippet?.preview !== undefined) && (
           <>
             <span className={styles.separator} aria-hidden="true">
               —
             </span>
-            <span className={styles.preview}>{preview}</span>
+            <span className={styles.preview}>
+              <SnippetText raw={snippet?.preview} fallback={preview} />
+            </span>
           </>
         )}
       </span>

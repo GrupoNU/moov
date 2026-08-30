@@ -53,6 +53,15 @@ import type { Label } from "../../mail/labelStore";
 import { visibleLabels } from "../../mail/labelStore";
 import { mailboxSegment, resolveMailbox } from "../../mail/mailboxes";
 import { isSearchable, normalizeQuery, refusalFor } from "../../mail/search";
+import { parseSearchQuery, type UnsupportedTerm } from "../../mail/searchQuery";
+import { planFilter, type FilterPlan, type FilterProblem } from "../../mail/searchFilter";
+import {
+  loadRecentSearches,
+  saveRecentSearches,
+  withRecentSearch,
+} from "../../mail/searchSuggestions";
+import { fetchSnippets, snippetIndex, type SearchSnippet } from "../../mail/snippet";
+import { SearchChips } from "./SearchChips";
 import {
   actionTargets,
   EMPTY_SELECTION,
@@ -128,6 +137,17 @@ import styles from "./MailScreen.module.css";
  * maths, the debounce — all lives in tested modules, which is what keeps this
  * file about WIRING rather than about behaviour.
  */
+
+/**
+ * E3: how many rows one `SearchSnippet/get` asks for.
+ *
+ * Fifty rather than the page's full 200: a snippet is a `ts_headline` over a
+ * message body, which is real work per row, and a person scanning a result list
+ * reads the first screenful. The rest of the page renders its ordinary preview
+ * — degraded in a way nobody notices, versus a request four times larger to
+ * highlight rows most searches never scroll to.
+ */
+const SNIPPET_BATCH = 50;
 
 export function MailScreen(): React.JSX.Element {
   const { state, signOut } = useAuth();
@@ -240,6 +260,19 @@ export function MailScreen(): React.JSX.Element {
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | undefined>(undefined);
+
+  /*
+   * E3: the recent-search history and the result snippets.
+   *
+   * The history is seeded from localStorage ONCE (a lazy initial state, not an
+   * effect) so the very first focus of the box already offers it — an effect
+   * would render an empty dropdown for one frame, which reads as "there is no
+   * history" to someone who has one.
+   */
+  const [recentSearches, setRecentSearches] = useState<readonly string[]>(() =>
+    loadRecentSearches(),
+  );
+  const [snippets, setSnippets] = useState<readonly SearchSnippet[]>([]);
 
   // --- P3 state ------------------------------------------------------------
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
@@ -519,12 +552,37 @@ export function MailScreen(): React.JSX.Element {
 
   // --- the message list ----------------------------------------------------
 
+  /**
+   * E3: the search plan — the parsed query, its filter, and everything it
+   * could NOT express.
+   *
+   * Computed once here rather than in each consumer, because the banner, the
+   * chips and the request all have to be talking about the same parse. The
+   * mailboxes are an input: `in:<name>` resolves against them, so the plan is
+   * recomputed when they arrive.
+   */
+  const searchPlan = useMemo<FilterPlan | undefined>(() => {
+    if (route.kind !== "search") return undefined;
+    return planFilter(parseSearchQuery(route.query), mailboxes);
+  }, [route, mailboxes]);
+
   /** What the current route asks the server for. */
   const filter = useMemo<MailFilter | undefined>(() => {
     if (route.kind === "search") {
       const query = normalizeQuery(route.query);
       if (!isSearchable(query)) return undefined;
-      return { kind: "search", text: query };
+      /*
+       * E3: the operator grammar owns the filter now.
+       *
+       * `planFilter` returns `undefined` when the query cannot be answered as
+       * typed — a refused negation, an unknown folder, too many OR branches —
+       * and the banner below explains which term was at fault. Falling back to
+       * a plain text search here would be the silent mis-answer the whole
+       * epic exists to avoid: it would search for the words of an operator the
+       * user meant as a filter.
+       */
+      if (searchPlan?.filter === undefined) return undefined;
+      return { kind: "query", filter: searchPlan.filter };
     }
     /*
      * E8: a label view is a `hasKeyword` filter across the WHOLE account, not
@@ -537,7 +595,7 @@ export function MailScreen(): React.JSX.Element {
     }
     if (activeMailbox === undefined) return undefined;
     return { kind: "mailbox", mailboxId: activeMailbox.id };
-  }, [route, activeMailbox]);
+  }, [route, activeMailbox, searchPlan]);
 
   /**
    * E5: the inbox-type sort.
@@ -789,6 +847,58 @@ export function MailScreen(): React.JSX.Element {
     () => groupByThread(projected, listThreads),
     [projected, listThreads],
   );
+
+  /*
+   * E3: the snippets for the rows on screen (RFC 8621 §5).
+   *
+   * # Why this asks for the whole fetched page, not the visible viewport
+   *
+   * The plan says "only for rows on screen", and the intent behind it is the
+   * one that matters: never ask the server to headline the WHOLE result set to
+   * paint a few rows. The page the list holds is already bounded by the
+   * server's 200-row window, and the batch is capped below that again.
+   *
+   * Scoping to the scroll viewport instead would fire a fresh request on every
+   * scroll — dozens of round trips through a list, each re-running the search
+   * server-side to compute headlines — which costs far more than one bounded
+   * batch and makes highlights flicker in as the user scrolls. One request per
+   * result page is both cheaper and steadier.
+   *
+   * A failure here is invisible by design: `fetchSnippets` returns empty, and
+   * the list renders its ordinary subject and preview.
+   */
+  useEffect(() => {
+    if (
+      client === undefined ||
+      accountId === "" ||
+      route.kind !== "search" ||
+      searchPlan?.filter === undefined ||
+      emails.length === 0
+    ) {
+      setSnippets([]);
+      return undefined;
+    }
+    const controller = new AbortController();
+    // The cap: a page is at most 200 rows, and headlining 200 message bodies to
+    // paint a list is the same category of mistake as fetching their bodies.
+    const ids = emails.slice(0, SNIPPET_BATCH).map((email) => email.id);
+    void (async () => {
+      const found = await fetchSnippets(
+        client,
+        accountId,
+        searchPlan.filter ?? null,
+        ids,
+        controller.signal,
+      ).catch(() => []);
+      if (!controller.signal.aborted) setSnippets(found);
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [client, accountId, route.kind, searchPlan, emails]);
+
+  /** Snippets by id, so a row can find its own without a scan. */
+  const snippetsById = useMemo(() => snippetIndex(snippets), [snippets]);
 
   /** Refetches the list from the server after a write. */
   const refresh = useCallback((): void => {
@@ -1751,9 +1861,32 @@ export function MailScreen(): React.JSX.Element {
       // Typing replaces rather than pushes: one Back press should leave the
       // search, not walk back through every keystroke that built it.
       replace(next);
+
+      /*
+       * E3: remember it, but only if it is a real search.
+       *
+       * The debounce means this fires once the user has STOPPED typing, so the
+       * history collects finished queries rather than every prefix of one. A
+       * query too short to send is not remembered either — offering "ar" back
+       * as a suggestion would be noise where the useful entry is the whole
+       * thing the user eventually typed.
+       */
+      if (query !== "" && isSearchable(query)) {
+        setRecentSearches((current) => {
+          const updated = withRecentSearch(current, query);
+          saveRecentSearches(updated);
+          return updated;
+        });
+      }
     },
     [replace],
   );
+
+  /** E3: forgets the stored searches, from the dropdown's own affordance. */
+  const clearRecentSearches = useCallback((): void => {
+    setRecentSearches([]);
+    saveRecentSearches([]);
+  }, []);
 
   // --- E9: the Outbox -------------------------------------------------------
 
@@ -2458,6 +2591,11 @@ export function MailScreen(): React.JSX.Element {
           onChange={setSearchText}
           onSearch={runSearch}
           isSearching={isLoadingList && route.kind === "search"}
+          /* E3: the suggestion sources and the options panel's folder list. */
+          recentSearches={recentSearches}
+          labels={sidebarLabels}
+          mailboxes={mailboxes}
+          onClearRecent={clearRecentSearches}
         />
 
         <div className={styles.headerActions}>
@@ -2632,6 +2770,14 @@ export function MailScreen(): React.JSX.Element {
               {format("offline.search.label", groups.length)}
             </div>
           )}
+          {/*
+            E3: the chips row, under the box while a search is active (canon
+            §2.5). It holds no state of its own — each chip reads and rewrites
+            the query STRING, so it can never disagree with what was searched.
+          */}
+          {route.kind === "search" && !isOfflineMode && (
+            <SearchChips query={route.query} onChange={runSearch} />
+          )}
           <ActionBar
             selectedCount={selection.selected.size}
             totalCount={groups.length}
@@ -2663,6 +2809,8 @@ export function MailScreen(): React.JSX.Element {
           <MessageList
             labels={labelsApi.labels}
             onSelectLabel={goToLabel}
+            /* E3: the result highlighting, empty outside a search. */
+            snippets={snippetsById}
             listKey={listKey}
             groups={groups}
             selectedId={selectedId}
@@ -2733,6 +2881,8 @@ export function MailScreen(): React.JSX.Element {
                 error={listError}
                 total={resultTotal}
                 isSearch={route.kind === "search"}
+                /* E3: the parse, so the banner can name the term at fault. */
+                plan={searchPlan}
               />
             }
             empty={
@@ -2956,6 +3106,50 @@ function GearIcon(): React.JSX.Element {
   );
 }
 
+/**
+ * E3: the sentence for one term the parser had to exclude.
+ *
+ * A `switch` in a named function rather than a ternary chain inside the JSX.
+ * That is not only readability: a long conditional-expression chain returning
+ * differently-typed calls is one of the shapes that makes the TypeScript
+ * checker allocate heavily, and this component sits in a 3,000-line file that
+ * was already close to the limit on a modest machine. Two small functions cost
+ * nothing at runtime and keep the incremental build inside its budget.
+ */
+function refusedTermMessage(
+  term: UnsupportedTerm,
+  format: ReturnType<typeof useTranslation>["format"],
+): string {
+  switch (term.reason) {
+    case "negationUnanswerable":
+      return format("search.refused.negation", term.operator);
+    case "deferredOperator":
+      return format("search.refused.deferred", term.operator);
+    case "badValue":
+      return format("search.refused.badValue", term.operator);
+  }
+}
+
+/** E3: the sentence for one reason the planner refused the whole query. */
+function problemMessage(
+  problem: FilterProblem,
+  t: ReturnType<typeof useTranslation>["t"],
+  format: ReturnType<typeof useTranslation>["format"],
+): string {
+  switch (problem.code) {
+    case "needsTextOrFolder":
+      return t("search.problem.needsTextOrFolder");
+    case "labelNeedsText":
+      return t("search.problem.labelNeedsText");
+    case "unknownMailbox":
+      return format("search.problem.unknownMailbox", problem.detail ?? "");
+    case "tooManyBranches":
+      return format("search.problem.tooManyBranches", Number(problem.detail ?? 0));
+    case "branchNotAnswerable":
+      return format("search.problem.branchNotAnswerable", Number(problem.detail ?? 0));
+  }
+}
+
 function ListNotice({
   refusal,
   truncated,
@@ -2963,6 +3157,7 @@ function ListNotice({
   error,
   total,
   isSearch,
+  plan,
 }: {
   readonly refusal: string | undefined;
   readonly truncated: boolean;
@@ -2970,6 +3165,8 @@ function ListNotice({
   readonly error: string | undefined;
   readonly total: number | undefined;
   readonly isSearch: boolean;
+  /** E3: the parsed plan, so a refusal can name the term at fault. */
+  readonly plan?: FilterPlan | undefined;
 }): React.JSX.Element | null {
   const { t, format } = useTranslation();
 
@@ -2982,15 +3179,56 @@ function ListNotice({
     );
   }
 
-  if (refusal !== undefined) {
-    // The honest degradation the brief demands: never a silent empty list.
+  /*
+   * E3: the refused terms, EACH BY NAME.
+   *
+   * The banner used to say "this server cannot answer that search" and stop
+   * there, which leaves a user editing their query at random. Now every term
+   * the parser excluded and every reason the planner refused gets its own
+   * line, so the fix is visible: remove that operator, add a word, name a
+   * folder.
+   *
+   * This runs whether or not the SERVER refused, because most refusals are now
+   * caught before the request — the round trip is spent only on shapes we
+   * believed were answerable.
+   */
+  const problems = plan?.problems ?? [];
+  const unsupported = plan?.unsupported ?? [];
+  if (refusal !== undefined || problems.length > 0 || unsupported.length > 0) {
     return (
       <div className={styles.noticeWarn} role="status">
-        <strong>{t("search.unsupported")}</strong>
-        <span>{t("search.unsupportedBody")}</span>
+        <strong>
+          {problems.length > 0 || unsupported.length > 0
+            ? t("search.refused.title")
+            : t("search.unsupported")}
+        </strong>
+        {unsupported.map((term) => (
+          <span key={`${term.reason}:${term.raw}`}>
+            {refusedTermMessage(term, format)}
+          </span>
+        ))}
+        {problems.map((problem) => (
+          <span key={`${problem.code}:${problem.detail ?? ""}`}>
+            {problemMessage(problem, t, format)}
+          </span>
+        ))}
+        {/* The server's own words, when it was the one to refuse. */}
+        {refusal !== undefined && problems.length === 0 && unsupported.length === 0 && (
+          <span>{t("search.unsupportedBody")}</span>
+        )}
       </div>
     );
   }
+
+  /*
+   * E3: the widening, stated rather than hidden.
+   *
+   * `from:` and `subject:` share one tsvector on this server, so combining
+   * them searches the whole message. That is a real difference from what the
+   * user asked for, and the row that says so is what keeps an over-matching
+   * result from reading as a bug.
+   */
+  const folded = plan?.approximations.find((item) => item.code === "fieldsFoldedIntoText");
 
   if (truncated) {
     return (
@@ -3000,8 +3238,18 @@ function ListNotice({
     );
   }
 
-  if (isSearch && total !== undefined && total > 0) {
-    return <div className={styles.noticeCount}>{format("search.resultCount", total)}</div>;
+  if (isSearch && (total !== undefined || folded !== undefined)) {
+    return (
+      <div className={styles.noticeCount}>
+        {total !== undefined && total > 0 && (
+          <span>{format("search.resultCount", total)}</span>
+        )}
+        {plan?.includesEverything === true && <span>{t("search.scopeEverything")}</span>}
+        {folded !== undefined && (
+          <span>{format("search.approximate.folded", folded.fields.join(", "))}</span>
+        )}
+      </div>
+    );
   }
 
   return null;

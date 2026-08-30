@@ -675,6 +675,83 @@ export const en = {
   "settings.section.labels": "Labels",
   "settings.labels.description":
     "Labels are IMAP keywords, so they cross folders — and a folder holds only 26 of them.",
+
+  // --- E3: the search language (canon §2.5) ---
+  //
+  // The honesty rule of this block: when a term cannot be used, the UI names
+  // WHICH term and why. "This server cannot answer that search" alone leaves
+  // the user editing a query at random, which is how a search box teaches
+  // people that search does not work.
+  "search.options": "Search options",
+  "search.options.open": "Show search options",
+  "search.options.close": "Hide search options",
+  "search.options.from": "From",
+  "search.options.to": "To",
+  "search.options.subject": "Subject",
+  "search.options.words": "Has the words",
+  "search.options.size": "Size",
+  "search.options.sizeLarger": "greater than",
+  "search.options.sizeSmaller": "less than",
+  "search.options.sizeUnit": "Unit",
+  "search.options.dateWithin": "Date within",
+  "search.options.dateOf": "of",
+  "search.options.hasAttachment": "Has attachment",
+  "search.options.scope": "Search",
+  "search.options.scopeAll": "All mail",
+  "search.options.submit": "Search",
+  "search.options.reset": "Clear",
+  "search.within.1d": "1 day",
+  "search.within.3d": "3 days",
+  "search.within.1w": "1 week",
+  "search.within.2w": "2 weeks",
+  "search.within.1m": "1 month",
+  "search.within.2m": "2 months",
+  "search.within.6m": "6 months",
+  "search.within.1y": "1 year",
+
+  // The chips row (Gmail's five).
+  "search.chip.from": "From",
+  "search.chip.to": "To",
+  "search.chip.anyTime": "Any time",
+  "search.chip.hasAttachment": "Has attachment",
+  "search.chip.isUnread": "Is unread",
+  "search.chip.last7": "Last 7 days",
+  "search.chip.last30": "Last 30 days",
+  "search.chip.last90": "Last 90 days",
+  "search.chip.remove": (name: string): string => `Remove the ${name} filter`,
+  "search.chips.label": "Search filters",
+
+  // Suggestions.
+  "search.suggestions.label": "Search suggestions",
+  "search.suggestions.recent": "Recent searches",
+  "search.suggestions.labels": "Labels",
+  "search.suggestions.operators": "Search operators",
+  "search.suggestions.clearRecent": "Clear recent searches",
+
+  // Refusals, each naming the term at fault.
+  "search.refused.title": "Part of that search could not be used",
+  "search.refused.negation": (operator: string): string =>
+    `“${operator}” — this server cannot search for the ABSENCE of an address or a word, only for its presence.`,
+  "search.refused.deferred": (operator: string): string =>
+    `“${operator}” is not supported yet.`,
+  "search.refused.badValue": (operator: string): string =>
+    `“${operator}” did not have a value this server could read.`,
+  "search.problem.needsTextOrFolder":
+    "Add a word to search for, or choose a folder: filters like “is:unread” cannot be answered on their own.",
+  "search.problem.labelNeedsText":
+    "A label search cannot be narrowed to one folder. Remove the folder, or add a word to search for.",
+  "search.problem.unknownMailbox": (name: string): string =>
+    `There is no folder called “${name}”.`,
+  "search.problem.tooManyBranches": (count: number): string =>
+    `${count} alternatives joined by OR is more than this server answers at once. Use at most 4.`,
+  "search.problem.branchNotAnswerable": (index: number): string =>
+    `Alternative ${index} needs a word or a folder of its own — an OR only widens a search, it never narrows one.`,
+  "search.approximate.folded": (fields: string): string =>
+    `${fields} were searched across the whole message, not only in those headers.`,
+  "search.scopeEverything": "Including Spam and Trash",
+  "search.zeroResults": "No messages matched",
+  "search.zeroResultsBody":
+    "Every term was searched. Try removing one, or search all mail including Spam and Trash.",
 } as const;
 
 /**
@@ -1268,6 +1345,75 @@ export const es: Strings = {
   "settings.section.labels": "Etiquetas",
   "settings.labels.description":
     "Las etiquetas son keywords IMAP, así que cruzan carpetas — y una carpeta guarda solo 26.",
+
+  // --- E3: el lenguaje de búsqueda (canon §2.5) ---
+  "search.options": "Opciones de búsqueda",
+  "search.options.open": "Mostrar opciones de búsqueda",
+  "search.options.close": "Ocultar opciones de búsqueda",
+  "search.options.from": "De",
+  "search.options.to": "Para",
+  "search.options.subject": "Asunto",
+  "search.options.words": "Contiene las palabras",
+  "search.options.size": "Tamaño",
+  "search.options.sizeLarger": "mayor que",
+  "search.options.sizeSmaller": "menor que",
+  "search.options.sizeUnit": "Unidad",
+  "search.options.dateWithin": "Fecha dentro de",
+  "search.options.dateOf": "de",
+  "search.options.hasAttachment": "Tiene adjunto",
+  "search.options.scope": "Buscar en",
+  "search.options.scopeAll": "Todo el correo",
+  "search.options.submit": "Buscar",
+  "search.options.reset": "Limpiar",
+  "search.within.1d": "1 día",
+  "search.within.3d": "3 días",
+  "search.within.1w": "1 semana",
+  "search.within.2w": "2 semanas",
+  "search.within.1m": "1 mes",
+  "search.within.2m": "2 meses",
+  "search.within.6m": "6 meses",
+  "search.within.1y": "1 año",
+
+  "search.chip.from": "De",
+  "search.chip.to": "Para",
+  "search.chip.anyTime": "Cualquier fecha",
+  "search.chip.hasAttachment": "Con adjunto",
+  "search.chip.isUnread": "Sin leer",
+  "search.chip.last7": "Últimos 7 días",
+  "search.chip.last30": "Últimos 30 días",
+  "search.chip.last90": "Últimos 90 días",
+  "search.chip.remove": (name: string): string => `Quitar el filtro ${name}`,
+  "search.chips.label": "Filtros de búsqueda",
+
+  "search.suggestions.label": "Sugerencias de búsqueda",
+  "search.suggestions.recent": "Búsquedas recientes",
+  "search.suggestions.labels": "Etiquetas",
+  "search.suggestions.operators": "Operadores de búsqueda",
+  "search.suggestions.clearRecent": "Borrar búsquedas recientes",
+
+  "search.refused.title": "Una parte de esa búsqueda no se pudo usar",
+  "search.refused.negation": (operator: string): string =>
+    `«${operator}» — este servidor no puede buscar la AUSENCIA de una dirección o una palabra, solo su presencia.`,
+  "search.refused.deferred": (operator: string): string =>
+    `«${operator}» todavía no está soportado.`,
+  "search.refused.badValue": (operator: string): string =>
+    `«${operator}» no tenía un valor que el servidor pudiera leer.`,
+  "search.problem.needsTextOrFolder":
+    "Agregá una palabra para buscar, o elegí una carpeta: filtros como «is:unread» no se pueden responder solos.",
+  "search.problem.labelNeedsText":
+    "Una búsqueda por etiqueta no se puede acotar a una carpeta. Sacá la carpeta, o agregá una palabra para buscar.",
+  "search.problem.unknownMailbox": (name: string): string =>
+    `No hay ninguna carpeta que se llame «${name}».`,
+  "search.problem.tooManyBranches": (count: number): string =>
+    `${count} alternativas unidas con OR son más de las que este servidor responde de una vez. Usá 4 como máximo.`,
+  "search.problem.branchNotAnswerable": (index: number): string =>
+    `La alternativa ${index} necesita una palabra o una carpeta propia — un OR solo amplía una búsqueda, nunca la acota.`,
+  "search.approximate.folded": (fields: string): string =>
+    `${fields} se buscaron en todo el mensaje, no solo en esos encabezados.`,
+  "search.scopeEverything": "Incluyendo Spam y Papelera",
+  "search.zeroResults": "Ningún mensaje coincide",
+  "search.zeroResultsBody":
+    "Se buscaron todos los términos. Probá sacando alguno, o buscá en todo el correo incluyendo Spam y Papelera.",
 };
 
 /** The locales the app ships with. */

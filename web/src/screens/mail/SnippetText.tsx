@@ -36,18 +36,22 @@ export function SnippetText({ raw, fallback }: SnippetTextProps): React.ReactEle
   const segments = parseSnippet(raw);
   if (segments.length === 0) return <>{fallback}</>;
 
+  /*
+   * The index is the key, and here that is correct rather than a shortcut.
+   *
+   * A segment has no identity of its own — it IS a position in one string, and
+   * the whole list is rebuilt whenever that string changes. There is no reorder
+   * or insertion a stable key could help React through, because a new snippet
+   * replaces every segment at once.
+   */
   return (
     <>
       {segments.map((segment: SnippetSegment, index: number) =>
         segment.isMatch ? (
-          // eslint-disable-next-line react/no-array-index-key -- segments have
-          // no identity of their own; they are positions in one string, and the
-          // list is re-created wholesale whenever that string changes.
           <mark key={index} className={styles.mark}>
             {segment.text}
           </mark>
         ) : (
-          // eslint-disable-next-line react/no-array-index-key -- as above.
           <Fragment key={index}>{segment.text}</Fragment>
         ),
       )}

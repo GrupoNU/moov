@@ -1,0 +1,64 @@
+/*
+ * The search chips row (E3).
+ *
+ * Gmail puts these directly under the box, and they read as filters ON the
+ * search rather than as buttons of their own — so they are pill-shaped, quiet
+ * when off, and tinted with the accent when on. Never a second toolbar.
+ */
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-default);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  /* A full pill: the shape is what says "filter", not the colour, so the
+     control still reads correctly for someone who cannot see the tint. */
+  border-radius: 999px;
+  background: var(--surface-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip:hover {
+  background: var(--surface-sunken);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/*
+ * The ON state carries THREE cues, not one: the tint, the border colour and
+ * the weight. Colour alone fails for a colour-blind user, and `aria-pressed`
+ * covers the screen reader — this covers the person who can see the screen but
+ * not the hue.
+ */
+.active {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.caret {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  opacity: 0.7;
+}

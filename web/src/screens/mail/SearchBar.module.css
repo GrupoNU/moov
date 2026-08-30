@@ -96,6 +96,141 @@
   }
 }
 
+/* --- E3: the options trigger and the suggestions popup --- */
+
+.options {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.options svg {
+  width: 15px;
+  height: 15px;
+}
+
+.options:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+.options:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.popup {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: var(--space-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(15, 18, 34, 0.18));
+}
+
+.popup[hidden] {
+  display: none;
+}
+
+.suggestions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Never taller than a glance: a suggestion list that scrolls costs more
+     attention than retyping, which is why the source list is capped too. */
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.suggestion {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  cursor: pointer;
+}
+
+/*
+ * The active option is styled from `aria-selected`, not from a class of its
+ * own, so the visual state and the announced state cannot drift apart: if the
+ * highlight is visible, the attribute that tells a screen reader about it is
+ * necessarily set.
+ */
+.suggestion[aria-selected="true"],
+.suggestion:hover {
+  background: var(--color-accent-tint);
+}
+
+.suggestionActive {
+  /* Kept as a hook for tests and for a future non-pointer highlight; the
+     visual truth lives on the aria-selected rule above. */
+  font-weight: 500;
+}
+
+.suggestionKind {
+  flex: none;
+  min-width: 7.5rem;
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--text-muted);
+  text-transform: none;
+}
+
+.suggestionText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The "clear recent searches" affordance lives INSIDE the popup, as its last
+ * row, rather than being positioned under it.
+ *
+ * The first version placed it absolutely at a hand-computed offset below the
+ * list — which is only correct while the list happens to be its maximum
+ * height. A short list would have left it floating in mid-air. Being a row of
+ * the popup makes its position a consequence of the layout rather than a
+ * number that has to be kept in step by hand.
+ */
+.clearRecent {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs, 0.75rem);
+  text-align: left;
+  cursor: pointer;
+}
+
+.clearRecent:hover {
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+}
+
+.clearRecent:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
 @media (max-width: 700px) {
   .wrapper {
     max-width: none;

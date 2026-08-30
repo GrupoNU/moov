@@ -69,7 +69,7 @@ describe("free text", () => {
      * that helpfully excludes Spam and Trash by hand would therefore turn OFF
      * Gmail's default exclusion and put Spam back into every search.
      */
-    const filter = plan("arquitectura").filter as Record<string, unknown>;
+    const filter = plan("arquitectura").filter!;
     expect(filter).not.toHaveProperty("inMailboxOtherThan");
     expect(JSON.stringify(filter)).not.toContain("inMailboxOtherThan");
   });
@@ -363,7 +363,7 @@ describe("OR", () => {
       "from:ana is:unread OR in:Proyectos",
       "in:inbox informe OR in:Proyectos informe",
     ]) {
-      const filter = plan(query).filter as Record<string, unknown>;
+      const filter = plan(query).filter!;
       expect(filter.operator).toBe("OR");
       for (const branch of filter.conditions as Record<string, unknown>[]) {
         // A branch is a condition or an AND — never another operator node.

@@ -245,24 +245,31 @@ function tokenize(input: string): Token[] {
       i += opMatch[0].length;
     }
 
-    // The value: a quoted run, or everything up to the next space.
+    /*
+     * The value: a quoted run, or everything up to the next space.
+     *
+     * The scan finds the END and the value is taken with one `slice`, rather
+     * than appended character by character. Indexing a string past its end
+     * yields `undefined`, and `value += input[i]` would happily stringify that
+     * into a literal "undefined" inside a user's search term — a bug the
+     * length guard makes unreachable here but which nothing in the expression
+     * itself prevents.
+     */
     let value = "";
     let quoted = false;
     if (input[i] === '"') {
       quoted = true;
       i += 1;
-      while (i < input.length && input[i] !== '"') {
-        value += input[i];
-        i += 1;
-      }
+      const valueStart = i;
+      while (i < input.length && input[i] !== '"') i += 1;
+      value = input.slice(valueStart, i);
       // Step past the closing quote when there is one; an unterminated quote
       // simply ends at the input's end.
       if (input[i] === '"') i += 1;
     } else {
-      while (i < input.length && !/\s/.test(input[i] ?? "")) {
-        value += input[i];
-        i += 1;
-      }
+      const valueStart = i;
+      while (i < input.length && !/\s/.test(input[i] ?? "")) i += 1;
+      value = input.slice(valueStart, i);
     }
 
     const raw = input.slice(start, i);
@@ -718,7 +725,7 @@ export function withGroupPatch(
    * previous version leaned on a double cast to silence exactly this, which is
    * how `text: undefined` could have reached a caller typed as `string`.
    */
-  const has = <K extends keyof QueryGroup>(key: K): boolean =>
+  const has = (key: keyof QueryGroup): boolean =>
     Object.prototype.hasOwnProperty.call(patch, key);
   const pick = <K extends keyof QueryGroup>(key: K): QueryGroup[K] | undefined =>
     has(key) ? patch[key] : head[key];

@@ -1,0 +1,136 @@
+/*
+ * The search options panel (E3).
+ *
+ * Drops below the search box like Gmail's, as a raised card over the list —
+ * not a modal. A modal would block the list the user is trying to narrow, and
+ * Gmail's panel deliberately does not.
+ */
+
+.panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(15, 18, 34, 0.18));
+}
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.row {
+  display: grid;
+  /* A fixed label column keeps every field's left edge aligned, which is what
+     makes a form of eight rows scannable rather than ragged. */
+  grid-template-columns: minmax(7rem, 9rem) 1fr;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.input,
+.select,
+.number {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.input:focus-visible,
+.select:focus-visible,
+.number:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.inline {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.number {
+  max-width: 8rem;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  /* Aligned with the inputs above rather than with the labels: it reads as one
+     more field, not as a heading. */
+  padding-left: calc(7rem + var(--space-3));
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.primary,
+.secondary {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.primary {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: 600;
+}
+
+.primary:hover {
+  background: var(--color-accent-hover);
+}
+
+.secondary {
+  border: 1px solid var(--border-default);
+  background: var(--surface-default);
+  color: var(--text-default);
+}
+
+.secondary:hover {
+  background: var(--surface-sunken);
+}
+
+.primary:focus-visible,
+.secondary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 40rem) {
+  /* On a narrow viewport the two-column grid would squeeze the inputs to
+     nothing; the label moves above its field instead. */
+  .row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+
+  .checkboxRow {
+    padding-left: 0;
+  }
+}

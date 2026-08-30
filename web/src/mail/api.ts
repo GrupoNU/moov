@@ -160,6 +160,26 @@ export type MailFilter =
    * rather than shipping an `unsupportedFilter` to a user.
    */
   | { readonly kind: "label"; readonly keyword: string; readonly mailboxId?: string }
+  /**
+   * E3: a filter already composed by the operator grammar.
+   *
+   * `mail/searchFilter.ts` maps a parsed Gmail-style query onto the server's
+   * §4.4.1 conditions, checking each one against `internal/jmap/mail/query.go`
+   * and refusing — with a named reason — anything the repertoire cannot
+   * answer. By the time a filter reaches here it has already been validated
+   * against that grammar, so this kind carries it through verbatim.
+   *
+   * It does NOT subsume the kinds above. Those are the shapes the app builds
+   * from a route (a folder, a label, the whole account), and keeping them
+   * named means a folder view cannot accidentally become an arbitrary filter
+   * because someone edited a string. This kind is only ever produced by the
+   * parser, which is the one place the wire shape is pinned by tests.
+   *
+   * `null` is the account-wide enumeration (§5.5's `filter: null`), which is
+   * why the type admits it — it is NOT "no filter", which the planner
+   * expresses as `undefined` and never sends.
+   */
+  | { readonly kind: "query"; readonly filter: Record<string, unknown> | null }
   | { readonly kind: "all" };
 
 /** Builds the JMAP filter object for one of our filters. */
@@ -173,6 +193,9 @@ export function toJmapFilter(filter: MailFilter): Record<string, unknown> | null
       return null;
     case "mailbox":
       return { inMailbox: filter.mailboxId };
+    case "query":
+      // Already in the server's grammar, validated by `planFilter`.
+      return filter.filter;
     case "label":
       /*
        * The AND with `inMailbox` is the SAME two-condition shape the search

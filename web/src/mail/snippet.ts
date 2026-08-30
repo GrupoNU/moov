@@ -67,7 +67,7 @@ const CLOSE = "</mark>";
  * alone: the server does not emit them, and decoding arbitrary numeric escapes
  * is how an unescaping routine becomes an attack surface of its own.
  */
-const ENTITIES: ReadonlyArray<readonly [string, string]> = [
+const ENTITIES: readonly (readonly [string, string])[] = [
   ["&lt;", "<"],
   ["&gt;", ">"],
   ["&quot;", '"'],

@@ -20,7 +20,9 @@ function fakeStorage(initial: Record<string, string> = {}): Storage {
     get length() {
       return data.size;
     },
-    clear: () => data.clear(),
+    clear: () => {
+      data.clear();
+    },
     getItem: (key: string) => data.get(key) ?? null,
     key: (index: number) => Array.from(data.keys())[index] ?? null,
     removeItem: (key: string) => {
@@ -78,15 +80,24 @@ describe("the recent-search history", () => {
   });
 
   it("survives a storage that throws — private mode", () => {
-    const hostile = {
-      ...fakeStorage(),
-      getItem: () => {
-        throw new Error("denied");
-      },
-      setItem: () => {
-        throw new Error("denied");
-      },
-    } as unknown as Storage;
+    /*
+     * Built from scratch rather than spread over `fakeStorage()`: spreading an
+     * object with a getter (`length`) evaluates it once and freezes the value,
+     * and spreading a real class instance would drop its prototype. Neither
+     * matters for these two methods, but the honest construction costs nothing
+     * and does not teach the pattern.
+     */
+    const deny = (): never => {
+      throw new Error("denied");
+    };
+    const hostile: Storage = {
+      length: 0,
+      clear: deny,
+      getItem: deny,
+      key: deny,
+      removeItem: deny,
+      setItem: deny,
+    };
     expect(loadRecentSearches(hostile)).toEqual([]);
     expect(() => {
       saveRecentSearches(["x"], hostile);
