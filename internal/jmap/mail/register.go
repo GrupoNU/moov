@@ -93,6 +93,22 @@ type Deps struct {
 	// chosen one, which is most of them.
 	UndoWindow time.Duration
 
+	// Sieve is the RFC 9661 SieveScript surface (L3 epic E6). Required by
+	// RegisterSieveMethods, unused elsewhere.
+	Sieve SieveStore
+
+	// Vacation is the RFC 8621 §8 VacationResponse surface (E6). Required by
+	// RegisterVacationMethods.
+	Vacation VacationStore
+
+	// Filters and Forwarding are the vendor rule-model surface (E6, GC-4)
+	// under jmap.CapFilters. Required together by RegisterFilterMethods.
+	Filters    FilterStore
+	Forwarding ForwardingStore
+
+	// Quota is the RFC 9425 surface (E6). Required by RegisterQuotaMethods.
+	Quota QuotaReader
+
 	// SubmissionObserver, when set, is told once per submission CANCELED here
 	// (W4b metrics). The outbox reports its own terminal outcomes — sent and
 	// failed — but a cancel never reaches it: the row is CAS'd out of 'queued'

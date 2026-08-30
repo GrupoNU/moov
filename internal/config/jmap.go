@@ -62,6 +62,21 @@ type JMAPConfig struct {
 	// accumulating streams — which is a per-account phenomenon.
 	MaxSSEPerAccount int
 
+	// SieveEnabled turns the E6 Sieve surfaces on (MOOV_SIEVE_ENABLED,
+	// default true when the JMAP server is enabled): SieveScript,
+	// VacationResponse, the vendor filter surface and Quota. Opt-out exists
+	// for a deployment whose ManageSieve is firewalled off; the daemon also
+	// degrades to disabled ON ITS OWN when the startup capability probe
+	// cannot reach ManageSieve (cmd/moovd logs it loudly).
+	SieveEnabled bool
+
+	// SieveHost is the ManageSieve host (MOOV_SIEVE_HOST, defaulting to
+	// IMAPHost — the same Dovecot serves both).
+	SieveHost string
+
+	// SievePort is the ManageSieve port (MOOV_SIEVE_PORT, default 4190).
+	SievePort int
+
 	// BrandingDir is the root of the per-host branding directories
 	// (MOOV_BRANDING_DIR, e.g. /etc/moov/branding holding
 	// <host>/branding.json). Arbitration W-A1 of L2-pwa: the PWA reads
@@ -136,6 +151,22 @@ func loadJMAP() (JMAPConfig, error) {
 	// rather than refusing to start the mail server.
 	j.BrandingDir = strings.TrimSpace(os.Getenv("MOOV_BRANDING_DIR"))
 
+	if j.SieveEnabled, err = ParseBool("MOOV_SIEVE_ENABLED", true); err != nil {
+		return JMAPConfig{}, err
+	}
+	j.SieveHost = envOr("MOOV_SIEVE_HOST", j.IMAPHost)
+	j.SievePort = 4190
+	if v := os.Getenv("MOOV_SIEVE_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return JMAPConfig{}, fmt.Errorf("MOOV_SIEVE_PORT: %w", err)
+		}
+		if n < 1 || n > 65535 {
+			return JMAPConfig{}, fmt.Errorf("MOOV_SIEVE_PORT: %d out of range", n)
+		}
+		j.SievePort = n
+	}
+
 	return j, nil
 }
 
@@ -161,9 +192,9 @@ func (j JMAPConfig) String() string {
 	return fmt.Sprintf(
 		"jmap_enabled=%t jmap_addr=%s jmap_external_url=%s jmap_cors_origins=%s "+
 			"jmap_imap_host=%s jmap_imap_port=%d jmap_imap_server_name=%s jmap_auth_cache_ttl=%s "+
-			"sse_max_conn_per_account=%d branding_dir=%s",
+			"sse_max_conn_per_account=%d branding_dir=%s sieve_enabled=%t sieve_host=%s sieve_port=%d",
 		j.Enabled, j.Addr, orUnset(j.ExternalURL), orUnset(strings.Join(j.CORSOrigins, ",")),
 		orUnset(j.IMAPHost), j.IMAPPort, orUnset(j.IMAPServerName), orDefault(j.AuthCacheTTL),
-		j.MaxSSEPerAccount, orUnset(j.BrandingDir),
+		j.MaxSSEPerAccount, orUnset(j.BrandingDir), j.SieveEnabled, orUnset(j.SieveHost), j.SievePort,
 	)
 }

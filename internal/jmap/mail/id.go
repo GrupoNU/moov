@@ -34,7 +34,28 @@ const (
 	mailboxIDPrefix = "m"
 	emailIDPrefix   = "e"
 	threadIDPrefix  = "t"
+
+	// E6: s = SieveScript (the ledger id, stable across renames), f =
+	// ForwardingAddress. Same scheme, same canonicality.
+	sieveScriptIDPrefix = "s"
+	forwardingIDPrefix  = "f"
 )
+
+// EncodeSieveScriptID renders a sieve_scripts ledger id as a JMAP Id.
+func EncodeSieveScriptID(id int64) string { return encodeID(sieveScriptIDPrefix, id) }
+
+// DecodeSieveScriptID parses a JMAP SieveScript Id back to the ledger id.
+func DecodeSieveScriptID(s string) (int64, error) {
+	return decodeID(sieveScriptIDPrefix, "sieve script", s)
+}
+
+// EncodeForwardingID renders a forwarding_addresses id as a JMAP Id.
+func EncodeForwardingID(id int64) string { return encodeID(forwardingIDPrefix, id) }
+
+// DecodeForwardingID parses a JMAP ForwardingAddress Id back to the row id.
+func DecodeForwardingID(s string) (int64, error) {
+	return decodeID(forwardingIDPrefix, "forwarding address", s)
+}
 
 // EncodeMailboxID renders a store mailbox id as a JMAP Id.
 func EncodeMailboxID(id int64) string { return encodeID(mailboxIDPrefix, id) }

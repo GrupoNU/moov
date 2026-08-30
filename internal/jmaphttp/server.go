@@ -146,6 +146,53 @@ type Config struct {
 	// MOOV_BRANDING_DIR). Empty serves the Moov defaults to every host, which
 	// is a complete and supported configuration — it is what the pilot runs.
 	BrandingDir string
+
+	// Sieve, when non-nil, advertises urn:ietf:params:jmap:sieve with the
+	// probed live values (E6). It must be set exactly when
+	// RegisterSieveMethods was called — the same advertised == registered
+	// rule as Submission. nil on a deployment whose ManageSieve could not be
+	// probed at startup: the honest degradation is "no sieve capability",
+	// never a capability with guessed extension lists.
+	Sieve *SieveCapability
+
+	// Vacation advertises urn:ietf:params:jmap:vacationresponse; set exactly
+	// when RegisterVacationMethods was called.
+	Vacation bool
+
+	// Quota advertises urn:ietf:params:jmap:quota; set exactly when
+	// RegisterQuotaMethods was called.
+	Quota bool
+
+	// Filters advertises Moov's vendor filter capability (jmap.CapFilters);
+	// set exactly when RegisterFilterMethods was called.
+	Filters bool
+
+	// Forwarding backs GET /jmap/forwarding/verify (E6): the authenticated
+	// aux route that consumes a verification token. nil keeps the route
+	// answering 501, the same degradation shape push uses.
+	Forwarding ForwardingVerifier
+}
+
+// SieveCapability carries the live server facts the RFC 9661 §1.2.1 account
+// capability advertises. cmd/moovd fills it from sieve.Probe at startup.
+type SieveCapability struct {
+	// Extensions is the server's SIEVE list, verbatim (case-sensitive per
+	// §1.2.1).
+	Extensions []string
+
+	// NotificationMethods is the NOTIFY list, or nil when enotify is not
+	// supported (§1.2.1 wants null then).
+	NotificationMethods []string
+
+	// MaxRedirects is the advertised MAXREDIRECTS; nil means the server
+	// declared no limit (§1.2.1's null).
+	MaxRedirects *int
+}
+
+// ForwardingVerifier consumes one forwarding verification token for the
+// authenticated caller. mail.SieveAdapter satisfies it by construction.
+type ForwardingVerifier interface {
+	VerifyForwarding(ctx context.Context, accountID int64, token string) (email string, err error)
 }
 
 // RequestRecorder is the metrics layer's view of an HTTP request.
@@ -225,7 +272,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 
 	// The capability set the engine accepts in "using" is exactly the set the
 	// session advertises — one list, used twice, so they cannot drift.
-	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(cfg.Submission, cfg.Prefs, cfg.Triage), cfg.Logger)
+	engine := jmap.NewEngine(registry, cfg.Limits, supportedCapabilities(&cfg), cfg.Logger)
 
 	maxSSE := cfg.MaxSSEPerAccount
 	if maxSSE <= 0 {
@@ -310,20 +357,31 @@ func fillLimitDefaults(l jmap.Limits) jmap.Limits {
 
 // supportedCapabilities is the single source for what this server speaks:
 // advertised in the Session object AND accepted in a request's "using" list.
-// The submission capability joins exactly when the deployment mounts the
-// submission methods (Config.Submission), and Moov's vendor preference
-// capability exactly when it mounts those (Config.Prefs), and its vendor
-// triage capability exactly when it mounts those (Config.Triage).
-func supportedCapabilities(submission, prefs, triage bool) []string {
+// Each capability joins exactly when the deployment mounts its methods — the
+// advertised == registered rule, applied uniformly (Submission, Prefs,
+// Triage, and E6's Sieve/Vacation/Quota/Filters).
+func supportedCapabilities(cfg *Config) []string {
 	caps := []string{jmap.CapCore, jmap.CapMail}
-	if submission {
+	if cfg.Submission {
 		caps = append(caps, jmap.CapSubmission)
 	}
-	if prefs {
+	if cfg.Prefs {
 		caps = append(caps, jmap.CapPrefs)
 	}
-	if triage {
+	if cfg.Triage {
 		caps = append(caps, jmap.CapTriage)
+	}
+	if cfg.Sieve != nil {
+		caps = append(caps, jmap.CapSieve)
+	}
+	if cfg.Vacation {
+		caps = append(caps, jmap.CapVacation)
+	}
+	if cfg.Quota {
+		caps = append(caps, jmap.CapQuota)
+	}
+	if cfg.Filters {
+		caps = append(caps, jmap.CapFilters)
 	}
 	return caps
 }

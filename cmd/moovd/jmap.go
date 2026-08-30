@@ -184,6 +184,30 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	// the outbox, so the JMAP layer is the only place it can be counted.
 	deps.SubmissionObserver = submissionMetrics{m}
 
+	// The E6 surfaces (Sieve/Vacation/Filters/Forwarding + Quota), gated on
+	// config AND on the startup ManageSieve probe: if the probe fails the
+	// daemon serves mail without the sieve capabilities this run — honest
+	// degradation, logged loudly in probeSieveCapability.
+	transport := &smtpTransport{cfg: cfg.Submit, dialer: dialer, logger: logger}
+	var sieveCap *jmaphttp.SieveCapability
+	var sieveAdapter *mail.SieveAdapter
+	if cfg.JMAP.SieveEnabled {
+		sieveCap = probeSieveCapability(ctx, cfg.JMAP, logger)
+	}
+	if sieveCap != nil {
+		sieveAdapter, err = buildSieveSurfaces(cfg, st, blobs, deps, dialer, keyring,
+			transport, broker, m, logger)
+		if err != nil {
+			writer.Close()
+			st.Close()
+			return nil, err
+		}
+		// Quota rides with the sieve gate rather than its own: both exist for
+		// the settings screen, and the reader is the writer adapter's cached
+		// IMAP connection — nothing to probe separately.
+		deps.Quota = writerAdapter
+	}
+
 	// The uploader is the SAME adapter deps.Blobs is — one object serving
 	// download's reads and upload's writes keeps the account-scoping rule in
 	// one place. The assertion is structural: mail.Adapter implements both.
@@ -218,6 +242,19 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		// Branding (W-A1): the public, Host-resolved brand document the PWA
 		// reads before anyone has logged in. Empty serves Moov's own brand.
 		BrandingDir: cfg.JMAP.BrandingDir,
+		// E6: advertised == registered, per capability (the J1 rule). All
+		// four flags key off the same probe result the registrations below
+		// key off, so they cannot disagree.
+		Sieve:    sieveCap,
+		Vacation: sieveCap != nil,
+		Quota:    sieveCap != nil,
+		Filters:  sieveCap != nil,
+		Forwarding: func() jmaphttp.ForwardingVerifier {
+			if sieveAdapter != nil {
+				return sieveAdapter
+			}
+			return nil
+		}(),
 	}, auth)
 	if err != nil {
 		writer.Close()
@@ -237,6 +274,14 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	mail.RegisterPrefsMethods(srv.Registry(), deps)
 	// E4's snooze and mute methods, under the vendor triage capability.
 	mail.RegisterTriageMethods(srv.Registry(), deps)
+	// E6: the standard SieveScript/VacationResponse/Quota surfaces and the
+	// vendor filter surface — registered exactly when advertised.
+	if sieveCap != nil {
+		mail.RegisterSieveMethods(srv.Registry(), deps)
+		mail.RegisterVacationMethods(srv.Registry(), deps)
+		mail.RegisterFilterMethods(srv.Registry(), deps)
+		mail.RegisterQuotaMethods(srv.Registry(), deps)
+	}
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -265,7 +310,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	// draft bytes), and its lifecycle: mounted with submission, stopped after
 	// the HTTP server drains.
 	raws, _ := deps.Emails.(submit.RawSource)
-	outbox, err := startOutbox(cfg, st, &smtpTransport{cfg: cfg.Submit, dialer: dialer, logger: logger},
+	outbox, err := startOutbox(cfg, st, transport,
 		writer, raws, broker, blobs, submissionMetrics{m}, logger)
 	if err != nil {
 		_ = httpSrv.Close()

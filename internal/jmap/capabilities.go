@@ -80,4 +80,38 @@ const (
 	// exist, and — the property that matters for the Bulwark oracle — is
 	// completely unaffected by their presence.
 	CapTriage = "https://moov.email/ns/triage"
+
+	// CapSieve is the JMAP Sieve capability (RFC 9661 §1.2.1): the
+	// SieveScript data type and its /get, /set, /validate and /query methods
+	// (L3 epic E6). This is the standard surface that unlocks Bulwark's
+	// Filters tab. Its account capability object carries the §1.2.1 limits
+	// and the server's live SIEVE extension list.
+	CapSieve = "urn:ietf:params:jmap:sieve"
+
+	// CapVacation is the JMAP vacation-response capability (RFC 8621 §1.3.3,
+	// §8): the VacationResponse singleton. Its session and account values
+	// are empty objects per §1.3.3.
+	CapVacation = "urn:ietf:params:jmap:vacationresponse"
+
+	// CapQuota is the JMAP quota capability (RFC 9425 §2.1): the Quota data
+	// type. §2.1: "The value of this property is an empty object in both the
+	// JMAP session capabilities property and an account's
+	// accountCapabilities property."
+	CapQuota = "urn:ietf:params:jmap:quota"
+
+	// CapFilters is Moov's VENDOR capability for the server-side rule model
+	// (L3 epic E6, GC-4): FilterRule and ForwardingAddress objects.
+	//
+	// # Why a vendor surface EXISTS next to urn:ietf:params:jmap:sieve
+	//
+	// RFC 9661 moves raw scripts; it has no notion of a rule, a blocked
+	// sender, or a verified forwarding address. Bulwark solves that
+	// client-side (an ~800-line Sieve tokenizer in the browser). Moov's UI
+	// gets the rule model SERVER-side instead — the parse/generate round
+	// trip, the origin partitioning and the verified-forward enforcement
+	// live in internal/sieve where they are pinned by tests — so the UI
+	// renders "Filtros", "Bloqueados" and "Reenvío" from typed objects. Same
+	// vendor-URI reasoning as CapPrefs; a client that never opts in is
+	// unaffected.
+	CapFilters = "https://moov.email/ns/filters"
 )

@@ -112,6 +112,42 @@ var (
 	_ EmailCreator  = (*WriterAdapter)(nil)
 )
 
+// ReadQuota implements QuotaReader (E6, RFC 9425's transport): the executor
+// reads GETQUOTAROOT over its cached per-account connection, and the mapping
+// here applies the honesty filter — only the two RFC 9425 resource types are
+// served, and a resource without a positive limit is "no quota", not an
+// object with an invented hardLimit (quota.go's package comment).
+func (a *WriterAdapter) ReadQuota(ctx context.Context, accountID int64) ([]QuotaValue, error) {
+	usages, err := a.exec.ReadQuota(ctx, accountID)
+	if err != nil {
+		return nil, mapWriteErr(err)
+	}
+	var out []QuotaValue
+	for _, u := range usages {
+		if u.Limit <= 0 || u.Usage < 0 {
+			continue
+		}
+		var resourceType string
+		switch u.Resource {
+		case "STORAGE":
+			resourceType = "octets"
+		case "MESSAGE":
+			resourceType = "count"
+		default:
+			// RFC 9425 §3.2 defines exactly count and octets; anything else
+			// a server advertises has no truthful spelling on this surface.
+			continue
+		}
+		out = append(out, QuotaValue{
+			Name:         u.Root,
+			ResourceType: resourceType,
+			Used:         uint64(u.Usage),
+			HardLimit:    uint64(u.Limit),
+		})
+	}
+	return out, nil
+}
+
 // mapWriteErr translates the executor's sentinels into this package's, so the
 // handlers branch on one vocabulary.
 func mapWriteErr(err error) error {

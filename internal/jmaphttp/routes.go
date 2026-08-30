@@ -80,6 +80,11 @@ func (s *Server) routes() []route {
 		{method: http.MethodPost, pattern: PathToken, handler: s.handleTokenMint},
 		{method: http.MethodPost, pattern: PathTokenRevoke, handler: s.handleTokenRevoke},
 
+		// Forwarding verification (E6, forwarding.go). Authenticated by the
+		// table's default; the token in the query is consent evidence, not a
+		// credential.
+		{method: http.MethodGet, pattern: PathForwardingVerify, handler: s.handleForwardingVerify},
+
 		// Branding (W-A1): public by design, see branding.go.
 		{method: http.MethodGet, pattern: PathBranding, handler: s.handleBranding, public: true},
 		{method: http.MethodGet, pattern: PathBrandingAsset, handler: s.handleBrandingAsset, public: true},

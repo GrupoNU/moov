@@ -94,6 +94,34 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		accountCapabilities[jmap.CapTriage] = triageAccountCapability()
 		primaryAccounts[jmap.CapTriage] = id.AccountID
 	}
+	if s.cfg.Sieve != nil {
+		// RFC 9661 §1.2.1 puts the values in the account capability; the
+		// session-level value is an empty object like the other IETF
+		// capabilities' (the RFC defines only per-account properties).
+		capabilities[jmap.CapSieve] = map[string]any{}
+		accountCapabilities[jmap.CapSieve] = sieveAccountCapability(s.cfg.Sieve)
+		primaryAccounts[jmap.CapSieve] = id.AccountID
+	}
+	if s.cfg.Vacation {
+		// RFC 8621 §1.3.3: "The value of this property ... is an empty
+		// object" in both places.
+		capabilities[jmap.CapVacation] = map[string]any{}
+		accountCapabilities[jmap.CapVacation] = map[string]any{}
+		primaryAccounts[jmap.CapVacation] = id.AccountID
+	}
+	if s.cfg.Quota {
+		// RFC 9425 §2.1: "The value of this property is an empty object in
+		// both the JMAP session capabilities property and an account's
+		// accountCapabilities property."
+		capabilities[jmap.CapQuota] = map[string]any{}
+		accountCapabilities[jmap.CapQuota] = map[string]any{}
+		primaryAccounts[jmap.CapQuota] = id.AccountID
+	}
+	if s.cfg.Filters {
+		capabilities[jmap.CapFilters] = filtersCapability()
+		accountCapabilities[jmap.CapFilters] = map[string]any{}
+		primaryAccounts[jmap.CapFilters] = id.AccountID
+	}
 
 	return map[string]any{
 		"capabilities": capabilities,
@@ -237,6 +265,57 @@ func triageAccountCapability() map[string]any {
 	return map[string]any{
 		"maxScheduledSends":     mail.MaxScheduledPerAccount(),
 		"maxDelayedSendSeconds": int(mail.MaxDelayedSend.Seconds()),
+	}
+}
+
+// sieveAccountCapability is the RFC 9661 §1.2.1 account capability object,
+// truthful per the J1 rule:
+//
+//   - maxSizeScriptName: 512 octets ("For compatibility with ManageSieve,
+//     this MUST be at least 512" — and RFC 5804 §1.6's 128 characters can
+//     take exactly 512 bytes in UTF-8, which is what the /set validator
+//     enforces).
+//   - maxSizeScript: mail.MaxSieveScriptSize, the value the upload path
+//     enforces (declared == applied). It mirrors the deployment's Dovecot
+//     sieve_max_script_size, which ManageSieve cannot advertise.
+//   - maxNumberScripts: null — the Mailcow Dovecot sets
+//     sieve_quota_max_scripts = 0 (no limit), and this server imposes none.
+//   - maxNumberRedirects: the probed MAXREDIRECTS, else null (§1.2.1's "null
+//     for no limit").
+//   - sieveExtensions: the probed live list, verbatim and case-sensitive.
+//   - notificationMethods / externalLists: probed NOTIFY list; null when the
+//     extension is absent (§1.2.1). extlists is not in the deployment's
+//     SIEVE list, so externalLists is null.
+func sieveAccountCapability(sc *SieveCapability) map[string]any {
+	var notify any
+	if len(sc.NotificationMethods) > 0 {
+		notify = sc.NotificationMethods
+	}
+	var maxRedirects any
+	if sc.MaxRedirects != nil {
+		maxRedirects = *sc.MaxRedirects
+	}
+	return map[string]any{
+		"maxSizeScriptName":   512,
+		"maxSizeScript":       mail.MaxSieveScriptSize,
+		"maxNumberScripts":    nil,
+		"maxNumberRedirects":  maxRedirects,
+		"sieveExtensions":     sc.Extensions,
+		"notificationMethods": notify,
+		"externalLists":       nil,
+	}
+}
+
+// filtersCapability is the server-wide value of Moov's vendor filter
+// capability (E6, GC-4). Like the other vendor capabilities it carries what
+// a client cannot discover otherwise: the schema version of the rule model
+// and the fact that no /changes methods exist on this surface (refresh via
+// SSE + /get).
+func filtersCapability() map[string]any {
+	return map[string]any{
+		"schemaVersion":       1,
+		"maxChangesSupported": false,
+		"verifyPath":          PathForwardingVerify,
 	}
 }
 

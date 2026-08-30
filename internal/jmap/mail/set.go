@@ -40,6 +40,11 @@ type setError struct {
 	Type        string   `json:"type"`
 	Description string   `json:"description,omitempty"`
 	Properties  []string `json:"properties,omitempty"`
+
+	// ExistingID carries RFC 9661 §2.4's alreadyExists payload: "An
+	// 'existingId' property of type 'Id' MUST be included ... with the id of
+	// the existing script." Empty for every other SetError type.
+	ExistingID string `json:"existingId,omitempty"`
 }
 
 // The SetError types this server emits.

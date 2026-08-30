@@ -112,6 +112,25 @@ type Metrics struct {
 	// are locked out of Dovecot right now" must be a first-class question.
 	BreakerOpen *Gauge
 
+	// --- Sieve (E6)
+
+	// SievePushes counts pushes of the managed Sieve script (vacation,
+	// filter and forwarding writes all end in one), labeled by result
+	// (ok/error). Vacation REPLIES are deliberately not counted anywhere:
+	// Dovecot sends them and this server never sees one — a counter would
+	// be a guess wearing a unit.
+	SievePushes *Counter
+
+	// VerificationMails counts forwarding-verification mails, labeled by
+	// result (sent/failed) — the half of the GC-4 flow this server CAN
+	// honestly observe.
+	VerificationMails *Counter
+
+	// VacationUpdates counts VacationResponse/set applications, labeled by
+	// the resulting enabled state — the observable proxy for "vacation
+	// state" that does not require a per-account gauge.
+	VacationUpdates *Counter
+
 	// --- Parser (E4)
 
 	// ParseResults counts MIME parses by which stage of the S4 cascade
@@ -179,6 +198,12 @@ func NewWithRegistry(r *Registry) *Metrics {
 		BreakerOpen: r.Gauge("moov_sync_breaker_open",
 			"1 when an account's circuit breaker is open, 0 otherwise."),
 
+		SievePushes: r.Counter("moov_sieve_script_pushes_total",
+			"Managed Sieve script pushes by result (ok, error)."),
+		VerificationMails: r.Counter("moov_sieve_verification_mails_total",
+			"Forwarding verification mails by result (sent, failed)."),
+		VacationUpdates: r.Counter("moov_vacation_updates_total",
+			"VacationResponse/set applications by resulting enabled state (true, false)."),
 		ParseResults: r.Counter("moov_parse_results_total",
 			"MIME parse outcomes by which stage of the cascade produced the result."),
 
@@ -264,6 +289,26 @@ const (
 // make the failure rate report retries rather than lost mail.
 func (m *Metrics) IncSubmission(result string) {
 	m.Submissions.Inc(Labels{"result": result})
+}
+
+// IncSievePush counts one managed-script push (E6). result: "ok"/"error".
+func (m *Metrics) IncSievePush(result string) {
+	m.SievePushes.Inc(Labels{"result": result})
+}
+
+// IncVerificationMail counts one forwarding verification mail (E6).
+// result: "sent"/"failed".
+func (m *Metrics) IncVerificationMail(result string) {
+	m.VerificationMails.Inc(Labels{"result": result})
+}
+
+// IncVacationUpdate counts one vacation configuration change (E6).
+func (m *Metrics) IncVacationUpdate(enabled bool) {
+	label := "false"
+	if enabled {
+		label = "true"
+	}
+	m.VacationUpdates.Inc(Labels{"enabled": label})
 }
 
 // IncSnoozeWoken counts one snoozed message returned to its folder (L3 E4).

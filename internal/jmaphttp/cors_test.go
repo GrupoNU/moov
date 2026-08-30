@@ -30,6 +30,9 @@ var corsRoutes = []struct{ method, path string }{
 	// POSTs the PWA calls with fetch, so they preflight like /jmap/api.
 	{http.MethodPost, "/jmap/token"},
 	{http.MethodPost, "/jmap/token/revoke"},
+	// Forwarding verification (E6, forwarding.go): an authenticated GET the
+	// PWA calls with fetch, so it preflights like /jmap/api.
+	{http.MethodGet, "/jmap/forwarding/verify"},
 }
 
 func TestPreflightCoversEveryRoute(t *testing.T) {

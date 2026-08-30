@@ -84,6 +84,18 @@ func (s *Store) SyncSieveScripts(ctx context.Context, accountID int64, names []s
 	return out, nil
 }
 
+// GetSieveScriptByName resolves one ledger row by its current name.
+func (s *Store) GetSieveScriptByName(ctx context.Context, accountID int64, name string) (SieveScriptRow, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+sieveScriptColumns+` FROM sieve_scripts
+		 WHERE account_id = $1 AND name = $2`, accountID, name)
+	r, err := scanSieveScript(row)
+	if err != nil {
+		return SieveScriptRow{}, notFound(err, fmt.Sprintf("sieve script %q", name))
+	}
+	return r, nil
+}
+
 // GetSieveScript resolves one ledger row by id, account-scoped.
 func (s *Store) GetSieveScript(ctx context.Context, accountID, id int64) (SieveScriptRow, error) {
 	row := s.pool.QueryRow(ctx, `
@@ -169,6 +181,7 @@ func (s *Store) SieveScriptWatermark(ctx context.Context, accountID int64) (time
 	return *t, nil
 }
 
+// CountSieveScripts is the count term of the SieveScript state cursor.
 func (s *Store) CountSieveScripts(ctx context.Context, accountID int64) (int64, error) {
 	var n int64
 	err := s.pool.QueryRow(ctx, `
@@ -350,6 +363,7 @@ func (s *Store) ForwardingWatermark(ctx context.Context, accountID int64) (time.
 	return *t, nil
 }
 
+// CountForwardingAddresses is the count term of the forwarding state cursor.
 func (s *Store) CountForwardingAddresses(ctx context.Context, accountID int64) (int64, error) {
 	var n int64
 	err := s.pool.QueryRow(ctx, `
