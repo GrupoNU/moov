@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -655,4 +656,70 @@ func TestUndoWindowClamp(t *testing.T) {
 			t.Errorf("clampUndoWindow(%v) = %v, want %v", in, got, want)
 		}
 	}
+}
+
+// TestPrefsUndoWindowClampsTheStoredPreference extends the clamp contract to
+// the E0 path: the number now comes from an account's stored preference, and
+// the send path's correctness must not depend on that preference having gone
+// through the current validator.
+//
+// The middle rows are the whole point. Prefs/set only accepts Gmail's four
+// values, so 3 and 3600 are unreachable through the API — but a row written by
+// an older build, a future one, or an operator's UPDATE can hold them, and the
+// outbox must still get a window it can honor.
+func TestPrefsUndoWindowClampsTheStoredPreference(t *testing.T) {
+	for in, want := range map[int]time.Duration{
+		// Unset (an account that has never chosen) falls to the default.
+		0: DefaultUndoWindow,
+		// Gmail's four, each honored exactly.
+		5:  5 * time.Second,
+		10: 10 * time.Second,
+		20: 20 * time.Second,
+		30: 30 * time.Second,
+		// Out of contract in both directions, and negative — clamped, never
+		// propagated.
+		3:    MinUndoWindow,
+		3600: MaxUndoWindow,
+		-7:   DefaultUndoWindow,
+	} {
+		if got := prefsUndoWindow(in); got != want {
+			t.Errorf("prefsUndoWindow(%d) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestUndoWindowFallsBackWithoutAPrefsSurface pins the degradation documented
+// on undoWindowFor: a deployment that does not mount preferences, and a
+// preference read that FAILS, must both still send the user's mail.
+func TestUndoWindowFallsBackWithoutAPrefsSurface(t *testing.T) {
+	ctx := context.Background()
+
+	deps := &Deps{UndoWindow: 20 * time.Second}
+	if got := deps.undoWindowFor(ctx, 1); got != 20*time.Second {
+		t.Errorf("window = %v, want the configured 20s with no Prefs surface", got)
+	}
+
+	// A failing read degrades to the configured window rather than refusing to
+	// send: the cost of the wrong branch is a shorter undo, the cost of the
+	// alternative is mail that does not go out.
+	deps.Prefs = failingPrefsStore{}
+	if got := deps.undoWindowFor(ctx, 1); got != 20*time.Second {
+		t.Errorf("window = %v, want the configured 20s when the preference read fails", got)
+	}
+}
+
+// failingPrefsStore fails every read, standing in for a database hiccup during
+// compose.
+type failingPrefsStore struct{}
+
+func (failingPrefsStore) GetPrefs(context.Context, int64) (PrefsRecord, error) {
+	return PrefsRecord{}, errors.New("database unavailable")
+}
+
+func (failingPrefsStore) PutPrefs(context.Context, int64, PrefsValue) (PrefsRecord, error) {
+	return PrefsRecord{}, errors.New("database unavailable")
+}
+
+func (failingPrefsStore) PrefsState(context.Context, int64) (string, error) {
+	return "", errors.New("database unavailable")
 }
