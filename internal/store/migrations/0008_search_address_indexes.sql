@@ -1,0 +1,183 @@
+-- Moov Mail — migration 0008: address-substring indexes for the cc and bcc
+-- search filters (L3 epic E3).
+--
+-- Source of truth: RFC 8621 §4.4.1 (the `cc` and `bcc` FilterConditions),
+-- docs/research/06-gmail-canon.md §2.5 (Gmail's `cc:` and `bcc:` operators are
+-- part of the daily operator language), and the S3 discipline this repository
+-- applies to every new query shape: measure the plan, or do not ship the shape.
+--
+-- ===========================================================================
+-- WHY A MIGRATION AT ALL, WHEN THE COLUMNS ALREADY EXIST
+-- ===========================================================================
+--
+-- Both filters could be served with no schema change whatsoever, and that is
+-- exactly what was measured first. The result is why this file exists.
+--
+-- `cc` has a column (messages.cc_addrs, migration 0002). `bcc` has no column:
+-- it lives inside messages.addresses -> 'bcc', a JSONB array of {name,email}
+-- objects. Neither has an index that a SUBSTRING match can use, because the
+-- only text index on this table is the tsvector GIN, and a tsvector cannot
+-- answer "contains this fragment" — it answers "contains this lexeme".
+--
+-- Measured on the E3 bench corpus (120,000 messages on the account under test,
+-- 20,000 more on a second account, PostgreSQL 17.4, the dev instance):
+--
+--   shape                                       plan                    time
+--   ------------------------------------------  ----------------------  --------
+--   cc_addrs ILIKE '%addr%'      (27 matches)   Parallel Seq Scan       145.9 ms
+--   cc_addrs ILIKE '%addr%'      (0 matches)    Parallel Seq Scan       125.6 ms
+--   addresses->'bcc' jsonb_path_exists (10)     Index Scan + Filter,
+--                                               119,990 rows discarded  167.5 ms
+--   (addresses->'bcc')::text ILIKE (10)         Parallel Seq Scan       107.0 ms
+--
+-- Every one of them is over the Gmail-class 100 ms bar (project rule 1) BEFORE
+-- any concurrency, and — worse than the number — every one of them is a scan
+-- whose cost is the SIZE OF THE MAILBOX rather than the size of the answer.
+-- That is precisely the failure mode internal/store/search.go exists to make
+-- unrepresentable, and shipping either filter on those plans would have
+-- reintroduced it one condition at a time.
+--
+-- The alternative to this migration was not "a slower filter". It was refusing
+-- `cc` and `bcc` outright, or serving them as a whole-message tsvector match
+-- and calling it cc — which is the over-match posture documented at
+-- translateCondition for from/to/subject. Neither is acceptable HERE, for a
+-- reason specific to these two conditions:
+--
+--   * `cc` COULD have ridden the existing tsvector: cc_addrs is in the tsv's B
+--     weight band (0002). But that is a LEXEME match over the whole message, so
+--     `cc:ana@x.test` would also return every message that merely mentions Ana
+--     in its body — and a user filtering by cc is usually trying to find the
+--     mail where a specific person was copied, which is exactly the distinction
+--     the over-match destroys.
+--   * `bcc` COULD NOT have ridden it at all: bcc is deliberately absent from the
+--     tsv (0002 puts only from/to/cc in band B). Blind-carbon recipients are not
+--     full-text searchable in this store by construction, so there was no
+--     over-match option to fall back on — only an index or a refusal.
+--
+-- ===========================================================================
+-- THE CHOICE: TRIGRAM GIN OVER AN EXTRACTED EXPRESSION
+-- ===========================================================================
+--
+-- pg_trgm's GIN operator class indexes every 3-character substring, which is
+-- what makes an unanchored LIKE '%fragment%' index-served. Measured on the same
+-- corpus, same queries, after these indexes exist:
+--
+--   shape                                       plan                    time
+--   ------------------------------------------  ----------------------  --------
+--   lower(cc_addrs) LIKE '%addr%'  (27 matches) Bitmap Index Scan
+--                                               on messages_cc_trgm       1.8 ms
+--   lower(cc_addrs) LIKE '%addr%'  (0 matches)  Bitmap Index Scan         0.1 ms
+--   bcc expression LIKE '%addr%'   (10 matches) Bitmap Index Scan
+--                                               on messages_bcc_trgm      0.6 ms
+--   bcc expression LIKE '%addr%'   (0 matches)  Bitmap Index Scan         0.1 ms
+--
+-- 81x on cc, 293x on bcc, and — the number that actually decides it — the
+-- NO-MATCH case drops from 125.6 ms to 0.1 ms. A filter for an address that
+-- appears nowhere is the single most common shape a search box produces while
+-- the user is still typing, and it was the worst case of every unindexed
+-- alternative because a scan cannot stop early when there is nothing to find.
+--
+-- Cost: 1,032 kB (cc) + 432 kB (bcc) on 120,000 messages, against 17 MB for the
+-- tsvector GIN those messages already carry. Roughly 8.5% of the FTS index for
+-- two filters the FTS index cannot answer.
+--
+-- ===========================================================================
+-- THE RULE THIS MIGRATION HAD TO CLEAR (migration 0004's own)
+-- ===========================================================================
+--
+-- 0004 states it, and internal/store/collapse.go declined to write THIS
+-- migration number once already on its strength: an index whose only
+-- justification is a shape that already has one hands the planner one more way
+-- to compete with the composite GIN on every search query. S3 §5.3 is the
+-- cautionary tale — a misestimated tsvector selectivity took a 1.6 ms query to
+-- 13,085 ms because the planner preferred a different index.
+--
+-- So the rule was TESTED rather than assumed. The four pre-existing text-search
+-- plans (rare term alone; rare term + unread; rare term + keyword; rare term +
+-- inMailbox) were EXPLAIN'd before and after these indexes were created, on the
+-- same corpus in the same session. Every plan was byte-identical and every
+-- timing was within run-to-run noise. That is the expected result rather than a
+-- lucky one: a trigram index over lower(cc_addrs) is only a candidate for a
+-- predicate ON THAT EXPRESSION, and no existing query has one. These indexes
+-- are inert for every shape the repertoire already served.
+--
+-- ===========================================================================
+-- WHY AN EXPRESSION INDEX AND NOT AN EXTRACTED COLUMN
+-- ===========================================================================
+--
+-- The obvious alternative for bcc is a generated column — `bcc_addrs text
+-- GENERATED ALWAYS AS (...)` — mirroring cc_addrs, then a trigram index on it.
+-- It is rejected on the rule migration 0002 states for the messages table:
+-- "every write here costs a rewrite of the tsv into the GIN index". A new
+-- generated column means REWRITING ALL 120,000 ROWS of the pilot's largest
+-- account at migration time (and 26,869 on the owner's real one), plus a
+-- permanent duplication of data the addresses JSONB already holds. The
+-- expression index stores only the trigrams — 432 kB — and derives the text on
+-- the fly for the handful of rows a bitmap scan actually rechecks.
+--
+-- The expression is spelled out below rather than hidden in a function because
+-- an expression index only applies when the QUERY repeats it CHARACTER FOR
+-- CHARACTER. internal/store/search.go builds exactly this string, and
+-- search_address_test.go asserts the resulting plan is a bitmap index scan — so
+-- a drift between the two fails a test rather than silently returning to the
+-- 167 ms sequential scan.
+
+-- +goose Up
+
+-- +goose StatementBegin
+-- ---------------------------------------------------------------------------
+-- pg_trgm: the trigram operator classes.
+--
+-- Created here rather than in 0001 because 0001 predates any need for it, and
+-- because an extension is exactly the kind of thing that should appear in the
+-- migration whose shapes require it — an operator to explain what it is for.
+-- ---------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- ---------------------------------------------------------------------------
+-- cc: a trigram index over the lowercased Cc header text.
+--
+-- lower() rather than a case-insensitive operator class because ILIKE cannot
+-- use a trigram index on a plain column expression, while LIKE over lower()
+-- can — and email addresses are case-insensitive in their domain part and
+-- conventionally in their local part, so lowercasing both sides is the correct
+-- comparison anyway, not just the indexable one.
+-- ---------------------------------------------------------------------------
+CREATE INDEX messages_cc_trgm ON messages USING gin (lower(cc_addrs) gin_trgm_ops);
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- ---------------------------------------------------------------------------
+-- bcc: a trigram index over the addresses JSONB's bcc email list.
+--
+-- jsonb_path_query_array is IMMUTABLE (it takes no timezone or collation
+-- input), which is what makes it indexable; jsonb_path_query, the set-returning
+-- sibling, is not usable in an index expression at all. Casting the resulting
+-- array to text yields ["a@x.test", "b@y.test"], and a substring match over
+-- that string is exactly "is this address among the bcc recipients" — with the
+-- JSON quoting acting as a free delimiter, so a search for `ana@x.test` cannot
+-- match `susana@x.test` when the caller anchors on the quote (search.go does
+-- not anchor, deliberately: a partial address is a useful search).
+-- ---------------------------------------------------------------------------
+CREATE INDEX messages_bcc_trgm ON messages
+    USING gin ((lower(jsonb_path_query_array(addresses, '$.bcc[*].email')::text)) gin_trgm_ops);
+-- +goose StatementEnd
+
+-- +goose Down
+
+-- +goose StatementBegin
+DROP INDEX IF EXISTS messages_bcc_trgm;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+DROP INDEX IF EXISTS messages_cc_trgm;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- pg_trgm is deliberately NOT dropped: an extension is installation-wide, and a
+-- rollback of one migration must not remove something another schema object —
+-- or another database in the same cluster — may depend on.
+SELECT 1;
+-- +goose StatementEnd

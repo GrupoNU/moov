@@ -78,6 +78,10 @@ type SearchQuery struct {
 	// (account_id, date DESC) walk the shape already performs.
 	Until *time.Time
 
+	// Narrow carries the E3 filter conditions every shape in this file shares.
+	// See Narrowing for what each one costs.
+	Narrow Narrowing
+
 	// After is the keyset cursor: results resume strictly after this position
 	// in the (date DESC, id DESC) order. Nil starts at the newest match.
 	//
@@ -304,6 +308,9 @@ type MailboxListQuery struct {
 	// message_state_unread exactly.
 	UnreadOnly bool
 
+	// Narrow carries the E3 filter conditions (see Narrowing).
+	Narrow Narrowing
+
 	// After resumes the (date DESC, id DESC) walk after a previous page's last
 	// row. Nil starts at the newest message.
 	After *SearchCursor
@@ -351,6 +358,7 @@ func (s *Store) ListMailboxMessages(ctx context.Context, q MailboxListQuery) ([]
 		// and it matches the partial index predicate exactly.
 		conds = append(conds, "(ms.flags & 1) = 0")
 	}
+	conds, args = q.Narrow.appendConditions(conds, args, "m", "ms")
 	if q.After != nil {
 		// Row-value comparison so the page resumes the index walk; see
 		// SearchCursor for why this is not OFFSET and not a disjunction.
@@ -397,29 +405,9 @@ func (s *Store) ListMailboxMessages(ctx context.Context, q MailboxListQuery) ([]
 // is already account-first — so this is bounded by the same LIMIT as every other
 // method here rather than by how much mail the account happens to hold.
 func (s *Store) ListAccountMessages(ctx context.Context, q AccountListQuery) ([]SearchResult, error) {
-	conds := []string{
-		"m.account_id = $1",
-		"ms.deleted_at IS NULL",
-	}
-	args := []any{q.AccountID}
+	sql, args := q.build()
 
-	if q.Until != nil {
-		args = append(args, *q.Until)
-		conds = append(conds, fmt.Sprintf("m.date < $%d", len(args)))
-	}
-	if q.After != nil {
-		args = append(args, q.After.Date, q.After.MessageID)
-		conds = append(conds, fmt.Sprintf("(m.date, m.id) < ($%d, $%d)", len(args)-1, len(args)))
-	}
-	args = append(args, q.effectiveLimit())
-
-	rows, err := s.pool.Query(ctx, `
-		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
-		  FROM messages m
-		  JOIN message_state ms ON ms.message_id = m.id
-		 WHERE `+strings.Join(conds, " AND ")+`
-		 ORDER BY m.date DESC, m.id DESC
-		 LIMIT $`+fmt.Sprint(len(args)), args...)
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing account messages: %w", err)
 	}
@@ -427,13 +415,76 @@ func (s *Store) ListAccountMessages(ctx context.Context, q AccountListQuery) ([]
 	return scanSearchResults(rows, false)
 }
 
+// build assembles the account-wide statement and its arguments.
+//
+// It is a separate method from ListAccountMessages so that a test can EXPLAIN
+// THE STORE'S OWN STRING rather than a hand-copied approximation of it. That
+// distinction is load-bearing since migration 0008: an expression index applies
+// only when the query repeats the indexed expression CHARACTER FOR CHARACTER,
+// so a builder that paraphrases the cc or bcc predicate silently falls back to
+// a sequential scan — 145.9 ms instead of 1.8 ms — while a plan test written
+// against a hand-copied query keeps passing and reports everything is fine.
+// search_e3_test.go EXPLAINs what this returns, so the paraphrase fails.
+func (q AccountListQuery) build() (string, []any) {
+	conds := []string{
+		"m.account_id = $1",
+		"ms.deleted_at IS NULL",
+	}
+	args := []any{q.AccountID}
+
+	if q.Since != nil {
+		args = append(args, *q.Since)
+		conds = append(conds, fmt.Sprintf("m.date >= $%d", len(args)))
+	}
+	if q.Until != nil {
+		args = append(args, *q.Until)
+		conds = append(conds, fmt.Sprintf("m.date < $%d", len(args)))
+	}
+	if q.UnreadOnly {
+		// Literal 1: the \Seen bit by definition, matching the partial index
+		// message_state_unread exactly.
+		conds = append(conds, "(ms.flags & 1) = 0")
+	}
+	conds, args = q.Narrow.appendConditions(conds, args, "m", "ms")
+	if q.After != nil {
+		args = append(args, q.After.Date, q.After.MessageID)
+		conds = append(conds, fmt.Sprintf("(m.date, m.id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, q.effectiveLimit())
+
+	return `
+		SELECT m.id, m.date, m.subject, m.from_addr, m.preview, ms.mailbox_id, ms.flags, ms.keywords
+		  FROM messages m
+		  JOIN message_state ms ON ms.message_id = m.id
+		 WHERE ` + strings.Join(conds, " AND ") + `
+		 ORDER BY m.date DESC, m.id DESC
+		 LIMIT $` + fmt.Sprint(len(args)), args
+}
+
 // AccountListQuery is the account-wide view's request — the same shape as
 // MailboxListQuery without the mailbox predicate.
 type AccountListQuery struct {
 	AccountID int64
 
+	// Since restricts to messages at or after this instant when non-nil.
+	//
+	// Added in L3 epic E3 alongside UnreadOnly and Narrow. Before it, the
+	// account-wide shape took only an upper date bound, and the JMAP layer had
+	// to REFUSE any account-wide filter carrying more than that (query.go's
+	// account-wide refusal). That refusal is what made Gmail's default search —
+	// text-free, account-wide, Spam and Trash excluded — unanswerable, so the
+	// shape grew the same narrowing its two siblings already had rather than
+	// the policy growing an exception.
+	Since *time.Time
+
 	// Until restricts to messages strictly before this instant when non-nil.
 	Until *time.Time
+
+	// UnreadOnly restricts to unread messages.
+	UnreadOnly bool
+
+	// Narrow carries the E3 filter conditions (see Narrowing).
+	Narrow Narrowing
 
 	// After resumes the (date DESC, id DESC) walk after a previous page's last
 	// row. Nil starts at the newest message.
@@ -519,6 +570,7 @@ func (q SearchQuery) conditions(prefix bool) (string, []any) {
 		args = append(args, q.Keyword)
 		conds = append(conds, fmt.Sprintf("ms.keywords @> ARRAY[$%d]::text[]", len(args)))
 	}
+	conds, args = q.Narrow.appendConditions(conds, args, "m", "ms")
 	if q.After != nil {
 		// The row-value comparison, not an OR of two predicates.
 		//

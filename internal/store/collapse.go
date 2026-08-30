@@ -159,6 +159,15 @@ type CollapsedQuery struct {
 	// live after arbitration A6. Only honored alongside Text.
 	Keyword string
 
+	// Narrow carries the E3 filter conditions (see Narrowing).
+	//
+	// It is applied to BOTH the candidate window and the cross-page dedupe
+	// anti-join, for the reason dedupeClause states at length: "already offered"
+	// means offered by a query with THIS filter, so a thread whose only newer
+	// member fails the narrowing was never on an earlier page and excluding it
+	// would silently drop a conversation.
+	Narrow Narrowing
+
 	// After resumes the underlying (date DESC, id DESC) MESSAGE walk after a
 	// previous page's last SCANNED row, which is not its last RETURNED row —
 	// see CollapsedResult.NextCursor.
@@ -446,6 +455,12 @@ func (q CollapsedQuery) dedupeClause(args []any) (string, []any) {
 		args = append(args, q.Keyword)
 		conds = append(conds, fmt.Sprintf("ps.keywords @> ARRAY[$%d]::text[]", len(args)))
 	}
+	// The E3 narrowing, over the probe's own aliases. Omitting it here would
+	// break the anti-join in the direction that HIDES mail: a thread whose only
+	// newer member has no attachment, under a hasAttachment filter, was never
+	// offered on an earlier page, so excluding it now would drop the
+	// conversation entirely.
+	conds, args = q.Narrow.appendConditions(conds, args, "p", "ps")
 
 	// At or ABOVE the cursor — the inclusive complement of the window's strict
 	// "below". The cursor row itself was the last row an earlier page SCANNED,
@@ -502,6 +517,7 @@ func (q CollapsedQuery) conditions() (string, []any) {
 		args = append(args, q.Keyword)
 		conds = append(conds, fmt.Sprintf("ms.keywords @> ARRAY[$%d]::text[]", len(args)))
 	}
+	conds, args = q.Narrow.appendConditions(conds, args, "m", "ms")
 	if q.After != nil {
 		// The row-value comparison, not a disjunction — SearchCursor documents
 		// why the difference decides whether a deep page resumes the index walk
