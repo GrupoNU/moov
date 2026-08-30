@@ -248,55 +248,42 @@ func (s *Store) BackfillThreadRows(ctx context.Context, accountID int64, batchSi
 		batchSize = 500
 	}
 	err = s.InTx(ctx, func(tx pgx.Tx) error {
-		// The oldest member of each thread, in thread_id order so the caller can
-		// page. DISTINCT ON is served by messages_acct_thread (account, thread,
-		// date) — the same index ThreadMembers uses.
+		// The thread ids of this batch. The KEY is derived per thread by
+		// threadRootKey, which is the same single derivation the insert path
+		// uses — a second copy here would be a second definition of identity,
+		// and the two would disagree the first time one was changed.
 		rows, qerr := tx.Query(ctx, `
-			SELECT DISTINCT ON (m.thread_id)
-			       m.thread_id, m.message_id, m.in_reply_to, m.references_ids, m.subject
+			SELECT DISTINCT m.thread_id
 			  FROM messages m
 			 WHERE m.account_id = $1 AND m.thread_id IS NOT NULL AND m.thread_id > $2
-			 ORDER BY m.thread_id, m.date, m.id
+			 ORDER BY m.thread_id
 			 LIMIT $3`, accountID, afterThreadID, batchSize)
 		if qerr != nil {
 			return fmt.Errorf("backfilling thread rows: %w", qerr)
 		}
-		type work struct {
-			threadID  int64
-			candidate ThreadCandidate
-		}
-		var batch []work
+		var threadIDs []int64
 		for rows.Next() {
-			var (
-				threadID  int64
-				messageID *string
-				inReplyTo *string
-				refs      []string
-				subject   string
-			)
-			if err := rows.Scan(&threadID, &messageID, &inReplyTo, &refs, &subject); err != nil {
+			var threadID int64
+			if err := rows.Scan(&threadID); err != nil {
 				rows.Close()
 				return fmt.Errorf("backfilling thread rows: %w", err)
 			}
-			c := ThreadCandidate{References: refs, Subject: subject}
-			if messageID != nil {
-				c.MessageID = *messageID
-			}
-			if inReplyTo != nil && *inReplyTo != "" {
-				c.References = append(append([]string{}, refs...), *inReplyTo)
-			}
-			batch = append(batch, work{threadID: threadID, candidate: c})
+			threadIDs = append(threadIDs, threadID)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("backfilling thread rows: %w", err)
 		}
-		for _, w := range batch {
-			if _, err := EnsureThread(ctx, tx, accountID, ThreadKey(w.candidate), w.threadID); err != nil {
+		for _, threadID := range threadIDs {
+			key, kerr := threadRootKey(ctx, tx, accountID, threadID)
+			if kerr != nil {
+				return kerr
+			}
+			if _, err := ensureThreadForWinner(ctx, tx, accountID, key, threadID); err != nil {
 				return err
 			}
 			created++
-			lastThreadID = w.threadID
+			lastThreadID = threadID
 		}
 		return nil
 	})

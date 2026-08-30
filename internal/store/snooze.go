@@ -13,10 +13,11 @@ import (
 // # What lives here and what does NOT
 //
 // GC-10 is the governing constraint and it is worth restating at the code that
-// implements it, because the whole epic is audited against it:
-//
-//	"Estado que solo vive en PostgreSQL viola la invariante (otros clientes
-//	 IMAP seguirían viendo el mail en INBOX; un rebuild del cache lo perdería)."
+// implements it, because the whole epic is audited against it. Its wording, in
+// English: state that lives ONLY in PostgreSQL violates the invariant, because
+// other IMAP clients would still see the mail in INBOX and a cache rebuild
+// would lose it. (The plan's original Spanish is in
+// docs/specs/L3-gmail-class-plan.md §3.)
 //
 // So neither of these tables holds where mail IS. A snooze is a MOVE to the
 // Snoozed folder in Dovecot; a mute's effect is an archive in Dovecot. Both
@@ -474,29 +475,11 @@ func (s *Store) MuteWatermark(ctx context.Context, accountID int64) (time.Time, 
 func (s *Store) EnsureThreadRowFor(ctx context.Context, accountID, threadID int64) (Thread, error) {
 	var out Thread
 	err := s.InTx(ctx, func(tx pgx.Tx) error {
-		var (
-			messageID *string
-			inReplyTo *string
-			refs      []string
-			subject   string
-		)
-		err := tx.QueryRow(ctx, `
-			SELECT m.message_id, m.in_reply_to, m.references_ids, m.subject
-			  FROM messages m
-			 WHERE m.account_id = $1 AND m.thread_id IS NOT NULL AND m.thread_id = $2
-			 ORDER BY m.date, m.id
-			 LIMIT 1`, accountID, threadID).Scan(&messageID, &inReplyTo, &refs, &subject)
+		key, err := threadRootKey(ctx, tx, accountID, threadID)
 		if err != nil {
-			return notFound(err, fmt.Sprintf("thread %d", threadID))
+			return err
 		}
-		c := ThreadCandidate{References: refs, Subject: subject}
-		if messageID != nil {
-			c.MessageID = *messageID
-		}
-		if inReplyTo != nil && *inReplyTo != "" {
-			c.References = append(append([]string{}, refs...), *inReplyTo)
-		}
-		row, err := EnsureThread(ctx, tx, accountID, ThreadKey(c), threadID)
+		row, err := ensureThreadForWinner(ctx, tx, accountID, key, threadID)
 		if err != nil {
 			return err
 		}

@@ -241,17 +241,7 @@ func assignOne(ctx context.Context, tx pgx.Tx, accountID, id int64, c ThreadCand
 	// It is written from inside this same transaction, so a conversation and
 	// the row that names it durably are always consistent — an unpaired row
 	// would let a mute attach to a thread that does not exist.
-	//
-	// The key is derived from THIS message's headers, and that is correct even
-	// though the row describes the whole thread: a message joins a thread only
-	// by naming an ancestor, so the winner's own key is what a later member
-	// derives too — the References chain contains the root regardless of which
-	// member you look at. The one case where it differs is the out-of-order
-	// parent (step 2 above): a genuine ancestor arriving late derives a key
-	// closer to the real root and takes over the row, which is exactly the
-	// "the root only ever moves backwards in time" property migration 0009's
-	// header claims.
-	if err := ensureThreadRow(ctx, tx, accountID, winner, c, assignment.MergedFrom); err != nil {
+	if err := ensureThreadRow(ctx, tx, accountID, winner, assignment.MergedFrom); err != nil {
 		return assignment, err
 	}
 
@@ -260,6 +250,27 @@ func assignOne(ctx context.Context, tx pgx.Tx, accountID, id int64, c ThreadCand
 
 // ensureThreadRow maintains the durable thread row for an assignment, and
 // tombstones the rows of the threads this assignment absorbed.
+//
+// # The key comes from the thread's OLDEST member, never from the arriving one
+//
+// This is the correction the tests forced, and it is worth stating because the
+// wrong version is the obvious one. Deriving the key from the message being
+// threaded looks right — every member of a conversation names its root in
+// References, so surely they all derive the same key. They do not: the ROOT
+// derives "mid:<its own Message-ID>" while every descendant derives
+// "ref:<the root's Message-ID>". Two spellings, one conversation, and the
+// second one lands on the unique index over (account_id, thread_id) as a
+// duplicate.
+//
+// So the key is derived from whichever message the store says is oldest in the
+// winning thread — which is the definition migration 0009 and threadkey.go both
+// state, applied literally. It costs one indexed lookup per assignment,
+// served by messages_acct_thread (account, thread, date), which is the same
+// index ThreadMembers already reads.
+//
+// The property migration 0009 claims — "the root only ever moves backwards in
+// time" — falls out of this: when a genuine ancestor arrives late, IT becomes
+// the oldest member, and the row's key is re-derived to name it.
 //
 // # Why the merged rows are tombstoned rather than deleted
 //
@@ -277,8 +288,12 @@ func assignOne(ctx context.Context, tx pgx.Tx, accountID, id int64, c ThreadCand
 // identity, which mute would silently fail to attach to — a feature that looks
 // like it worked and did not. Failing the batch makes the sync engine retry,
 // which is loud and recoverable.
-func ensureThreadRow(ctx context.Context, tx pgx.Tx, accountID, winner int64, c ThreadCandidate, mergedFrom []int64) error {
-	row, err := EnsureThread(ctx, tx, accountID, ThreadKey(c), winner)
+func ensureThreadRow(ctx context.Context, tx pgx.Tx, accountID, winner int64, mergedFrom []int64) error {
+	key, err := threadRootKey(ctx, tx, accountID, winner)
+	if err != nil {
+		return err
+	}
+	row, err := ensureThreadForWinner(ctx, tx, accountID, key, winner)
 	if err != nil {
 		return err
 	}
@@ -311,6 +326,137 @@ func ensureThreadRow(ctx context.Context, tx pgx.Tx, accountID, winner int64, c 
 		}
 	}
 	return nil
+}
+
+// threadRootKey derives the durable key of a thread from its OLDEST member.
+//
+// Ordered by (date, id) — the same total order ThreadMembers uses, and for the
+// same reason: two messages with the same date must still yield one answer, or
+// the key would depend on which row the planner happened to return first.
+func threadRootKey(ctx context.Context, tx pgx.Tx, accountID, threadID int64) (string, error) {
+	var (
+		messageID *string
+		inReplyTo *string
+		refs      []string
+		subject   string
+	)
+	err := tx.QueryRow(ctx, `
+		SELECT message_id, in_reply_to, references_ids, subject
+		  FROM messages
+		 WHERE account_id = $1 AND thread_id IS NOT NULL AND thread_id = $2
+		 ORDER BY date, id
+		 LIMIT 1`, accountID, threadID).Scan(&messageID, &inReplyTo, &refs, &subject)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("deriving the durable key of thread %d: %w", threadID, err)
+	}
+	c := ThreadCandidate{References: refs, Subject: subject}
+	if messageID != nil {
+		c.MessageID = *messageID
+	}
+	if inReplyTo != nil && *inReplyTo != "" {
+		c.References = append(append([]string{}, refs...), *inReplyTo)
+	}
+	return ThreadKey(c), nil
+}
+
+// ensureThreadForWinner writes the durable row for one thread_id, handling the
+// RE-KEY case EnsureThread alone cannot.
+//
+// EnsureThread is keyed on (account_id, root_message_id) and re-points a row's
+// thread_id. The case it cannot express is the mirror image: a row already
+// owns this thread_id under a DIFFERENT key, which happens when a genuine
+// ancestor arrives late and becomes the conversation's new oldest member. A
+// plain insert would then collide on the partial unique index over
+// (account_id, thread_id) — the exact failure the E4 tests caught.
+//
+// The re-key is an UPDATE of the existing row rather than a new row plus a
+// tombstone, and that distinction is the point: the conversation did not die
+// and did not merge, so reporting it destroyed would tell a client to drop a
+// thread it still has. Its identity was REFINED — the root moved backwards in
+// time, which migration 0009's header names as the only movement the key
+// permits — and the row's watermark moves so Thread/changes reports it updated.
+func ensureThreadForWinner(ctx context.Context, tx pgx.Tx, accountID int64, key string, winner int64) (Thread, error) {
+	// The row that currently owns this thread_id, if any.
+	var existingID int64
+	var existingKey string
+	err := tx.QueryRow(ctx, `
+		SELECT id, root_message_id FROM threads
+		 WHERE account_id = $1 AND thread_id = $2 AND destroyed_at IS NULL`,
+		accountID, winner).Scan(&existingID, &existingKey)
+	switch {
+	case err == nil && existingKey == key:
+		// The identity is unchanged — the overwhelmingly common path — but the
+		// CONVERSATION changed: a message just joined it.
+		//
+		// RFC 8621 §3 defines a Thread as its id plus its ordered emailIds, so
+		// "updated" means the member set changed, which is exactly what has
+		// just happened. Skipping the watermark bump here would make
+		// Thread/changes silently miss every reply — the most common thread
+		// change there is — and a client would render a conversation whose
+		// message list stops growing.
+		//
+		// The bump is one narrow UPDATE of one row, on the same transaction
+		// that already wrote the message, so it costs nothing measurable next
+		// to the insert it accompanies.
+		if _, uerr := tx.Exec(ctx,
+			`UPDATE threads SET updated_at = now() WHERE id = $1 AND account_id = $2`,
+			existingID, accountID); uerr != nil {
+			return Thread{}, fmt.Errorf("advancing the thread watermark: %w", uerr)
+		}
+		return threadByID(ctx, tx, accountID, existingID)
+	case err == nil:
+		// The re-key. If the new key is already taken by ANOTHER row, the two
+		// rows describe one conversation and the older one wins — the same
+		// oldest-wins rule thread ids follow, applied to identity.
+		var otherID int64
+		kerr := tx.QueryRow(ctx,
+			`SELECT id FROM threads WHERE account_id = $1 AND root_message_id = $2`,
+			accountID, key).Scan(&otherID)
+		if kerr == nil && otherID != existingID {
+			winnerRow, loserRow := otherID, existingID
+			if existingID < otherID {
+				winnerRow, loserRow = existingID, otherID
+			}
+			// The surviving row takes the thread_id and the key; the other is
+			// tombstoned onto it, which is a genuine merge of two identities.
+			if _, uerr := tx.Exec(ctx, `
+				UPDATE threads SET thread_id = $3, root_message_id = $4, updated_at = now()
+				 WHERE id = $1 AND account_id = $2`, winnerRow, accountID, winner, key); uerr != nil {
+				return Thread{}, fmt.Errorf("re-keying thread row %d: %w", winnerRow, uerr)
+			}
+			if terr := TombstoneThread(ctx, tx, accountID, loserRow, winnerRow); terr != nil {
+				return Thread{}, terr
+			}
+			return threadByID(ctx, tx, accountID, winnerRow)
+		}
+		if kerr != nil && !errors.Is(kerr, pgx.ErrNoRows) {
+			return Thread{}, fmt.Errorf("checking the new durable key: %w", kerr)
+		}
+		if _, uerr := tx.Exec(ctx, `
+			UPDATE threads SET root_message_id = $3, updated_at = now()
+			 WHERE id = $1 AND account_id = $2`, existingID, accountID, key); uerr != nil {
+			return Thread{}, fmt.Errorf("re-keying thread row %d: %w", existingID, uerr)
+		}
+		return threadByID(ctx, tx, accountID, existingID)
+	case errors.Is(err, pgx.ErrNoRows):
+		// No row owns this thread_id: the ordinary create-or-repoint.
+		return EnsureThread(ctx, tx, accountID, key, winner)
+	default:
+		return Thread{}, fmt.Errorf("reading the thread row of thread %d: %w", winner, err)
+	}
+}
+
+func threadByID(ctx context.Context, tx pgx.Tx, accountID, id int64) (Thread, error) {
+	row := tx.QueryRow(ctx,
+		`SELECT `+threadRowColumns+` FROM threads WHERE id = $1 AND account_id = $2`, id, accountID)
+	t, err := scanThreadRow(row)
+	if err != nil {
+		return Thread{}, notFound(err, fmt.Sprintf("thread row %d", id))
+	}
+	return t, nil
 }
 
 // threadsOfMessageIDs resolves a set of Message-ID headers to the threads of
