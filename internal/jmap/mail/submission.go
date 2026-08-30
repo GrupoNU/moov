@@ -155,6 +155,42 @@ const (
 	MaxUndoWindow     = 30 * time.Second
 )
 
+// undoWindowFor resolves the undo window for one submission: the ACCOUNT's
+// undoSendSeconds preference (L3 epic E0) when it has one, otherwise the
+// daemon's configured default.
+//
+// The fallback is not a convenience — it is the only correct answer in three
+// real situations, and each of them must produce a working send rather than an
+// error:
+//
+//   - the deployment does not mount the preference surface at all (Deps.Prefs
+//     nil), which is a valid wiring: preferences are a vendor capability and a
+//     server may serve mail without them;
+//   - the account has never opened the settings screen, so it has no stored
+//     preference and GetPrefs returns the product default;
+//   - the read FAILS. A database hiccup while composing must not refuse to
+//     send the user's mail; it degrades to the configured window, which is
+//     what every submission used before preferences existed.
+//
+// The error is deliberately swallowed rather than propagated, and that is the
+// judgment worth stating: the cost of the wrong branch is a send whose undo
+// window is 10 seconds instead of 20, and the cost of the alternative is a
+// mail that does not go out. There is no reading of "Gmail-class" in which the
+// second is the better failure.
+//
+// The result goes through the SAME clamp the config path uses, so the [5, 30]
+// contract holds regardless of which branch supplied the number.
+func (d *Deps) undoWindowFor(ctx context.Context, accountID int64) time.Duration {
+	if d.Prefs == nil {
+		return clampUndoWindow(d.UndoWindow)
+	}
+	rec, err := d.Prefs.GetPrefs(ctx, accountID)
+	if err != nil {
+		return clampUndoWindow(d.UndoWindow)
+	}
+	return prefsUndoWindow(rec.Prefs.UndoSendSeconds)
+}
+
 // clampUndoWindow applies the window contract.
 func clampUndoWindow(d time.Duration) time.Duration {
 	switch {
@@ -673,7 +709,7 @@ func (d *Deps) applySubmissionCreate(ctx context.Context, caller jmap.Caller, ra
 	spec := SubmissionSpec{
 		EmailID:    emailID,
 		IdentityID: identity.WireID(),
-		UndoWindow: d.UndoWindow,
+		UndoWindow: d.undoWindowFor(ctx, caller.AccountID),
 	}
 
 	// The envelope: given, or derived per §7.1.2: "If the envelope property
