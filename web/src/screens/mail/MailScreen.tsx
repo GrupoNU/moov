@@ -7,6 +7,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { loadSession } from "../../auth/session";
 import { useBranding } from "../../branding/BrandingProvider";
 import { BrandMark } from "../../components/BrandMark";
+import { useConfirm } from "../../components/ModalDialog";
 import { useTranslation } from "../../i18n/I18nProvider";
 import {
   INITIAL_KEYBOARD_STATE,
@@ -173,6 +174,15 @@ export function MailScreen(): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const { route, navigate, replace } = useRouter();
   const { prefs } = usePrefs();
+
+  /*
+   * E11: the app's own confirm, replacing `window.confirm` at every site on
+   * this screen — permanent delete, empty trash, delete a label, discard a
+   * queued message. The natives were unstyleable and inconsistent between
+   * browsers, and are increasingly suppressed outright, which would turn a
+   * destructive checkpoint into a silent yes.
+   */
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const session = state.status === "authenticated" ? state.session : undefined;
   const accountId = session?.primaryAccounts["urn:ietf:params:jmap:mail"] ?? "";
@@ -1598,15 +1608,26 @@ export function MailScreen(): React.JSX.Element {
     [replyOriginMailboxId, actions, projected, refresh],
   );
 
-  const runDelete = useCallback((): void => {
+  const runDelete = useCallback(async (): Promise<void> => {
     const ids = targetMessageIds();
     if (ids.length === 0) return;
     /*
      * Confirmation is asked for ONLY when the delete is irreversible (W-A2:
      * already in Trash). A confirm on every delete trains people to dismiss
      * it, which is how the one that mattered gets dismissed too.
+     *
+     * E11: our own dialog. `window.confirm` is suppressed outright in some
+     * embedding contexts, which would have turned this checkpoint into a
+     * silent permanent delete — a correctness bug, not a styling one.
      */
-    if (willDeletePermanently && !window.confirm(format("action.confirmDeleteForever", ids.length))) {
+    if (
+      willDeletePermanently &&
+      !(await confirm({
+        message: format("action.confirmDeleteForever", ids.length),
+        confirmLabel: t("action.confirm"),
+        destructive: true,
+      }))
+    ) {
       return;
     }
     void dispatchAction(
@@ -1622,7 +1643,7 @@ export function MailScreen(): React.JSX.Element {
         autoAdvance: true,
       },
     );
-  }, [targetMessageIds, willDeletePermanently, dispatchAction, format, activeMailbox?.id]);
+  }, [targetMessageIds, willDeletePermanently, dispatchAction, format, activeMailbox?.id, confirm, t]);
 
   const runMove = useCallback(
     (mailboxId: string): void => {
@@ -1806,8 +1827,17 @@ export function MailScreen(): React.JSX.Element {
         // The confirmation says what is and is NOT deleted: removing a label
         // from 4,000 messages is alarming precisely because it sounds like
         // deleting 4,000 messages.
-        if (!window.confirm(format("label.deleteConfirm", label.name))) return;
-        void labelsApi.remove(label).then(reportMigration);
+        void (async () => {
+          if (
+            !(await confirm({
+              message: format("label.deleteConfirm", label.name),
+              destructive: true,
+            }))
+          ) {
+            return;
+          }
+          void labelsApi.remove(label).then(reportMigration);
+        })();
       },
       migrationStatus: labelsApi.isMigrating
         ? format("label.migrating", labelsApi.migratedCount)
@@ -2029,15 +2059,22 @@ export function MailScreen(): React.JSX.Element {
    * "empty the trash" reads very differently at 3 messages and at 4,000.
    */
   const confirmEmptyTrash = useCallback(
-    (trash: Mailbox): void => {
+    async (trash: Mailbox): Promise<void> => {
       if (trash.totalEmails === 0) {
         setToast(t("action.emptyTrashEmpty"));
         return;
       }
-      if (!window.confirm(format("action.emptyTrashConfirm", trash.totalEmails))) return;
+      if (
+        !(await confirm({
+          message: format("action.emptyTrashConfirm", trash.totalEmails),
+          destructive: true,
+        }))
+      ) {
+        return;
+      }
       runEmptyTrash(trash.id);
     },
-    [format, t, runEmptyTrash],
+    [format, t, runEmptyTrash, confirm],
   );
 
   // --- navigation ----------------------------------------------------------
@@ -2246,14 +2283,14 @@ export function MailScreen(): React.JSX.Element {
 
   const discardOutboxItem = useCallback(
     (item: OutboxItem): void => {
-      // The one place a queued message is allowed to disappear: the user asked.
-      if (!window.confirm(t("draft.discardConfirm"))) return;
       void (async () => {
+        // The one place a queued message is allowed to disappear: the user asked.
+        if (!(await confirm({ message: t("draft.discardConfirm"), destructive: true }))) return;
         await offline.outbox?.remove(item.id);
         await offline.reloadOutbox();
       })();
     },
-    [offline, t],
+    [offline, t, confirm],
   );
 
   /**
@@ -3043,7 +3080,7 @@ export function MailScreen(): React.JSX.Element {
           runArchive();
           break;
         case "delete":
-          runDelete();
+          void runDelete();
           break;
         /*
          * E11 — `Shift+I` / `Shift+U`, the DIRECTIONAL read pair (canon §2.7).
@@ -3368,7 +3405,7 @@ export function MailScreen(): React.JSX.Element {
                * 30-day retention is Dovecot's/Mailcow's expunge policy, not a
                * timer of ours (spec E2) — this is the manual "now".
                */
-              onEmptyTrash={inTrash ? confirmEmptyTrash : undefined}
+              onEmptyTrash={inTrash ? (trash) => { void confirmEmptyTrash(trash); } : undefined}
               isEmptyingTrash={isEmptyingTrash}
               /*
                * E9: the Outbox, as a VIRTUAL folder the list draws only when
@@ -3538,7 +3575,7 @@ export function MailScreen(): React.JSX.Element {
             }}
             onFlag={runToggleFlag}
             onArchive={runArchive}
-            onDelete={runDelete}
+            onDelete={() => { void runDelete(); }}
             onMove={runMove}
             mailboxes={mailboxes}
             currentMailboxId={activeMailbox?.id}
@@ -3630,7 +3667,15 @@ export function MailScreen(): React.JSX.Element {
               const permanent =
                 trashMailboxId !== undefined &&
                 group.messages.every((message) => deleteIsPermanent(message, trashMailboxId));
-              if (permanent && !window.confirm(format("action.confirmDeleteForever", ids.length))) {
+              void (async () => {
+              if (
+                permanent &&
+                !(await confirm({
+                  message: format("action.confirmDeleteForever", ids.length),
+                  confirmLabel: t("action.confirm"),
+                  destructive: true,
+                }))
+              ) {
                 return;
               }
               void dispatchAction(
@@ -3644,6 +3689,7 @@ export function MailScreen(): React.JSX.Element {
                   autoAdvance: true,
                 },
               );
+              })();
             }}
             onRowToggleRead={(group) => {
               const ids = idsOfGroup(group);
@@ -3784,7 +3830,7 @@ export function MailScreen(): React.JSX.Element {
                 );
               }}
               onArchive={runArchive}
-              onDelete={runDelete}
+              onDelete={() => { void runDelete(); }}
               deleteIsPermanent={willDeletePermanently}
               blobToken={blobToken}
               onToggleFlag={runToggleFlag}
@@ -3900,6 +3946,9 @@ export function MailScreen(): React.JSX.Element {
           setHelpOpen(false);
         }}
       />
+
+      {/* E11: the confirm this screen's destructive actions await. */}
+      {confirmDialog}
 
       {composerDraft !== undefined && client !== undefined && (
         <Composer

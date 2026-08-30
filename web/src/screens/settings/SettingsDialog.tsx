@@ -1,3 +1,4 @@
+import { useConfirm } from "../../components/ModalDialog";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ThemeToggle } from "../../components/ThemeToggle";
@@ -707,6 +708,8 @@ function AccountSection({
   const [draft, setDraft] = useState(identity?.textSignature ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const fieldId = useId();
+  /** E11: replaces the `window.confirm` that guarded clearing the index. */
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   // The identity arrives asynchronously; the textarea must adopt it when it
   // does, but must NOT stomp on what the user has typed since.
@@ -719,6 +722,7 @@ function AccountSection({
 
   return (
     <>
+      {confirmDialog}
       {showRow("identity") && (
         <SettingRow labelKey="settings.identity.label" descriptionKey="settings.identity.description">
           {identity === undefined ? (
@@ -834,8 +838,18 @@ function AccountSection({
                 className={styles.signatureSave}
                 disabled={addresses.count === 0}
                 onClick={() => {
-                  if (!window.confirm(t("settings.addressAutocomplete.clearConfirm"))) return;
-                  void addresses.clear();
+                  // E11: our own confirm, like every other one in the app.
+                  void (async () => {
+                    if (
+                      !(await confirm({
+                        message: t("settings.addressAutocomplete.clearConfirm"),
+                        destructive: true,
+                      }))
+                    ) {
+                      return;
+                    }
+                    void addresses.clear();
+                  })();
                 }}
               >
                 {t("settings.addressAutocomplete.clear")}

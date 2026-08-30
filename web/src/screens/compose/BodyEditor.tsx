@@ -1,3 +1,4 @@
+import { PromptDialog } from "../../components/ModalDialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
@@ -83,7 +84,6 @@ export function BodyEditor({
   const editableRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [activeCommands, setActiveCommands] = useState<readonly RichTextCommand[]>([]);
-  const [linkError, setLinkError] = useState<string | undefined>(undefined);
 
   /*
    * Seeding. Runs when the MESSAGE changes, never on every render: writing
@@ -159,6 +159,13 @@ export function BodyEditor({
   const onEditableKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>): void => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      /*
+       * E11: Shift is excluded, because Ctrl+Shift+B and Ctrl+Shift+C are the
+       * composer's Bcc and Cc keys (canon §2.7). Without this guard the
+       * editor's `event.key === "b"` would ALSO match Ctrl+Shift+B and toggle
+       * bold on the way past — two actions on one press.
+       */
+      if (event.shiftKey) return;
       const command: RichTextCommand | undefined =
         event.key === "b" ? "bold" : event.key === "i" ? "italic" : event.key === "u" ? "underline" : undefined;
       if (command === undefined) return;
@@ -187,19 +194,61 @@ export function BodyEditor({
     [publish],
   );
 
+  /*
+   * E11 — the link dialog replaces `window.prompt`.
+   *
+   * The prompt was the worst of the three natives this epic removed: it could
+   * only accept or reject a string AFTER the fact, so an invalid URL was
+   * swallowed and the complaint appeared in a banner somewhere else. The
+   * dialog validates as you type, next to the field, before you commit —
+   * which is what every real form does.
+   *
+   * The selection has to be captured BEFORE the dialog opens: moving focus
+   * into a dialog input collapses the contentEditable's selection, and
+   * applying a link to a collapsed range would silently do nothing.
+   */
+  const [linkOpen, setLinkOpen] = useState(false);
+  const savedRange = useRef<Range | undefined>(undefined);
+
   const onInsertLink = useCallback((): void => {
-    const raw = window.prompt(t("compose.linkPrompt"));
-    if (raw === null) return;
-    const normalized = normalizeLinkUrl(raw);
-    if (normalized === undefined) {
-      setLinkError(t("compose.linkInvalid"));
-      return;
-    }
-    setLinkError(undefined);
-    editableRef.current?.focus();
-    applyLink(normalized);
-    publish();
-  }, [t, publish]);
+    const selection = window.getSelection();
+    savedRange.current =
+      selection !== null && selection.rangeCount > 0
+        ? selection.getRangeAt(0).cloneRange()
+        : undefined;
+    setLinkOpen(true);
+  }, []);
+
+  const onLinkSubmit = useCallback(
+    (raw: string): void => {
+      const normalized = normalizeLinkUrl(raw);
+      // The dialog's own validator already refused anything invalid; this is
+      // the belt to that braces, and it keeps `applyLink` total.
+      if (normalized === undefined) return;
+      setLinkOpen(false);
+
+      editableRef.current?.focus();
+      // Restore what the user had selected before the dialog stole focus.
+      const range = savedRange.current;
+      if (range !== undefined) {
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+      applyLink(normalized);
+      publish();
+    },
+    [publish],
+  );
+
+  /** The dialog's live validation — the affordance `window.prompt` cannot have. */
+  const validateLink = useCallback(
+    (value: string): string | undefined =>
+      value.trim() === "" || normalizeLinkUrl(value) !== undefined
+        ? undefined
+        : t("compose.linkInvalid"),
+    [t],
+  );
 
   return (
     <div className={styles.wrapper}>
@@ -276,11 +325,22 @@ export function BodyEditor({
         )}
       </div>
 
-      {linkError !== undefined && (
-        <p className={styles.linkError} role="alert">
-          {linkError}
-        </p>
-      )}
+      {/*
+        E11: the link error used to be a banner HERE, because `window.prompt`
+        had nowhere to put it. The dialog shows it next to the field instead,
+        so the banner is gone rather than kept as a second place to look.
+      */}
+      <PromptDialog
+        isOpen={linkOpen}
+        title={t("compose.linkTitle")}
+        message={t("compose.linkPrompt")}
+        placeholder={t("compose.linkPlaceholder")}
+        validate={validateLink}
+        onSubmit={onLinkSubmit}
+        onCancel={() => {
+          setLinkOpen(false);
+        }}
+      />
 
       {isRich ? (
         <div

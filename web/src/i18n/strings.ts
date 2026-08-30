@@ -498,6 +498,13 @@ export const en = {
   "action.selected": (count: number): string => `${count} selected`,
   "action.selectRow": "Select this conversation",
   "action.undo": "Undo",
+
+  // E11: the app's own confirm/prompt, replacing window.confirm/prompt.
+  "dialog.confirmTitle": "Are you sure?",
+  "dialog.promptTitle": "Enter a value",
+  "dialog.confirm": "Confirm",
+  "dialog.cancel": "Cancel",
+  "dialog.ok": "OK",
   "action.confirmDeleteForever": (count: number): string =>
     count === 1
       ? "Delete this message permanently? This cannot be undone."
@@ -604,6 +611,8 @@ export const en = {
   "compose.link": "Insert a link",
   "compose.linkPrompt": "Address of the link",
   "compose.linkInvalid": "A link must be a web address (http, https) or an email address.",
+  "compose.linkTitle": "Insert link",
+  "compose.linkPlaceholder": "example.com",
   "compose.addressInvalid": (address: string): string =>
     `${address} is not a complete email address.`,
   "compose.noRecipients": "Add at least one recipient before sending.",
@@ -1307,6 +1316,12 @@ export const es: Strings = {
     count === 1 ? "1 seleccionado" : `${count} seleccionados`,
   "action.selectRow": "Seleccionar esta conversación",
   "action.undo": "Deshacer",
+
+  "dialog.confirmTitle": "¿Estás seguro?",
+  "dialog.promptTitle": "Ingresá un valor",
+  "dialog.confirm": "Confirmar",
+  "dialog.cancel": "Cancelar",
+  "dialog.ok": "Aceptar",
   "action.confirmDeleteForever": (count: number): string =>
     count === 1
       ? "¿Eliminar este mensaje definitivamente? No se puede deshacer."
@@ -1407,6 +1422,8 @@ export const es: Strings = {
   "compose.linkPrompt": "Dirección del enlace",
   "compose.linkInvalid":
     "Un enlace tiene que ser una dirección web (http, https) o una dirección de correo.",
+  "compose.linkTitle": "Insertar enlace",
+  "compose.linkPlaceholder": "ejemplo.com",
   "compose.addressInvalid": (address: string): string =>
     `${address} no es una dirección de correo completa.`,
   "compose.noRecipients": "Agregá al menos un destinatario antes de enviar.",

@@ -1,0 +1,117 @@
+/* The confirm/prompt pair (E11). Deliberately the same shell as the other
+ * sheets — a confirmation that looked like its own product would defeat the
+ * point of replacing the browser's. */
+
+.dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: min(28rem, calc(100vw - 2rem));
+  /* The dialog element centres itself with margin:auto in the top layer. */
+  margin: auto;
+  overflow: visible;
+}
+
+.dialog::backdrop {
+  background: var(--surface-overlay);
+  backdrop-filter: blur(2px);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+.title {
+  font-size: var(--text-base);
+  color: var(--text-strong);
+  margin: 0;
+}
+
+.message,
+.label {
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.error {
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.primary,
+.secondary,
+.destructive {
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+}
+
+.primary {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+/*
+ * The destructive button is OUTLINED rather than filled.
+ *
+ * `--color-danger` inverts between themes — a deep red in light, a pale pink
+ * in dark — so a filled button would need two different foregrounds to stay
+ * legible. An outline keeps the danger colour on text and border, where it
+ * reads correctly against the surface in both themes, and still separates
+ * this button from the neutral cancel beside it.
+ */
+.destructive {
+  background: var(--color-danger-tint);
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text-default);
+  border-color: var(--border-default);
+}
+
+.secondary:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+.primary:disabled {
+  opacity: 0.55;
+}

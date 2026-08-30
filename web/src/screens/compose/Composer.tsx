@@ -24,6 +24,7 @@ import { htmlToText, textToHtml } from "../../mail/quoting";
 import type { IndexedAddress } from "../../mail/addressIndex";
 import { isBlockedAttachment } from "../../mail/blockedExtensions";
 import { loadBodyMode, saveBodyMode } from "../../mail/composePrefs";
+import { useConfirm } from "../../components/ModalDialog";
 import { AddressField } from "./AddressField";
 import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
 import { BodyEditor } from "./BodyEditor";
@@ -158,6 +159,9 @@ export function Composer({
   const { t, format, locale } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  /** E11: the app's own confirm, replacing `window.confirm` for discard. */
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const [to, setTo] = useState<readonly AddressChip[]>(draft.to);
   const [cc, setCc] = useState<readonly AddressChip[]>(draft.cc);
@@ -771,7 +775,9 @@ export function Composer({
   // --- discard and close ---------------------------------------------------
 
   const discard = useCallback(async (): Promise<void> => {
-    if (!window.confirm(t("draft.discardConfirm"))) return;
+    // E11: our own dialog, not the browser's. Same shape as the `window.confirm`
+    // it replaces — one `await` longer — so the flow below is untouched.
+    if (!(await confirm({ message: t("draft.discardConfirm"), destructive: true }))) return;
     scheduler.cancel();
     const id = draftIdRef.current;
     if (id !== undefined) {
@@ -789,7 +795,7 @@ export function Composer({
     onNotify(t("draft.discarded"));
     onChanged();
     onClose();
-  }, [client, accountId, scheduler, t, onNotify, onChanged, onClose]);
+  }, [client, accountId, scheduler, t, onNotify, onChanged, onClose, confirm]);
 
   /**
    * Switches the body between the rich surface and the textarea.
@@ -831,6 +837,73 @@ export function Composer({
     [closeWithSave],
   );
 
+  /*
+   * E11 — the composer's own keys (canon §2.7's compose row).
+   *
+   * They live HERE rather than in the global resolver because the global one
+   * refuses everything typed inside a text field — correctly, or `e` would
+   * archive a message while you write one. That refusal is exactly why the
+   * composer has to own its own keys.
+   *
+   * They are also the one place modifiers are ours rather than the browser's:
+   * Ctrl+Enter, Ctrl+Shift+C and Ctrl+Shift+B are Gmail's, and none collides
+   * with a browser default worth keeping inside a modal composer.
+   */
+  const onComposerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLFormElement>): void => {
+      const accel = event.ctrlKey || event.metaKey;
+      if (!accel || event.altKey) return;
+
+      // Ctrl+Enter sends — the one key every mail client agrees on.
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        if (canSend) void send(false);
+        return;
+      }
+
+      if (!event.shiftKey) return;
+
+      /*
+       * Ctrl+Shift+C / Ctrl+Shift+B reveal Cc/Bcc AND focus them.
+       *
+       * Resolved by `event.code`, for the same reason the global map is: on a
+       * non-QWERTY layout `event.key` here would be a Cyrillic glyph and the
+       * shortcut would be unreachable. `KeyC`/`KeyB` are the same physical
+       * keys everywhere.
+       *
+       * Revealing without focusing would be the wrong half of the job: the
+       * user pressed a key to type an address, not to look at a field.
+       */
+      if (event.code === "KeyC") {
+        event.preventDefault();
+        setShowCc(true);
+        setFocusField("cc");
+      } else if (event.code === "KeyB") {
+        event.preventDefault();
+        setShowBcc(true);
+        setFocusField("bcc");
+      }
+    },
+    [canSend, send],
+  );
+
+  /*
+   * Which optional address field to focus once it has rendered.
+   *
+   * A state flag rather than a direct `.focus()` because the field may not be
+   * in the DOM yet — `setShowCc(true)` in the same handler is what puts it
+   * there, and focusing before React commits would hit nothing.
+   */
+  const [focusField, setFocusField] = useState<"cc" | "bcc" | undefined>(undefined);
+  const ccInputRef = useRef<HTMLInputElement | null>(null);
+  const bccInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (focusField === undefined) return;
+    const target = focusField === "cc" ? ccInputRef.current : bccInputRef.current;
+    target?.focus();
+    setFocusField(undefined);
+  }, [focusField, showCc, showBcc]);
+
   const title =
     draft.intent === "reply" || draft.intent === "replyAll"
       ? t("compose.titleReply")
@@ -849,6 +922,7 @@ export function Composer({
     >
       <form
         className={styles.form}
+        onKeyDown={onComposerKeyDown}
         onSubmit={(event) => {
           event.preventDefault();
           void send(false);
@@ -917,6 +991,7 @@ export function Composer({
           <AddressField
             label={t("compose.cc")}
             chips={cc}
+            inputRef={ccInputRef}
             onChange={(next) => {
               setCc(next);
               touched();
@@ -928,6 +1003,7 @@ export function Composer({
           <AddressField
             label={t("compose.bcc")}
             chips={bcc}
+            inputRef={bccInputRef}
             onChange={(next) => {
               setBcc(next);
               touched();
@@ -1177,6 +1253,12 @@ export function Composer({
             : ""}
         </p>
       </form>
+      {/*
+        E11: the discard confirmation. Inside the composer's own <dialog>, and
+        correct there: a nested `showModal()` goes into the top layer ABOVE its
+        parent, so it is not covered by the composer it is asking about.
+      */}
+      {confirmDialog}
     </dialog>
   );
 }
