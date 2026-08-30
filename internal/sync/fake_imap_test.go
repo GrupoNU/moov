@@ -204,6 +204,13 @@ type fakeClient struct {
 	srv      *fakeServer
 	selected *fakeMailbox
 	closed   bool
+
+	// selectCount counts SELECT commands this connection issued. It exists for
+	// one assertion — that a run of writes against one folder does not
+	// re-SELECT it per message (write_selection_test.go) — because that is a
+	// ROUND-TRIP property, and a round trip is invisible to every other kind of
+	// test: the results are identical either way, only the latency differs.
+	selectCount int
 }
 
 func (c *fakeClient) Connect(_ context.Context, _ imap.Config) error { return nil }
@@ -262,6 +269,7 @@ func (c *fakeClient) SelectQResync(_ context.Context, mailbox string, uidValidit
 		// executor's self-healing SELECT probe depends on (W1).
 		return imap.SelectResult{}, imap.ErrNotConnected
 	}
+	c.selectCount++
 	mb := c.srv.mailbox(mailbox)
 	if mb == nil {
 		return imap.SelectResult{}, fmt.Errorf("fake: no such mailbox %q", mailbox)

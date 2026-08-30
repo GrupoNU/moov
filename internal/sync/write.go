@@ -174,6 +174,45 @@ type WriteExecutor struct {
 type accountConn struct {
 	mu     sync.Mutex
 	client imap.Client
+
+	// selectedName and selectedResult remember which mailbox this connection
+	// has open, so a run of writes against one folder does not re-SELECT it
+	// per message (withMailbox documents the measurement that motivated it).
+	//
+	// The cache is trusted ONLY while this executor is the one issuing
+	// commands, which ac.mu guarantees: the IMAP connection is exclusively
+	// ours, one command at a time. Anything that can move the selection out
+	// from under it drops it — discard() when the socket goes, and
+	// forgetSelection() after a folder command that changes what the name
+	// refers to.
+	selectedName   string
+	selectedResult imap.SelectResult
+}
+
+// selection returns the remembered SELECT result for a mailbox, if this
+// connection currently has that exact mailbox open. Caller holds ac.mu.
+func (ac *accountConn) selection(mailbox string) (imap.SelectResult, bool) {
+	if ac.client == nil || ac.selectedName == "" || ac.selectedName != mailbox {
+		return imap.SelectResult{}, false
+	}
+	return ac.selectedResult, true
+}
+
+// remember records a fresh SELECT. Caller holds ac.mu.
+func (ac *accountConn) remember(mailbox string, sel imap.SelectResult) {
+	ac.selectedName, ac.selectedResult = mailbox, sel
+}
+
+// forgetSelection drops the remembered selection without touching the socket.
+//
+// It is what a FOLDER command calls: CREATE, RENAME and DELETE all change what
+// a mailbox NAME refers to (or whether it refers to anything), and DELETE in
+// particular unselects on the server. Keeping a stale entry after any of them
+// would let a later write skip a SELECT it genuinely needs — the one failure
+// mode a selection cache can introduce, closed here rather than reasoned about.
+// Caller holds ac.mu.
+func (ac *accountConn) forgetSelection() {
+	ac.selectedName, ac.selectedResult = "", imap.SelectResult{}
 }
 
 // NewWriteExecutor builds the executor.
@@ -373,7 +412,16 @@ func (w *WriteExecutor) ApplyMove(ctx context.Context, accountID, messageID, tar
 		// valid under. One extra round trip; it is what keeps the row's
 		// modseq_seen truthful, and a stale modseq_seen is a future false
 		// conflict on every conditional write.
-		dsel, err := c.SelectQResync(ctx, tgtMb.Name, 0, 0)
+		//
+		// This SELECT is recorded in the connection's selection cache
+		// (reselect, rather than a bare c.SelectQResync) for one reason: it
+		// MOVES the selection off the source mailbox, and a cache that did not
+		// know would hand the next write a stale entry naming a folder the
+		// connection no longer has open — a command issued against the wrong
+		// mailbox, which for a MOVE means moving the wrong message. The cache
+		// must be told by everything that changes the selection, not only by
+		// the code that reads it.
+		dsel, err := w.reselect(ctx, accountID, c, tgtMb.Name)
 		if err != nil {
 			return fmt.Errorf("selecting %q after move: %w", tgtMb.Name, err)
 		}
@@ -631,6 +679,54 @@ func (w *WriteExecutor) reflectFlags(ctx context.Context, st store.MessageState,
 // fails it, gets discarded, and ONE fresh dial is attempted — that retry is
 // safe because selecting is read-only. fn itself runs exactly once; see the
 // package comment for why a write command is never auto-retried.
+//
+// # The redundant SELECT, and why removing it was worth doing
+//
+// This used to SELECT unconditionally, once per call, even when the connection
+// already had that exact mailbox open. For a single write that is one extra
+// round trip and nobody noticed. For a BATCH of writes against one folder it is
+// the dominant cost, and W4b measured the consequence: destroying a folder took
+// 1.8-6.1 s, over the Gmail-class bar, because Mailbox/set empties a folder by
+// moving its messages to Trash one at a time (mailbox_set.go
+// emptyMailboxToTrash) and every one of those moves paid for its own SELECT of
+// a mailbox that was already selected.
+//
+// So the selection is now remembered per connection and re-used. The saving is
+// exactly one round trip per consecutive write to the same folder: a run of N
+// flag writes, archives or label changes against one folder went from N SELECTs
+// to 1 (write_selection_test.go pins the ratio).
+//
+// # What it did NOT fix, stated because the debt is still partly open
+//
+// A folder DELETE is still 2N, and measurably so. Mailbox/set empties a folder
+// by MOVING each message, and a MOVE genuinely has to select the DESTINATION
+// afterwards to read the message's new modseq — which moves the selection off
+// the source, so the next message re-selects it. The cache removed only the
+// first of those. The real fix is a batched MOVE of the whole UID set, which is
+// one command and two selects for the entire folder; it belongs to
+// mailbox_set.go's emptying loop rather than here, because it changes the
+// per-message reflection contract W-A2 deliberately shares with Email/set.
+// TestEmptyingAFolderCostsTwoSelectsPerMove carries the full argument and the
+// number.
+//
+// # What that costs, and how it is paid back
+//
+// The SELECT was doing two jobs, and skipping it drops the second:
+//
+//  1. establishing the selection — genuinely redundant when it is already
+//     established, which is the whole point;
+//  2. PROBING that the connection is alive. A cached connection that died while
+//     idle used to fail here, harmlessly, and be replaced.
+//
+// Without the probe, a dead connection is discovered by fn instead — and fn is a
+// WRITE, which this package refuses to auto-retry (see the package comment: a
+// MOVE whose outcome is unknown must never be repeated blindly). The rule that
+// keeps that safe is the one already in withConn: a retry is allowed only when
+// the error proves the command never reached the server. isConnectionDead names
+// exactly those errors, and a cached selection is dropped and re-established
+// with a real SELECT before fn runs a second time — so the retry begins from the
+// same state the unconditional-SELECT version would have, and a write that may
+// have landed is still never repeated.
 func (w *WriteExecutor) withMailbox(ctx context.Context, account store.Account, mailbox string, fn func(imap.Client, imap.SelectResult) error) error {
 	ac, err := w.forAccount(account.ID)
 	if err != nil {
@@ -648,21 +744,79 @@ func (w *WriteExecutor) withMailbox(ctx context.Context, account store.Account, 
 		if err != nil {
 			return fmt.Errorf("connecting for a write: %w", err)
 		}
-		sel, err := c.SelectQResync(ctx, mailbox, 0, 0)
-		if err != nil {
-			// Covers the dead-idle connection AND the stale-session view
-			// (imap.ErrMailboxStale): both are cured by a fresh connection
-			// and by nothing else.
-			ac.discard()
-			lastErr = err
-			if attempt == 0 {
-				continue
+
+		sel, cached := ac.selection(mailbox)
+		if !cached {
+			sel, err = c.SelectQResync(ctx, mailbox, 0, 0)
+			if err != nil {
+				// Covers the dead-idle connection AND the stale-session view
+				// (imap.ErrMailboxStale): both are cured by a fresh connection
+				// and by nothing else.
+				ac.discard()
+				lastErr = err
+				if attempt == 0 {
+					continue
+				}
+				return fmt.Errorf("selecting %q for a write: %w", mailbox, lastErr)
 			}
-			return fmt.Errorf("selecting %q for a write: %w", mailbox, lastErr)
+			ac.remember(mailbox, sel)
 		}
-		return fn(c, sel)
+
+		ferr := fn(c, sel)
+		if ferr == nil {
+			return nil
+		}
+		// A cached selection that turns out to sit on a dead socket: fn failed
+		// with an error that proves the command never reached the server, so
+		// re-establishing and running it once more is safe — and is exactly what
+		// the unconditional SELECT used to do one step earlier.
+		//
+		// The condition is deliberately narrow: only a CACHED selection is
+		// retried (a fresh SELECT already proved the connection alive, so a
+		// failure after it is fn's own), and only for isConnectionDead errors.
+		// Anything else — a NO from the server, a UIDVALIDITY mismatch, a write
+		// conflict — is returned untouched, because those mean the server saw
+		// the command and answered it.
+		if cached && attempt == 0 && isConnectionDead(ferr) {
+			ac.discard()
+			lastErr = ferr
+			continue
+		}
+		return ferr
 	}
 	return fmt.Errorf("selecting %q for a write: %w", mailbox, lastErr)
+}
+
+// reselect performs a SELECT from INSIDE a withMailbox callback and records it,
+// so the connection's selection cache stays truthful.
+//
+// # Why a helper rather than calling the client directly
+//
+// Because the cache's correctness is not about what withMailbox does — it is
+// about everything that can move the selection. ApplyMove genuinely has to
+// select the destination mid-callback (to read the moved message's new modseq
+// and confirm the UIDVALIDITY the COPYUID mapping is valid under), and that
+// silently leaves the connection pointing somewhere the outer withMailbox
+// believes it is not. Routing it here is what keeps "the cache says X" and "the
+// connection has X open" the same statement.
+//
+// The caller is already inside withMailbox, so ac.mu is held by this goroutine
+// and the map lookup is safe: forAccount takes only w.mu, which is a different
+// lock, and the connection slot is never removed while a write holds it.
+func (w *WriteExecutor) reselect(ctx context.Context, accountID int64, c imap.Client, mailbox string) (imap.SelectResult, error) {
+	sel, err := c.SelectQResync(ctx, mailbox, 0, 0)
+	if err != nil {
+		// The selection is now indeterminate: the SELECT may have released the
+		// old mailbox before failing. Forgetting is the only safe record.
+		if ac, ferr := w.forAccount(accountID); ferr == nil {
+			ac.forgetSelection()
+		}
+		return sel, err
+	}
+	if ac, ferr := w.forAccount(accountID); ferr == nil {
+		ac.remember(mailbox, sel)
+	}
+	return sel, nil
 }
 
 // forAccount returns the account's connection slot, creating it on first use.
@@ -708,6 +862,10 @@ func (ac *accountConn) discard() {
 		_ = ac.client.Close()
 		ac.client = nil
 	}
+	// The selection belonged to the socket that just went away. A fresh
+	// connection selects nothing, so remembering otherwise would make the next
+	// write issue a command against a mailbox it never opened.
+	ac.forgetSelection()
 }
 
 // invisibleFlags returns the flag state a JMAP client cannot see and a

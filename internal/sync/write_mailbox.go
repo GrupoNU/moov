@@ -475,6 +475,18 @@ func (w *WriteExecutor) withConn(ctx context.Context, account store.Account, fn 
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 
+	// A folder command changes what a mailbox NAME means — CREATE makes one
+	// exist, RENAME moves it, DELETE removes it and unselects on the server —
+	// so any selection this connection had remembered is void afterwards.
+	//
+	// It is dropped BEFORE fn rather than after, and unconditionally: a folder
+	// command that fails may still have taken effect (a DELETE that unselected
+	// and then errored, a RENAME whose response was lost), so "it returned an
+	// error, therefore nothing changed" is not a conclusion available here. The
+	// cost of being wrong in the safe direction is one extra SELECT.
+	defer ac.forgetSelection()
+	ac.forgetSelection()
+
 	var lastErr error
 	for attempt := range 2 {
 		if err := ctx.Err(); err != nil {
