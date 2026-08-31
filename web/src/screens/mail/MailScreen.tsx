@@ -3263,7 +3263,19 @@ export function MailScreen(): React.JSX.Element {
           openCompose();
           break;
         case "reply":
-          openReply(false);
+          /*
+           * E5 `defaultReplyBehavior` (canon §2.3): `r` is "the default reply",
+           * not "reply to sender". Gmail's setting moves exactly this key —
+           * with `replyAll` chosen, `r` opens a reply-all — while `Shift+A`
+           * stays unconditionally reply-all, so the explicit verb never becomes
+           * ambiguous.
+           *
+           * There is deliberately NO inverse binding for "reply to sender only"
+           * when the default is reply-all. Gmail has none either, and inventing
+           * one would add a key to the map that exists in no other mail client's
+           * muscle memory.
+           */
+          openReply(prefs.defaultReplyBehavior === "replyAll");
           break;
         case "replyAll":
           openReply(true);
@@ -3387,6 +3399,8 @@ export function MailScreen(): React.JSX.Element {
       // E4
       runToggleMute,
       goToSnoozed,
+      // E5 v2: `r` follows the reply default.
+      prefs.defaultReplyBehavior,
     ],
   );
 
@@ -4185,8 +4199,17 @@ export function MailScreen(): React.JSX.Element {
            * conversation to archive and only when there is an Archive folder to
            * archive into. Absent removes the button, per P4 — a control that
            * cannot act must not be on screen.
+           *
+           * E5 v2 adds the fourth condition: `prefs.sendAndArchive`, which is
+           * Gmail's own "Show 'Send & Archive' button in reply" setting. It is
+           * the FIRST test rather than the last only for readability; all four
+           * are necessary. Note the three structural conditions still apply
+           * with the preference on — a preference that says "show it" cannot
+           * conjure an Archive folder, and the honest answer when there is
+           * nothing to archive into stays "no button".
            */
-          {...(isReplyIntent(composerDraft.intent) &&
+          {...(prefs.sendAndArchive &&
+          isReplyIntent(composerDraft.intent) &&
           archiveTargetIds.length > 0 &&
           roleMailboxId("archive") !== undefined
             ? {

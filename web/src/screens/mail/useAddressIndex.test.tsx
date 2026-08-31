@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Email } from "../../mail/types";
-import { OfflineProvider } from "../../offline/OfflineProvider";
+import { OfflineProvider, useOffline } from "../../offline/OfflineProvider";
 import { FakeIndexedDB, installKeyRange } from "../../test/fakeIndexedDB";
 import { useAddressIndex, SCAN_CAP, SCAN_PAGE } from "./useAddressIndex";
 
@@ -68,11 +68,14 @@ function Probe({
     sentMailboxId: fetchSentPage === undefined ? undefined : "mbSent",
     fetchSentPage,
   });
+  const { addresses: store } = useOffline();
 
   return (
     <div>
       <span data-testid="count">{index.count}</span>
       <span data-testid="enabled">{String(index.enabled)}</span>
+      {/* The precondition `ready()` waits on — see its comment. */}
+      <span data-testid="storeReady">{String(store !== undefined)}</span>
       <span data-testid="suggestions">
         {index.suggestions.map((entry) => entry.email).join(",")}
       </span>
@@ -112,10 +115,24 @@ function renderProbe(props: React.ComponentProps<typeof Probe> = {}): void {
   );
 }
 
-/** Waits for the provider's async database open to settle. */
+/**
+ * Waits for the provider's async database open to settle.
+ *
+ * It watches a flag the PROVIDER owns rather than `enabled`, and the distinction
+ * is what this helper got wrong before prefs v2. `enabled` reads true on the
+ * very first render — it always could, and now certainly does, since the
+ * localStorage mirror answers before prefs resolve — so waiting on it proved
+ * nothing about the store. The tests that record would then click through a
+ * still-undefined store, `record` would return early exactly as it is designed
+ * to, and the count would stay at zero perhaps one run in six.
+ *
+ * The probe therefore reports whether the address STORE exists, which is the
+ * condition every recording case actually depends on — `record` returns early
+ * without one, by design.
+ */
 async function ready(): Promise<void> {
   await waitFor(() => {
-    expect(screen.getByTestId("enabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("storeReady")).toHaveTextContent("true");
   });
 }
 

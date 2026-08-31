@@ -9,7 +9,9 @@ import {
 } from "../../mail/labels";
 import {
   deriveLabels,
+  effectiveMetadata,
   loadLabelState,
+  metadataToPrefs,
   renamedLabel,
   saveLabelState,
   withLabel,
@@ -19,6 +21,7 @@ import {
   type LabelState,
   type LabelVisibility,
 } from "../../mail/labelStore";
+import { usePrefs } from "../../mail/PrefsProvider";
 import {
   MIGRATE_BATCH_SIZE,
   shouldContinueMigration,
@@ -84,12 +87,62 @@ export function useLabels({
   const [isMigrating, setMigrating] = useState(false);
   const [migratedCount, setMigratedCount] = useState(0);
   const abortRef = useRef(false);
+  const { prefs, isAvailable, setPref } = usePrefs();
 
   // Every state change is persisted immediately: the alternative is a save on
   // unmount, and a tab closed with the X never unmounts cleanly.
   useEffect(() => {
     saveLabelState(state);
   }, [state]);
+
+  /*
+   * E5 v2: presentation comes from `Prefs.labels` once they load, from the
+   * localStorage mirror before that — so the sidebar draws coloured chips on
+   * the first paint instead of flashing grey and correcting itself.
+   *
+   * The `known` set stays purely local (see `state` above and the header of
+   * `labelStore.ts`): it answers "did THIS browser just create a label with no
+   * messages yet", which is not a fact about the account. Only `metadata`
+   * roams, so this composes the two halves rather than replacing the state.
+   */
+  const metadata = useMemo(
+    () => effectiveMetadata(prefs.labels, state.metadata, isAvailable),
+    [prefs.labels, state.metadata, isAvailable],
+  );
+  const effectiveState = useMemo<LabelState>(
+    () => ({ known: state.known, metadata }),
+    [state.known, metadata],
+  );
+
+  /**
+   * Writes one label's presentation to prefs, and to the mirror.
+   *
+   * Both, in that order, for the reason the autocomplete switch gives: the
+   * mirror is what the next cold boot reads, and the local `setState` also
+   * keeps the chip painted for a server that does not advertise the capability
+   * at all — where prefs are permanently unavailable and this is the only
+   * storage there is. When prefs DO exist, `App.tsx`'s write-through re-derives
+   * the mirror from the authoritative object, so a refused save self-repairs
+   * without this call site owning the rollback.
+   *
+   * The whole map is sent rather than a `labels/<keyword>` pointer. Both are
+   * legal (the server accepts either — `applyLabelsPatch`), and the whole map
+   * is chosen because it is the only spelling under which the 26-entry cap is
+   * checked against what the user will actually have: a per-entry patch that
+   * pushed the map over the ceiling would be refused with the same error but
+   * after the optimistic paint had already shown the change.
+   */
+  const writeMetadata = useCallback(
+    (keyword: string, meta: LabelMetadata): void => {
+      setState((current) => withLabel(current, keyword, meta));
+      if (!isAvailable) return;
+      void setPref("labels", {
+        ...metadataToPrefs(metadata),
+        [keyword]: { color: meta.colorId, visibility: meta.visibility },
+      });
+    },
+    [isAvailable, setPref, metadata],
+  );
 
   /**
    * Every keyword seen on the loaded messages.
@@ -118,7 +171,10 @@ export function useLabels({
     return [...seen];
   }, [emails, state.known]);
 
-  const labels = useMemo(() => deriveLabels(observedKeywords, state), [observedKeywords, state]);
+  const labels = useMemo(
+    () => deriveLabels(observedKeywords, effectiveState),
+    [observedKeywords, effectiveState],
+  );
 
   const budget = useMemo(
     () =>
@@ -129,23 +185,26 @@ export function useLabels({
     [observedKeywords, labels],
   );
 
-  const create = useCallback((name: string, colorId: string): void => {
-    const keyword = encodeLabelKeyword(name);
-    const metadata: LabelMetadata = { colorId, visibility: "show" };
-    setState((current) => withLabel(current, keyword, metadata));
-  }, []);
+  const create = useCallback(
+    (name: string, colorId: string): void => {
+      writeMetadata(encodeLabelKeyword(name), { colorId, visibility: "show" });
+    },
+    [writeMetadata],
+  );
 
-  const setColor = useCallback((label: Label, colorId: string): void => {
-    setState((current) =>
-      withLabel(current, label.keyword, { colorId, visibility: label.visibility }),
-    );
-  }, []);
+  const setColor = useCallback(
+    (label: Label, colorId: string): void => {
+      writeMetadata(label.keyword, { colorId, visibility: label.visibility });
+    },
+    [writeMetadata],
+  );
 
-  const setVisibility = useCallback((label: Label, visibility: LabelVisibility): void => {
-    setState((current) =>
-      withLabel(current, label.keyword, { colorId: label.colorId, visibility }),
-    );
-  }, []);
+  const setVisibility = useCallback(
+    (label: Label, visibility: LabelVisibility): void => {
+      writeMetadata(label.keyword, { colorId: label.colorId, visibility });
+    },
+    [writeMetadata],
+  );
 
   const abort = useCallback((): void => {
     abortRef.current = true;
@@ -237,9 +296,21 @@ export function useLabels({
        * rename, and exactly what the "run it again to finish" copy refers to.
        */
       setState((current) => renamedLabel(current, label.keyword, to));
+      if (isAvailable) {
+        // The metadata MOVES to the new keyword in prefs too, or the renamed
+        // label would arrive on the other devices with the default swatch —
+        // the roaming half of exactly the argument the comment above makes.
+        const next = metadataToPrefs(metadata);
+        const moved = next[label.keyword] ?? {
+          color: label.colorId,
+          visibility: label.visibility,
+        };
+        const { [label.keyword]: _dropped, ...rest } = next;
+        void setPref("labels", { ...rest, [to]: moved });
+      }
       return result;
     },
-    [migrate],
+    [migrate, isAvailable, setPref, metadata],
   );
 
   const remove = useCallback(
@@ -253,10 +324,18 @@ export function useLabels({
        */
       if (!result.incomplete) {
         setState((current) => withoutLabel(current, label.keyword));
+        if (isAvailable) {
+          // Dropped from prefs too, and on the same condition: a partial delete
+          // leaves the keyword on hundreds of messages, and stripping its
+          // colour everywhere would make a still-present label look like a
+          // stranger on every device.
+          const { [label.keyword]: _dropped, ...rest } = metadataToPrefs(metadata);
+          void setPref("labels", rest);
+        }
       }
       return result;
     },
-    [migrate],
+    [migrate, isAvailable, setPref, metadata],
   );
 
   return {

@@ -16,6 +16,7 @@ import {
 } from "../../mail/types";
 import { listIdLabel, unsubscribeInfo, type UnsubscribeInfo } from "../../mail/unsubscribe";
 import { useOffline } from "../../offline/OfflineProvider";
+import { usePrefs } from "../../mail/PrefsProvider";
 import { ConversationView, type ConversationControls } from "./ConversationView";
 import { AttachmentList, DownloadOriginalButton } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
@@ -230,6 +231,19 @@ export function ReadingPane({
    * be a conditional hook.
    */
   const { isOnline } = useOffline();
+  /*
+   * E5 v2 `defaultReplyBehavior`, read here for exactly the reason stated
+   * above — every early return below is a hook boundary, and lint caught this
+   * one when it was first placed beside the buttons it serves.
+   *
+   * From the provider rather than threaded as a prop, on the same reasoning
+   * `isOnline` follows: the reply default reaches one pair of buttons in this
+   * file, and a prop would grow an already-long list to carry one enum to one
+   * place. `usePrefs` falls back to the defaults outside a provider, so every
+   * existing test of this component keeps working unchanged, at Gmail's own
+   * default.
+   */
+  const { prefs } = usePrefs();
 
   // The remote-image signer the secure HTML renderer uses (W-A4): the ONLY
   // path by which a message's remote image can ever be fetched, and it goes
@@ -461,12 +475,37 @@ export function ReadingPane({
           someone uses it.
         */}
         <div className={styles.actions} role="group" aria-label={t("action.more")}>
-          <button type="button" className={styles.primaryAction} onClick={onReply}>
-            {t("action.reply")}
-          </button>
-          <button type="button" className={styles.secondaryAction} onClick={onReplyAll}>
-            {t("action.replyAll")}
-          </button>
+          {/*
+            E5 `defaultReplyBehavior` (canon §2.3), Gmail's shape exactly: the
+            preference chooses which reply is PRIMARY, and the other stays on
+            screen as a secondary. Both verbs remain available and both keep
+            their own label — the setting moves the emphasis and the default,
+            it never removes a control (P4), which is why this is an order swap
+            rather than a conditional render.
+
+            The `r` key follows the same preference in `MailScreen`, so the
+            button the eye lands on and the key the hand reaches for always
+            agree.
+          */}
+          {prefs.defaultReplyBehavior === "replyAll" ? (
+            <>
+              <button type="button" className={styles.primaryAction} onClick={onReplyAll}>
+                {t("action.replyAll")}
+              </button>
+              <button type="button" className={styles.secondaryAction} onClick={onReply}>
+                {t("action.reply")}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className={styles.primaryAction} onClick={onReply}>
+                {t("action.reply")}
+              </button>
+              <button type="button" className={styles.secondaryAction} onClick={onReplyAll}>
+                {t("action.replyAll")}
+              </button>
+            </>
+          )}
           <button type="button" className={styles.secondaryAction} onClick={onForward}>
             {t("action.forward")}
           </button>

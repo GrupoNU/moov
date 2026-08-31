@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { addressesFromMessage, type IndexedAddress } from "../../mail/addressIndex";
-import { loadAddressAutocomplete, saveAddressAutocomplete } from "../../mail/addressPrefs";
+import {
+  addressAutocompleteEnabled,
+  addressAutocompleteMode,
+  loadAddressAutocomplete,
+  saveAddressAutocomplete,
+} from "../../mail/addressPrefs";
+import { usePrefs } from "../../mail/PrefsProvider";
 import type { Email, EmailAddress } from "../../mail/types";
 import { useOffline } from "../../offline/OfflineProvider";
 
@@ -94,8 +100,31 @@ export function useAddressIndex({
   fetchSentPage,
 }: AddressIndexOptions): AddressIndexApi {
   const { addresses: store } = useOffline();
-  const [enabled, setEnabledState] = useState<boolean>(() => loadAddressAutocomplete());
+  const { prefs, isAvailable, setPref } = usePrefs();
   const [suggestions, setSuggestions] = useState<readonly IndexedAddress[]>([]);
+
+  /*
+   * E5 v2: the choice is `Prefs.addressAutocomplete` and it ROAMS. The local
+   * state answers only until prefs resolve, and permanently on a server that
+   * does not advertise the capability.
+   *
+   * The pre-load answer is the MIRROR rather than the default, and that
+   * direction is load-bearing: the feeds below fire on the first render, and
+   * defaulting to "collect" for that window would gather addresses from a user
+   * who opted out — the exact failure this setting exists to prevent. Erring
+   * toward the last known choice makes the worst case "a few sightings missed
+   * on one boot" instead of "a privacy setting silently ignored on every boot".
+   *
+   * The local state is kept even though prefs win when available, because
+   * without it the switch would be DEAD on an older server: `setPref` there is
+   * a no-op that resolves false (the provider says so), so nothing would
+   * re-render and the toggle would not move. P4 — never a control that does
+   * nothing — applies to the degraded case too.
+   */
+  const [localEnabled, setLocalEnabled] = useState<boolean>(() => loadAddressAutocomplete());
+  const enabled = isAvailable
+    ? addressAutocompleteEnabled(prefs.addressAutocomplete)
+    : localEnabled;
 
   /*
    * The own address, read through a ref.
@@ -106,6 +135,26 @@ export function useAddressIndex({
    */
   const ownRef = useRef(ownAddress);
   ownRef.current = ownAddress;
+
+  /*
+   * `enabled` is read through a ref for the SAME reason `ownAddress` is, and
+   * the reason became load-bearing when the value started coming from prefs.
+   *
+   * It used to be plain `useState`, settled before the first paint, so listing
+   * it as a dependency of `record` was harmless. Now it can change one render
+   * after mount — the provider resolves and the account's answer replaces the
+   * mirror's — which gave `record` a new identity mid-flight and re-ran the
+   * write-through effect that holds it. That effect fires on the path that
+   * paints the message list, so a re-run means the same window recorded twice
+   * and, worse, a `refresh()` from the superseded call landing after the newer
+   * one and overwriting the suggestions with a staler read.
+   *
+   * A ref states "read the latest" without becoming a dependency, which is
+   * exactly the property the feeds need: they must observe the CURRENT choice
+   * at the moment they fire, not re-subscribe every time it is re-derived.
+   */
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   /** Re-reads the stored index into state. */
   const refresh = useCallback(async (): Promise<void> => {
@@ -124,7 +173,7 @@ export function useAddressIndex({
 
   const record = useCallback(
     (emails: readonly Email[]): void => {
-      if (!enabled || store === undefined || emails.length === 0) return;
+      if (!enabledRef.current || store === undefined || emails.length === 0) return;
 
       const sightings = emails.flatMap((email) =>
         addressesFromMessage(email, ownRef.current),
@@ -142,25 +191,45 @@ export function useAddressIndex({
        */
       void store.record(sightings, "browsed").then(refresh);
     },
-    [enabled, store, refresh],
+    [store, refresh],
   );
 
   const recordSent = useCallback(
     (recipients: readonly EmailAddress[]): void => {
-      if (!enabled || store === undefined || recipients.length === 0) return;
+      // Through the ref, like `record` above and for the same reason: a send
+      // must observe the CURRENT choice, not pin a callback identity to it.
+      if (!enabledRef.current || store === undefined || recipients.length === 0) return;
       const sightings = addressesFromMessage({ to: recipients }, ownRef.current);
       if (sightings.length === 0) return;
       // `sent` rather than `browsed`: this is the Gmail-model feed, and the
       // source is what the settings row can honestly say these came from.
       void store.record(sightings, "sent").then(refresh);
     },
-    [enabled, store, refresh],
+    [store, refresh],
   );
 
-  const setEnabled = useCallback((next: boolean): void => {
-    setEnabledState(next);
-    saveAddressAutocomplete(next);
-  }, []);
+  const setEnabled = useCallback(
+    (next: boolean): void => {
+      /*
+       * The mirror is written FIRST and unconditionally, then prefs.
+       *
+       * Not belt-and-braces: the mirror is what the next cold boot reads, and
+       * writing it before the round trip means an opt-out survives a reload
+       * even if the save fails or the tab closes mid-flight. If the server then
+       * refuses, the provider rolls the pref back and the write-through in
+       * `App.tsx` restores the mirror from the authoritative value on the next
+       * render — so the two converge without this call site owning the repair.
+       *
+       * `setPref` is optimistic, so the switch moves immediately and the feeds
+       * below stop on the same tick; the promise is deliberately not awaited,
+       * for the reason the provider gives (paint first, call second).
+       */
+      setLocalEnabled(next);
+      saveAddressAutocomplete(next);
+      void setPref("addressAutocomplete", addressAutocompleteMode(next));
+    },
+    [setPref],
+  );
 
   const clear = useCallback(async (): Promise<void> => {
     if (store === undefined) return;

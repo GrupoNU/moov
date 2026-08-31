@@ -20,7 +20,9 @@ import {
   type DraftSpec,
   type Identity,
 } from "../../mail/write";
-import { htmlToText, textToHtml } from "../../mail/quoting";
+import { htmlToText, textToHtml, type ComposeIntent } from "../../mail/quoting";
+import { usePrefs } from "../../mail/PrefsProvider";
+import { resolveSignature } from "../../mail/prefs";
 import type { IndexedAddress } from "../../mail/addressIndex";
 import { isBlockedAttachment } from "../../mail/blockedExtensions";
 import { loadBodyMode, saveBodyMode } from "../../mail/composePrefs";
@@ -157,6 +159,14 @@ export function Composer({
   initialAttachments,
 }: ComposerProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
+  /*
+   * E5 v2: the named signatures. Read from the provider rather than threaded
+   * as a prop for the same reason the reader reads its own preference — this is
+   * the only thing here that needs it, and `usePrefs` falls back to the
+   * defaults outside a provider, so every existing composer test keeps working
+   * unchanged and gets the Identity signature it always got.
+   */
+  const { prefs } = usePrefs();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -254,10 +264,32 @@ export function Composer({
         size: attachment.size,
       }));
 
-    const bodyHtml = isRich ? withSignature(html, identity.htmlSignature, true) : undefined;
+    /*
+     * E5 v2 — the named signature (E7), resolved by the precedence rule
+     * documented on `store.Prefs.Signatures` and mirrored on
+     * `SignaturePrefs` / `resolveSignature`:
+     *
+     *   this PWA, new mail : prefs.signatures.forNew, else the Identity's own
+     *   this PWA, a reply  : prefs.signatures.forReply, else the Identity's own
+     *   any other client   : the Identity's own, always
+     *
+     * A FORWARD counts as a reply here, matching `signatureIntent`'s comment:
+     * Gmail's setting is worded "on reply/forward", and the two share the case
+     * because both are a message the user is continuing rather than starting.
+     *
+     * Nothing is injected by the server — this is a composer pre-fill, exactly
+     * as RFC 8621 §6 says a client SHOULD do with the Identity's signature — so
+     * two clients can only ever disagree about what was PRE-FILLED, never about
+     * what was sent.
+     */
+    const named = resolveSignature(prefs.signatures, signatureIntent(draft.intent));
+    const textSignature = named?.text ?? identity.textSignature;
+    const htmlSignature = named?.html ?? identity.htmlSignature;
+
+    const bodyHtml = isRich ? withSignature(html, htmlSignature, true) : undefined;
     const bodyText = isRich
       ? htmlToText(bodyHtml ?? "")
-      : withSignature(text, identity.textSignature, false);
+      : withSignature(text, textSignature, false);
 
     return {
       mailboxId: draftsMailboxId,
@@ -285,6 +317,9 @@ export function Composer({
     subject,
     draft.inReplyTo,
     draft.references,
+    // E5 v2: which named signature the body starts with.
+    draft.intent,
+    prefs.signatures,
   ]);
 
   const specRef = useRef(spec);
@@ -1287,6 +1322,32 @@ export function Composer({
  * appended when the draft was first composed, and appending it again on every
  * save would grow a message with one signature per autosave.
  */
+/**
+ * Which of the two signature defaults a compose intent uses (canon §2.3).
+ *
+ * Gmail's pair is worded "for new emails" and "on reply/forward", so a FORWARD
+ * takes the reply signature: both continue a message rather than start one, and
+ * a user who wrote a shorter footer "for replies" means it for forwards too.
+ *
+ * `draft` — resuming a saved draft — takes the NEW signature, which is the
+ * conservative choice of the two: the body already carries whatever signature
+ * was appended when it was first composed, and `withSignature` is idempotent by
+ * substring check, so in the common case nothing is appended at all. Where they
+ * differ (a draft saved before the setting changed) "new" is the reading that
+ * matches how the draft was started.
+ */
+function signatureIntent(intent: ComposeIntent): "new" | "reply" {
+  switch (intent) {
+    case "reply":
+    case "replyAll":
+    case "forward":
+      return "reply";
+    case "new":
+    case "draft":
+      return "new";
+  }
+}
+
 function withSignature(body: string, signature: string, isHtml: boolean): string {
   if (signature === "") return body;
   if (body.includes(signature)) return body;

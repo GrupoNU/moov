@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { JmapClient } from "../../api/jmap";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { KEYWORD_FLAGGED, type Email, type Mailbox } from "../../mail/types";
+import { PrefsProvider } from "../../mail/PrefsProvider";
+import { DEFAULT_PREFS, type Prefs } from "../../mail/prefs";
 import { ReadingPane, type ReadingPaneProps } from "./ReadingPane";
 
 /**
@@ -100,7 +102,16 @@ function message(overrides: Partial<Email> = {}): Email {
   };
 }
 
-function renderPane(overrides: Partial<ReadingPaneProps> = {}) {
+function renderPane(
+  overrides: Partial<ReadingPaneProps> = {},
+  /*
+   * prefs v2: the reader reads `defaultReplyBehavior` from the provider rather
+   * than from a prop, so a test that cares about it seeds one. Omitted, there
+   * is NO provider and `usePrefs` returns its documented fallback — which is
+   * why every case below keeps working unchanged, at Gmail's own default.
+   */
+  prefs?: Prefs,
+) {
   const props: ReadingPaneProps = {
     email: message(),
     thread: undefined,
@@ -144,9 +155,21 @@ function renderPane(overrides: Partial<ReadingPaneProps> = {}) {
    * that silently followed the environment's default would pass on a machine
    * where nobody had checked the Spanish strings existed at all.
    */
+  const pane = <ReadingPane {...props} />;
   render(
     <I18nProvider locale="es">
-      <ReadingPane {...props} />
+      {prefs === undefined ? (
+        pane
+      ) : (
+        <PrefsProvider
+          client={undefined}
+          session={undefined}
+          accountId="a"
+          initialPrefs={prefs}
+        >
+          {pane}
+        </PrefsProvider>
+      )}
     </I18nProvider>,
   );
   return props;
@@ -488,5 +511,60 @@ describe("the sanitize chokepoint holds for cache-shaped bodies (E10 / D-4, E9b)
     expect(doc).toContain("ok");
     // The frame's sandbox is the layer that holds if the sanitizer fails.
     expect(frame?.getAttribute("sandbox")).toBe("allow-popups allow-popups-to-escape-sandbox");
+  });
+});
+
+/**
+ * `defaultReplyBehavior` (prefs v2, canon §2.3).
+ *
+ * Gmail's shape exactly: the preference chooses which reply is PRIMARY and the
+ * other stays on screen as a secondary. The `r` key follows the same value in
+ * `MailScreen`, so the button the eye lands on and the key the hand reaches for
+ * always agree.
+ */
+describe("the default reply behaviour", () => {
+  /** The two reply buttons, in DOM order, with the primary flagged. */
+  function replyButtons(): readonly { label: string; isPrimary: boolean }[] {
+    return screen
+      .getAllByRole("button")
+      .filter((button) => /^Responder( a todos)?$/.test(button.textContent ?? ""))
+      .map((button) => ({
+        label: button.textContent ?? "",
+        // `classNameStrategy: "non-scoped"` keeps module class names literal in
+        // the test environment, so the styling role is readable here.
+        isPrimary: button.className.includes("primaryAction"),
+      }));
+  }
+
+  it("makes plain reply primary by default — Gmail's own choice", () => {
+    renderPane();
+    expect(replyButtons()).toEqual([
+      { label: "Responder", isPrimary: true },
+      { label: "Responder a todos", isPrimary: false },
+    ]);
+  });
+
+  it("promotes reply-all to primary when the preference says so", () => {
+    renderPane({}, { ...DEFAULT_PREFS, defaultReplyBehavior: "replyAll" });
+    expect(replyButtons()).toEqual([
+      { label: "Responder a todos", isPrimary: true },
+      { label: "Responder", isPrimary: false },
+    ]);
+  });
+
+  it("NEVER removes the other verb — the setting moves emphasis, not controls", async () => {
+    /*
+     * P4: a preference must not make a control disappear when the action is
+     * still available. Both handlers stay reachable in either configuration,
+     * which is why this is an order swap and not a conditional render.
+     */
+    const user = userEvent.setup();
+    const props = renderPane({}, { ...DEFAULT_PREFS, defaultReplyBehavior: "replyAll" });
+
+    await user.click(screen.getByRole("button", { name: "Responder" }));
+    expect(props.onReply).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Responder a todos" }));
+    expect(props.onReplyAll).toHaveBeenCalledTimes(1);
   });
 });
