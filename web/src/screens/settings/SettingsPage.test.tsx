@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -8,35 +8,35 @@ import { en, es } from "../../i18n/strings";
 import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS, type Prefs } from "../../mail/prefs";
 import type { Identity } from "../../mail/write";
-import { applyTheme, loadThemePreference } from "../../theme/theme";
-import { SettingsDialog } from "./SettingsDialog";
+import { DEFAULT_SETTINGS_TAB, type SettingsTab } from "../../router/routes";
+import { applyTheme } from "../../theme/theme";
+import { SettingsPage } from "./SettingsPage";
 
 /**
- * The settings sheet.
+ * The settings PAGE.
  *
- * These cover what a unit test can honestly verify: that it opens and closes
- * from the keyboard, that focus goes in and comes back, that the section rail
- * navigates, that the search filters, and that every control is a real labelled
- * input whose current state is visible. What jsdom cannot verify — that the
- * sheet visually sits above the app, that the light theme actually looks light —
- * is checked in a real browser.
+ * These cover what a unit test can honestly verify: that the tab row navigates
+ * and is a real APG tablist, that the search filters ACROSS tabs, that every
+ * control is a labelled input whose current state is visible, and that a
+ * missing capability renders a named absence rather than a dead control. What
+ * jsdom cannot verify — that the page visually replaces the list while the rail
+ * stays put — is checked in a real browser.
  *
- * jsdom does not implement the modal behaviour of <dialog>, so showModal/close
- * are given the ONE behaviour the component logic depends on: flip `.open` and
- * fire `close`. Note what is deliberately NOT simulated — the focus trap and
- * page inertness. Those are the browser's job, and a stub asserting on itself
- * would only pretend to test them; they are verified in a real browser instead.
+ * # What E12 deleted from this file, and why the deletions are the point
+ *
+ * Three describes are gone: "opening and closing", "dismissal by every route a
+ * user has", and the `<dialog>` stub that made them possible. They tested
+ * `showModal()`, focus return to a trigger, and the parent's `isOpen` — the
+ * mechanics of a modal, none of which a page has or should have. Keeping them
+ * against a routed page would have meant asserting that a page behaves like a
+ * dialog, which is the opposite of what B3 decided.
+ *
+ * What REPLACES them is the tab-row coverage below plus MailScreen's own canary
+ * (which walks gear → quick panel → page) and `routes.test.ts` (which pins the
+ * URL round trip). Between them, every property the deleted tests protected —
+ * the surface opens, it can be left, it can be reached — is still asserted; it
+ * is asserted about a destination rather than about an overlay.
  */
-if (typeof HTMLDialogElement !== "undefined") {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    if (!this.open) return;
-    this.open = false;
-    this.dispatchEvent(new Event("close"));
-  };
-}
 
 const IDENTITY: Identity = {
   id: "i1",
@@ -49,22 +49,31 @@ const IDENTITY: Identity = {
   mayDelete: false,
 };
 
-/** The dialog as the app mounts it: behind a trigger that owns `isOpen`. */
+/**
+ * The page as the shell mounts it: the TAB comes from the route, so the harness
+ * owns it exactly as `MailScreen` owns the router's answer.
+ */
 function Harness({
   initialPrefs = DEFAULT_PREFS,
   identity,
   onSaveSignature,
+  initialTab = DEFAULT_SETTINGS_TAB,
+  onClose = () => undefined,
+  onOpenQuickSettings,
 }: {
   readonly initialPrefs?: Prefs;
   readonly identity?: Identity;
   readonly onSaveSignature?: (text: string) => Promise<boolean>;
+  readonly initialTab?: SettingsTab;
+  readonly onClose?: () => void;
+  readonly onOpenQuickSettings?: () => void;
 } = {}): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   return (
     <I18nProvider locale="en">
       {/*
         `initialPrefs` short-circuits the load, so these tests exercise the
-        SHEET rather than the JMAP transport — which `prefs.test.ts` covers
+        PAGE rather than the JMAP transport — which `prefs.test.ts` covers
         directly against a fake client.
       */}
       <PrefsProvider
@@ -73,12 +82,11 @@ function Harness({
         accountId=""
         initialPrefs={initialPrefs}
       >
-        <button type="button" onClick={() => { setOpen(true); }}>
-          {en["settings.open"]}
-        </button>
-        <SettingsDialog
-          isOpen={open}
-          onClose={() => { setOpen(false); }}
+        <SettingsPage
+          tab={tab}
+          onSelectTab={setTab}
+          onClose={onClose}
+          onOpenQuickSettings={onOpenQuickSettings}
           identity={identity}
           onSaveSignature={onSaveSignature}
         />
@@ -87,210 +95,248 @@ function Harness({
   );
 }
 
-function renderDialog(props: Parameters<typeof Harness>[0] = {}) {
+function renderPage(props: Parameters<typeof Harness>[0] = {}) {
   localStorage.clear();
   applyTheme("light", document.documentElement);
   return render(<Harness {...props} />);
 }
 
-/** The trigger, which is also where focus must return. */
-function trigger(): HTMLElement {
-  return screen.getByRole("button", { name: en["settings.open"] });
-}
-
-/** Opens the sheet and navigates the rail to a section. */
+/**
+ * Renders the page and navigates the tab row to a tab.
+ *
+ * It CLICKS the tab rather than passing `initialTab`, deliberately: most of
+ * these tests want the control they are about to assert on to have arrived
+ * through the navigation a user performs, not to have been mounted directly.
+ */
 async function openAt(
   user: ReturnType<typeof userEvent.setup>,
-  section: string,
+  tabName: string,
 ): Promise<void> {
-  await user.click(trigger());
-  await user.click(screen.getByRole("button", { name: section }));
+  await user.click(screen.getByRole("tab", { name: tabName }));
 }
 
-describe("opening and closing", () => {
-  it("opens from the keyboard", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-
-    trigger().focus();
-    await user.keyboard("{Enter}");
-
-    // The sheet is on screen and named by its own heading.
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: en["settings.title"] })).toBeInTheDocument();
-  });
-
-  it("closes with the close button and RETURNS focus to the trigger", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-
-    const button = trigger();
-    button.focus();
-    await user.click(button);
-
-    await user.click(screen.getByRole("button", { name: en["settings.close"] }));
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    // A settings sheet that dumps you at the top of the document punishes you
-    // for opening it.
-    expect(document.activeElement).toBe(button);
-  });
-
-  it("synchronises its parent when the element closes itself, and returns focus", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-
-    const button = trigger();
-    button.focus();
-    await user.click(button);
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-
-    /*
-     * This is the Escape/backdrop path. The KEY itself is not simulated,
-     * because jsdom does not implement the dialog key handling and pressing
-     * Escape here would test the stub rather than the component. Closing the
-     * element directly is the honest equivalent: it proves the component reads
-     * its parent state from the element's own `close` event rather than
-     * assuming only its own button can dismiss it.
-     */
-    const dialog = screen.getByRole("dialog");
-    act(() => { (dialog as HTMLDialogElement).close(); });
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(document.activeElement).toBe(button);
-  });
-
-  it("announces to assistive tech that the button opens a dialog", () => {
-    renderDialog();
-    // The trigger in the app carries aria-haspopup; this pins the contract the
-    // sheet relies on rather than the harness button.
-    expect(screen.getByRole("dialog", { hidden: true })).toHaveAttribute(
-      "aria-labelledby",
-      "settings-title",
-    );
-  });
-});
-
-describe("dismissal by every route a user has", () => {
-  /*
-   * A REGRESSION TEST, from a bug found in a real browser while building this.
-   *
-   * MailScreen binds a global `keydown` listener that resolves Escape to a
-   * `closeOverlay` action and calls preventDefault() once it owns the key.
-   * That listener knew about the shortcuts sheet and not about this one, so
-   * Escape was swallowed before the <dialog> could act on it and the settings
-   * sheet could not be dismissed from the keyboard at all — an accessibility
-   * defect invisible to jsdom, because jsdom does not implement the native
-   * Escape the global handler was stealing.
-   *
-   * The fix is in MailScreen's `closeOverlay` branch. What is pinned HERE is
-   * the property that fix relies on: closing is driven by `isOpen` from the
-   * parent, so a parent that flips it for ANY reason — its own Escape
-   * handling, a route change, a sign-out — dismisses the sheet correctly and
-   * still restores focus.
-   */
-  it("closes when the parent withdraws isOpen, and still returns focus", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-
-    const button = trigger();
-    button.focus();
-    await user.click(button);
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-
-    // The parent closing it, which is what the global Escape handler now does.
-    await user.click(screen.getByRole("button", { name: en["settings.close"] }));
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(document.activeElement).toBe(button);
-  });
-});
-
-describe("the section rail", () => {
-  it("lands on General, so the sheet is never blank on open", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+describe("the tab row", () => {
+  it("lands on the tab the route names, so the page is never blank", () => {
+    renderPage();
 
     expect(
       screen.getByRole("heading", { name: en["settings.section.general"] }),
     ).toBeInTheDocument();
-    // …and the other sections are not rendered at once, which is the whole
-    // point of a rail over one long column.
+    // …and the other tabs' sections are not rendered at once, which is the
+    // whole point of tabs over one long column.
     expect(
       screen.queryByRole("heading", { name: en["settings.section.offline"] }),
     ).not.toBeInTheDocument();
   });
 
-  it("offers every section of the adapted Gmail IA", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+  it("opens directly on a deep-linked tab — the reason settings became a route", () => {
+    renderPage({ initialTab: "offline" });
 
-    const nav = screen.getByRole("navigation", { name: en["settings.nav.label"] });
+    expect(
+      screen.getByRole("heading", { name: en["settings.section.offline"] }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: en["settings.section.general"] }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers every tab of the adapted Gmail IA (canon 07 §5)", () => {
+    renderPage();
+
+    const tabs = screen.getByRole("tablist", { name: en["settings.tabs.label"] });
     for (const title of [
       en["settings.section.general"],
-      en["settings.section.appearance"],
+      en["settings.section.labels"],
       en["settings.section.inbox"],
       en["settings.section.account"],
-      en["settings.section.filters"],
+      en["settings.tab.filters"],
       en["settings.section.forwarding"],
-      en["settings.section.vacation"],
       en["settings.section.offline"],
     ]) {
       expect(
-        within(nav).getByRole("button", { name: title }),
-        `the rail is missing "${title}"`,
+        within(tabs).getByRole("tab", { name: title }),
+        `the tab row is missing "${title}"`,
       ).toBeInTheDocument();
     }
   });
 
-  it("switches the panel when a section is chosen", async () => {
+  it("switches the panel when a tab is chosen", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
     expect(
       screen.getByRole("combobox", { name: en["settings.inboxType.label"] }),
     ).toBeInTheDocument();
-    // The previous section's controls are gone, not merely scrolled past.
+    // The previous tab's controls are gone, not merely scrolled past.
     expect(
       screen.queryByRole("switch", { name: en["settings.snippets.label"] }),
     ).not.toBeInTheDocument();
   });
 
-  it("marks the current section for assistive technology", async () => {
+  it("folds blocked senders into the filters tab, as Gmail does", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, en["settings.section.appearance"]);
+    renderPage();
+    await openAt(user, en["settings.tab.filters"]);
 
+    // ONE tab, TWO sections. The fold is honest here in a way it is only
+    // conventional at Google: both are the same Sieve script on our server.
     expect(
-      screen.getByRole("button", { name: en["settings.section.appearance"] }),
-    ).toHaveAttribute("aria-current", "true");
+      screen.getByRole("heading", { name: en["settings.section.filters"] }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: en["settings.section.blocked"] }),
+    ).toBeInTheDocument();
+  });
+
+  it("is a real APG tablist: one tab stop, arrows move within it", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const general = screen.getByRole("tab", { name: en["settings.section.general"] });
+    const labels = screen.getByRole("tab", { name: en["settings.section.labels"] });
+    // Roving tabindex: only the selected tab is reachable by Tab, which is what
+    // makes a seven-tab row ONE stop rather than seven.
+    expect(general).toHaveAttribute("tabindex", "0");
+    expect(labels).toHaveAttribute("tabindex", "-1");
+
+    general.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(labels).toHaveAttribute("aria-selected", "true");
+    expect(labels).toHaveFocus();
+  });
+
+  it("wraps at both ends rather than dead-ending", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    screen.getByRole("tab", { name: en["settings.section.general"] }).focus();
+    await user.keyboard("{ArrowLeft}");
+
+    // Left from the first tab lands on the LAST one.
+    expect(
+      screen.getByRole("tab", { name: en["settings.section.offline"] }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("names its panel after the selected tab", () => {
+    renderPage({ initialTab: "account" });
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("aria-labelledby", "settings-tab-account");
+  });
+});
+
+describe("leaving the page", () => {
+  it("offers an explicit way back to mail, not only a keyboard path", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderPage({ onClose });
+
+    await user.click(screen.getByRole("button", { name: en["settings.backToMail"] }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is never a dialog — a page must be tabbable out of", () => {
+    renderPage();
+    /*
+     * The inverse of what this file used to assert. The old sheet WAS a
+     * `<dialog>` and three tests pinned its modal mechanics; B3 makes the
+     * absence of those mechanics the property worth protecting, because a
+     * settings surface that traps focus is a settings surface you cannot leave
+     * by tabbing to the mail behind it.
+     */
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("the quick-panel pointer", () => {
+  /*
+   * Theme and density have no CONTROL on this page — their control lives in the
+   * quick panel, where the change is visible as you make it. The rows survive
+   * so the settings search still finds them, and what they render is directions.
+   */
+  it("points at the panel instead of duplicating the control", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openAt(user, en["settings.section.inbox"]);
+
+    expect(screen.getAllByText(en["settings.inQuickPanel"]).length).toBe(2);
+    // The thing that must NOT be here: a second live control over one
+    // preference. The theme radios belong to the panel now.
+    expect(screen.queryByRole("radio", { name: en["theme.dark"] })).not.toBeInTheDocument();
+  });
+
+  it("opens the panel when an opener is wired", async () => {
+    const user = userEvent.setup();
+    const onOpenQuickSettings = vi.fn();
+    renderPage({ onOpenQuickSettings });
+    await openAt(user, en["settings.section.inbox"]);
+
+    await user.click(
+      screen.getAllByRole("button", { name: en["settings.openQuickPanel"] })[0]!,
+    );
+
+    expect(onOpenQuickSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades to plain text when no opener was wired", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openAt(user, en["settings.section.inbox"]);
+
+    // A button that leads nowhere is the dead control P4 forbids; the sentence
+    // still tells the user where to look.
+    expect(
+      screen.queryByRole("button", { name: en["settings.openQuickPanel"] }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText(en["settings.inQuickPanel"]).length).toBe(2);
   });
 });
 
 describe("settings search (D-5)", () => {
-  it("finds a row in a section the user is not standing in", async () => {
+  it("finds a row in a TAB the user is not standing in", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
-    // Standing in General; the density row lives in Appearance.
+    // Standing in General; the reading-pane row lives in the Inbox tab. Under a
+    // search the tabs are suspended and every match renders wherever it lives,
+    // because results hidden behind a tab are results that appear not to exist.
+    await user.type(
+      screen.getByRole("searchbox", { name: en["settings.search.label"] }),
+      "reading pane",
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: en["settings.readingPane.label"] }),
+    ).toBeInTheDocument();
+  });
+
+  it("still finds the rows whose CONTROL moved to the quick panel", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    /*
+     * The reason `theme` and `density` keep their registry rows after B3 moved
+     * their controls out. A user who types "density" here must be told where
+     * the control is; finding nothing would look like the setting had been
+     * removed, and the search silently returning empty for two real settings is
+     * the exact failure D-5 exists to prevent.
+     */
     await user.type(
       screen.getByRole("searchbox", { name: en["settings.search.label"] }),
       "density",
     );
 
-    expect(
-      screen.getByRole("combobox", { name: en["settings.density.label"] }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(en["settings.inQuickPanel"])).toBeInTheDocument();
+    expect(screen.queryByText(en["settings.search.empty"])).not.toBeInTheDocument();
   });
 
   it("finds a row by a SYNONYM the label never says", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
     // "privacy" appears in no rendered string of the images row; it is exactly
     // what a worried user types.
@@ -306,8 +352,7 @@ describe("settings search (D-5)", () => {
 
   it("hides the rows that do not match", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
     await user.type(
       screen.getByRole("searchbox", { name: en["settings.search.label"] }),
@@ -321,8 +366,7 @@ describe("settings search (D-5)", () => {
 
   it("says so when nothing matches, rather than showing a blank panel", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
     await user.type(
       screen.getByRole("searchbox", { name: en["settings.search.label"] }),
@@ -332,25 +376,29 @@ describe("settings search (D-5)", () => {
     expect(screen.getByText(en["settings.search.empty"])).toBeInTheDocument();
   });
 
-  it("clears with Escape without closing the sheet", async () => {
+  it("clears with Escape without disturbing the page", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
     const box = screen.getByRole("searchbox", { name: en["settings.search.label"] });
     await user.type(box, "density");
     await user.type(box, "{Escape}");
 
     expect(box).toHaveValue("");
-    // The sheet must survive: Escape inside a search field means "clear", and
-    // only an already-empty field lets it through to dismiss.
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    /*
+     * The page must survive, and the assertion changed shape with B3: there is
+     * no dialog to still be open, so what is checked is that the tab row came
+     * BACK — clearing the search un-suspends the tabs, which is the visible
+     * proof the page is intact and standing where it was.
+     */
+    expect(
+      screen.getByRole("tab", { name: en["settings.section.general"] }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("clears with the clear button", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
     const box = screen.getByRole("searchbox", { name: en["settings.search.label"] });
     await user.type(box, "density");
@@ -364,90 +412,17 @@ describe("settings search (D-5)", () => {
   });
 });
 
-describe("the theme control", () => {
-  it("is a labelled group of three options with the current one checked", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, en["settings.section.appearance"]);
-
-    expect(screen.getByRole("group", { name: en["theme.label"] })).toBeInTheDocument();
-
-    // Every option is a real radio with a visible label, so the current state
-    // is visible rather than inferable from an icon.
-    expect(screen.getByRole("radio", { name: en["theme.light"] })).toBeChecked();
-    expect(screen.getByRole("radio", { name: en["theme.dark"] })).not.toBeChecked();
-    expect(screen.getByRole("radio", { name: en["theme.system"] })).not.toBeChecked();
-  });
-
-  it("applies a choice IMMEDIATELY and mirrors it into the pre-paint cache", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, en["settings.section.appearance"]);
-
-    await user.click(screen.getByRole("radio", { name: en["theme.dark"] }));
-
-    // Immediately: the attribute the CSS keys on has already changed, with no
-    // reload and no save button.
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    /*
-     * Mirrored: E5 makes the ACCOUNT the source of truth, and localStorage the
-     * cache the pre-paint script in index.html reads. The cache must move with
-     * the choice even while the save is in flight, or the next load flashes the
-     * old theme.
-     */
-    expect(loadThemePreference()).toBe("dark");
-  });
-
-  it("lets the user opt IN to following the system, which removes the attribute", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, en["settings.section.appearance"]);
-
-    await user.click(screen.getByRole("radio", { name: en["theme.system"] }));
-
-    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
-    expect(loadThemePreference()).toBe("system");
-  });
-
-  it("is operable entirely from the keyboard", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, en["settings.section.appearance"]);
-
-    // Radios in one group are a single tab stop and arrows move between them.
-    // That behaviour comes from the browser because these are real inputs.
-    screen.getByRole("radio", { name: en["theme.light"] }).focus();
-    await user.keyboard("{ArrowRight}");
-
-    expect(screen.getByRole("radio", { name: en["theme.dark"] })).toBeChecked();
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-  });
-
-  it("shows the ACCOUNT's theme, not the local cache", async () => {
-    const user = userEvent.setup();
-    // The cache says light (renderDialog applies it); the account says dark.
-    renderDialog({ initialPrefs: { ...DEFAULT_PREFS, theme: "dark" } });
-    await openAt(user, en["settings.section.appearance"]);
-
-    expect(screen.getByRole("radio", { name: en["theme.dark"] })).toBeChecked();
-  });
-});
-
 describe("the preference controls", () => {
-  it("offers Gmail's exact four undo-send values", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+  it("offers Gmail's exact four undo-send values", () => {
+    renderPage();
 
     const select = screen.getByRole("combobox", { name: en["settings.undoSend.label"] });
     const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
     expect(values).toEqual(["5", "10", "20", "30"]);
   });
 
-  it("renders each toggle as a real switch reflecting its current value", async () => {
-    const user = userEvent.setup();
-    renderDialog({ initialPrefs: { ...DEFAULT_PREFS, showSnippets: false, hoverActions: true } });
-    await user.click(trigger());
+  it("renders each toggle as a real switch reflecting its current value", () => {
+    renderPage({ initialPrefs: { ...DEFAULT_PREFS, showSnippets: false, hoverActions: true } });
 
     expect(screen.getByRole("switch", { name: en["settings.snippets.label"] })).not.toBeChecked();
     expect(screen.getByRole("switch", { name: en["settings.hover.label"] })).toBeChecked();
@@ -455,8 +430,7 @@ describe("the preference controls", () => {
 
   it("moves a switch when it is clicked", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+    renderPage();
 
     const snippets = screen.getByRole("switch", { name: en["settings.snippets.label"] });
     expect(snippets).toBeChecked();
@@ -465,10 +439,8 @@ describe("the preference controls", () => {
     expect(snippets).not.toBeChecked();
   });
 
-  it("offers the language switcher with a follow-the-browser option", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await user.click(trigger());
+  it("offers the language switcher with a follow-the-browser option", () => {
+    renderPage();
 
     const select = screen.getByRole("combobox", { name: en["settings.language.label"] });
     const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
@@ -479,8 +451,8 @@ describe("the preference controls", () => {
 
   it("offers exactly the three reading panes Gmail names", async () => {
     const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, en["settings.section.appearance"]);
+    renderPage();
+    await openAt(user, en["settings.section.inbox"]);
 
     const select = screen.getByRole("combobox", { name: en["settings.readingPane.label"] });
     const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
@@ -489,7 +461,7 @@ describe("the preference controls", () => {
 
   it("offers only the DETERMINISTIC inbox types", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
     const select = screen.getByRole("combobox", { name: en["settings.inboxType.label"] });
@@ -501,7 +473,7 @@ describe("the preference controls", () => {
 
   it("offers two notification modes, not Gmail's three", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
     const select = screen.getByRole("combobox", { name: en["settings.notifications.label"] });
@@ -515,7 +487,7 @@ describe("the preference controls", () => {
 describe("the account section", () => {
   it("shows the identity read-only", async () => {
     const user = userEvent.setup();
-    renderDialog({ identity: IDENTITY });
+    renderPage({ identity: IDENTITY });
     await openAt(user, en["settings.section.account"]);
 
     expect(screen.getByText(IDENTITY.name)).toBeInTheDocument();
@@ -524,7 +496,7 @@ describe("the account section", () => {
 
   it("says so honestly when there is no sending identity", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.account"]);
 
     expect(screen.getByText(en["settings.identity.missing"])).toBeInTheDocument();
@@ -533,7 +505,7 @@ describe("the account section", () => {
   it("seeds the signature from the identity and saves it EXPLICITLY", async () => {
     const user = userEvent.setup();
     const onSaveSignature = vi.fn().mockResolvedValue(true);
-    renderDialog({ identity: IDENTITY, onSaveSignature });
+    renderPage({ identity: IDENTITY, onSaveSignature });
     await openAt(user, en["settings.section.account"]);
 
     const field = screen.getByRole("textbox", { name: en["settings.signature.label"] });
@@ -553,7 +525,7 @@ describe("the account section", () => {
 
   it("keeps the save button inert until the text actually changes", async () => {
     const user = userEvent.setup();
-    renderDialog({ identity: IDENTITY, onSaveSignature: vi.fn() });
+    renderPage({ identity: IDENTITY, onSaveSignature: vi.fn() });
     await openAt(user, en["settings.section.account"]);
 
     expect(screen.getByRole("button", { name: en["settings.signature.save"] })).toBeDisabled();
@@ -561,7 +533,7 @@ describe("the account section", () => {
 
   it("reports a failed save in the row rather than silently doing nothing", async () => {
     const user = userEvent.setup();
-    renderDialog({ identity: IDENTITY, onSaveSignature: vi.fn().mockResolvedValue(false) });
+    renderPage({ identity: IDENTITY, onSaveSignature: vi.fn().mockResolvedValue(false) });
     await openAt(user, en["settings.section.account"]);
 
     const field = screen.getByRole("textbox", { name: en["settings.signature.label"] });
@@ -573,28 +545,47 @@ describe("the account section", () => {
 });
 
 describe("the honest skeletons (P4)", () => {
+  /*
+   * The TAB names, not the section names — B3 folded blocked into filters and
+   * vacation into forwarding, so two of these three are now reached through a
+   * tab whose label differs from the heading the skeleton renders under.
+   */
   it.each([
-    [en["settings.section.filters"], en["settings.filters.soon"]],
+    [en["settings.tab.filters"], en["settings.filters.soon"]],
     [en["settings.section.forwarding"], en["settings.forwarding.soon"]],
-    [en["settings.section.vacation"], en["settings.vacation.soon"]],
+    [en["settings.section.forwarding"], en["settings.vacation.soon"]],
     /*
      * Offline LEFT this list: prefs v2 gave it two real controls (the header
      * and body depths), so a skeleton there would now be the dishonest option.
      * Its own coverage is below.
      */
-  ])("names what is coming in %s, with no control at all", async (section, promise) => {
+  ])("names what is coming under %s, with no control at all", async (tab, promise) => {
     const user = userEvent.setup();
-    renderDialog();
-    await openAt(user, section);
+    renderPage();
+    await openAt(user, tab);
 
-    expect(screen.getByText(promise)).toBeInTheDocument();
+    /*
+     * `getAllBy`, because the FOLD makes duplicates real: the filters tab holds
+     * both the filter list and the blocked senders, and without the Sieve
+     * capability both render the same "this server does not offer filters"
+     * skeleton. That is correct — they are the same missing capability stated
+     * where each is expected — so the assertion is that the sentence is
+     * present, not that it is unique.
+     */
+    expect(screen.getAllByText(promise).length).toBeGreaterThan(0);
 
     /*
      * The rule these sections exist to honour: never a control that does
      * nothing. A disabled "Create filter" button would be exactly that — it
      * invites the click, then refuses it. A paragraph is information.
+     *
+     * The panel is found by its `tabpanel` role now rather than by `dialog`:
+     * same assertion, new container. The search box is excluded because it
+     * lives in the page HEADER and is not part of what the tab renders — but
+     * the query is written to exclude it by type anyway, so a future move of
+     * the box inside the panel cannot silently turn this green.
      */
-    const panel = screen.getByRole("dialog");
+    const panel = screen.getByRole("tabpanel");
     const controls = Array.from(
       panel.querySelectorAll("input, select, textarea"),
     ).filter((element) => element.getAttribute("type") !== "search");
@@ -610,7 +601,11 @@ describe("persistence honesty", () => {
     render(
       <I18nProvider locale="en">
         <PrefsProvider client={undefined} session={undefined} accountId="">
-          <SettingsDialog isOpen onClose={() => undefined} />
+          <SettingsPage
+            tab={DEFAULT_SETTINGS_TAB}
+            onSelectTab={() => undefined}
+            onClose={() => undefined}
+          />
         </PrefsProvider>
       </I18nProvider>,
     );
@@ -635,7 +630,7 @@ describe("persistence honesty", () => {
 describe("the v2 rows exist and write their key", () => {
   it("offers the Send & Archive switch, defaulting on", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.general"]);
 
     const control = screen.getByRole("switch", { name: en["settings.sendAndArchive.label"] });
@@ -648,7 +643,7 @@ describe("the v2 rows exist and write their key", () => {
 
   it("offers the reply-default select with both verbs", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.general"]);
 
     const control = screen.getByRole("combobox", { name: en["settings.replyBehavior.label"] });
@@ -659,7 +654,7 @@ describe("the v2 rows exist and write their key", () => {
 
   it("gives the offline section two real depth controls instead of a promise", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.offline"]);
 
     expect(
@@ -674,7 +669,7 @@ describe("the v2 rows exist and write their key", () => {
 
   it("mirrors the server's bounds on the depth inputs, so a refused save is impossible", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.offline"]);
 
     const headers = screen.getByRole("spinbutton", {
@@ -692,7 +687,7 @@ describe("the v2 rows exist and write their key", () => {
      * the user thinks they made.
      */
     const user = userEvent.setup();
-    renderDialog();
+    renderPage();
     await openAt(user, en["settings.section.offline"]);
 
     const headers = screen.getByRole("spinbutton", {
@@ -708,7 +703,7 @@ describe("the v2 rows exist and write their key", () => {
 
   it("offers named signatures: create, name, pick for new and for replies", async () => {
     const user = userEvent.setup();
-    renderDialog({ identity: IDENTITY });
+    renderPage({ identity: IDENTITY });
     await openAt(user, en["settings.section.account"]);
 
     expect(screen.getByText(en["settings.signatures.empty"])).toBeInTheDocument();
@@ -727,7 +722,7 @@ describe("the v2 rows exist and write their key", () => {
     // be edited, and a user with a rich signature needs to know why the box
     // shows plain text.
     const user = userEvent.setup();
-    renderDialog({ identity: IDENTITY });
+    renderPage({ identity: IDENTITY });
     await openAt(user, en["settings.section.account"]);
     expect(screen.getByText(en["settings.signatures.textOnly"])).toBeInTheDocument();
   });

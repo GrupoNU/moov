@@ -83,7 +83,64 @@ export type Route =
    * real MOVE to a real folder (GC-10), so it is an ordinary `mailbox` route
    * and every existing code path works on it unchanged.
    */
-  | { readonly kind: "scheduled" };
+  | { readonly kind: "scheduled" }
+  /**
+   * E12: the settings PAGE (canon 07 §5).
+   *
+   * A route, not a dialog, and the reason is Gmail's own: full settings replace
+   * the list area while the top bar and the rail stay put, which makes them a
+   * DESTINATION — one you can deep-link ("send me the link to the filters
+   * tab"), bookmark, reach with Back, and land on directly from the quick
+   * panel's "See all settings". A `<dialog>` can be none of those things, and
+   * this app's previous one could not: there was no URL for "settings, filters"
+   * to point at.
+   *
+   * The price is real and paid deliberately. `showModal()` supplied inertness,
+   * a focus trap and Escape for free; a routed page has none of them and must
+   * not — it is a page, and trapping focus on a page is a bug. What replaces
+   * them is what replaces them for the mail list: `u`/Back returns, and the
+   * shell's Escape handler is not involved at all.
+   *
+   * `tab` is part of the path rather than a query parameter because it selects
+   * WHICH settings you are looking at, exactly as a mailbox id selects which
+   * mail — and `/settings/filters` is a link a human can read, where
+   * `/settings?tab=filters` is a link a human has to parse.
+   */
+  | { readonly kind: "settings"; readonly tab: SettingsTab };
+
+/**
+ * The settings tabs, in the order the tab row lists them (canon 07 §5).
+ *
+ * This is Gmail's own IA with its stated exclusions applied: no
+ * Complementos/Chat/Temas (Google-ecosystem chrome), and no POP/IMAP tab
+ * (GC-9 — Dovecot IS the IMAP server, so porting Gmail's IMAP settings would
+ * import Google's web-store-vs-IMAP impedance debt to solve a problem we do not
+ * have).
+ *
+ * "Filtros y direcciones bloqueadas" is ONE tab holding two sections, which is
+ * the fold Gmail uses: filters and blocked senders are the same Sieve script on
+ * our server too, so the fold is honest here in a way it is only conventional
+ * at Google.
+ */
+export const SETTINGS_TABS = [
+  "general",
+  "labels",
+  "inbox",
+  "account",
+  "filters",
+  "forwarding",
+  "offline",
+] as const;
+
+export type SettingsTab = (typeof SETTINGS_TABS)[number];
+
+/** Where `/settings` with no tab, or an unknown one, lands. */
+export const DEFAULT_SETTINGS_TAB: SettingsTab = "general";
+
+/** True when a path segment names a settings tab. */
+export function isSettingsTab(value: string): value is SettingsTab {
+  return (SETTINGS_TABS as readonly string[]).includes(value);
+}
 
 /** Where an unrecognised or empty URL lands. */
 export const DEFAULT_ROUTE: Route = { kind: "mailbox", mailboxId: "inbox" };
@@ -178,6 +235,26 @@ export function parseRoute(url: string): Route {
   // E4: likewise — the Scheduled view lists submissions, not messages.
   if (segments[0] === "scheduled") return { kind: "scheduled" };
 
+  /*
+   * E12: `/settings` and `/settings/:tab`.
+   *
+   * An UNKNOWN tab falls back to General rather than to the default route, and
+   * that difference matters: a stale bookmark to a tab that has since been
+   * renamed should land in settings, not silently in the inbox. The user asked
+   * for settings; only the sub-destination was wrong.
+   */
+  if (segments[0] === "settings") {
+    const tab = segments[1];
+    if (tab === undefined || tab === "") {
+      return { kind: "settings", tab: DEFAULT_SETTINGS_TAB };
+    }
+    const decoded = decodeURIComponent(tab);
+    return {
+      kind: "settings",
+      tab: isSettingsTab(decoded) ? decoded : DEFAULT_SETTINGS_TAB,
+    };
+  }
+
   if (segments[0] === "mail") {
     const mailbox = segments[1];
     if (mailbox === undefined || mailbox === "") return DEFAULT_ROUTE;
@@ -229,6 +306,15 @@ export function formatRoute(route: Route): string {
       return "/outbox";
     case "scheduled":
       return "/scheduled";
+    /*
+     * The tab is ALWAYS in the path, including for the default. `/settings`
+     * and `/settings/general` would otherwise be two URLs for one destination,
+     * and `routesEqual` — which is `formatRoute` equality — would then have to
+     * decide which of them the route "is". One canonical form removes the
+     * question.
+     */
+    case "settings":
+      return `/settings/${encodeURIComponent(route.tab)}`;
   }
 }
 
@@ -259,8 +345,19 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
    * E9: the Outbox holds no messages the reader can open, so it absorbs the
    * request rather than inventing a route. Returning the outbox unchanged is
    * the honest answer to "open message X in this list": there is no such list.
+   *
+   * E12: the settings page absorbs it for the same reason — it is not a list of
+   * mail at all. The alternative, navigating AWAY from settings to open a
+   * message, would make a stray notification click silently discard whatever
+   * the user was editing.
    */
-  if (route.kind === "outbox" || route.kind === "scheduled") return route;
+  if (
+    route.kind === "outbox" ||
+    route.kind === "scheduled" ||
+    route.kind === "settings"
+  ) {
+    return route;
+  }
   return messageId === undefined
     ? { kind: "search", query: route.query }
     : { kind: "search", query: route.query, messageId };
@@ -268,7 +365,9 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
 
 /** The message currently open in a route, if any. */
 export function openMessageId(route: Route): string | undefined {
-  return route.kind === "outbox" || route.kind === "scheduled"
+  return route.kind === "outbox" ||
+    route.kind === "scheduled" ||
+    route.kind === "settings"
     ? undefined
     : route.messageId;
 }

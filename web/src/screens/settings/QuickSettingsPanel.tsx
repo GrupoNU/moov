@@ -12,6 +12,7 @@ import {
   type ReadingPane,
   type Theme,
 } from "../../mail/prefs";
+import { applyTheme, saveThemePreference } from "../../theme/theme";
 import type { PlainStringKey } from "./registry";
 import {
   DensityThumb,
@@ -171,6 +172,33 @@ export function QuickSettingsPanel({
       returnFocusRef.current?.focus();
     };
   }, [isOpen]);
+
+  /**
+   * The theme's immediate paint and its pre-paint cache.
+   *
+   * This is the ONE preference in the panel that needs more than a `setPref`,
+   * and it is the same contract `ThemeToggle` carried before the control moved
+   * here (B3). Two things must happen the instant the radio moves, neither of
+   * which the round trip can wait for:
+   *
+   *   - the `data-theme` attribute the CSS keys on, or the theme becomes the
+   *     one setting that visibly lags its own control;
+   *   - `saveThemePreference`, because that cache is what the pre-paint script
+   *     in `index.html` reads on the NEXT load. Left behind, the following load
+   *     flashes the old colours before React catches up.
+   *
+   * `App.tsx` also applies the theme from `prefs.theme`, and the redundancy is
+   * deliberate rather than accidental: that effect is what makes a theme
+   * changed on another device apply here, and this one is what makes a theme
+   * changed HERE apply before the server has answered. They converge on the
+   * same value, so neither can win a race the user would notice.
+   */
+  const theme = prefs.theme;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    applyTheme(theme, document.documentElement);
+    saveThemePreference(theme);
+  }, [theme]);
 
   if (!isOpen) return null;
 

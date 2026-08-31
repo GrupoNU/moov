@@ -1,5 +1,6 @@
 import type { Strings } from "../../i18n/strings";
 import type { PrefKey } from "../../mail/prefs";
+import type { SettingsTab } from "../../router/routes";
 
 /**
  * The settings registry: what rows exist, where they live, and what finds them.
@@ -27,18 +28,38 @@ export type PlainStringKey = {
   [K in keyof Strings]: Strings[K] extends string ? K : never;
 }[keyof Strings];
 
-/** The sections, in the order the rail lists them (Gmail's IA, canon §3). */
+/**
+ * The sections a row can belong to.
+ *
+ * # E12: sections and TABS are now two different things
+ *
+ * Through E11 these were the same list: one rail item per section, one section
+ * per rail item. Canon 07 §5 breaks that, and correctly — Gmail's settings tabs
+ * are COARSER than its sections, because a tab is a destination you deep-link
+ * to and a section is a heading inside one. "Filtros y direcciones bloqueadas"
+ * is one tab holding two sections; "Cuenta" holds the identity, the signatures
+ * and the storage bar.
+ *
+ * So this list stays the FINE-grained one — it is what `showRow` and the
+ * settings search resolve against, and splitting a search hit down to its
+ * section is what lets the page scroll to the right heading rather than to the
+ * top of a long tab. {@link SETTINGS_TABS} in `router/routes.ts` is the coarse
+ * one, and {@link SECTION_TAB} is the map between them.
+ *
+ * "appearance" is GONE as a section, and that is a real regrouping rather than
+ * a rename: its three rows moved where canon 07 §5 puts them. Theme and density
+ * live in the quick panel (B2), which is where Gmail keeps them and where a
+ * live preview is possible; the reading pane joins the inbox tab, because
+ * "where an open message appears" is a fact about the inbox, not about colour.
+ */
 export const SECTION_IDS = [
   "general",
-  "appearance",
   "inbox",
   "account",
   /*
-   * E8. It sits after "account" and before the skeletons because it is a REAL
-   * section — Gmail's own IA puts Labels second, right after General, but ours
-   * earns its place by being the only section here that manages server-side
-   * objects rather than preferences, and grouping it with the account is the
-   * honest reading of what it is.
+   * E8. Its own TAB in Gmail's IA (second, right after General), because it is
+   * the only section here that manages server-side objects rather than
+   * preferences — a label is a thing you create, not a value you pick.
    */
   "labels",
   /*
@@ -47,8 +68,10 @@ export const SECTION_IDS = [
    * user-facing jobs, and because a blocked rule has no visible action to show
    * in a filter list (the Junk filing is compiled from its type tag).
    *
-   * "Blocked" sits right after "Filters", which is where Gmail's own IA puts
-   * it — adjacent to the mechanism it shares, before the forwarding block.
+   * E12 folds the first two into ONE TAB, which is Gmail's own fold and is
+   * honest here in a way it is only conventional at Google: they are literally
+   * the same script on our server. Vacation joins Forwarding for the weaker but
+   * still real reason that both are "what happens to mail you do not read".
    */
   "filters",
   "blocked",
@@ -61,7 +84,6 @@ export type SectionId = (typeof SECTION_IDS)[number];
 
 export const SECTION_TITLES: Readonly<Record<SectionId, PlainStringKey>> = {
   general: "settings.section.general",
-  appearance: "settings.section.appearance",
   inbox: "settings.section.inbox",
   account: "settings.section.account",
   labels: "settings.section.labels",
@@ -71,6 +93,83 @@ export const SECTION_TITLES: Readonly<Record<SectionId, PlainStringKey>> = {
   vacation: "settings.section.vacation",
   offline: "settings.section.offline",
 };
+
+/**
+ * Which TAB each section is rendered under (canon 07 §5).
+ *
+ * A total map, so a section added without a home is a compile error rather than
+ * a section that silently renders nowhere — which is exactly the failure mode
+ * of a page that picks its sections with a `switch` and a default case.
+ */
+export const SECTION_TAB: Readonly<Record<SectionId, SettingsTab>> = {
+  general: "general",
+  inbox: "inbox",
+  account: "account",
+  labels: "labels",
+  filters: "filters",
+  // Gmail's fold: "Filters and blocked addresses" is one tab.
+  blocked: "filters",
+  forwarding: "forwarding",
+  // "What happens to mail you do not read" — the weaker of the two folds, but
+  // a vacation responder alone does not earn a tab of its own.
+  vacation: "forwarding",
+  offline: "offline",
+};
+
+/** The sections a tab renders, in order. Derived, never a second hand-kept list. */
+export function sectionsOfTab(tab: SettingsTab): readonly SectionId[] {
+  return SECTION_IDS.filter((id) => SECTION_TAB[id] === tab);
+}
+
+/** The tab a section lives under — what a settings-search hit navigates to. */
+export function tabOfSection(section: SectionId): SettingsTab {
+  return SECTION_TAB[section];
+}
+
+/** The label the tab row shows for each tab. */
+export const TAB_TITLES: Readonly<Record<SettingsTab, PlainStringKey>> = {
+  general: "settings.section.general",
+  labels: "settings.section.labels",
+  inbox: "settings.section.inbox",
+  account: "settings.section.account",
+  // The FOLDED name, not "Filters": a tab that hides the blocked list behind a
+  // label that does not mention it is a tab nobody looks in for it.
+  filters: "settings.tab.filters",
+  forwarding: "settings.section.forwarding",
+  offline: "settings.section.offline",
+};
+
+/**
+ * Rows whose CONTROL lives in the quick-settings panel, not on this page
+ * (E12/B2, canon 07 §4).
+ *
+ * They keep their registry entries — so the settings search still finds
+ * "densidad" and "tema", which is the whole point of D-5 — but the page renders
+ * a POINTER at the panel where the control would be, rather than a second copy
+ * of it. Two live controls over one preference is the drift this codebase
+ * avoids everywhere else, and the quick panel is where Gmail puts these two
+ * because it is the only surface where the change is visible as you make it.
+ */
+export const QUICK_PANEL_ROWS: ReadonlySet<string> = new Set(["theme", "density"]);
+
+/**
+ * Gmail's "Tamaño máximo de la página" is DELIBERATELY not a row here.
+ *
+ * Gmail's General tab offers "Mostrar [50] conversaciones por página", and it
+ * is the one confirmed General row this page does not mirror. The reason is not
+ * scope: Moov's list does not paginate BY A PREFERENCE. B4's pager is fixed at
+ * 50 and the list under it is virtualized, so the number a user picked would
+ * change nothing they can see — the rows they scroll past are rendered on
+ * demand either way.
+ *
+ * A control that writes a preference nothing reads is exactly the dead control
+ * principle P4 forbids, and it is worse than a missing one: it invites the user
+ * to tune something and then silently ignores them. If the pager ever becomes
+ * configurable this constant is where the row goes, with a preference behind it.
+ */
+export const PAGE_SIZE_ROW_OMITTED =
+  "Gmail's page-size preference has no reader in Moov: the pager is fixed at 50 " +
+  "and the list beneath it is virtualized, so the setting would change nothing.";
 
 /** One row: its strings and the words that should find it. */
 export interface RowSpec {
@@ -219,10 +318,38 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
     ],
   },
 
-  // --- Appearance ---
+  // --- Inbox (canon 07 §5's "Recibidos") ---
+  //
+  // E12 moved `readingPane` here from the deleted "appearance" section: "where
+  // an open message appears" is a fact about the inbox, not about colour.
+  // `theme` and `density` moved OUT of the page entirely — to the quick panel
+  // (B2), which is where Gmail keeps them and the only surface where the live
+  // preview that makes them choosable is possible. Their registry rows moved
+  // WITH them rather than being deleted, so the settings search still finds
+  // them; the page renders a pointer at the panel instead of a duplicate
+  // control (see `QUICK_PANEL_ROWS` below).
+  {
+    id: "readingPane",
+    sectionId: "inbox",
+    labelKey: "settings.readingPane.label",
+    descriptionKey: "settings.readingPane.description",
+    keywords: [
+      "reading",
+      "lectura",
+      "pane",
+      "panel",
+      "split",
+      "dividir",
+      "layout",
+      "right",
+      "derecha",
+      "bottom",
+      "abajo",
+    ],
+  },
   {
     id: "theme",
-    sectionId: "appearance",
+    sectionId: "inbox",
     labelKey: "theme.label",
     descriptionKey: "settings.theme.description",
     keywords: [
@@ -240,7 +367,7 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
   },
   {
     id: "density",
-    sectionId: "appearance",
+    sectionId: "inbox",
     labelKey: "settings.density.label",
     descriptionKey: "settings.density.description",
     keywords: [
@@ -256,27 +383,6 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
       "espacio",
     ],
   },
-  {
-    id: "readingPane",
-    sectionId: "appearance",
-    labelKey: "settings.readingPane.label",
-    descriptionKey: "settings.readingPane.description",
-    keywords: [
-      "reading",
-      "lectura",
-      "pane",
-      "panel",
-      "split",
-      "dividir",
-      "layout",
-      "right",
-      "derecha",
-      "bottom",
-      "abajo",
-    ],
-  },
-
-  // --- Inbox ---
   {
     id: "inboxType",
     sectionId: "inbox",

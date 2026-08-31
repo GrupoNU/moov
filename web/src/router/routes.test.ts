@@ -8,6 +8,9 @@ import {
   parseRoute,
   routesEqual,
   withMessage,
+  SETTINGS_TABS,
+  DEFAULT_SETTINGS_TAB,
+  isSettingsTab,
   type Route,
 } from "./routes";
 
@@ -87,6 +90,8 @@ describe("round-tripping", () => {
     { kind: "search", query: "arquitectura" },
     { kind: "search", query: "diseño de lista" },
     { kind: "search", query: "a b", messageId: "e1" },
+    // E12: every settings tab, so a renamed one cannot break its own URL.
+    ...SETTINGS_TABS.map((tab) => ({ kind: "settings", tab }) as const),
   ];
 
   it.each(routes)("survives format → parse: %o", (route) => {
@@ -231,5 +236,66 @@ describe("the scheduled route (E4)", () => {
     // Deep-linking a snoozed message works with no special case at all.
     const route: Route = { kind: "mailbox", mailboxId: "snz", messageId: "e1" };
     expect(parseRoute(formatRoute(route))).toEqual(route);
+  });
+});
+
+describe("the settings route (E12)", () => {
+  it("names its tab in the PATH, which is what deep-linking a tab means", () => {
+    expect(formatRoute({ kind: "settings", tab: "filters" })).toBe("/settings/filters");
+  });
+
+  it("canonicalises a bare /settings to the default tab", () => {
+    /*
+     * `/settings` and `/settings/general` must not be two URLs for one
+     * destination: `routesEqual` is `formatRoute` equality, so a second form
+     * would make "am I already here?" answerable two ways, and one of them
+     * would eventually be wrong.
+     */
+    expect(parseRoute("/settings")).toEqual({
+      kind: "settings",
+      tab: DEFAULT_SETTINGS_TAB,
+    });
+    expect(formatRoute(parseRoute("/settings"))).toBe(
+      `/settings/${DEFAULT_SETTINGS_TAB}`,
+    );
+  });
+
+  it("falls back to the default TAB, not to the inbox, for an unknown one", () => {
+    /*
+     * The distinction that matters for a stale bookmark: a link to a tab that
+     * has since been renamed should still land in settings. The user asked for
+     * settings; only the sub-destination was wrong, and dumping them in the
+     * inbox would discard the half of their request that was valid.
+     */
+    expect(parseRoute("/settings/appearance")).toEqual({
+      kind: "settings",
+      tab: DEFAULT_SETTINGS_TAB,
+    });
+    expect(parseRoute("/settings/appearance")).not.toEqual(DEFAULT_ROUTE);
+  });
+
+  it("absorbs a request to open a message, because it lists no mail", () => {
+    const route: Route = { kind: "settings", tab: "general" };
+    /*
+     * The same rule the Outbox and Scheduled follow, for a stronger reason: a
+     * stray notification click must not navigate AWAY from settings and
+     * silently discard whatever the user was editing.
+     */
+    expect(withMessage(route, "e1")).toEqual(route);
+    expect(openMessageId(route)).toBeUndefined();
+  });
+
+  it("treats two tabs as two destinations", () => {
+    expect(
+      routesEqual({ kind: "settings", tab: "general" }, { kind: "settings", tab: "labels" }),
+    ).toBe(false);
+  });
+
+  it("recognises exactly the tabs it renders", () => {
+    for (const tab of SETTINGS_TABS) expect(isSettingsTab(tab)).toBe(true);
+    // The tabs canon 07 §9 lists as deliberately NOT mirrored.
+    expect(isSettingsTab("pop")).toBe(false);
+    expect(isSettingsTab("themes")).toBe(false);
+    expect(isSettingsTab("chat")).toBe(false);
   });
 });

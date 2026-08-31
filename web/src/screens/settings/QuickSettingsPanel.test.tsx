@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -7,7 +7,19 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import { en } from "../../i18n/strings";
 import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS, type Prefs } from "../../mail/prefs";
+import { applyTheme, loadThemePreference } from "../../theme/theme";
 import { QuickSettingsPanel } from "./QuickSettingsPanel";
+
+/*
+ * Every test starts from a known theme, because `ThemeToggle`'s cache and the
+ * document attribute both survive between tests in one jsdom environment — and
+ * a theme assertion that passed only because the previous test left the right
+ * value behind is a test that proves nothing.
+ */
+beforeEach(() => {
+  localStorage.clear();
+  applyTheme("light", document.documentElement);
+});
 
 /**
  * The quick-settings dock (E12/B2).
@@ -221,6 +233,84 @@ describe("the controls write the real preferences", () => {
         { name: en["settings.density.default"] },
       ),
     ).toBeChecked();
+  });
+});
+
+/**
+ * The theme control's behaviour, MOVED here from the settings sheet's tests by
+ * E12/B3 along with the control itself.
+ *
+ * These are not new tests and they are not rewritten ones: they are the same
+ * assertions about the same mechanism, following it to its new home. What they
+ * protect is the pre-paint contract — the ACCOUNT is the source of truth and
+ * localStorage is the cache `index.html` reads before React runs — and losing
+ * them in the move would have meant the next theme change flashed the old
+ * colours on load with nothing to catch it.
+ */
+describe("the theme control", () => {
+  it("shows every option as a real radio with the current one checked", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(gear());
+
+    expect(screen.getByRole("group", { name: en["theme.label"] })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: en["theme.light"] })).toBeChecked();
+    expect(screen.getByRole("radio", { name: en["theme.dark"] })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: en["theme.system"] })).not.toBeChecked();
+  });
+
+  it("applies a choice IMMEDIATELY and mirrors it into the pre-paint cache", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(gear());
+
+    await user.click(screen.getByRole("radio", { name: en["theme.dark"] }));
+
+    // Immediately: the attribute the CSS keys on has already changed, with no
+    // reload and no save button.
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    /*
+     * Mirrored: E5 makes the ACCOUNT the source of truth, and localStorage the
+     * cache the pre-paint script in index.html reads. The cache must move with
+     * the choice even while the save is in flight, or the next load flashes the
+     * old theme.
+     */
+    expect(loadThemePreference()).toBe("dark");
+  });
+
+  it("lets the user opt IN to following the system, which removes the attribute", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(gear());
+
+    await user.click(screen.getByRole("radio", { name: en["theme.system"] }));
+
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    expect(loadThemePreference()).toBe("system");
+  });
+
+  it("is operable entirely from the keyboard", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(gear());
+
+    // Radios in one group are a single tab stop and arrows move between them.
+    // That behaviour comes from the browser because these are real inputs —
+    // which is why the panel kept native radios rather than styled spans.
+    screen.getByRole("radio", { name: en["theme.light"] }).focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(screen.getByRole("radio", { name: en["theme.dark"] })).toBeChecked();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("shows the ACCOUNT's theme, not the local cache", async () => {
+    const user = userEvent.setup();
+    // The cache says light (the beforeEach applies it); the account says dark.
+    render(<Harness initialPrefs={{ ...DEFAULT_PREFS, theme: "dark" }} />);
+    await user.click(gear());
+
+    expect(screen.getByRole("radio", { name: en["theme.dark"] })).toBeChecked();
   });
 });
 

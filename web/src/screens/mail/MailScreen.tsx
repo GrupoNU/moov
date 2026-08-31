@@ -99,9 +99,12 @@ import { fetchIdentities, type Identity } from "../../mail/write";
 import { encodeBasicCredentials } from "../../api/jmap";
 import { useRouter } from "../../router/RouterProvider";
 import {
+  DEFAULT_ROUTE,
+  DEFAULT_SETTINGS_TAB,
   openMessageId as routeMessageId,
   withMessage,
   type Route,
+  type SettingsTab,
 } from "../../router/routes";
 import { parseComposeRequest, urlWithoutCompose } from "../../pwa/mailto";
 import { useAddressIndex } from "./useAddressIndex";
@@ -146,7 +149,7 @@ import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
 import { TopBar } from "./TopBar";
 import { QuickSettingsPanel } from "../settings/QuickSettingsPanel";
-import { SettingsDialog } from "../settings/SettingsDialog";
+import { SettingsPage } from "../settings/SettingsPage";
 import type { LabelsSectionProps } from "../settings/LabelsSection";
 import type { FiltersSectionProps } from "../settings/FiltersSection";
 import type { BlockedSectionProps } from "../settings/BlockedSection";
@@ -319,8 +322,22 @@ export function MailScreen(): React.JSX.Element {
     route.kind === "search" ? route.query : "",
   );
   const [helpOpen, setHelpOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | undefined>(undefined);
+
+  /**
+   * B3: settings is a ROUTE now, not a piece of local state (canon 07 §5).
+   *
+   * `settingsOpen` is gone with the `<dialog>` it governed. Everything that
+   * used to set it navigates instead, which is what makes the surface
+   * deep-linkable, bookmarkable and reachable with Back — the properties a
+   * dialog could not have.
+   *
+   * `settingsTab` is `undefined` off the settings route, which is exactly the
+   * condition the shell renders the mail list under. It is not a second copy of
+   * the route: it is the route, read once.
+   */
+  const settingsTab = route.kind === "settings" ? route.tab : undefined;
+  const inSettings = settingsTab !== undefined;
 
   /*
    * E12: the top bar's two pieces of shell state.
@@ -1837,15 +1854,52 @@ export function MailScreen(): React.JSX.Element {
    * and so `runAction`'s dependency list does not change on every mount of the
    * bar, which would recreate the global key handler on every list refresh.
    */
+  /**
+   * B3: the mail route to come BACK to when settings closes.
+   *
+   * A ref, updated on every render where the route is NOT settings, rather than
+   * `navigate(-1)` or a history pop. Two reasons, both about honesty: the user
+   * may have arrived at `/settings/general` from a bookmark with no history
+   * behind it, where a back-step would leave the app (this returns them to the
+   * inbox instead); and they may have changed tabs three times while inside,
+   * where a single back-step lands on another settings tab rather than on mail.
+   *
+   * A ref and not state, because nothing renders from it — writing it during
+   * render would be a re-render for a value only a click handler reads.
+   */
+  const mailRouteRef = useRef<Route>(DEFAULT_ROUTE);
+  if (route.kind !== "settings") mailRouteRef.current = route;
+
+  /** Opens the settings page at a tab (the gear's panel, the label manager). */
+  const goToSettings = useCallback(
+    (tab: SettingsTab = DEFAULT_SETTINGS_TAB): void => {
+      navigate({ kind: "settings", tab });
+    },
+    [navigate],
+  );
+
+  /** Leaves settings for the mail the user was looking at. */
+  const leaveSettings = useCallback((): void => {
+    navigate(mailRouteRef.current);
+  }, [navigate]);
+
   const openLabelMenu = useRef<(() => void) | undefined>(undefined);
   const registerLabelMenu = useCallback((open: () => void): void => {
     openLabelMenu.current = open;
   }, []);
 
-  /** Opens Settings on the labels section — the menu's "Manage labels…". */
+  /**
+   * Opens Settings on the LABELS tab — the menu's "Manage labels…", and the
+   * sidebar's `+`.
+   *
+   * B3 makes this land on the right tab rather than on whatever tab the page
+   * happened to be showing. That is the deep-linking the route was added for,
+   * used first by the app itself: before, "Manage labels…" opened the sheet on
+   * General and left the user to find the section.
+   */
   const openLabelSettings = useCallback((): void => {
-    setSettingsOpen(true);
-  }, []);
+    goToSettings("labels");
+  }, [goToSettings]);
 
   /**
    * Reports how a rename or delete ended, in the migration's own terms.
@@ -3236,7 +3290,15 @@ export function MailScreen(): React.JSX.Element {
           break;
         }
         case "back":
-          closeMessage();
+          /*
+           * B3: `u` means "back to the list", and from the settings page the
+           * list is the mail the user came from. Falling through to
+           * `closeMessage()` there would be a no-op — settings carries no open
+           * message — so the one key the canon gives for "go back" would do
+           * nothing on the one view it is most needed on.
+           */
+          if (inSettings) leaveSettings();
+          else closeMessage();
           break;
         case "focusSearch":
           searchInputRef.current?.focus();
@@ -3258,12 +3320,16 @@ export function MailScreen(): React.JSX.Element {
            * preventDefault() once it owns a key, which means a <dialog>'s own
            * native Escape never fires while this listener is bound. Any modal
            * added to this screen must therefore be listed here or it becomes
-           * un-dismissable by keyboard — a real defect, and the reason the
-           * settings sheet is named explicitly rather than assumed to handle
-           * its own Escape the way an unmounted dialog would.
+           * un-dismissable by keyboard — a real defect.
+           *
+           * B3: the settings SHEET is gone from this list, and deliberately.
+           * Settings is a route now, and Escape does not close pages — Escape
+           * dismisses overlays. Leaving settings is `u`/Back/the explicit
+           * button, exactly as leaving any other view is. The quick-settings
+           * dock is absent for the opposite reason: it handles its own Escape
+           * in the capture phase, before this listener runs.
            */
-          if (settingsOpen) setSettingsOpen(false);
-          else if (helpOpen) setHelpOpen(false);
+          if (helpOpen) setHelpOpen(false);
           // The composer owns its own Escape (it must flush the draft first),
           // so the global handler must not close it out from under that.
           else if (composerDraft !== undefined) break;
@@ -3411,7 +3477,8 @@ export function MailScreen(): React.JSX.Element {
       mailboxes,
       goToMailbox,
       helpOpen,
-      settingsOpen,
+      inSettings,
+      leaveSettings,
       openMessageId,
       composerDraft,
       selection,
@@ -3710,6 +3777,57 @@ export function MailScreen(): React.JSX.Element {
           */}
         </nav>
 
+        {/*
+          B3: the settings page REPLACES the list area (canon 07 §5).
+
+          The top bar and the rail stay exactly where they are, which is what
+          makes settings a destination inside the app rather than a screen the
+          app disappears behind — and is the layout Gmail uses. It carries
+          `#main` for the same reason the list and the reader trade it: the skip
+          link must land on whatever is actually showing.
+        */}
+        {inSettings && settingsTab !== undefined ? (
+          <main className={styles.settingsColumn} id="main">
+            <SettingsPage
+              tab={settingsTab}
+              onSelectTab={goToSettings}
+              onClose={leaveSettings}
+              onOpenQuickSettings={() => {
+                setQuickSettingsOpen(true);
+              }}
+              identity={identity}
+              onSaveSignature={saveSignature}
+              labels={labelSettings}
+              /*
+               * E7: the autocomplete row. Passed only when this browser
+               * actually has an index to govern — `offline.addresses` is
+               * undefined without usable storage, and a switch over nothing is
+               * a dead control.
+               */
+              {...(offline.addresses !== undefined
+                ? {
+                    addresses: {
+                      enabled: addressIndex.enabled,
+                      setEnabled: addressIndex.setEnabled,
+                      count: addressIndex.count,
+                      clear: addressIndex.clear,
+                    },
+                  }
+                : {})}
+              /*
+               * E6. Each is undefined when the server does not advertise its
+               * capability, which is what makes the page render the honest
+               * skeleton rather than a control that cannot work.
+               */
+              filters={filterSettings}
+              blocked={blockedSettings}
+              forwarding={forwardingSettings}
+              vacation={vacationSettings}
+              quota={quotaSettings}
+            />
+          </main>
+        ) : (
+          <>
         {/*
           In "No split" the list is UNMOUNTED while a message is open, not
           hidden: a virtualized list in a zero-height container measures a
@@ -4140,6 +4258,8 @@ export function MailScreen(): React.JSX.Element {
             />
           </aside>
         )}
+          </>
+        )}
 
         {/*
           B2: quick settings, as the LAST GRID COLUMN.
@@ -4168,50 +4288,15 @@ export function MailScreen(): React.JSX.Element {
               }}
               onOpenFullSettings={() => {
                 // The panel closes as the full surface opens: leaving a
-                // shrunken list behind a settings sheet the user is about to
+                // shrunken list behind the settings page the user is about to
                 // read is a layout they never asked for and would have to undo.
                 setQuickSettingsOpen(false);
-                setSettingsOpen(true);
+                goToSettings();
               }}
             />
           </div>
         )}
       </div>
-
-      <SettingsDialog
-        isOpen={settingsOpen}
-        onClose={() => {
-          setSettingsOpen(false);
-        }}
-        identity={identity}
-        onSaveSignature={saveSignature}
-        labels={labelSettings}
-        /*
-         * E7: the autocomplete row. Passed only when this browser actually has
-         * an index to govern — `offline.addresses` is undefined without usable
-         * storage, and a switch over nothing is a dead control.
-         */
-        {...(offline.addresses !== undefined
-          ? {
-              addresses: {
-                enabled: addressIndex.enabled,
-                setEnabled: addressIndex.setEnabled,
-                count: addressIndex.count,
-                clear: addressIndex.clear,
-              },
-            }
-          : {})}
-        /*
-         * E6. Each is undefined when the server does not advertise its
-         * capability, which is what makes the sheet render the honest skeleton
-         * rather than a control that cannot work.
-         */
-        filters={filterSettings}
-        blocked={blockedSettings}
-        forwarding={forwardingSettings}
-        vacation={vacationSettings}
-        quota={quotaSettings}
-      />
 
       <ShortcutsDialog
         isOpen={helpOpen}

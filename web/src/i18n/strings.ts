@@ -133,6 +133,20 @@ export const en = {
   "settings.section.vacation": "Vacation responder",
   "settings.section.offline": "Offline",
 
+  // --- E12: the settings PAGE (canon 07 §5) ---
+  //
+  // `settings.tab.filters` is the FOLDED name — the tab holds both the filter
+  // list and the blocked senders, and a tab called just "Filters" is a tab
+  // nobody looks in for a blocked address.
+  "settings.tab.filters": "Filters and blocked addresses",
+  "settings.backToMail": "Back to mail",
+  "settings.tabs.label": "Settings sections",
+  // The pointer the page renders where a quick-panel control would be, so
+  // someone who searched for "density" here is told where it lives rather than
+  // finding nothing.
+  "settings.inQuickPanel": "Choose this in quick settings, where you can see the change as you make it.",
+  "settings.openQuickPanel": "Open quick settings",
+
   "settings.language.label": "Language",
   "settings.language.description": "The language Moov's interface is written in.",
   "settings.language.auto": "Match my browser",
@@ -1284,6 +1298,13 @@ export const es: Strings = {
   "settings.section.forwarding": "Reenvío",
   "settings.section.vacation": "Respuesta automática",
   "settings.section.offline": "Sin conexión",
+
+  "settings.tab.filters": "Filtros y direcciones bloqueadas",
+  "settings.backToMail": "Volver al correo",
+  "settings.tabs.label": "Secciones de configuración",
+  "settings.inQuickPanel":
+    "Elegí esto en los ajustes rápidos, donde ves el cambio mientras lo hacés.",
+  "settings.openQuickPanel": "Abrir los ajustes rápidos",
 
   "settings.language.label": "Idioma",
   "settings.language.description": "El idioma en el que está escrita la interfaz de Moov.",

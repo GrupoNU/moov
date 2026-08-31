@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { en, es, type Strings } from "../../i18n/strings";
+import { SETTINGS_TABS } from "../../router/routes";
 import { DEFAULT_PREFS, type PrefKey } from "../../mail/prefs";
 import { foldForSearch } from "../../mail/settingsSearch";
 import {
@@ -11,6 +12,9 @@ import {
   SECTION_IDS,
   SECTION_TITLES,
   SETTINGS_ROWS,
+  SECTION_TAB,
+  QUICK_PANEL_ROWS,
+  sectionsOfTab,
 } from "./registry";
 
 /**
@@ -28,7 +32,7 @@ import {
  *
  * E8 added the first section whose body lives in its own file: the label
  * manager is a stateful CRUD surface, not a column of `SettingRow`s, and
- * inlining it would have doubled `SettingsDialog`. The drift scan therefore
+ * inlining it would have doubled `SettingsPage`. The drift scan therefore
  * reads the delegates too — otherwise moving a section out of the sheet would
  * make it look unrendered, which is a false accusation, and the scan's whole
  * value is that it only ever errs the safe way.
@@ -38,7 +42,7 @@ import {
  * description explicitly rather than inheriting the rail's heading.
  */
 const dialogSource = [
-  "src/screens/settings/SettingsDialog.tsx",
+  "src/screens/settings/SettingsPage.tsx",
   "src/screens/settings/LabelsSection.tsx",
   // E6: four more sections that own their own bodies, for the same reason the
   // label manager does — each is a stateful surface over server objects, not a
@@ -277,5 +281,55 @@ describe("what the sheet deliberately does NOT have", () => {
     const labels = SETTINGS_ROWS.map((row) => en[row.labelKey]).join(" ").toLowerCase();
     expect(labels).not.toContain("per page");
     expect(labels).not.toContain("page size");
+  });
+});
+
+/**
+ * E12: the section → tab mapping (canon 07 §5).
+ *
+ * Tabs are COARSER than sections now, which is new and is Gmail's own shape.
+ * What these pin is the property the page depends on and no compiler can see
+ * for it: that the mapping is TOTAL and its inverse loses nothing. A section
+ * with no tab renders nowhere, silently, on a page nobody looks at until a user
+ * reports that a setting "disappeared".
+ */
+describe("the section → tab mapping (E12)", () => {
+  it("gives every section a home", () => {
+    for (const id of SECTION_IDS) {
+      expect(SECTION_TAB[id], `section "${id}" has no tab`).toBeDefined();
+      expect(SETTINGS_TABS).toContain(SECTION_TAB[id]);
+    }
+  });
+
+  it("gives every tab at least one section, so no tab renders empty", () => {
+    for (const tab of SETTINGS_TABS) {
+      expect(sectionsOfTab(tab).length, `tab "${tab}" renders nothing`).toBeGreaterThan(0);
+    }
+  });
+
+  it("partitions the sections: every one reachable, none twice", () => {
+    const reached = SETTINGS_TABS.flatMap((tab) => sectionsOfTab(tab));
+    expect([...reached].sort()).toEqual([...SECTION_IDS].sort());
+    expect(new Set(reached).size).toBe(reached.length);
+  });
+
+  it("folds blocked into filters and vacation into forwarding, as Gmail does", () => {
+    // The two folds canon 07 §5 records. Pinned because each is a DECISION with
+    // a reason (both pairs share one Sieve script), not a layout convenience.
+    expect(sectionsOfTab("filters")).toEqual(["filters", "blocked"]);
+    expect(sectionsOfTab("forwarding")).toEqual(["forwarding", "vacation"]);
+  });
+
+  it("keeps the quick-panel rows registered even though the page has no control", () => {
+    /*
+     * The rows whose CONTROL moved to the quick panel keep their registry
+     * entries so the settings search still finds them. Deleting them would make
+     * someone typing "density" get "nothing matched" for a setting that plainly
+     * exists — the exact failure D-5 was signed to prevent.
+     */
+    const ids = new Set(SETTINGS_ROWS.map((row) => row.id));
+    for (const id of QUICK_PANEL_ROWS) {
+      expect(ids.has(id), `"${id}" lost its registry row when its control moved`).toBe(true);
+    }
   });
 });

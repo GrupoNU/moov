@@ -209,6 +209,6 @@ describe("the module graph", () => {
 
     // ...and that it does NOT cry wolf about a module that IS imported.
     expect(reachable.has("theme/theme.ts")).toBe(true);
-    expect(reachable.has("screens/settings/SettingsDialog.tsx")).toBe(true);
+    expect(reachable.has("screens/settings/SettingsPage.tsx")).toBe(true);
   });
 });

@@ -1,96 +1,117 @@
 /*
- * The settings sheet (L3 E5 — the full surface).
+ * The settings PAGE (L3 E5, re-homed by E12/B3).
  *
- * P1 shipped this as a single scrolling column with one row in it. E5 turns it
- * into the shape Gmail's settings actually have: a persistent SECTION RAIL on
- * the left and a scrolling panel on the right, with a search box above both.
+ * # What changed and what deliberately did not
  *
- * The rail is what makes eight sections navigable — a single column of ~25 rows
- * is a scroll-hunt, and the previous file's own comment predicted this ("when
- * it IS long enough, the sections become the tab list without the rows
- * changing at all"). The rows did not change; only their container did.
+ * Everything above the rows: the <dialog> card and its backdrop are gone, the
+ * left section RAIL became a horizontal TAB row, and the whole thing is now a
+ * column that fills the shell grid track the message list used to occupy. That
+ * is canon 07 §5 — Gmail's settings replace the list area while the top bar and
+ * the folder rail stay put.
  *
- * It stays a <dialog> rather than becoming a route: `showModal()` already
- * supplies inertness, the focus trap and Escape, all three of which a routed
- * screen would have to give up or re-implement.
+ * Everything from the section styles down is UNCHANGED except for the row
+ * geometry. The controls, the switches, the number fields, the signature
+ * editor and the skeletons all render exactly as they did; only their
+ * container moved. That is what made this a re-layout rather than a rewrite.
+ *
+ * # The row is a two-column GRID now, not a flex row
+ *
+ * Gmail's settings rows put the setting's name in a fixed-width left column and
+ * its control on the right, so the controls line up in one column down the
+ * whole page and the eye can scan them. A flex row with
+ * `justify-content: space-between` — which is what this had — puts every
+ * control at a different x depending on how long its label happens to be,
+ * producing exactly the ragged edge the fixed column exists to remove.
  */
 
-.dialog {
-  padding: 0;
-  border: none;
-  background: transparent;
-  /* Wide enough for a rail plus a readable measure; never wider than the
-   * viewport. */
-  max-width: min(56rem, calc(100vw - 2rem));
-  width: min(56rem, calc(100vw - 2rem));
-  max-height: calc(100dvh - 4rem);
-  /* The dialog element centres itself with margin:auto in the top layer. */
-  margin: auto;
-  overflow: visible;
-}
-
-.dialog::backdrop {
-  background: var(--surface-overlay);
-  backdrop-filter: blur(2px);
-}
-
-.content {
+.page {
   display: flex;
   flex-direction: column;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
-  max-height: calc(100dvh - 4rem);
-  /* The PANEL scrolls, not the card: the rail and the search box must stay
-   * put while the settings scroll under them. */
-  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-default);
 }
 
 .header {
   flex: none;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-5) var(--space-6) var(--space-4);
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6) 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.headerText {
+.headerTop {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
 }
 
+.back {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+}
+
+.back svg {
+  width: 18px;
+  height: 18px;
+}
+
+.back:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
 .title {
-  font-size: var(--text-lg);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
   color: var(--text-strong);
   white-space: nowrap;
 }
 
-.close {
-  display: grid;
-  place-items: center;
+/*
+ * The tab row. It SCROLLS horizontally rather than wrapping: a wrapped tab row
+ * changes the header's height when the viewport narrows, which moves the
+ * content under it — the one thing a persistent navigation must not do.
+ */
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
   flex: none;
-  width: 30px;
-  height: 30px;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--text-muted);
+  white-space: nowrap;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border: none;
+  /* The underline is a TRANSPARENT border on every tab, not a border added to
+   * the active one: adding it on selection would change the tab's height and
+   * shift the whole page by 2px every time the user changed tabs. */
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
 }
 
-.close svg {
-  width: 15px;
-  height: 15px;
-}
-
-.close:hover {
-  background: var(--surface-sunken);
+.tab:hover {
   color: var(--text-strong);
-  border-color: var(--border-subtle);
+}
+
+.tabActive {
+  font-weight: var(--weight-medium);
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
 }
 
 /* --- the search box (D-5) --- */
@@ -150,50 +171,23 @@
   color: var(--text-strong);
 }
 
-/* --- the two panes --- */
-
-.panes {
-  display: grid;
-  grid-template-columns: 13rem minmax(0, 1fr);
-  min-height: 0;
-  flex: 1;
-}
-
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-4) var(--space-3);
-  border-right: 1px solid var(--border-subtle);
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.navItem {
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  text-align: left;
-  color: var(--text-default);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-
-.navItem:hover {
-  background: var(--surface-sunken);
-}
-
-.navItemActive {
-  font-weight: var(--weight-medium);
-  color: var(--text-strong);
-  background: var(--surface-sunken);
-}
-
+/*
+ * The tab panel: the one thing on this page that scrolls.
+ *
+ * The header above it — title, search, tab row — stays put, exactly as the
+ * rail and the search box did in the sheet. `outline: none` is NOT here: the
+ * panel is `tabIndex={0}` so a keyboard user can enter its content from its
+ * tab, and suppressing the ring would leave them with no idea they had arrived.
+ */
 .panel {
+  flex: 1;
   padding: var(--space-5) var(--space-6) var(--space-6);
   overflow-y: auto;
   min-height: 0;
+  /* Named, so the rows below can ask about THIS box rather than about the
+   * viewport — the panel narrows when the quick dock opens beside it, and a
+   * media query cannot see that. */
+  container: settings / inline-size;
 }
 
 /* --- status strip --- */
@@ -231,13 +225,35 @@
   flex-direction: column;
 }
 
+/*
+ * Gmail's two-column row (canon 07 §5): a fixed ~340px name column and the
+ * control beside it.
+ *
+ * `align-items: start` rather than `center`, because the left column can wrap
+ * to two lines (a name plus its grey footnote) while the control is one line
+ * tall — centring would then float a select in the middle of a two-line label
+ * and break the alignment the fixed column was introduced to create.
+ */
 .row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  align-items: start;
   gap: var(--space-5);
   padding: var(--space-4) 0;
   border-top: 1px solid var(--border-subtle);
+}
+
+/*
+ * Below ~48rem of PANEL width the fixed column stops fitting a control beside
+ * it, so the two stack. A container query rather than a media query, because
+ * what determines this is the panel's width — and the panel narrows when the
+ * quick dock opens beside it, which no viewport query can see.
+ */
+@container settings (max-width: 48rem) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
 }
 
 .row:last-child {
@@ -263,8 +279,46 @@
   text-wrap: pretty;
 }
 
+/* `min-width: 0` rather than the old `flex: none`: this is a grid cell now, and
+ * a grid item's default `min-width: auto` refuses to shrink below its content —
+ * which is how a long select pushed the whole row wider than the panel. */
 .rowControl {
-  flex: none;
+  min-width: 0;
+}
+
+/*
+ * The quick-panel pointer: what stands where theme's and density's controls
+ * used to be. Styled as PROSE with a link-weight button, not as a control —
+ * a boxed, button-like affordance here would read as the setting itself and
+ * invite the click that a real control would have answered.
+ */
+.pointer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.pointerNote {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.pointerButton {
+  padding: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-accent);
+  background: transparent;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.pointerButton:hover {
+  color: var(--text-strong);
 }
 
 /* --- the controls --- */
@@ -494,41 +548,20 @@
 }
 
 /*
- * On a narrow sheet the rail becomes a horizontal strip and the rows stack.
- * The rail is NOT hidden: it is the only way to reach a section without
- * scrolling past the seven others.
+ * E12: the rail's narrow-viewport rules are gone with the rail.
+ *
+ * They turned the vertical section rail into a horizontal strip below ~44rem —
+ * which is precisely what the tab row now IS at every width, so the whole media
+ * query became a no-op describing elements that no longer exist. The row's own
+ * stacking moved to the container query beside `.row`, which is strictly better:
+ * it fires on the PANEL's width, so a row stacks when the quick dock narrows
+ * the page even on a wide monitor, where a viewport query would not have fired.
  */
-@media (max-width: 44rem) {
-  .panes {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .nav {
-    flex-direction: row;
-    overflow-x: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .navItem {
-    white-space: nowrap;
-  }
-
-  .header {
-    flex-wrap: wrap;
-  }
-}
-
 @media (max-width: 30rem) {
-  .row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-3);
-  }
-
-  .rowControl {
-    align-self: flex-start;
+  .headerTop {
+    /* The title and the search box stop fitting on one line long before the
+       tabs do. */
+    flex-wrap: wrap;
   }
 
   .identity {

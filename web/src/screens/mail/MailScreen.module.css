@@ -242,6 +242,26 @@
   overflow: hidden;
 }
 
+/*
+ * B3: the settings page's track.
+ *
+ * It occupies the SAME cell the list column does — the page replaces the list
+ * area, which is canon 07 §5's shape and is why the top bar and the rail need
+ * no rules here at all: they are simply not in this cell.
+ */
+.settingsColumn {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.settingsColumn > * {
+  flex: 1;
+  min-height: 0;
+}
+
 /* --- notices above the list --- */
 
 .noticeInfo,

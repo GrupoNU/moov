@@ -1,12 +1,10 @@
 import { useConfirm } from "../../components/useConfirm";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { ThemeToggle } from "../../components/ThemeToggle";
 import { useTranslation } from "../../i18n/I18nProvider";
 import { usePrefs } from "../../mail/PrefsProvider";
 import {
   AUTO_ADVANCE,
-  DENSITIES,
   IMAGES_POLICIES,
   INBOX_TYPES,
   LANGUAGES,
@@ -27,43 +25,61 @@ import { ForwardingSection, type ForwardingSectionProps } from "./ForwardingSect
 import { LabelsSection, type LabelsSectionProps } from "./LabelsSection";
 import { QuotaRow, type QuotaRowProps } from "./QuotaRow";
 import { VacationSection, type VacationSectionProps } from "./VacationSection";
+import { SETTINGS_TABS, type SettingsTab } from "../../router/routes";
 import {
   SECTION_IDS,
   SECTION_TITLES,
   SETTINGS_ROWS,
+  TAB_TITLES,
+  sectionsOfTab,
   type PlainStringKey,
-  type SectionId,
 } from "./registry";
-import styles from "./SettingsDialog.module.css";
+import styles from "./SettingsPage.module.css";
 
 /**
- * The settings sheet — the full surface (L3 epic E5).
+ * The settings PAGE — the full surface (L3 epic E5; re-homed by E12).
  *
- * # Dialog, not a route, and why
+ * # It was a dialog until E12, and the reversal is deliberate
  *
- * P1 chose a `<dialog>` for three properties: `showModal()` makes the rest of
- * the page inert (not merely covered), traps focus while it is open, and closes
- * on Escape. Promoting settings to a route would give up all three and require
- * re-implementing them, and it would put the mail route model — which owns
- * mailboxes, messages and searches — in the business of describing a
- * preferences panel. Gmail's own settings are a full page, but Gmail's settings
- * are also fifteen tabs deep with server round trips per tab; ours are thirteen
- * preferences and four honest skeletons. The dialog is right for the size, and
- * the shape below (rail + panel) is the part of Gmail's IA that actually
- * carries: sections you can jump between without scroll-hunting.
+ * P1 chose a `<dialog>` for three properties `showModal()` supplies free:
+ * inertness, a focus trap, and Escape. The header that stood here argued the
+ * dialog was "right for the size" — thirteen preferences against Gmail's
+ * fifteen tabs. Canon 07 §5 overrules it, and the argument that wins is not
+ * about size at all: Gmail's settings are a DESTINATION. They replace the list
+ * area while the top bar and rail stay put, which means they have a URL. You
+ * can send someone "the filters tab", bookmark it, reach it with Back, and land
+ * on it from the quick panel. A `<dialog>` can be none of those, and this app's
+ * previous one could not: there was no address for "settings, filters".
  *
- * # The IA, adapted from Gmail (canon §3)
+ * The three free properties are given up, and two of them SHOULD be: inertness
+ * and a focus trap are wrong on a page — a page is something you can tab out
+ * of. What replaces Escape is what already returns from any other view: `u`, or
+ * Back, or the explicit "Back to mail" affordance.
  *
- * General · Appearance · Inbox · Account · Filters · Forwarding · Vacation ·
- * Offline. The last four are SKELETONS — a named explanation of what lands and
- * when, and no control at all. That is principle P4 taken literally: never a
- * dead control, but a named absence is honest. A greyed-out "Create filter"
- * button would be the dead control; a paragraph saying filters arrive with the
- * Sieve epic is information.
+ * # The IA, from canon 07 §5
  *
- * Deliberately absent: the entire IMAP/POP block. GC-9 — Dovecot IS the IMAP
- * server, so porting Gmail's IMAP settings would import Google's
- * web-store-vs-IMAP impedance debt to solve a problem we do not have.
+ * A horizontal tab row — General · Labels · Inbox · Account · Filters and
+ * blocked addresses · Forwarding · Offline — over two-column rows: the setting's
+ * name in a fixed left column, its control on the right. The tab set is Gmail's
+ * with its stated exclusions applied: no Complementos/Chat/Temas (Google
+ * ecosystem chrome) and no POP/IMAP (GC-9 — Dovecot IS the IMAP server, so
+ * porting Gmail's IMAP settings would import Google's web-store-vs-IMAP
+ * impedance debt to solve a problem we do not have).
+ *
+ * TABS are coarser than SECTIONS, which is new here and is Gmail's own shape:
+ * "Filters and blocked addresses" is one tab holding two sections. The mapping
+ * lives in `registry.ts` as a total record, so a section with no tab is a
+ * compile error rather than a section that silently renders nowhere.
+ *
+ * Two settings are deliberately NOT on this page — theme and density. Their
+ * controls live in the quick panel (B2), which is the only surface where the
+ * change is visible as you make it, and duplicating them here would be two live
+ * controls over one preference. Their registry rows stay, so the search still
+ * finds them, and the page renders a pointer at the panel instead.
+ *
+ * Sections whose capability the server does not advertise render an honest
+ * SKELETON — a named absence rather than a greyed-out control. That is
+ * principle P4 taken literally.
  *
  * # Every row is registered twice, on purpose
  *
@@ -76,9 +92,20 @@ import styles from "./SettingsDialog.module.css";
  * generation would have bought.
  */
 
-export interface SettingsDialogProps {
-  readonly isOpen: boolean;
+export interface SettingsPageProps {
+  /** The tab the route names. */
+  readonly tab: SettingsTab;
+  /** Navigates to another tab — the caller owns the URL. */
+  readonly onSelectTab: (tab: SettingsTab) => void;
+  /** Leaves settings for the mail the user came from. */
   readonly onClose: () => void;
+  /**
+   * Opens the quick-settings panel, for the two rows whose control lives there.
+   *
+   * Absent renders the pointer as plain text rather than as a button — a
+   * caller with no panel wired must not offer to open one.
+   */
+  readonly onOpenQuickSettings?: (() => void) | undefined;
   /** The account's sending identity, for the read-only display and signature. */
   readonly identity?: Identity | undefined;
   /**
@@ -141,9 +168,12 @@ export interface AddressSettings {
   readonly clear: () => Promise<void>;
 }
 
-export function SettingsDialog({
-  isOpen,
+
+export function SettingsPage({
+  tab,
+  onSelectTab,
   onClose,
+  onOpenQuickSettings,
   identity,
   onSaveSignature,
   labels,
@@ -153,70 +183,10 @@ export function SettingsDialog({
   forwarding,
   vacation,
   quota,
-}: SettingsDialogProps): React.JSX.Element {
+}: SettingsPageProps): React.JSX.Element {
   const { t } = useTranslation();
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
-  const [activeSection, setActiveSection] = useState<SectionId>("general");
   const prefs = usePrefs();
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog === null) return;
-
-    if (isOpen && !dialog.open) {
-      // Remember where focus was so it can be restored on close.
-      returnFocusRef.current =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      dialog.showModal();
-    } else if (!isOpen && dialog.open) {
-      dialog.close();
-      returnFocusRef.current?.focus();
-    }
-  }, [isOpen]);
-
-  // A closed sheet forgets its search: reopening settings to find the same
-  // thing again is unusual, and leaving the filter applied makes the panel look
-  // half-empty for a reason the user has to remember.
-  useEffect(() => {
-    if (!isOpen) setQuery("");
-  }, [isOpen]);
-
-  // The dialog can close by means we did not initiate (Escape, the backdrop),
-  // so the parent's state is synchronised from the element's own event rather
-  // than assumed.
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog === null) return undefined;
-    const handleClose = (): void => {
-      returnFocusRef.current?.focus();
-      onClose();
-    };
-    dialog.addEventListener("close", handleClose);
-    return () => {
-      dialog.removeEventListener("close", handleClose);
-    };
-  }, [onClose]);
-
-  /*
-   * Backdrop dismissal, attached natively rather than as a React onClick: a
-   * <dialog> is not an interactive element, so an onClick on it is both a
-   * jsx-a11y error and a genuine keyboard trap. It is a pure ENHANCEMENT for
-   * pointer users — Escape and the close button both dismiss, and both work
-   * from the keyboard.
-   */
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog === null) return undefined;
-    const onBackdropClick = (event: MouseEvent): void => {
-      if (event.target === dialog) onClose();
-    };
-    dialog.addEventListener("click", onBackdropClick);
-    return () => {
-      dialog.removeEventListener("click", onBackdropClick);
-    };
-  }, [onClose]);
 
   /*
    * The search haystack is built from the RENDERED strings, so it is
@@ -242,13 +212,19 @@ export function SettingsDialog({
   );
 
   /*
-   * While filtering, EVERY matching section renders — the rail's selection is
-   * suspended, because a search whose results are hidden behind a section the
-   * user is not standing in is a search that appears to have found nothing.
+   * D-5: while filtering, the TABS are suspended and every matching section
+   * renders, wherever it lives.
+   *
+   * This is the one place the page deliberately stops being a tabbed page, and
+   * it is the same rule the rail followed before: a search whose results are
+   * hidden behind a tab the user is not standing in is a search that appears to
+   * have found nothing. The tab row stays visible and stays operable — picking
+   * one clears the query, because the two are competing ways to choose what is
+   * on screen.
    */
   const visibleSections = search.isFiltering
     ? SECTION_IDS.filter((id) => search.sectionIds.has(id))
-    : [activeSection];
+    : sectionsOfTab(tab);
 
   const showRow = useCallback(
     (id: string): boolean => !search.isFiltering || search.rowIds.has(id),
@@ -264,177 +240,227 @@ export function SettingsDialog({
    * poll. Refetching exactly when the number is about to be READ is the whole
    * refresh strategy, and it is the one the server's own comment prescribes.
    *
-   * `visibleSections` rather than `activeSection`, so a SEARCH that surfaces
-   * the storage row also refreshes it — otherwise finding it by typing
-   * "almacenamiento" would show a figure from whenever the sheet last opened.
+   * `visibleSections` rather than the tab, so a SEARCH that surfaces the
+   * storage row also refreshes it — otherwise finding it by typing
+   * "almacenamiento" would show a figure from whenever the page last loaded.
    */
   const showsAccount = visibleSections.includes("account");
   const refreshQuota = quota?.onRefresh;
   useEffect(() => {
-    if (!isOpen || !showsAccount) return;
+    if (!showsAccount) return;
     refreshQuota?.();
-  }, [isOpen, showsAccount, refreshQuota]);
+  }, [showsAccount, refreshQuota]);
 
   return (
-    <dialog ref={dialogRef} className={styles.dialog} aria-labelledby="settings-title">
-      <div className={styles.content}>
-        <div className={styles.header}>
-          <div className={styles.headerText}>
-            <h2 className={styles.title} id="settings-title">
-              {t("settings.title")}
-            </h2>
-            <SettingsSearchBox value={query} onChange={setQuery} />
-          </div>
+    <div className={styles.page}>
+      <div className={styles.header}>
+        <div className={styles.headerTop}>
+          {/*
+            "Back to mail" is an explicit control, not only a keyboard path.
+            The page took over the list area, so the way out has to be visible:
+            `u` and the browser's Back both work, but neither is discoverable by
+            someone who arrived here by clicking a gear.
+          */}
           <button
             type="button"
-            className={styles.close}
+            className={styles.back}
             onClick={onClose}
-            aria-label={t("settings.close")}
+            aria-label={t("settings.backToMail")}
+            title={t("settings.backToMail")}
           >
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
-              <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M16 10H4.5m0 0l4.8-4.8M4.5 10l4.8 4.8" />
             </svg>
           </button>
+          <h1 className={styles.title}>{t("settings.title")}</h1>
+          {/* D-5: the search moves into the page header, where canon 07 §5 puts
+              it — "an addition, placed unobtrusively". */}
+          <SettingsSearchBox value={query} onChange={setQuery} />
         </div>
 
         {/*
-          The persistence status, stated rather than assumed.
+          The horizontal tab row (canon 07 §5).
 
-          A server without the preferences capability still lets the user move
-          every control — the choices apply for the session — but saying so is
-          the difference between a degraded mode and a silent lie about what
-          was saved.
+          Real APG `tab`s inside a `tablist`, so the arrow keys move between
+          them and only the selected one is in the tab order — which is what
+          makes a seven-tab row one stop rather than seven. They are BUTTONS and
+          not links even though each has a URL, because the panel below is not
+          re-fetched: `onSelectTab` navigates, and rendering them as anchors
+          would invite a middle-click that opens a second copy of the whole app
+          to show a different heading.
         */}
-        {(prefs.status === "unavailable" || prefs.error !== undefined) && (
-          <p
-            className={[styles.status, prefs.error !== undefined ? styles.statusError : ""]
-              .filter(Boolean)
-              .join(" ")}
-            role="status"
-          >
-            {prefs.error !== undefined
-              ? `${t("settings.saveFailed")}: ${prefs.error}`
-              : t("settings.unavailable")}
-          </p>
-        )}
-
-        <div className={styles.panes}>
-          {/*
-            The rail. Buttons rather than links, because there is no URL behind
-            them — the sheet is not routed — and a link with href="#" is a
-            keyboard trap dressed as navigation.
-          */}
-          <nav className={styles.nav} aria-label={t("settings.nav.label")}>
-            {SECTION_IDS.map((id) => (
+        <div className={styles.tabs} role="tablist" aria-label={t("settings.tabs.label")}>
+          {SETTINGS_TABS.map((id) => {
+            const isActive = !search.isFiltering && id === tab;
+            return (
               <button
                 key={id}
                 type="button"
-                className={[
-                  styles.navItem,
-                  !search.isFiltering && id === activeSection ? styles.navItemActive : "",
-                ]
+                role="tab"
+                id={`settings-tab-${id}`}
+                aria-selected={isActive}
+                aria-controls="settings-panel"
+                /* Roving tabindex: only the selected tab is reachable by Tab,
+                   and the arrows move within the row (the APG contract). */
+                tabIndex={isActive ? 0 : -1}
+                className={[styles.tab, isActive ? styles.tabActive : ""]
                   .filter(Boolean)
                   .join(" ")}
-                aria-current={!search.isFiltering && id === activeSection ? "true" : undefined}
                 onClick={() => {
-                  // Picking a section clears the search: the two are competing
-                  // ways to choose what is on screen, and leaving both active
-                  // would show a section filtered by a query the user has
-                  // stopped thinking about.
+                  // Picking a tab clears the search: the two are competing ways
+                  // to choose what is on screen, and leaving both active would
+                  // show a tab filtered by a query the user has stopped
+                  // thinking about.
                   setQuery("");
-                  setActiveSection(id);
+                  onSelectTab(id);
+                }}
+                onKeyDown={(event) => {
+                  const step =
+                    event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                  if (step === 0) return;
+                  event.preventDefault();
+                  const index = SETTINGS_TABS.indexOf(id);
+                  // Wraps at both ends, which APG lists as the expected
+                  // behaviour and which saves the row from a dead end.
+                  const next =
+                    SETTINGS_TABS[
+                      (index + step + SETTINGS_TABS.length) % SETTINGS_TABS.length
+                    ];
+                  if (next === undefined) return;
+                  setQuery("");
+                  onSelectTab(next);
+                  document.getElementById(`settings-tab-${next}`)?.focus();
                 }}
               >
-                {t(SECTION_TITLES[id])}
+                {t(TAB_TITLES[id])}
               </button>
-            ))}
-          </nav>
-
-          <div className={styles.panel}>
-            {search.isEmpty ? (
-              <div className={styles.empty}>
-                <p className={styles.emptyTitle}>{t("settings.search.empty")}</p>
-                <p className={styles.emptyBody}>{t("settings.search.emptyBody")}</p>
-              </div>
-            ) : (
-              visibleSections.map((sectionId) => (
-                <SettingsSection key={sectionId} titleKey={SECTION_TITLES[sectionId]}>
-                  {sectionId === "general" && (
-                    <GeneralSection prefs={prefs} showRow={showRow} />
-                  )}
-                  {sectionId === "appearance" && (
-                    <AppearanceSection prefs={prefs} showRow={showRow} />
-                  )}
-                  {sectionId === "inbox" && <InboxSection prefs={prefs} showRow={showRow} />}
-                  {sectionId === "account" && (
-                    <AccountSection
-                      identity={identity}
-                      onSaveSignature={onSaveSignature}
-                      showRow={showRow}
-                      addresses={addresses}
-                      quota={quota}
-                      prefs={prefs}
-                    />
-                  )}
-                  {sectionId === "labels" && showRow("labels") && labels !== undefined && (
-                    <LabelsSection {...labels} />
-                  )}
-                  {/*
-                    E6. Each section renders itself when the server offers the
-                    capability, and its skeleton when it does not — the skeleton
-                    now says "this server does not offer X", which is the true
-                    sentence once the feature exists in the app.
-                  */}
-                  {sectionId === "filters" &&
-                    showRow("filters") &&
-                    (filters !== undefined ? (
-                      <FiltersSection {...filters} />
-                    ) : (
-                      <Skeleton
-                        titleKey="settings.filters.soon"
-                        bodyKey="settings.filters.soonBody"
-                      />
-                    ))}
-                  {sectionId === "blocked" &&
-                    showRow("blocked") &&
-                    (blocked !== undefined ? (
-                      <BlockedSection {...blocked} />
-                    ) : (
-                      <Skeleton
-                        titleKey="settings.filters.soon"
-                        bodyKey="settings.filters.soonBody"
-                      />
-                    ))}
-                  {sectionId === "forwarding" &&
-                    showRow("forwarding") &&
-                    (forwarding !== undefined ? (
-                      <ForwardingSection {...forwarding} />
-                    ) : (
-                      <Skeleton
-                        titleKey="settings.forwarding.soon"
-                        bodyKey="settings.forwarding.soonBody"
-                      />
-                    ))}
-                  {sectionId === "vacation" &&
-                    showRow("vacation") &&
-                    (vacation !== undefined ? (
-                      <VacationSection {...vacation} />
-                    ) : (
-                      <Skeleton
-                        titleKey="settings.vacation.soon"
-                        bodyKey="settings.vacation.soonBody"
-                      />
-                    ))}
-                  {sectionId === "offline" && (
-                    <OfflineSection prefs={prefs} showRow={showRow} />
-                  )}
-                </SettingsSection>
-              ))
-            )}
-          </div>
+            );
+          })}
         </div>
       </div>
-    </dialog>
+
+      {/*
+        The persistence status, stated rather than assumed.
+
+        A server without the preferences capability still lets the user move
+        every control — the choices apply for the session — but saying so is
+        the difference between a degraded mode and a silent lie about what
+        was saved.
+      */}
+      {(prefs.status === "unavailable" || prefs.error !== undefined) && (
+        <p
+          className={[styles.status, prefs.error !== undefined ? styles.statusError : ""]
+            .filter(Boolean)
+            .join(" ")}
+          role="status"
+        >
+          {prefs.error !== undefined
+            ? `${t("settings.saveFailed")}: ${prefs.error}`
+            : t("settings.unavailable")}
+        </p>
+      )}
+
+      <div
+        className={styles.panel}
+        id="settings-panel"
+        role="tabpanel"
+        /*
+         * The panel is named by its tab — but only while a tab is genuinely
+         * selected. Under a search the tabs are suspended, and pointing at a
+         * tab that is not selected would name the panel after a heading that
+         * is not what it contains.
+         */
+        {...(search.isFiltering ? {} : { "aria-labelledby": `settings-tab-${tab}` })}
+        /* Focusable so a keyboard user can reach the panel's content directly
+           from its tab, which is the APG tabpanel contract for a panel whose
+           first child is not itself focusable. */
+        tabIndex={0}
+      >
+        {search.isEmpty ? (
+          <div className={styles.empty}>
+            <p className={styles.emptyTitle}>{t("settings.search.empty")}</p>
+            <p className={styles.emptyBody}>{t("settings.search.emptyBody")}</p>
+          </div>
+        ) : (
+          visibleSections.map((sectionId) => (
+            <SettingsSection key={sectionId} titleKey={SECTION_TITLES[sectionId]}>
+              {sectionId === "general" && (
+                <GeneralSection prefs={prefs} showRow={showRow} />
+              )}
+              {sectionId === "inbox" && (
+                <InboxSection
+                  prefs={prefs}
+                  showRow={showRow}
+                  onOpenQuickSettings={onOpenQuickSettings}
+                />
+              )}
+              {sectionId === "account" && (
+                <AccountSection
+                  identity={identity}
+                  onSaveSignature={onSaveSignature}
+                  showRow={showRow}
+                  addresses={addresses}
+                  quota={quota}
+                  prefs={prefs}
+                />
+              )}
+              {sectionId === "labels" && showRow("labels") && labels !== undefined && (
+                <LabelsSection {...labels} />
+              )}
+              {/*
+                E6. Each section renders itself when the server offers the
+                capability, and its skeleton when it does not — the skeleton
+                now says "this server does not offer X", which is the true
+                sentence once the feature exists in the app.
+              */}
+              {sectionId === "filters" &&
+                showRow("filters") &&
+                (filters !== undefined ? (
+                  <FiltersSection {...filters} />
+                ) : (
+                  <Skeleton
+                    titleKey="settings.filters.soon"
+                    bodyKey="settings.filters.soonBody"
+                  />
+                ))}
+              {sectionId === "blocked" &&
+                showRow("blocked") &&
+                (blocked !== undefined ? (
+                  <BlockedSection {...blocked} />
+                ) : (
+                  <Skeleton
+                    titleKey="settings.filters.soon"
+                    bodyKey="settings.filters.soonBody"
+                  />
+                ))}
+              {sectionId === "forwarding" &&
+                showRow("forwarding") &&
+                (forwarding !== undefined ? (
+                  <ForwardingSection {...forwarding} />
+                ) : (
+                  <Skeleton
+                    titleKey="settings.forwarding.soon"
+                    bodyKey="settings.forwarding.soonBody"
+                  />
+                ))}
+              {sectionId === "vacation" &&
+                showRow("vacation") &&
+                (vacation !== undefined ? (
+                  <VacationSection {...vacation} />
+                ) : (
+                  <Skeleton
+                    titleKey="settings.vacation.soon"
+                    bodyKey="settings.vacation.soonBody"
+                  />
+                ))}
+              {sectionId === "offline" && (
+                <OfflineSection prefs={prefs} showRow={showRow} />
+              )}
+            </SettingsSection>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -647,78 +673,23 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
   );
 }
 
-function AppearanceSection({ prefs, showRow }: SectionProps): React.JSX.Element {
-  const { t } = useTranslation();
-  const set = prefs.setPref;
-
-  return (
-    <>
-      {showRow("theme") && (
-        <SettingRow labelKey="theme.label" descriptionKey="settings.theme.description">
-          {/*
-            Controlled by the account preference. ThemeToggle still writes the
-            attribute and the localStorage cache itself, which is what the
-            pre-paint script in index.html reads next load — prefs is the source
-            of truth, localStorage is its mirror.
-          */}
-          <ThemeToggle
-            value={prefs.prefs.theme}
-            onChange={(theme) => {
-              void set("theme", theme);
-            }}
-          />
-        </SettingRow>
-      )}
-
-      {showRow("density") && (
-        <SettingRow labelKey="settings.density.label" descriptionKey="settings.density.description">
-          <Select
-            label={t("settings.density.label")}
-            value={prefs.prefs.density}
-            onChange={(value) => {
-              void set("density", value as Prefs["density"]);
-            }}
-            options={DENSITIES.map((density) => ({
-              value: density,
-              label:
-                density === "default"
-                  ? t("settings.density.default")
-                  : density === "comfortable"
-                    ? t("settings.density.comfortable")
-                    : t("settings.density.compact"),
-            }))}
-          />
-        </SettingRow>
-      )}
-
-      {showRow("readingPane") && (
-        <SettingRow
-          labelKey="settings.readingPane.label"
-          descriptionKey="settings.readingPane.description"
-        >
-          <Select
-            label={t("settings.readingPane.label")}
-            value={prefs.prefs.readingPane}
-            onChange={(value) => {
-              void set("readingPane", value as Prefs["readingPane"]);
-            }}
-            options={READING_PANES.map((pane) => ({
-              value: pane,
-              label:
-                pane === "none"
-                  ? t("settings.readingPane.none")
-                  : pane === "right"
-                    ? t("settings.readingPane.right")
-                    : t("settings.readingPane.bottom"),
-            }))}
-          />
-        </SettingRow>
-      )}
-    </>
-  );
-}
-
-function InboxSection({ prefs, showRow }: SectionProps): React.JSX.Element {
+/**
+ * "Recibidos" (canon 07 §5): what the inbox looks like and how it behaves.
+ *
+ * E12 moved the reading pane here from the deleted "appearance" section — where
+ * an open message appears is a fact about the inbox, not about colour — and
+ * moved theme and density OUT of the page entirely, to the quick panel. What
+ * stands in their place is a POINTER, not a duplicate control: see
+ * `QuickPanelPointer` on why a second live control over one preference is worse
+ * than a sentence saying where the first one is.
+ */
+function InboxSection({
+  prefs,
+  showRow,
+  onOpenQuickSettings,
+}: SectionProps & {
+  readonly onOpenQuickSettings?: (() => void) | undefined;
+}): React.JSX.Element {
   const { t } = useTranslation();
   const set = prefs.setPref;
 
@@ -748,8 +719,92 @@ function InboxSection({ prefs, showRow }: SectionProps): React.JSX.Element {
         </SettingRow>
       )}
 
+      {showRow("readingPane") && (
+        <SettingRow
+          labelKey="settings.readingPane.label"
+          descriptionKey="settings.readingPane.description"
+        >
+          <Select
+            label={t("settings.readingPane.label")}
+            value={prefs.prefs.readingPane}
+            onChange={(value) => {
+              void set("readingPane", value as Prefs["readingPane"]);
+            }}
+            options={READING_PANES.map((pane) => ({
+              value: pane,
+              label:
+                pane === "none"
+                  ? t("settings.readingPane.none")
+                  : pane === "right"
+                    ? t("settings.readingPane.right")
+                    : t("settings.readingPane.bottom"),
+            }))}
+          />
+        </SettingRow>
+      )}
+
       {showRow("notifications") && <NotificationsRow prefs={prefs} />}
+
+      {/*
+        The two rows whose control lives in the quick panel. They are still
+        REGISTERED — so someone typing "densidad" into the settings search finds
+        something rather than nothing, which is the whole point of D-5 — and
+        what they find is directions, not a second copy of the control.
+      */}
+      {showRow("theme") && (
+        <SettingRow labelKey="theme.label" descriptionKey="settings.theme.description">
+          <QuickPanelPointer onOpen={onOpenQuickSettings} />
+        </SettingRow>
+      )}
+      {showRow("density") && (
+        <SettingRow
+          labelKey="settings.density.label"
+          descriptionKey="settings.density.description"
+        >
+          <QuickPanelPointer onOpen={onOpenQuickSettings} />
+        </SettingRow>
+      )}
     </>
+  );
+}
+
+/**
+ * What the page renders where a quick-panel control would be.
+ *
+ * # Why a pointer rather than the control itself
+ *
+ * Theme and density belong in the quick panel because that is the only surface
+ * where the change is visible AS YOU MAKE IT — the whole reason Gmail keeps
+ * them there. Rendering them here as well would put two live controls over one
+ * preference. They would not disagree (both write `PrefsProvider`), but the
+ * user would have no way to know that, and the pair invites exactly the "I
+ * changed it and it changed back" report that comes from changing one, going to
+ * the other, and seeing a stale render.
+ *
+ * # Why the row exists at all
+ *
+ * Deleting it would make the settings search — which the registry still lists
+ * these rows in — find a row that renders nothing. A search result that leads
+ * to an empty space is worse than no result: it looks like a bug in the search.
+ *
+ * The button degrades to plain text when no opener was wired, rather than
+ * rendering a control that leads nowhere.
+ */
+function QuickPanelPointer({
+  onOpen,
+}: {
+  readonly onOpen?: (() => void) | undefined;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.pointer}>
+      <span className={styles.pointerNote}>{t("settings.inQuickPanel")}</span>
+      {onOpen !== undefined && (
+        <button type="button" className={styles.pointerButton} onClick={onOpen}>
+          {t("settings.openQuickPanel")}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1557,15 +1612,22 @@ function SettingsSection({
 }
 
 /**
- * One setting: what it is on the left, the control on the right.
+ * One setting: its NAME in a fixed ~340px left column, its control on the right
+ * (canon 07 §5).
+ *
+ * E12 turned this from a flex row into a two-column grid, and that is the whole
+ * visual difference between this page and the sheet it replaces. With
+ * `justify-content: space-between`, every control sat at a different x
+ * depending on how long its label happened to be; a fixed name column lines
+ * them all up so the eye can scan down them.
  *
  * The label is NOT a <label> element and does not point at the control. Some
- * controls here are single inputs (a switch) and some are groups (the theme
- * radios, which carry their own fieldset/legend); a <label> can only name the
- * first kind, and pointing one at a fieldset produces a name that screen
- * readers announce inconsistently. So each control stays responsible for its
- * own accessible name — ThemeToggle's legend says "Theme" — and this text is
- * the VISIBLE heading of the row.
+ * controls here are single inputs (a switch) and some are groups (the offline
+ * depths, the signature editor) carrying their own fieldset/legend; a <label>
+ * can only name the first kind, and pointing one at a fieldset produces a name
+ * that screen readers announce inconsistently. So each control stays
+ * responsible for its own accessible name, and this text is the VISIBLE heading
+ * of the row.
  */
 function SettingRow({
   labelKey,
