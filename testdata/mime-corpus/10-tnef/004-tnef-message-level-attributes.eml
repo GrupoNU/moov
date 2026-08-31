@@ -1,0 +1,21 @@
+From: Outlook User <outlook@example.com>
+To: Moov Tester <moov-test@example.org>
+Subject: TNEF with message-level attributes
+Date: Tue, 07 Jan 2025 09:30:00 +0000
+Message-ID: <tnef-msglevel@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_tnef_boundary_="
+
+--=_tnef_boundary_=
+Content-Type: text/plain; charset=us-ascii
+
+Message-level attributes precede the attachment.
+--=_tnef_boundary_=
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Disposition: attachment; filename="winmail.dat"
+Content-Transfer-Encoding: base64
+
+eJ8+IgEAAQSAAQAWAAAATWVzc2FnZSBsZXZlbCBzdWJqZWN0AA0IAgKQAAAOAAAAAQAAAAAAAAAA
+AAAAAAABAAIQgAAABwAAAE9LLlRYVADIAQIPgAAAIQAAAHN1cnZpdmVkIHRoZSBtZXNzYWdlLWxl
+dmVsIG5vaXNlCmsM
+--=_tnef_boundary_=--

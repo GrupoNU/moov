@@ -6,8 +6,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -426,6 +428,129 @@ func TestIntegrationParseFailedMessageIsStillServed(t *testing.T) {
 	// Whatever the parse outcome, the response must be well formed.
 	if _, ok := e["bodyValues"].(map[string]any); !ok {
 		t.Errorf("bodyValues = %#v, want an object", e["bodyValues"])
+	}
+}
+
+// TNEF extraction, end to end through the real store (plan L3 decision D-6).
+//
+// This is the test that proves the feature reaches a CLIENT rather than merely
+// working inside the parser. A message whose only real attachment is buried in
+// an Outlook winmail.dat is seeded exactly as the sync engine would seed it, and
+// then read back through Email/get the way Bulwark reads it: the extracted file
+// must appear in the `attachments` property with its real name and type, and it
+// must be downloadable by the blobId the response advertises.
+//
+// The download half matters as much as the listing half. The synthesized parts
+// exist only in the parser's output — nothing stores their bytes — so a part
+// blobId is served by re-parsing the raw message and taking the part at that
+// index (partblob.go). That works only because the index space is deterministic:
+// the same parser, at the same version, over the same bytes, must synthesize the
+// same parts in the same order. Downloading the extracted attachment here is
+// what actually proves that property holds across two independent parses.
+func TestIntegrationTNEFAttachmentsSurfaceThroughEmailGet(t *testing.T) {
+	f := newFixture(t)
+
+	raw := corpusMessage(t, "10-tnef/001-tnef-minimal-one-attachment.eml")
+	id := f.seedRaw(t, raw, f.inbox, 1, 0, nil)
+
+	got := f.call(t, "Email/get", `{"accountId":"`+f.accountID()+
+		`","ids":["`+mail.EncodeEmailID(id)+
+		`"],"properties":["id","hasAttachment","attachments"]}`)
+
+	e := firstObject(t, got, 0)
+
+	if e["hasAttachment"] != true {
+		t.Errorf("hasAttachment = %v, want true", e["hasAttachment"])
+	}
+
+	attachments := array(t, e, "attachments")
+	byName := map[string]map[string]any{}
+	for _, a := range attachments {
+		att, _ := a.(map[string]any)
+		name, _ := att["name"].(string)
+		byName[name] = att
+	}
+
+	// The extracted file: the entire point of D-6. Without extraction the user
+	// sees only winmail.dat and this entry does not exist.
+	pdf, ok := byName["REPORT.PDF"]
+	if !ok {
+		t.Fatalf("REPORT.PDF was not extracted from winmail.dat; attachments = %v",
+			attachmentNames(byName))
+	}
+	if pdf["type"] != "application/pdf" {
+		t.Errorf("extracted attachment type = %v, want application/pdf", pdf["type"])
+	}
+	if pdf["disposition"] != "attachment" {
+		t.Errorf("extracted attachment disposition = %v, want attachment", pdf["disposition"])
+	}
+
+	// The original stays listed too (corpus convention C5): it is the only
+	// artifact that lets a user recover the file by hand if the decoder is ever
+	// wrong about one, and it is what a client hands to Outlook.
+	if _, ok := byName["winmail.dat"]; !ok {
+		t.Errorf("the winmail.dat original vanished from the attachment list; got %v",
+			attachmentNames(byName))
+	}
+
+	// The extracted attachment must actually download, not just be advertised.
+	blobID, _ := pdf["blobId"].(string)
+	if blobID == "" {
+		t.Fatal("the extracted attachment has no blobId, so a client cannot fetch it")
+	}
+	rc, size, err := f.deps.Blobs.OpenBlob(f.ctx, f.account.ID, blobID)
+	if err != nil {
+		t.Fatalf("downloading the extracted attachment: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	body := make([]byte, size)
+	if _, err := io.ReadFull(rc, body); err != nil {
+		t.Fatalf("reading the extracted attachment: %v", err)
+	}
+	// The bytes must be the file that was inside the container, NOT a slice of
+	// the winmail.dat wrapper.
+	if !bytes.HasPrefix(body, []byte("%PDF-1.4")) {
+		t.Errorf("downloaded bytes are not the extracted PDF: %q", body)
+	}
+}
+
+// attachmentNames renders the names present, for a failure message.
+func attachmentNames(byName map[string]map[string]any) []string {
+	out := make([]string, 0, len(byName))
+	for name := range byName {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// A winmail.dat that will not decode must still serve a complete, readable
+// message — the degrade-never-block rule, proved at the layer a client sees.
+func TestIntegrationUndecodableTNEFStillServesTheMessage(t *testing.T) {
+	f := newFixture(t)
+
+	raw := corpusMessage(t, "10-tnef/007-tnef-length-overflow.eml")
+	id := f.seedRaw(t, raw, f.inbox, 1, 0, nil)
+
+	got := f.call(t, "Email/get", `{"accountId":"`+f.accountID()+
+		`","ids":["`+mail.EncodeEmailID(id)+`"],"fetchTextBodyValues":true}`)
+
+	e := firstObject(t, got, 0)
+
+	// The opaque container is still offered: the user keeps exactly what a
+	// client without TNEF support would have given them.
+	attachments := array(t, e, "attachments")
+	if len(attachments) != 1 {
+		t.Errorf("got %d attachments, want just the opaque winmail.dat", len(attachments))
+	}
+
+	// And the readable part of the message is untouched by the failure.
+	if len(array(t, e, "textBody")) == 0 {
+		t.Error("textBody is empty; a broken container took the body down with it")
+	}
+	if len(object(t, e, "bodyValues")) == 0 {
+		t.Error("bodyValues is empty; the message body was lost")
 	}
 }
 

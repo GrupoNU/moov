@@ -104,7 +104,7 @@ func Parse(raw io.Reader, limits Limits) ParsedMessage {
 	}
 	if primaryErr == nil && primary != nil && !truncated {
 		primary.prepend(preDefects)
-		finish(primary, data)
+		finish(primary, data, limits)
 		return *primary
 	}
 
@@ -120,7 +120,7 @@ func Parse(raw io.Reader, limits Limits) ParsedMessage {
 	// and on a message where it does worse the primary result must survive.
 	if primaryErr == nil && primary != nil && truncated {
 		primary.prepend(preDefects)
-		finish(primary, data)
+		finish(primary, data, limits)
 
 		if fallback, _, err := parseEnmimeChecked(data, limits); err == nil && fallback != nil {
 			fallback.prepend(preDefects)
@@ -131,7 +131,7 @@ func Parse(raw io.Reader, limits Limits) ParsedMessage {
 				CorpusCase: "le-003/cs-015/structural-015 (S4 §3)",
 			})
 			fallback.downgrade(StatusPartial)
-			finish(fallback, data)
+			finish(fallback, data, limits)
 			if len(fallback.LeafParts()) > len(primary.LeafParts()) {
 				return *fallback
 			}
@@ -160,7 +160,7 @@ func Parse(raw io.Reader, limits Limits) ParsedMessage {
 		// The message needed a second parser to be read at all, so something in
 		// it is malformed even though the result is complete.
 		fallback.downgrade(StatusPartial)
-		finish(fallback, data)
+		finish(fallback, data, limits)
 		return *fallback
 	}
 	if errors.Is(fallbackErr, errCapExceeded) {
@@ -179,7 +179,7 @@ func Parse(raw io.Reader, limits Limits) ParsedMessage {
 	// legible — and for two of the three corpus cases that reach here, the
 	// manifest requires that it be recovered rather than shown as blank.
 	if salvaged, ok := parseSalvage(data, limits, cascadeDefects); ok {
-		finish(salvaged, data)
+		finish(salvaged, data, limits)
 		return *salvaged
 	}
 
@@ -267,9 +267,18 @@ func errText(err error) string {
 }
 
 // finish assembles the derived fields once the tree is built.
-func finish(m *ParsedMessage, raw []byte) {
+//
+// TNEF extraction runs here, between tree-building and the derived fields, for
+// three reasons worth stating: it is the one place BOTH cascade layers pass
+// through (so go-message and enmime get it from a single implementation), the
+// synthesized parts must exist before assembleFTS so a text attachment inside a
+// winmail.dat reaches the search index, and it must precede
+// resolveInlineReferences so an extracted part is subject to the same inline-cid
+// demotion as any other. See tnef.go.
+func finish(m *ParsedMessage, raw []byte, limits Limits) {
 	m.truncatedHeaders = headersEndMidLine(raw)
 
+	extractTNEFParts(m, limits)
 	resolveInlineReferences(m)
 	assembleFTS(m)
 }

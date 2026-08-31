@@ -1,0 +1,19 @@
+From: Outlook User <outlook@example.com>
+To: Moov Tester <moov-test@example.org>
+Subject: TNEF wrong signature
+Date: Tue, 07 Jan 2025 09:30:00 +0000
+Message-ID: <tnef-wrongsig@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_tnef_boundary_="
+
+--=_tnef_boundary_=
+Content-Type: text/plain; charset=us-ascii
+
+Named winmail.dat but not TNEF.
+--=_tnef_boundary_=
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Disposition: attachment; filename="winmail.dat"
+Content-Transfer-Encoding: base64
+
+776t3gEAbm90IHJlYWxseSB0bmVmIGF0IGFsbA==
+--=_tnef_boundary_=--

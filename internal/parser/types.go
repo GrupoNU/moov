@@ -167,6 +167,17 @@ const (
 	// DefectBodyReadError records a body read that failed for a reason other than
 	// a decoding fault — a truncated stream, most often.
 	DefectBodyReadError DefectCode = "body_read_error"
+
+	// DefectTNEFExtracted records that attachments were recovered from an
+	// Outlook winmail.dat container (plan L3 §D-6). It is not damage — it is the
+	// evidence that the extraction ran, and its rate is what tells an operator
+	// how much of a deployment's mail is Outlook rich-text.
+	DefectTNEFExtracted DefectCode = "tnef_extracted"
+
+	// DefectTNEFUndecodable records that a TNEF container could not be decoded,
+	// or could only be decoded in part, so the winmail.dat part was left opaque.
+	// The user still has the original file; only the automatic unpacking failed.
+	DefectTNEFUndecodable DefectCode = "tnef_undecodable"
 )
 
 // Defect is one observation about a message, traceable to its cause.

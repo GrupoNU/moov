@@ -1,0 +1,26 @@
+From: Outlook User <outlook@example.com>
+To: Moov Tester <moov-test@example.org>
+Subject: TNEF with two attachments
+Date: Tue, 07 Jan 2025 09:30:00 +0000
+Message-ID: <tnef-two@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_tnef_boundary_="
+
+--=_tnef_boundary_=
+Content-Type: text/plain; charset=us-ascii
+
+Two files are attached in the TNEF container.
+--=_tnef_boundary_=
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Disposition: attachment; filename="winmail.dat"
+Content-Transfer-Encoding: base64
+
+eJ8+IgEAAgKQAAAOAAAAAQAAAAAAAAAAAAAAAAABAAIQgAAACgAAAE5PVEVTLlRYVAC3AgIPgAAA
+HQAAAGZpcnN0IGF0dGFjaG1lbnQsIHBsYWluIHRleHQKwAoCApAAAA4AAAABAAAAAAAAAAAAAAAA
+AAEAAhCAAAAJAAAAREFUQS5CSU4AIQICD4AAAAABAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY
+GRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BR
+UlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImK
+i4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLD
+xMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8
+/f7/gH8=
+--=_tnef_boundary_=--

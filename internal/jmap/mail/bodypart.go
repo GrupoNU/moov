@@ -203,11 +203,34 @@ func bodyStructureLists(root *bodyPartNode) (textBody, htmlBody, attachments []*
 	}
 	// A leaf contributes itself: inline text to both body lists, anything else
 	// to attachments.
-	if !root.isMultipart() {
+	//
+	// "Leaf" means no children, NOT "not a multipart". The distinction became
+	// load-bearing when the parser began unpacking TNEF containers (plan L3
+	// decision D-6): a winmail.dat part is application/ms-tnef — emphatically not
+	// a multipart — and yet it now has the files extracted from it as children.
+	// Testing only isMultipart() here dropped those children silently, so the
+	// extraction worked in the parser and the client still saw nothing but
+	// winmail.dat. Recursing whenever children exist is also the safer rule for
+	// any future container this engine learns to unpack.
+	if !root.isMultipart() && len(root.children) == 0 {
 		if root.isInlineText() {
 			return []*bodyPartNode{root}, []*bodyPartNode{root}, nil
 		}
 		return nil, nil, []*bodyPartNode{root}
+	}
+
+	// A non-multipart node WITH children is an unpacked container. It
+	// contributes itself as an attachment — the original must remain
+	// downloadable — plus everything recovered from inside it.
+	if !root.isMultipart() {
+		attachments = append(attachments, root)
+		for _, c := range root.children {
+			t, h, att := bodyStructureLists(c)
+			textBody = append(textBody, t...)
+			htmlBody = append(htmlBody, h...)
+			attachments = append(attachments, att...)
+		}
+		return textBody, htmlBody, attachments
 	}
 
 	// A container dispatches on its own media type. Recursion goes through
@@ -338,14 +361,22 @@ func containsHTML(n *bodyPartNode) bool {
 
 // collectAll returns every leaf of a subtree, for the branches that are
 // attachments wholesale.
+//
+// An unpacked container (a TNEF winmail.dat with extracted children — see
+// bodyStructureLists) contributes ITSELF as well as its children, for the same
+// reason it does there: the original stays downloadable. A plain leaf
+// contributes only itself, and a multipart contributes only its children.
 func collectAll(n *bodyPartNode) []*bodyPartNode {
 	if n == nil {
 		return nil
 	}
-	if !n.isMultipart() {
+	if len(n.children) == 0 {
 		return []*bodyPartNode{n}
 	}
 	var out []*bodyPartNode
+	if !n.isMultipart() {
+		out = append(out, n)
+	}
 	for _, c := range n.children {
 		out = append(out, collectAll(c)...)
 	}

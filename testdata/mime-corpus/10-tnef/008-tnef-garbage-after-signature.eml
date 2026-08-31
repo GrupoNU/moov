@@ -1,0 +1,21 @@
+From: Outlook User <outlook@example.com>
+To: Moov Tester <moov-test@example.org>
+Subject: TNEF garbage after signature
+Date: Tue, 07 Jan 2025 09:30:00 +0000
+Message-ID: <tnef-garbage@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_tnef_boundary_="
+
+--=_tnef_boundary_=
+Content-Type: text/plain; charset=us-ascii
+
+Valid magic, unusable body.
+--=_tnef_boundary_=
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Disposition: attachment; filename="winmail.dat"
+Content-Transfer-Encoding: base64
+
+eJ8+IgEAf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pV
+f6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pVf6pV
+f6pVf6pVf6pVf6pV
+--=_tnef_boundary_=--

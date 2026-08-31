@@ -1,0 +1,22 @@
+From: Outlook User <outlook@example.com>
+To: Moov Tester <moov-test@example.org>
+Subject: TNEF long filename beats 8.3 title
+Date: Tue, 07 Jan 2025 09:30:00 +0000
+Message-ID: <tnef-longname@corpus.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_tnef_boundary_="
+
+--=_tnef_boundary_=
+Content-Type: text/plain; charset=us-ascii
+
+The real filename lives in the MAPI blob.
+--=_tnef_boundary_=
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Disposition: attachment; filename="winmail.dat"
+Content-Transfer-Encoding: base64
+
+eJ8+IgEAAgKQAAAOAAAAAQAAAAAAAAAAAAAAAAABAAIQgAAADQAAAFFVQVJURX4xLlhMUwCmAwIF
+kAAAWgAAAAEAAAAfAAc3AQAAAEoAAABRAHUAYQByAHQAZQByAGwAeQAgAEYAaQBuAGEAbgBjAGkA
+YQBsACAAUgBlAHAAbwByAHQAIAAyADAAMgA2AC4AeABsAHMAeAAAAJoNAg+AAAAYAAAAYmluYXJ5
+IHNwcmVhZHNoZWV0IGJ5dGVzhAk=
+--=_tnef_boundary_=--

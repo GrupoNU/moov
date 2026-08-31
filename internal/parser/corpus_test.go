@@ -70,9 +70,15 @@ func loadManifest(t *testing.T) corpusManifest {
 func TestCorpus(t *testing.T) {
 	m := loadManifest(t)
 
-	if len(m.Cases) != 110 {
-		t.Errorf("manifest has %d cases, expected 110 — the corpus changed size",
-			len(m.Cases))
+	// 110 from spike S4, plus the 9 TNEF cases added with the winmail.dat
+	// decoder (plan L3 decision D-6, category 10-tnef). The count is asserted
+	// rather than inferred so that a case file going missing — or a manifest
+	// entry silently dropped by a bad merge — fails loudly instead of shrinking
+	// the acceptance suite without anyone noticing.
+	const expectedCases = 119
+	if len(m.Cases) != expectedCases {
+		t.Errorf("manifest has %d cases, expected %d — the corpus changed size",
+			len(m.Cases), expectedCases)
 	}
 
 	var passed int

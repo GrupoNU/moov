@@ -96,6 +96,28 @@
 #     say so. What is not acceptable is an unbounded parse: a panic, a hang, or
 #     memory growth that takes the process down.
 #
+# C5. SYNTHESIZED PARTS COUNT AS PARTS (added with the 10-tnef category).
+#     A container this engine unpacks itself — currently only TNEF/winmail.dat,
+#     per plan L3 decision D-6 — contributes the files it yielded to the part
+#     tree, parented to the container part that carried them. Two consequences
+#     follow mechanically from C1 and are stated here so no case has to re-argue
+#     them:
+#
+#       * The winmail.dat part STOPS being a leaf once it has children, exactly
+#         as a multipart does, so `parts` counts the extracted files and not the
+#         container.
+#       * The winmail.dat part REMAINS an attachment, so `attachments` counts it
+#         AND every file extracted from it. This is deliberate: the original is
+#         the only artifact that survives a decoder bug, and a client that wants
+#         to hand the file to Outlook must still be able to. The cost is one
+#         extra row in an attachment list; the alternative is unrecoverable data
+#         loss when the extraction is wrong.
+#
+#     A container that cannot be decoded is left exactly as it was — one opaque
+#     attachment, zero synthesized parts — which is the baseline every other mail
+#     client gives the user. Extraction failure is therefore never worse than not
+#     having tried, and that is the property the failure cases here pin down.
+#
 # ---------------------------------------------------------------------------
 # Safety
 # ---------------------------------------------------------------------------
@@ -2763,3 +2785,255 @@ cases:
     subject: "multipart/report without report-type"
     parts: 2
     attachments: 0
+
+  # -------------------------------------------------------------------------
+  # 10-tnef — Outlook TNEF / winmail.dat containers (plan L3 decision D-6)
+  # -------------------------------------------------------------------------
+  # Outlook sending "Rich Text Format" to a non-Exchange recipient packs the
+  # body AND every real attachment into one opaque application/ms-tnef part
+  # named winmail.dat. Gmail does not unpack it; the Mailcow audience is
+  # Outlook-heavy, so D-6 signed extraction as a deliberate step PAST the
+  # benchmark rather than parity with it.
+  #
+  # Scope of the decoder these cases specify: attachments only. No MAPI/OLE
+  # property parsing and no compressed-RTF body decoding — both are separate
+  # attacker-controlled formats whose value here is marginal (the body is
+  # almost always also present as a plain MIME sibling) and whose risk is not.
+  # The cases below therefore pin down extraction and, at least as importantly,
+  # the SHAPE OF FAILURE: a container that will not decode must cost the user
+  # nothing relative to a client that never tried.
+  #
+  # Provenance note: these are handcrafted byte streams, not generator output.
+  # Each TNEF container was assembled attribute by attribute (signature, level,
+  # id, length, payload, checksum) to isolate one pathology per case.
+
+  - id: tnef-001
+    file: 10-tnef/001-tnef-minimal-one-attachment.eml
+    category: tnef
+    pathology: >
+      The baseline shape the whole feature exists for: a well-formed TNEF
+      container holding exactly one real attachment (a PDF), which a client
+      without TNEF support shows the user as a single unusable winmail.dat.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The MIME parse is unremarkable and must fully succeed. The TNEF stage must
+      then recover REPORT.PDF with its 32 bytes intact and add it as a
+      first-class attachment parented to the winmail.dat part. Per convention
+      C5 the winmail.dat stops being a leaf (it now has a child) and stays an
+      attachment, so parts=2 counts the text/plain body and the extracted PDF,
+      while attachments=2 counts the extracted PDF and the winmail.dat original.
+      The extracted part media type must be derived from the filename extension
+      (application/pdf), NOT by sniffing the content — deciding that bytes ARE a
+      given type is a security judgment belonging to the layer that serves them.
+      Marked ok rather than partial because nothing was lost or guessed: the
+      container was complete and it was fully unpacked. A parser that leaves
+      winmail.dat opaque is the acceptable BASELINE (that is what every
+      non-extracting client does, and it is what this engine falls back to on
+      any decode failure), but it is not what this case is here to accept.
+    subject: "TNEF with one attachment"
+    parts: 2
+    attachments: 2
+
+  - id: tnef-002
+    file: 10-tnef/002-tnef-two-attachments.eml
+    category: tnef
+    pathology: >
+      Two attachments in one container, which is where a decoder that treats the
+      flat attribute stream as a single record rather than as a list silently
+      loses everything after the first file.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Both files must be recovered: NOTES.TXT (29 bytes of text) and DATA.BIN
+      (256 bytes, every byte value 0x00-0xFF, which also proves the extraction
+      path is binary-clean and does not stop at the first NUL). The delimiter
+      that makes this parseable is attAttachRendData opening each attachment;
+      a decoder keying on anything else will merge or drop one. parts=3 is the
+      body plus the two extracted files; attachments=3 adds the winmail.dat
+      original per C5. DATA.BIN has no meaningful extension, so
+      application/octet-stream is the correct and honest media type.
+    subject: "TNEF with two attachments"
+    parts: 3
+    attachments: 3
+
+  - id: tnef-003
+    file: 10-tnef/003-tnef-long-filename.eml
+    category: tnef
+    pathology: >
+      The attachment carries BOTH an 8.3 short title (QUARTE~1.XLS) and a real
+      long filename in its MAPI property blob. A decoder that reads only the
+      title shows the user a DOS-mangled name for a file that has a perfectly
+      good one.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The long filename MUST win: "Quarterly Financial Report 2026.xlsx", stored
+      UTF-16LE inside the property blob, not "QUARTE~1.XLS". Note what this does
+      NOT license: the blob is not parsed as a MAPI property stream, because a
+      lie about one property type desynchronizes such a parser and every
+      subsequent read lands at an attacker-chosen offset. The required behavior
+      is a BOUNDED SCAN for the one tag (PR_ATTACH_LONG_FILENAME, 0x3707) at
+      aligned positions, with the value length checked against the remaining
+      bytes exactly as the outer walk checks its own. A wrong guess must cost a
+      wrong filename and nothing more. The media type follows the recovered
+      extension (.xlsx), which is how the long name becomes load-bearing beyond
+      cosmetics.
+    subject: "TNEF long filename beats 8.3 title"
+    parts: 2
+    attachments: 2
+
+  - id: tnef-004
+    file: 10-tnef/004-tnef-message-level-attributes.eml
+    category: tnef
+    pathology: >
+      A message-level attribute (attSubject) precedes the attachment-level ones.
+      A decoder that ignores the level byte and dispatches on the attribute id
+      alone will misattribute message metadata to an attachment, or walk off the
+      stream entirely.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The message-level attribute must be SKIPPED BY LENGTH — read its header,
+      advance past its payload, ignore its content — and the attachment OK.TXT
+      recovered normally afterwards. Skipping by length rather than by
+      recognition is the property that matters: it is what makes every unknown
+      and every future attribute free, and it is the difference between a
+      decoder that handles a real Outlook stream (which carries a dozen
+      message-level attributes this engine has no interest in) and one that only
+      handles the minimal case. Message-level content, including the compressed
+      RTF body, is deliberately out of scope and is dropped rather than
+      half-decoded.
+    subject: "TNEF with message-level attributes"
+    parts: 2
+    attachments: 2
+
+  - id: tnef-005
+    file: 10-tnef/005-tnef-zero-attachments.eml
+    category: tnef
+    pathology: >
+      A perfectly valid TNEF container that carries only formatting and no files
+      at all — routine Outlook output, and the case where an over-eager decoder
+      invents a phantom 0-byte attachment for the user to click on.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      Nothing is extracted and NOTHING IS WRONG. The winmail.dat part remains a
+      single opaque attachment (attachments=1) and the message stays ok — this
+      must NOT be recorded as a decode failure, because the container decoded
+      perfectly and simply had no files in it. Distinguishing "decoded, empty"
+      from "failed to decode" is what keeps the tnef_undecodable metric
+      meaningful; conflating them would make the metric fire on ordinary mail
+      and train an operator to ignore it. An attachment record with no data
+      attribute is a rendering placeholder, not a file, and must not be emitted.
+    subject: "TNEF with no attachments"
+    parts: 2
+    attachments: 1
+
+  - id: tnef-006
+    file: 10-tnef/006-tnef-truncated-stream.eml
+    category: tnef
+    pathology: >
+      One complete attachment, then a second one whose attAttachData header
+      claims 4096 bytes with 11 bytes actually present — the shape a connection
+      drop or a truncating gateway leaves behind.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      This is the partial-recovery case and the required behavior is to KEEP
+      WHAT DECODED: GOOD.TXT must be extracted and delivered, and the walk must
+      then stop at the impossible length rather than reading past the buffer or
+      allocating the 4096 bytes the stream asked for. Half an invoice recovered
+      beats none, and the winmail.dat original remains available for whatever
+      was lost. Marked partial because the second attachment is genuinely
+      unrecoverable — the bytes are not there to recover. Both a tnef_extracted
+      and a tnef_undecodable defect are expected on the same part, which is the
+      honest description of what happened and reads correctly in aggregate: the
+      pair means "this container was worth unpacking AND it was damaged".
+    subject: "TNEF truncated mid-attachment"
+    parts: 2
+    attachments: 2
+
+  - id: tnef-007
+    file: 10-tnef/007-tnef-length-overflow.eml
+    category: tnef
+    pathology: >
+      An attribute declaring a length of 0xFFFFFFF0 (4.29 GB) over four real
+      bytes. This is the memory-exhaustion vector of every naive TLV decoder,
+      and it is the exact shape of the superlinear-allocation defect the E4
+      fuzzing found in enmime.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      The decoder must REFUSE, allocate nothing, and leave winmail.dat opaque.
+      The specific requirement, stated because it is the one that is easy to get
+      subtly wrong: the length must be compared in a width that cannot wrap
+      (int64) against the bytes that ACTUALLY REMAIN — never by allocating the
+      declared size and hoping, and never by adding the length to the offset in
+      a 32-bit width where the sum silently wraps to something plausible.
+      attachments=1 (the untouched original) and a tnef_undecodable defect. The
+      message stays fully readable: the user loses nothing they would have had
+      from a client without TNEF support, which is the standard every failure
+      here must be held to. A hang, a panic, or a multi-gigabyte allocation is
+      the only unacceptable outcome.
+    subject: "TNEF attribute length overflow"
+    parts: 2
+    attachments: 1
+
+  - id: tnef-008
+    file: 10-tnef/008-tnef-garbage-after-signature.eml
+    category: tnef
+    pathology: >
+      A correct TNEF signature followed by 120 bytes of repeating non-attribute
+      garbage. The signature says "trust me", the body cannot be walked, and a
+      decoder that has already committed to the format keeps reading at
+      attacker-chosen offsets.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: partial
+    expect_notes: >
+      Recognizing the signature must not be a commitment. The walk must fail
+      safely on the first attribute that does not make sense — whether that is
+      an unknown level marker or a length past the end of the buffer, both are
+      correct refusals and which one fires first is an artifact of the garbage
+      bytes, not a behavior to pin — and the part must be left as an opaque
+      winmail.dat attachment (attachments=1) with a tnef_undecodable defect.
+      Continuing to scan for a plausible-looking attribute after a failure would
+      be exactly the "guess at attacker-chosen offsets" behavior this case
+      exists to forbid.
+    subject: "TNEF garbage after signature"
+    parts: 2
+    attachments: 1
+
+  - id: tnef-009
+    file: 10-tnef/009-tnef-wrong-signature.eml
+    category: tnef
+    pathology: >
+      A part named winmail.dat and typed application/ms-tnef whose leading magic
+      is 0xDEADBEEF. Common in the wild: a gateway stripped or replaced the
+      container and left the MIME labeling behind.
+    provenance: handcrafted
+    license: AGPL-3.0-or-later
+    expect: ok
+    expect_notes: >
+      The signature check must reject this before any attribute is read, and the
+      rejection must be SILENT — status stays ok and NO defect is recorded. This
+      is the deliberate asymmetry with tnef-007 and tnef-008 and the reason it
+      matters: a part that was never TNEF is the sending gateway business, not
+      damage to this message, and recording a defect for it would make the
+      tnef_undecodable rate a measure of how many mislabeled parts the internet
+      contains rather than a signal that this engine decoder is failing on real
+      containers. Detection is by CONTENT (the signature), while dispatch into
+      the TNEF path is by media type OR filename — a part reaching the path and
+      then failing the signature check is the expected, unremarkable outcome.
+      attachments=1, the part unchanged.
+    subject: "TNEF wrong signature"
+    parts: 2
+    attachments: 1
