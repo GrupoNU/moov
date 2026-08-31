@@ -372,3 +372,70 @@ func TestEmailCreateResolvesMailboxCreationReference(t *testing.T) {
 		t.Errorf("draft filed into mailbox %d, want the freshly created 9001", got)
 	}
 }
+
+// GC-6 (canon §4.1.2), the assembly-layer pin: no client — ours or anyone
+// else's — can put a read-receipt request on outgoing mail through the
+// header:{Name} escape hatch. Consumer Gmail refuses MDNs entirely; so does
+// Moov, and the refusal is a policy `forbidden`, not a shape error.
+func TestEmailCreateRefusesReadReceiptRequestHeaders(t *testing.T) {
+	for _, header := range []string{
+		"header:Disposition-Notification-To",
+		"header:Return-Receipt-To",
+		"header:X-Confirm-Reading-To",
+		// Case and form must not open a side door.
+		"header:DISPOSITION-NOTIFICATION-TO",
+		"header:disposition-notification-to:asText",
+	} {
+		t.Run(header, func(t *testing.T) {
+			f := newFakeReaders()
+			f.mailboxes[testAccountID] = []MailboxRow{sampleMailbox(31, "Drafts", "drafts", 0, 0)}
+			deps := f.deps()
+
+			body := draftCreateBody(EncodeMailboxID(31))
+			body[header] = "tracker@example.net"
+
+			res, merr := deps.handleEmailSet(callerCtx(), jsonArgs(t, map[string]any{
+				"accountId": testAccountJMAPID(),
+				"create":    map[string]any{"d1": body},
+			}))
+			if merr != nil {
+				t.Fatalf("Email/set: %v", merr)
+			}
+			resp, ok := res.(*setResponse)
+			if !ok {
+				t.Fatalf("result type = %T", res)
+			}
+			serr, refused := resp.NotCreated["d1"]
+			if !refused {
+				t.Fatalf("a read-receipt request header was accepted: %+v", resp.Created)
+			}
+			if serr.Type != setErrForbidden {
+				t.Errorf("SetError type = %q, want forbidden (policy, not shape)", serr.Type)
+			}
+			if !strings.Contains(serr.Description, "read-receipt") {
+				t.Errorf("the refusal must say what it refuses: %q", serr.Description)
+			}
+			if len(f.createCalls) != 0 {
+				t.Error("the creator was reached despite the refusal")
+			}
+		})
+	}
+
+	// The negative control: an ordinary extra header still passes — the
+	// refusal is surgical, not a ban on header:{Name}.
+	f := newFakeReaders()
+	f.mailboxes[testAccountID] = []MailboxRow{sampleMailbox(31, "Drafts", "drafts", 0, 0)}
+	deps := f.deps()
+	body := draftCreateBody(EncodeMailboxID(31))
+	body["header:X-Moov-Test"] = "ok"
+	res, merr := deps.handleEmailSet(callerCtx(), jsonArgs(t, map[string]any{
+		"accountId": testAccountJMAPID(),
+		"create":    map[string]any{"d1": body},
+	}))
+	if merr != nil {
+		t.Fatalf("Email/set: %v", merr)
+	}
+	if resp, ok := res.(*setResponse); !ok || resp.Created["d1"] == nil {
+		t.Fatalf("an ordinary extra header was refused: %+v", res)
+	}
+}

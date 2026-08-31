@@ -199,6 +199,27 @@ var modeledHeaders = map[string]bool{
 	"content-type": true, "content-transfer-encoding": true,
 }
 
+// receiptRequestHeaders are the read-receipt request headers this server
+// REFUSES to put on outgoing mail, from any client (GC-6; canon §4.1.2).
+//
+// Gmail's posture, adopted whole: consumer Gmail refuses MDNs entirely —
+// never answers a request, never makes one. Moov's composer never sets these
+// (pinned in web write.test.ts), and this refusal is the assembly-layer pin
+// that holds for EVERY JMAP client, not just ours: the `header:{Name}`
+// escape hatch would otherwise let any client mint a tracking request Moov's
+// own UI refuses to offer. The refusal is a dedicated `forbidden` SetError
+// rather than a generic invalidProperties, because the client did nothing
+// malformed — the server is declining on policy, and says which.
+//
+// Disposition-Notification-To is the RFC 8098 MDN request;
+// Return-Receipt-To and X-Confirm-Reading-To are its legacy ancestors, still
+// honored by enough clients to be the same tracking primitive.
+var receiptRequestHeaders = map[string]bool{
+	"disposition-notification-to": true,
+	"return-receipt-to":           true,
+	"x-confirm-reading-to":        true,
+}
+
 // interpretEmailCreate validates the creation object.
 func interpretEmailCreate(ctx context.Context, raw json.RawMessage) (*emailCreate, *setError) {
 	var obj map[string]json.RawMessage
@@ -342,6 +363,12 @@ func interpretEmailCreate(ctx context.Context, raw json.RawMessage) (*emailCreat
 			if !ok {
 				bad(key)
 				continue
+			}
+			if receiptRequestHeaders[strings.ToLower(name)] {
+				// GC-6: a policy refusal, not a shape error — see the map's doc.
+				return nil, &setError{Type: setErrForbidden, Properties: []string{key},
+					Description: "this server never sends read-receipt requests " +
+						"(Disposition-Notification-To and its relatives) on outgoing mail — GC-6"}
 			}
 			var v string
 			if err := json.Unmarshal(val, &v); err != nil {
@@ -663,6 +690,16 @@ func (n *createStructureNode) isMultipartNode() bool {
 // materializeLeaf builds one leaf part from a partId (bodyValues text) or a
 // blobId (uploaded bytes), charging blob bytes against the attachment budget.
 func (d *Deps) materializeLeaf(ctx context.Context, accountID int64, spec *emailCreate, partID, blobID string, ref *createPartRef, budget *int64, prop string) (*mimePart, *setError) {
+	// E10 / canon §2.3: the executable-attachment block, enforced at the one
+	// place every part shape passes through — attachments, bodyStructure
+	// leaves, and named body parts alike (blocked_extensions.go). Client-side
+	// E7 already refuses these in OUR composer; this is the server saying the
+	// same thing to every other JMAP client.
+	if ext := blockedAttachmentExtension(ref.name); ext != "" {
+		return nil, &setError{Type: setErrForbidden, Properties: []string{prop},
+			Description: fmt.Sprintf("attachments with a .%s extension are blocked for security reasons "+
+				"(Gmail's published blocked-file-types list, which this server follows)", ext)}
+	}
 	p := &mimePart{
 		mediaType:   ref.mediaType,
 		disposition: ref.disposition,
