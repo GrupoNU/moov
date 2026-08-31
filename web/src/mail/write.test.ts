@@ -235,6 +235,35 @@ describe("draftObject", () => {
     expect(object).not.toHaveProperty("bcc");
   });
 
+  /*
+   * GC-6, the composer half (E10; canon §4.1.2): outgoing mail NEVER carries
+   * a read-receipt request. The creation object is the assembly layer on this
+   * side of the wire — `header:{Name}` is the only way a header this client
+   * does not model could reach the server — so the pin is structural: no
+   * `header:*` key of ANY kind is emitted, which subsumes the specific ban.
+   * The server enforces its own half (email_create.go refuses the receipt
+   * family with `forbidden`), so both layers hold independently.
+   */
+  it("emits no header:* key at all — read-receipt requests are unmintable (GC-6)", () => {
+    const object = draftObject({
+      ...baseSpec,
+      cc: [{ name: null, email: "cc@x.com" }],
+      bcc: [{ name: null, email: "bcc@x.com" }],
+      html: "<p>hola</p>",
+      attachments: [{ blobId: "b1", name: "a.pdf", type: "application/pdf", size: 3 }],
+      inReplyTo: ["<m1@x>"],
+      references: ["<m0@x>"],
+      keywords: ["$label:x"],
+      replyTo: [{ name: null, email: "r@x.com" }],
+    });
+    for (const key of Object.keys(object)) {
+      expect(key.startsWith("header:"), key).toBe(false);
+    }
+    expect(JSON.stringify(object).toLowerCase()).not.toContain(
+      "disposition-notification",
+    );
+  });
+
   it("includes cc and bcc when present", () => {
     const object = draftObject({
       ...baseSpec,
