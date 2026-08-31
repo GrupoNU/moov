@@ -33,21 +33,58 @@ export interface LabelListProps {
   /** The label currently being viewed, by keyword. */
   readonly selectedKeyword: string | undefined;
   readonly onSelect: (label: Label) => void;
+  /**
+   * E12: the `+` beside the "Etiquetas" heading (canon 07 §2).
+   *
+   * It NAVIGATES to the labels settings rather than opening an inline creator,
+   * and that is deliberate: the label manager is where the 26-keyword ceiling
+   * is explained and where colour and visibility are chosen, and a bare "name
+   * it" prompt in the sidebar would create labels that then have to be found
+   * and configured somewhere else. Gmail's own `+` opens its label dialog for
+   * the same reason.
+   *
+   * Absent hides the button — a caller with no settings surface wired must not
+   * render a control that leads nowhere.
+   */
+  readonly onCreate?: (() => void) | undefined;
+  /** E12: the rail is collapsed to icons; see `MailboxListProps.collapsed`. */
+  readonly collapsed?: boolean;
 }
 
 export function LabelList({
   labels,
   selectedKeyword,
   onSelect,
+  onCreate,
+  collapsed = false,
 }: LabelListProps): React.JSX.Element | null {
   const { t } = useTranslation();
   if (labels.length === 0) return null;
 
   return (
-    <div className={styles.group}>
-      <h2 className={styles.title} id="sidebar-labels">
-        {t("label.plural")}
-      </h2>
+    <div
+      className={[styles.group, collapsed ? styles.groupCollapsed : ""]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <div className={styles.header}>
+        <h2 className={styles.title} id="sidebar-labels">
+          {t("label.plural")}
+        </h2>
+        {onCreate !== undefined && (
+          <button
+            type="button"
+            className={styles.create}
+            onClick={onCreate}
+            aria-label={t("label.create")}
+            title={t("label.create")}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true" focusable="false">
+              <path d="M10 4.5v11M4.5 10h11" />
+            </svg>
+          </button>
+        )}
+      </div>
       <ul className={styles.list} aria-labelledby="sidebar-labels">
         {labels.map((label) => {
           const isSelected = label.keyword === selectedKeyword;
@@ -62,6 +99,9 @@ export function LabelList({
                 onClick={() => {
                   onSelect(label);
                 }}
+                /* E12: same reason as the folder rows — with the rail
+                   collapsed, the name has to stay reachable by a pointer. */
+                title={label.name}
               >
                 {/*
                   The swatch is the ONLY coloured thing in the row: the row

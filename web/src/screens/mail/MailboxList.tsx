@@ -87,6 +87,20 @@ export interface MailboxListProps {
    * the message list working on it with no special case.
    */
   readonly snoozedMailboxName?: string | undefined;
+  /**
+   * E12: the rail is collapsed to icons (the hamburger, canon 07 §1-2).
+   *
+   * ONE class on the `<ul>`, not a different tree. The DOM, the `role="tree"`
+   * semantics, every `aria-level` and the visually-hidden state text are all
+   * unchanged: a collapsed rail is a VISUAL narrowing, and a screen reader must
+   * still hear "Inbox, 12 unread" from a row whose label the sighted user has
+   * folded away. Rendering a second, icon-only tree would have meant two places
+   * for a folder row to be wrong.
+   *
+   * The name survives as the row's `title`, so a pointer user can recover it by
+   * hovering rather than by expanding.
+   */
+  readonly collapsed?: boolean;
 }
 
 /**
@@ -212,6 +226,7 @@ export function MailboxList({
   outbox,
   scheduled,
   snoozedMailboxName,
+  collapsed = false,
 }: MailboxListProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const roleName = useRoleName();
@@ -225,7 +240,13 @@ export function MailboxList({
   }
 
   return (
-    <ul className={styles.tree} role="tree" aria-label={t("shell.mailboxes")}>
+    <ul
+      className={[styles.tree, collapsed ? styles.treeCollapsed : ""]
+        .filter(Boolean)
+        .join(" ")}
+      role="tree"
+      aria-label={t("shell.mailboxes")}
+    >
       {tree.map((node) => {
         /*
          * E4: the Snoozed folder is a REAL mailbox (GC-10 makes snoozing an
@@ -432,6 +453,12 @@ function MailboxRow({
         }}
         style={{ paddingLeft: `calc(var(--space-3) + ${depth} * var(--space-4))` }}
         {...(isSelected ? { "aria-current": "page" as const } : {})}
+        /* E12: with the rail collapsed the label is folded away visually, so
+           the name has to survive somewhere a pointer can reach it. It is set
+           unconditionally rather than only when collapsed — a title on a row
+           whose label is already visible is harmless, and a conditional one is
+           a second state to keep in step. */
+        title={name}
       >
         <MailboxIcon role={mailbox.role} iconKey={iconKey} />
         <span className={styles.name}>{name}</span>

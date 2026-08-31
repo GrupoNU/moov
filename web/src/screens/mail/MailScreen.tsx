@@ -20,6 +20,7 @@ import {
 } from "../../keyboard/shortcuts";
 import { usePrefs } from "../../mail/PrefsProvider";
 import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs";
+import { loadSidebarCollapsed, saveSidebarCollapsed } from "../../mail/viewChrome";
 import { connectionState, shouldRecycleStream } from "../../mail/connection";
 import {
   EMPTY_ARRIVAL_STATE,
@@ -143,6 +144,7 @@ import { mailboxLabel } from "./mailboxLabels";
 import { MessageList } from "./MessageList";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
+import { TopBar } from "./TopBar";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import type { LabelsSectionProps } from "../settings/LabelsSection";
 import type { FiltersSectionProps } from "../settings/FiltersSection";
@@ -318,6 +320,27 @@ export function MailScreen(): React.JSX.Element {
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | undefined>(undefined);
+
+  /*
+   * E12: the top bar's two pieces of shell state.
+   *
+   * The rail's collapse is seeded from localStorage in a LAZY initial state
+   * rather than an effect, for the same reason the recent-search history is:
+   * an effect would paint one frame of the expanded rail and then snap it
+   * closed, which reads as a layout glitch rather than as a restored choice.
+   * It is device-local by design — see `mail/viewChrome.ts` on why a pixel
+   * width and a rail state must not roam between a laptop and a monitor.
+   */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
+    loadSidebarCollapsed(),
+  );
+  const toggleSidebar = useCallback((): void => {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      saveSidebarCollapsed(next);
+      return next;
+    });
+  }, []);
 
   /*
    * E3: the recent-search history and the result snippets.
@@ -3511,11 +3534,27 @@ export function MailScreen(): React.JSX.Element {
 
   return (
     <div className={styles.shell}>
-      <header className={styles.header}>
-        <div className={styles.headerBrand}>
-          <BrandMark branding={branding} size="sm" />
-        </div>
-
+      <TopBar
+        branding={branding}
+        username={username}
+        onSignOut={signOut}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={toggleSidebar}
+        onOpenHelp={() => {
+          setHelpOpen(true);
+        }}
+        /*
+         * B1 wires the gear to the settings surface that EXISTS at this
+         * commit — the sheet — so the app is whole after every block. B2
+         * repoints it at the quick-settings panel and the sheet becomes that
+         * panel's "Ver todos los ajustes" destination, which is Gmail's own
+         * two-step shape.
+         */
+        onOpenQuickSettings={() => {
+          setSettingsOpen(true);
+        }}
+        quickSettingsOpen={settingsOpen}
+      >
         <SearchBar
           ref={searchInputRef}
           value={searchText}
@@ -3528,30 +3567,7 @@ export function MailScreen(): React.JSX.Element {
           mailboxes={mailboxes}
           onClearRecent={clearRecentSearches}
         />
-
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={styles.iconButton}
-            onClick={() => {
-              setHelpOpen(true);
-            }}
-            aria-label={t("shortcuts.title")}
-            title={`${t("shortcuts.title")} (?)`}
-          >
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true" focusable="false">
-              <circle cx="10" cy="10" r="7.5" />
-              <path d="M7.8 7.7a2.2 2.2 0 1 1 2.9 2.1c-.5.2-.8.6-.8 1.1v.4M10 14.2v.1" />
-            </svg>
-          </button>
-          <span className={styles.account} title={username}>
-            {format("shell.signedInAs", username)}
-          </span>
-          <button className={styles.signOut} type="button" onClick={signOut}>
-            {t("shell.signOut")}
-          </button>
-        </div>
-      </header>
+      </TopBar>
 
       {/*
         E6: the vacation banner (canon §2.8) — between the header and the panes,
@@ -3575,6 +3591,14 @@ export function MailScreen(): React.JSX.Element {
           layout.mode === "right" ? styles.reading : "",
           layout.mode === "bottom" ? styles.readingBottom : "",
           layout.mode === "full" ? styles.readingFull : "",
+          /*
+           * E12: the hamburger's effect is ONE class on the grid, not a
+           * conditional render of a different sidebar. The rail stays mounted
+           * and keeps its scroll position, its selection and its ARIA tree —
+           * unmounting it would drop a screen-reader user's place in the
+           * folder list every time the layout changed width.
+           */
+          sidebarCollapsed ? styles.railCollapsed : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -3636,6 +3660,7 @@ export function MailScreen(): React.JSX.Element {
                   }
                 : {})}
               snoozedMailboxName={snoozedFolderName}
+              collapsed={sidebarCollapsed}
             />
           )}
 
@@ -3650,37 +3675,23 @@ export function MailScreen(): React.JSX.Element {
               route.kind === "label" ? encodeLabelKeyword(route.name) : undefined
             }
             onSelect={goToLabel}
+            /* E12 (canon 07 §2): the `+` beside the heading. It routes to the
+               label manager rather than prompting inline — see LabelListProps. */
+            onCreate={openLabelSettings}
+            collapsed={sidebarCollapsed}
           />
 
           {/*
-            The settings entry point.
+            E12: the bottom-left settings button is GONE.
 
-            BOTTOM-LEFT, inside the sidebar but after the folder tree and
-            visually separated from it — which is the convention (Slack,
-            Linear, VS Code, Gmail's own bottom-left rail) for "this acts on
-            the APPLICATION, not on the thing the column above lists". Putting
-            it in the header instead would have made it a peer of search and
-            sign-out; putting it in the tree would have made it look like a
-            folder you can open mail in.
-
-            `margin-top: auto` in the stylesheet is what pins it to the bottom
-            of the column no matter how few folders the account has, without a
-            second scroll container.
+            It had a stated rationale (Slack/Linear/VS Code put app-level
+            controls bottom-left) and it was defensible in isolation. Canon 07
+            §1 settles it against the benchmark that governs this epic: Gmail's
+            gear is top-right, and "most people can use Gmail blind" is a claim
+            about where their hand goes. Two entries would have been worse than
+            either — a user who found one would never learn the other — so this
+            one is deleted rather than kept as a second door.
           */}
-          <div className={styles.sidebarFooter}>
-            <button
-              type="button"
-              className={styles.settingsButton}
-              onClick={() => {
-                setSettingsOpen(true);
-              }}
-              aria-haspopup="dialog"
-              aria-expanded={settingsOpen}
-            >
-              <GearIcon />
-              <span>{t("settings.open")}</span>
-            </button>
-          </div>
         </nav>
 
         {/*
@@ -4276,33 +4287,6 @@ function isReplyIntent(intent: ComposerDraft["intent"]): boolean {
 }
 
 /** The banner above the list: a refusal, a truncation warning, or a count. */
-/**
- * The gear.
- *
- * Same 20x20 grid, 1.6 stroke and `currentColor` as every other icon in this
- * screen, so it inherits the row's colour and sits at the same optical weight
- * as the folder icons above it. `aria-hidden` because the button already has
- * a visible text label — announcing the icon too would say "settings settings".
- */
-function GearIcon(): React.JSX.Element {
-  return (
-    <svg
-      className={styles.settingsIcon}
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <circle cx="10" cy="10" r="2.6" />
-      <path d="M10 2.2l1.1 1.9a6.6 6.6 0 0 1 1.7.7l2.1-.5 1.4 2.4-1.5 1.6a6.6 6.6 0 0 1 0 1.4l1.5 1.6-1.4 2.4-2.1-.5a6.6 6.6 0 0 1-1.7.7L10 17.8l-1.1-1.9a6.6 6.6 0 0 1-1.7-.7l-2.1.5-1.4-2.4 1.5-1.6a6.6 6.6 0 0 1 0-1.4L3.7 8.7l1.4-2.4 2.1.5a6.6 6.6 0 0 1 1.7-.7z" />
-    </svg>
-  );
-}
-
 /**
  * E3: the sentence for one term the parser had to exclude.
  *

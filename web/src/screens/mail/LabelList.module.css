@@ -13,14 +13,48 @@
   margin-top: var(--space-4);
 }
 
+/* E12 (canon 07 §2): the heading and its `+` share one row, so the button sits
+ * at the right edge of the group it acts on rather than floating above the
+ * first label. */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  padding-right: var(--space-1);
+}
+
 .title {
-  margin: 0 0 var(--space-1);
+  margin: 0;
   padding: 0 var(--space-3);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.create {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+}
+
+.create svg {
+  width: 14px;
+  height: 14px;
+}
+
+.create:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
 }
 
 .list {
@@ -92,4 +126,46 @@
 
 :root[data-theme="dark"] .swatch {
   background: var(--label-bg-dark);
+}
+
+/* ---------------------------------------------------------------------------
+ * E12: the collapsed rail. Same technique and same reason as MailboxList's —
+ * the text is CLIPPED rather than removed, so a screen reader still hears the
+ * label's name from a row whose name the sighted user has folded away.
+ *
+ * The heading and the `+` are hidden outright, and that is the one place this
+ * differs from the folder tree: a section title is a visual grouping device
+ * with no target behind it, and a `+` at icon width would be indistinguishable
+ * from a label row. The `<ul>` keeps its `aria-labelledby`, which still
+ * resolves — the heading is display:none, not removed from the DOM, so the
+ * group's accessible name survives.
+ * ------------------------------------------------------------------------ */
+
+.groupCollapsed .header {
+  display: none;
+}
+
+.groupCollapsed .name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.groupCollapsed .row {
+  justify-content: center;
+  gap: 0;
+  padding-left: var(--space-3);
+  padding-right: var(--space-3);
+}
+
+/* At icon width the swatch IS the row, so it grows to the size the folder
+ * icons occupy — a 10px dot alone in a 64px rail reads as an artefact. */
+.groupCollapsed .swatch {
+  width: 14px;
+  height: 14px;
 }

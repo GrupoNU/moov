@@ -225,3 +225,74 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------------------------------------------------------------------------
+ * E12: the collapsed icon rail (canon 07 §1-2 — the hamburger's target).
+ *
+ * The DOM is IDENTICAL to the expanded rail. Everything below hides text
+ * visually while leaving it in the accessibility tree, which is the whole
+ * reason this is CSS and not a second render: `display:none` on the name would
+ * take the row's accessible name with it, and a screen-reader user would hear
+ * eleven rows called "link" with no way to tell Inbox from Trash.
+ *
+ * `width:1px;overflow:hidden` rather than `visibility:hidden` for the same
+ * reason `.visually-hidden` in base.css uses the clip technique: a hidden
+ * element is removed from the accessibility tree, a clipped one is not.
+ * ------------------------------------------------------------------------ */
+
+.treeCollapsed .name,
+.treeCollapsed .badge {
+  /* Clipped, not removed: still announced, no longer drawn. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.treeCollapsed .row {
+  /* The indent that expressed nesting is meaningless at icon width: with the
+   * name gone, a nested folder's icon would simply sit further right with
+   * nothing to explain why. The `aria-level` still carries the nesting. */
+  padding-left: var(--space-3) !important;
+  padding-right: var(--space-3);
+  justify-content: center;
+  gap: 0;
+}
+
+/* An unread folder must stay distinguishable when its bold NAME is clipped
+ * away — otherwise collapsing the rail silently deletes the one signal the
+ * sidebar exists to carry. A dot on the icon replaces the weight. */
+.treeCollapsed .unread .icon {
+  color: var(--color-accent);
+}
+
+.treeCollapsed .unread {
+  /* The dot below is positioned against the ROW, not against the `.item` the
+   * selected spine uses: the spine is a left edge marker on the list item and
+   * this is a corner badge on the control, and sharing one containing block
+   * would make them move together the first time either is nudged. */
+  position: relative;
+}
+
+.treeCollapsed .unread::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+/* The Trash row's "Empty trash now" has no icon and would render as a bare
+ * sliver of text. It is dropped entirely while collapsed — the affordance is
+ * one hamburger press away, and an unreadable destructive control is worse
+ * than an absent one. */
+.treeCollapsed .emptyTrash {
+  display: none;
+}

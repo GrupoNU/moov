@@ -89,6 +89,16 @@ export const en = {
   "shell.signOut": "Sign out",
   "shell.signedInAs": (email: string): string => `Signed in as ${email}`,
 
+  // --- E12: the top bar (canon 07 §1) ---
+  //
+  // The hamburger says what it will DO, not what the rail currently is —
+  // "Collapse the folder list" on an expanded rail — because a toggle labelled
+  // with its state reads as a claim rather than as an offer.
+  "shell.collapseSidebar": "Collapse the folder list",
+  "shell.expandSidebar": "Expand the folder list",
+  "shell.accountMenu": "Account",
+  "shell.help": "Support and keyboard shortcuts",
+
   // --- settings ---
   "settings.title": "Settings",
   "settings.open": "Settings",
@@ -1233,6 +1243,11 @@ export const es: Strings = {
   "shell.mailboxes": "Carpetas",
   "shell.signOut": "Cerrar sesión",
   "shell.signedInAs": (email: string): string => `Sesión iniciada como ${email}`,
+
+  "shell.collapseSidebar": "Contraer la lista de carpetas",
+  "shell.expandSidebar": "Expandir la lista de carpetas",
+  "shell.accountMenu": "Cuenta",
+  "shell.help": "Ayuda y atajos de teclado",
 
   "settings.title": "Configuración",
   "settings.open": "Configuración",
