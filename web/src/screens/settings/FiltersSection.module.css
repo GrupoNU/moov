@@ -1,0 +1,359 @@
+/*
+ * The filter manager (E6).
+ *
+ * The banner is the loudest thing in this file on purpose: it reports that the
+ * user's rules are not running, which is the single most consequential fact the
+ * settings sheet can carry. Everything else follows the label manager's idiom,
+ * so the two server-object sections read as one family.
+ */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.explain,
+.note,
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger, #b91c1c);
+}
+
+/* --- the scriptActive banner --- */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning-border, #f5c469);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-warning-bg, #fff8e6);
+  color: var(--color-warning-text, #7a4b00);
+}
+
+.banner > svg {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.125rem;
+}
+
+.bannerText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.bannerTitle {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.bannerBody {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/* --- the list --- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.rowText {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.rowName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.paused {
+  padding: 0.0625rem var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted, rgb(0 0 0 / 6%));
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.rowOrder {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.rowSummary {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.rowSummary strong {
+  color: var(--text-default);
+  font-weight: 600;
+}
+
+.rowActions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.empty {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* --- controls --- */
+
+.primary,
+.secondary,
+.danger {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.primary {
+  align-self: flex-start;
+  border-color: transparent;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast, #fff);
+}
+
+.primary:disabled,
+.secondary:disabled,
+.danger:disabled,
+.iconButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.danger {
+  color: var(--color-danger, #b91c1c);
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-default);
+  cursor: pointer;
+}
+
+.iconButton > svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* --- the builder --- */
+
+.builder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-raised, var(--surface-default));
+}
+
+.builderTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.checkGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-default);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.input,
+.inputShort,
+.textarea,
+.select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 3rem;
+}
+
+.inputShort {
+  max-width: 8rem;
+}
+
+.sizeRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.problems {
+  margin: 0;
+  padding-left: var(--space-4, 1.25rem);
+  font-size: var(--text-sm);
+  color: var(--color-danger, #b91c1c);
+}
+
+.builderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- the quota bar (E6) --- */
+
+.quotaWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 12rem;
+}
+
+/*
+ * A real <progress>, restyled. Both the WebKit and the Firefox pseudo-elements
+ * are set, because styling only one leaves the other browser drawing its native
+ * widget beside our own border — which reads as a rendering bug rather than as
+ * a fallback.
+ */
+.quotaBar {
+  width: 100%;
+  height: 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted, rgb(0 0 0 / 10%));
+  appearance: none;
+}
+
+.quotaBar::-webkit-progress-bar {
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted, rgb(0 0 0 / 10%));
+}
+
+.quotaBar::-webkit-progress-value {
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+}
+
+.quotaBar::-moz-progress-bar {
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+}
+
+/*
+ * The banner's colours, defined for both themes rather than only in a media
+ * query — the discipline tokens.css states: never give a colour its only
+ * definition inside a conditional block.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner {
+    border-color: var(--color-warning-border-dark, #7a5a1f);
+    background: var(--color-warning-bg-dark, #2b2110);
+    color: var(--color-warning-text-dark, #f2d9a5);
+  }
+}
+
+:root[data-theme="dark"] .banner {
+  border-color: var(--color-warning-border-dark, #7a5a1f);
+  background: var(--color-warning-bg-dark, #2b2110);
+  color: var(--color-warning-text-dark, #f2d9a5);
+}

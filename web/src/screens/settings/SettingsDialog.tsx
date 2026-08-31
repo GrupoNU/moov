@@ -17,7 +17,12 @@ import {
 } from "../../mail/prefs";
 import { searchSettings, type SearchableRow } from "../../mail/settingsSearch";
 import type { Identity } from "../../mail/write";
+import { BlockedSection, type BlockedSectionProps } from "./BlockedSection";
+import { FiltersSection, type FiltersSectionProps } from "./FiltersSection";
+import { ForwardingSection, type ForwardingSectionProps } from "./ForwardingSection";
 import { LabelsSection, type LabelsSectionProps } from "./LabelsSection";
+import { QuotaRow, type QuotaRowProps } from "./QuotaRow";
+import { VacationSection, type VacationSectionProps } from "./VacationSection";
 import {
   SECTION_IDS,
   SECTION_TITLES,
@@ -100,6 +105,21 @@ export interface SettingsDialogProps {
    * index to govern, and a switch over nothing is the dead control P4 forbids.
    */
   readonly addresses?: AddressSettings | undefined;
+  /**
+   * E6: everything the four Sieve-backed sections need, passed whole.
+   *
+   * Each is INDEPENDENTLY optional, and absent means the section falls back to
+   * its honest skeleton. That is not defensive coding — it is the shape of the
+   * server: `internal/jmaphttp/session.go` gates the filter, vacation and quota
+   * capabilities on three separate config fields, so a deployment can genuinely
+   * have one and not the others, and the sheet has to render that truthfully
+   * rather than assuming they arrive together.
+   */
+  readonly filters?: FiltersSectionProps | undefined;
+  readonly blocked?: BlockedSectionProps | undefined;
+  readonly forwarding?: ForwardingSectionProps | undefined;
+  readonly vacation?: VacationSectionProps | undefined;
+  readonly quota?: QuotaRowProps | undefined;
 }
 
 /**
@@ -124,6 +144,11 @@ export function SettingsDialog({
   onSaveSignature,
   labels,
   addresses,
+  filters,
+  blocked,
+  forwarding,
+  vacation,
+  quota,
 }: SettingsDialogProps): React.JSX.Element {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -226,6 +251,26 @@ export function SettingsDialog({
     [search],
   );
 
+  /*
+   * E6: the quota is re-read when the Account section comes into view.
+   *
+   * Usage moves with every delivery and `Quota/changes` answers
+   * `cannotCalculateChanges` on purpose ("quota usage has no changelog; refetch
+   * with Quota/get"), so there is no push to subscribe to and no cursor to
+   * poll. Refetching exactly when the number is about to be READ is the whole
+   * refresh strategy, and it is the one the server's own comment prescribes.
+   *
+   * `visibleSections` rather than `activeSection`, so a SEARCH that surfaces
+   * the storage row also refreshes it — otherwise finding it by typing
+   * "almacenamiento" would show a figure from whenever the sheet last opened.
+   */
+  const showsAccount = visibleSections.includes("account");
+  const refreshQuota = quota?.onRefresh;
+  useEffect(() => {
+    if (!isOpen || !showsAccount) return;
+    refreshQuota?.();
+  }, [isOpen, showsAccount, refreshQuota]);
+
   return (
     <dialog ref={dialogRef} className={styles.dialog} aria-labelledby="settings-title">
       <div className={styles.content}>
@@ -323,26 +368,58 @@ export function SettingsDialog({
                       onSaveSignature={onSaveSignature}
                       showRow={showRow}
                       addresses={addresses}
+                      quota={quota}
                     />
                   )}
                   {sectionId === "labels" && showRow("labels") && labels !== undefined && (
                     <LabelsSection {...labels} />
                   )}
-                  {sectionId === "filters" && showRow("filters") && (
-                    <Skeleton titleKey="settings.filters.soon" bodyKey="settings.filters.soonBody" />
-                  )}
-                  {sectionId === "forwarding" && showRow("forwarding") && (
-                    <Skeleton
-                      titleKey="settings.forwarding.soon"
-                      bodyKey="settings.forwarding.soonBody"
-                    />
-                  )}
-                  {sectionId === "vacation" && showRow("vacation") && (
-                    <Skeleton
-                      titleKey="settings.vacation.soon"
-                      bodyKey="settings.vacation.soonBody"
-                    />
-                  )}
+                  {/*
+                    E6. Each section renders itself when the server offers the
+                    capability, and its skeleton when it does not — the skeleton
+                    now says "this server does not offer X", which is the true
+                    sentence once the feature exists in the app.
+                  */}
+                  {sectionId === "filters" &&
+                    showRow("filters") &&
+                    (filters !== undefined ? (
+                      <FiltersSection {...filters} />
+                    ) : (
+                      <Skeleton
+                        titleKey="settings.filters.soon"
+                        bodyKey="settings.filters.soonBody"
+                      />
+                    ))}
+                  {sectionId === "blocked" &&
+                    showRow("blocked") &&
+                    (blocked !== undefined ? (
+                      <BlockedSection {...blocked} />
+                    ) : (
+                      <Skeleton
+                        titleKey="settings.filters.soon"
+                        bodyKey="settings.filters.soonBody"
+                      />
+                    ))}
+                  {sectionId === "forwarding" &&
+                    showRow("forwarding") &&
+                    (forwarding !== undefined ? (
+                      <ForwardingSection {...forwarding} />
+                    ) : (
+                      <Skeleton
+                        titleKey="settings.forwarding.soon"
+                        bodyKey="settings.forwarding.soonBody"
+                      />
+                    ))}
+                  {sectionId === "vacation" &&
+                    showRow("vacation") &&
+                    (vacation !== undefined ? (
+                      <VacationSection {...vacation} />
+                    ) : (
+                      <Skeleton
+                        titleKey="settings.vacation.soon"
+                        bodyKey="settings.vacation.soonBody"
+                      />
+                    ))}
                   {sectionId === "offline" && showRow("offline") && (
                     <Skeleton titleKey="settings.offline.soon" bodyKey="settings.offline.soonBody" />
                   )}
@@ -698,11 +775,13 @@ function AccountSection({
   onSaveSignature,
   showRow,
   addresses,
+  quota,
 }: {
   readonly identity: Identity | undefined;
   readonly onSaveSignature: ((textSignature: string) => Promise<boolean>) | undefined;
   readonly showRow: (id: string) => boolean;
   readonly addresses: AddressSettings | undefined;
+  readonly quota: QuotaRowProps | undefined;
 }): React.JSX.Element {
   const { t, format } = useTranslation();
   const [draft, setDraft] = useState(identity?.textSignature ?? "");
@@ -864,6 +943,17 @@ function AccountSection({
               {t("settings.addressAutocomplete.localOnly")}
             </span>
           </div>
+        </SettingRow>
+      )}
+
+      {/*
+        E6: the storage bar (RFC 9425). Absent when the server has no quota
+        capability — the row disappears rather than showing an empty bar, which
+        is the same rule the autocomplete row above follows.
+      */}
+      {showRow("quota") && quota !== undefined && (
+        <SettingRow labelKey="quota.label" descriptionKey="quota.description">
+          <QuotaRow {...quota} />
         </SettingRow>
       )}
     </>

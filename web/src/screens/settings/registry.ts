@@ -41,7 +41,17 @@ export const SECTION_IDS = [
    * honest reading of what it is.
    */
   "labels",
+  /*
+   * E6. Filters, Blocked, Forwarding and Vacation are all backed by ONE Sieve
+   * script on the mail server; they are four sections because they are four
+   * user-facing jobs, and because a blocked rule has no visible action to show
+   * in a filter list (the Junk filing is compiled from its type tag).
+   *
+   * "Blocked" sits right after "Filters", which is where Gmail's own IA puts
+   * it — adjacent to the mechanism it shares, before the forwarding block.
+   */
   "filters",
+  "blocked",
   "forwarding",
   "vacation",
   "offline",
@@ -56,6 +66,7 @@ export const SECTION_TITLES: Readonly<Record<SectionId, PlainStringKey>> = {
   account: "settings.section.account",
   labels: "settings.section.labels",
   filters: "settings.section.filters",
+  blocked: "settings.section.blocked",
   forwarding: "settings.section.forwarding",
   vacation: "settings.section.vacation",
   offline: "settings.section.offline",
@@ -305,6 +316,27 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
       "borrar",
     ],
   },
+  {
+    /* E6: the storage bar, read live from Dovecot (RFC 9425, canon §2.11). */
+    id: "quota",
+    sectionId: "account",
+    labelKey: "quota.label",
+    descriptionKey: "quota.description",
+    keywords: [
+      "quota",
+      "cuota",
+      "storage",
+      "almacenamiento",
+      "space",
+      "espacio",
+      "full",
+      "lleno",
+      "size",
+      "tamano",
+      "gb",
+      "mb",
+    ],
+  },
 
   // --- Labels (E8) ---
   {
@@ -327,26 +359,70 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
     ],
   },
 
-  // --- the honest skeletons (P4: a named absence, never a dead control) ---
+  // --- E6: the four Sieve-backed sections ---
+  //
+  // These were skeletons through E5 ("llega con la épica de Sieve"). The epic
+  // landed, so the rows now name what they DO. The skeleton strings survive for
+  // the one honest case left: a server that does not advertise the capability,
+  // where the section renders the absence instead of a control that cannot work.
   {
     id: "filters",
     sectionId: "filters",
-    labelKey: "settings.filters.soon",
-    descriptionKey: "settings.filters.soonBody",
-    keywords: ["filters", "filtros", "rules", "reglas", "sieve", "block", "bloquear", "spam"],
+    labelKey: "settings.section.filters",
+    descriptionKey: "filters.description",
+    keywords: [
+      "filters",
+      "filtros",
+      "rules",
+      "reglas",
+      "sieve",
+      "label",
+      "etiquetar",
+      "archive",
+      "archivar",
+      "forward",
+      "reenviar",
+    ],
+  },
+  {
+    id: "blocked",
+    sectionId: "blocked",
+    labelKey: "settings.section.blocked",
+    descriptionKey: "blocked.description",
+    keywords: [
+      "blocked",
+      "bloqueados",
+      "block",
+      "bloquear",
+      "sender",
+      "remitente",
+      "spam",
+      "unsubscribe",
+      "baja",
+    ],
   },
   {
     id: "forwarding",
     sectionId: "forwarding",
-    labelKey: "settings.forwarding.soon",
-    descriptionKey: "settings.forwarding.soonBody",
-    keywords: ["forwarding", "reenvio", "forward", "reenviar", "redirect", "sieve", "block", "bloquear"],
+    labelKey: "settings.section.forwarding",
+    descriptionKey: "forwarding.description",
+    keywords: [
+      "forwarding",
+      "reenvio",
+      "forward",
+      "reenviar",
+      "redirect",
+      "copy",
+      "copia",
+      "verify",
+      "verificar",
+    ],
   },
   {
     id: "vacation",
     sectionId: "vacation",
-    labelKey: "settings.vacation.soon",
-    descriptionKey: "settings.vacation.soonBody",
+    labelKey: "settings.section.vacation",
+    descriptionKey: "vacation.description",
     keywords: [
       "vacation",
       "vacaciones",
@@ -356,6 +432,7 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
       "responder",
       "auto reply",
       "respuesta automatica",
+      "sieve",
     ],
   },
   {

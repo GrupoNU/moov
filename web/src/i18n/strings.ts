@@ -112,6 +112,8 @@ export const en = {
   "settings.section.inbox": "Inbox",
   "settings.section.account": "Account",
   "settings.section.filters": "Filters",
+  /* E6: its own section, Gmail's own shape (Filters and blocked addresses). */
+  "settings.section.blocked": "Blocked",
   "settings.section.forwarding": "Forwarding",
   "settings.section.vacation": "Vacation responder",
   "settings.section.offline": "Offline",
@@ -263,15 +265,196 @@ export const en = {
   "settings.addressAutocomplete.localOnly":
     "This choice applies to this browser only, until preferences can carry it.",
 
-  "settings.filters.soon": "Filters arrive with the Sieve work",
+  /*
+   * The E6 skeletons survive for ONE case each: a server that does not
+   * advertise the capability. They no longer say "arrives with the Sieve
+   * epic" — that epic landed — they say what the SERVER is missing, which is
+   * the honest sentence when the feature exists in the app and not on the
+   * deployment.
+   */
+  "settings.filters.soon": "This server does not offer filters",
   "settings.filters.soonBody":
-    "Rules that label, archive, star or delete mail as it arrives — built on Dovecot's own Sieve, so they keep running when Moov is closed.",
-  "settings.forwarding.soon": "Forwarding arrives with the Sieve work",
+    "Filters are Sieve rules stored on the mail server. This deployment does not advertise the capability, so Moov has nothing to configure.",
+  "settings.forwarding.soon": "This server does not offer forwarding",
   "settings.forwarding.soonBody":
-    "Forwarding to a verified address, and blocking a sender, are Sieve recipes. They land in the same epic as filters.",
-  "settings.vacation.soon": "The vacation responder arrives with the Sieve work",
+    "Forwarding and blocked senders are Sieve recipes. This deployment does not advertise the capability.",
+  "settings.vacation.soon": "This server does not offer a vacation responder",
   "settings.vacation.soonBody":
-    "An out-of-office reply with a date range, which never answers mailing lists or spam.",
+    "The out-of-office reply is Dovecot's Sieve `vacation`. This deployment does not advertise the capability.",
+
+  // --- E6: filters (GC-4) ---
+  "filters.description":
+    "Rules run on the mail server as it arrives, so they keep working when Moov is closed. They run IN ORDER, top to bottom.",
+  "filters.create": "Create a filter",
+  "filters.edit": "Edit",
+  "filters.delete": "Delete",
+  "filters.none": "No filters yet.",
+  "filters.deleteConfirm": (name: string): string =>
+    `Delete the filter “${name}”? Mail already filed stays where it is; new mail stops being filtered.`,
+  "filters.enabled": "Active",
+  "filters.disabled": "Paused",
+  "filters.moveUp": "Move up",
+  "filters.moveDown": "Move down",
+  "filters.unnamed": "(unnamed filter)",
+  "filters.order": (position: number, total: number): string =>
+    `Rule ${position} of ${total}`,
+  "filters.criteria": "When",
+  "filters.actions": "Then",
+  "filters.empty": "—",
+  "filters.saving": "Saving…",
+  "filters.saveFailed": "The filter could not be saved",
+  "filters.loadFailed": "The filters could not be loaded",
+
+  // The scriptActive banner — the honesty bit, in words.
+  "filters.foreignScript": "Moov's rules are not running",
+  "filters.foreignScriptBody":
+    "Another Sieve script is active on the server, so these rules exist but do not filter your mail. Moov never deletes a script it did not write — activating Moov's rules leaves the other one stored, just no longer the active one.",
+  "filters.activate": "Activate Moov's rules",
+  "filters.activating": "Activating…",
+  "filters.activateFailed": "The rules could not be activated",
+  "filters.activated": "Moov's rules are active",
+
+  // The builder.
+  "filters.builder.newTitle": "New filter",
+  "filters.builder.editTitle": "Edit filter",
+  "filters.builder.name": "Name",
+  "filters.builder.namePlaceholder": "Invoices",
+  "filters.builder.criteriaLegend": "When a message arrives that matches",
+  "filters.builder.actionsLegend": "Do this",
+  "filters.builder.from": "From",
+  "filters.builder.to": "To or Cc",
+  "filters.builder.subject": "Subject",
+  "filters.builder.sizeOver": "Larger than",
+  "filters.builder.sizeUnder": "Smaller than",
+  "filters.builder.attachment": "Attachment",
+  "filters.builder.attachmentAny": "Doesn't matter",
+  "filters.builder.attachmentYes": "Has an attachment",
+  "filters.builder.attachmentNo": "Has no attachment",
+  "filters.builder.moveTo": "Move to folder",
+  "filters.builder.moveToNone": "Leave in place",
+  "filters.builder.labels": "Apply labels",
+  "filters.builder.markRead": "Mark as read",
+  "filters.builder.star": "Star it",
+  "filters.builder.forward": "Forward to",
+  "filters.builder.forwardNone": "Do not forward",
+  "filters.builder.forwardHint":
+    "Only verified addresses can receive forwarded mail. Add one under Forwarding first.",
+  "filters.builder.delete": "Move to Trash",
+  "filters.builder.neverSpam": "Never send to Spam",
+  "filters.builder.stop": "Stop processing further rules",
+  "filters.builder.save": "Save",
+  "filters.builder.cancel": "Cancel",
+  "filters.builder.noDateNote":
+    "There is no date condition, and no free-text search condition: Sieve has no equivalent, so Moov restricts rather than pretends. Use search for those.",
+  "filters.builder.multiHint": "One per line.",
+
+  // The builder's problems, mirrored from the server's own model.
+  "filters.problem.noCriteria": "Add at least one condition.",
+  "filters.problem.noActions": "Add at least one action.",
+  "filters.problem.moveAndDelete": "A filter can move a message OR trash it, not both.",
+  "filters.problem.forwardUnverified":
+    "That forwarding address is not verified. Verify it under Forwarding first.",
+  "filters.problem.forwardNotAddress": "That is not an email address.",
+  "filters.problem.blockedNeedsAddress": "A blocked sender needs an address.",
+  "filters.problem.blockedNotAddress": "That is not an email address.",
+  "filters.problem.controlCharacters": "Remove the line breaks and control characters.",
+  "filters.problem.negativeSize": "A size cannot be negative.",
+
+  // --- E6: blocked senders (canon §2.2) ---
+  "blocked.description":
+    "Mail from these addresses goes straight to Spam. Blocking does not unsubscribe you from anything.",
+  "blocked.none": "You have not blocked anyone.",
+  "blocked.add": "Block an address",
+  "blocked.addPlaceholder": "sender@example.com",
+  "blocked.remove": "Unblock",
+  "blocked.removeConfirm": (address: string): string =>
+    `Unblock ${address}? Their mail goes back to your inbox.`,
+  "blocked.invalid": "Enter a complete email address.",
+  "blocked.duplicate": "That address is already blocked.",
+  "blocked.action": "Block sender",
+  "blocked.dialogTitle": (address: string): string => `Block ${address}?`,
+  "blocked.dialogBody":
+    "All future mail from this address goes to Spam. Mail already in your inbox stays where it is.",
+  "blocked.dialogUnsubscribe":
+    "This message offers an unsubscribe link. If it is a newsletter you signed up for, unsubscribing is the cleaner fix — blocking does not unsubscribe.",
+  "blocked.confirm": "Block",
+  "blocked.blocked": (address: string): string => `${address} is blocked`,
+  "blocked.failed": "The sender could not be blocked",
+
+  // --- E6: vacation responder (canon §2.8) ---
+  "vacation.description":
+    "An automatic reply while you are away. It answers each sender at most once every four days, and never answers mailing lists or spam.",
+  "vacation.enable": "Send an automatic reply",
+  "vacation.from": "First day",
+  "vacation.to": "Last day",
+  "vacation.dateHint":
+    "The reply starts at 00:00 and ends at 23:59 on those days, in your own timezone. Leave a field empty for no bound.",
+  "vacation.subject": "Subject",
+  "vacation.subjectPlaceholder": "Out of the office",
+  "vacation.body": "Message",
+  "vacation.save": "Save",
+  "vacation.saving": "Saving…",
+  "vacation.saved": "Vacation reply saved",
+  "vacation.saveFailed": "The vacation reply could not be saved",
+  "vacation.loadFailed": "The vacation reply could not be loaded",
+  "vacation.htmlNote":
+    "This responder has an HTML body set elsewhere. Moov edits the plain-text version and leaves the HTML untouched.",
+  "vacation.problem.endBeforeStart": "The last day is before the first day.",
+  "vacation.problem.emptyMessage": "Write a subject or a message.",
+  "vacation.problem.invalidDate": "That is not a date.",
+  "vacation.problem.multilineSubject": "The subject has to be a single line.",
+
+  // The inbox banner, Gmail's own shape (a bar across the top + "End now").
+  "vacation.banner": "Your vacation reply is on",
+  "vacation.bannerUntil": (date: string): string => `Your vacation reply is on until ${date}`,
+  "vacation.endNow": "End now",
+  "vacation.ending": "Ending…",
+  "vacation.endFailed": "The vacation reply could not be turned off",
+
+  // --- E6: forwarding (canon §2.11) ---
+  "forwarding.description":
+    "Send a copy of incoming mail to another address. The address has to be verified first — we mail it a code.",
+  "forwarding.addressesTitle": "Destination addresses",
+  "forwarding.none": "No forwarding addresses yet.",
+  "forwarding.add": "Add a forwarding address",
+  "forwarding.addPlaceholder": "you@elsewhere.com",
+  "forwarding.adding": "Sending the code…",
+  "forwarding.addFailed": "The address could not be added",
+  "forwarding.pending": "Waiting for the code",
+  "forwarding.accepted": "Verified",
+  "forwarding.verifiedOn": (date: string): string => `Verified on ${date}`,
+  "forwarding.codeSent": (address: string): string =>
+    `We sent a code to ${address}. Open that mailbox, copy the code and paste it here.`,
+  "forwarding.codeLabel": "Verification code",
+  "forwarding.verify": "Verify",
+  "forwarding.verifying": "Verifying…",
+  "forwarding.verified": (address: string): string => `${address} is verified`,
+  "forwarding.verifyFailed":
+    "That code did not work. It may be wrong, expired, or for another address.",
+  "forwarding.remove": "Remove",
+  "forwarding.removeConfirm": (address: string): string =>
+    `Remove ${address}? Any filter that forwards there stops working.`,
+  "forwarding.removeFailed": "The address could not be removed",
+  "forwarding.forwardAllTitle": "Forward all mail",
+  "forwarding.forwardAllEnable": "Forward a copy of every message",
+  "forwarding.forwardAllTo": "Forward to",
+  "forwarding.forwardAllNeedsVerified":
+    "Add and verify a destination address first.",
+  "forwarding.disposition": "Keep Moov's copy",
+  "forwarding.dispositionKeep": "in the inbox",
+  "forwarding.dispositionArchive": "in Archive",
+  "forwarding.saveFailed": "Forwarding could not be saved",
+  "forwarding.loadFailed": "Forwarding could not be loaded",
+
+  // --- E6: quota (RFC 9425, canon §2.11) ---
+  "quota.label": "Storage",
+  "quota.description": "How much of your mailbox is in use, read from the mail server.",
+  "quota.used": (used: string, limit: string): string => `${used} of ${limit} used`,
+  "quota.percent": (percent: number): string => `${percent}% full`,
+  "quota.noLimit": "This mailbox has no storage limit.",
+  "quota.loadFailed": "The storage figure could not be read",
+  "quota.refresh": "Refresh",
+
   "settings.offline.soon": "Offline mode is on its way",
   "settings.offline.soonBody":
     "Read, search and reply without a connection, with outgoing mail queued in an Outbox until you are back.",
@@ -995,6 +1178,7 @@ export const es: Strings = {
   "settings.section.inbox": "Recibidos",
   "settings.section.account": "Cuenta",
   "settings.section.filters": "Filtros",
+  "settings.section.blocked": "Bloqueados",
   "settings.section.forwarding": "Reenvío",
   "settings.section.vacation": "Respuesta automática",
   "settings.section.offline": "Sin conexión",
@@ -1124,15 +1308,188 @@ export const es: Strings = {
   "settings.addressAutocomplete.localOnly":
     "Esta opción vale solo para este navegador, hasta que las preferencias puedan llevarla.",
 
-  "settings.filters.soon": "Los filtros llegan con la épica de Sieve",
+  "settings.filters.soon": "Este servidor no ofrece filtros",
   "settings.filters.soonBody":
-    "Reglas que etiquetan, archivan, destacan o borran el correo cuando llega — sobre el Sieve del propio Dovecot, así siguen corriendo con Moov cerrado.",
-  "settings.forwarding.soon": "El reenvío llega con la épica de Sieve",
+    "Los filtros son reglas Sieve guardadas en el servidor de correo. Esta instalación no anuncia la capacidad, así que Moov no tiene nada que configurar.",
+  "settings.forwarding.soon": "Este servidor no ofrece reenvío",
   "settings.forwarding.soonBody":
-    "Reenviar a una dirección verificada, y bloquear a un remitente, son recetas de Sieve. Aterrizan en la misma épica que los filtros.",
-  "settings.vacation.soon": "La respuesta automática llega con la épica de Sieve",
+    "El reenvío y los remitentes bloqueados son recetas de Sieve. Esta instalación no anuncia la capacidad.",
+  "settings.vacation.soon": "Este servidor no ofrece respuesta automática",
   "settings.vacation.soonBody":
-    "Una respuesta de ausencia con rango de fechas, que nunca le contesta a listas de correo ni al spam.",
+    "La respuesta de ausencia es el `vacation` de Sieve, en Dovecot. Esta instalación no anuncia la capacidad.",
+
+  // --- E6: filtros (GC-4) ---
+  "filters.description":
+    "Las reglas corren en el servidor de correo cuando el mensaje llega, así siguen funcionando con Moov cerrado. Se aplican EN ORDEN, de arriba hacia abajo.",
+  "filters.create": "Crear un filtro",
+  "filters.edit": "Editar",
+  "filters.delete": "Eliminar",
+  "filters.none": "Todavía no hay filtros.",
+  "filters.deleteConfirm": (name: string): string =>
+    `¿Eliminar el filtro «${name}»? El correo ya archivado queda donde está; el correo nuevo deja de filtrarse.`,
+  "filters.enabled": "Activo",
+  "filters.disabled": "En pausa",
+  "filters.moveUp": "Subir",
+  "filters.moveDown": "Bajar",
+  "filters.unnamed": "(filtro sin nombre)",
+  "filters.order": (position: number, total: number): string =>
+    `Regla ${position} de ${total}`,
+  "filters.criteria": "Cuando",
+  "filters.actions": "Entonces",
+  "filters.empty": "—",
+  "filters.saving": "Guardando…",
+  "filters.saveFailed": "El filtro no se pudo guardar",
+  "filters.loadFailed": "No se pudieron cargar los filtros",
+
+  "filters.foreignScript": "Las reglas de Moov no se están ejecutando",
+  "filters.foreignScriptBody":
+    "Hay otro script Sieve activo en el servidor, así que estas reglas existen pero no filtran tu correo. Moov nunca borra un script que no escribió: al activar las reglas de Moov, el otro queda guardado, solo deja de ser el activo.",
+  "filters.activate": "Activar las reglas de Moov",
+  "filters.activating": "Activando…",
+  "filters.activateFailed": "No se pudieron activar las reglas",
+  "filters.activated": "Las reglas de Moov están activas",
+
+  "filters.builder.newTitle": "Filtro nuevo",
+  "filters.builder.editTitle": "Editar el filtro",
+  "filters.builder.name": "Nombre",
+  "filters.builder.namePlaceholder": "Facturas",
+  "filters.builder.criteriaLegend": "Cuando llegue un mensaje que cumpla",
+  "filters.builder.actionsLegend": "Hacer esto",
+  "filters.builder.from": "De",
+  "filters.builder.to": "Para o Cc",
+  "filters.builder.subject": "Asunto",
+  "filters.builder.sizeOver": "Más grande que",
+  "filters.builder.sizeUnder": "Más chico que",
+  "filters.builder.attachment": "Adjunto",
+  "filters.builder.attachmentAny": "No importa",
+  "filters.builder.attachmentYes": "Tiene adjunto",
+  "filters.builder.attachmentNo": "No tiene adjunto",
+  "filters.builder.moveTo": "Mover a la carpeta",
+  "filters.builder.moveToNone": "Dejarlo donde está",
+  "filters.builder.labels": "Aplicar etiquetas",
+  "filters.builder.markRead": "Marcarlo como leído",
+  "filters.builder.star": "Destacarlo",
+  "filters.builder.forward": "Reenviar a",
+  "filters.builder.forwardNone": "No reenviar",
+  "filters.builder.forwardHint":
+    "Solo las direcciones verificadas pueden recibir correo reenviado. Agregá una en Reenvío primero.",
+  "filters.builder.delete": "Mover a la papelera",
+  "filters.builder.neverSpam": "Nunca marcarlo como spam",
+  "filters.builder.stop": "Dejar de aplicar las reglas siguientes",
+  "filters.builder.save": "Guardar",
+  "filters.builder.cancel": "Cancelar",
+  "filters.builder.noDateNote":
+    "No hay condición por fecha ni condición de búsqueda libre: Sieve no tiene equivalente, así que Moov se restringe en lugar de fingir. Para eso está la búsqueda.",
+  "filters.builder.multiHint": "Uno por línea.",
+
+  "filters.problem.noCriteria": "Agregá al menos una condición.",
+  "filters.problem.noActions": "Agregá al menos una acción.",
+  "filters.problem.moveAndDelete":
+    "Un filtro puede mover el mensaje O mandarlo a la papelera, no las dos cosas.",
+  "filters.problem.forwardUnverified":
+    "Esa dirección de reenvío no está verificada. Verificala en Reenvío primero.",
+  "filters.problem.forwardNotAddress": "Eso no es una dirección de correo.",
+  "filters.problem.blockedNeedsAddress": "Un remitente bloqueado necesita una dirección.",
+  "filters.problem.blockedNotAddress": "Eso no es una dirección de correo.",
+  "filters.problem.controlCharacters": "Sacá los saltos de línea y los caracteres de control.",
+  "filters.problem.negativeSize": "Un tamaño no puede ser negativo.",
+
+  // --- E6: bloqueados (canon §2.2) ---
+  "blocked.description":
+    "El correo de estas direcciones va directo a Spam. Bloquear no te da de baja de ninguna lista.",
+  "blocked.none": "No bloqueaste a nadie.",
+  "blocked.add": "Bloquear una dirección",
+  "blocked.addPlaceholder": "remitente@ejemplo.com",
+  "blocked.remove": "Desbloquear",
+  "blocked.removeConfirm": (address: string): string =>
+    `¿Desbloquear a ${address}? Su correo vuelve a tu bandeja de entrada.`,
+  "blocked.invalid": "Escribí una dirección de correo completa.",
+  "blocked.duplicate": "Esa dirección ya está bloqueada.",
+  "blocked.action": "Bloquear al remitente",
+  "blocked.dialogTitle": (address: string): string => `¿Bloquear a ${address}?`,
+  "blocked.dialogBody":
+    "Todo el correo futuro de esta dirección va a Spam. El correo que ya está en tu bandeja queda donde está.",
+  "blocked.dialogUnsubscribe":
+    "Este mensaje ofrece un enlace para darte de baja. Si es un boletín al que te suscribiste, darte de baja es la solución más limpia: bloquear no te da de baja.",
+  "blocked.confirm": "Bloquear",
+  "blocked.blocked": (address: string): string => `${address} está bloqueado`,
+  "blocked.failed": "No se pudo bloquear al remitente",
+
+  // --- E6: respuesta automática (canon §2.8) ---
+  "vacation.description":
+    "Una respuesta automática mientras estás afuera. Le contesta a cada remitente como mucho una vez cada cuatro días, y nunca le contesta a listas de correo ni al spam.",
+  "vacation.enable": "Enviar una respuesta automática",
+  "vacation.from": "Primer día",
+  "vacation.to": "Último día",
+  "vacation.dateHint":
+    "La respuesta arranca a las 00:00 y termina a las 23:59 de esos días, en tu propia zona horaria. Dejá el campo vacío para no poner límite.",
+  "vacation.subject": "Asunto",
+  "vacation.subjectPlaceholder": "Fuera de la oficina",
+  "vacation.body": "Mensaje",
+  "vacation.save": "Guardar",
+  "vacation.saving": "Guardando…",
+  "vacation.saved": "Respuesta automática guardada",
+  "vacation.saveFailed": "La respuesta automática no se pudo guardar",
+  "vacation.loadFailed": "No se pudo cargar la respuesta automática",
+  "vacation.htmlNote":
+    "Esta respuesta tiene un cuerpo HTML puesto desde otro lado. Moov edita la versión de texto y deja el HTML intacto.",
+  "vacation.problem.endBeforeStart": "El último día es anterior al primero.",
+  "vacation.problem.emptyMessage": "Escribí un asunto o un mensaje.",
+  "vacation.problem.invalidDate": "Eso no es una fecha.",
+  "vacation.problem.multilineSubject": "El asunto tiene que ser una sola línea.",
+
+  "vacation.banner": "Tu respuesta automática está activa",
+  "vacation.bannerUntil": (date: string): string =>
+    `Tu respuesta automática está activa hasta el ${date}`,
+  "vacation.endNow": "Finalizar ahora",
+  "vacation.ending": "Finalizando…",
+  "vacation.endFailed": "No se pudo apagar la respuesta automática",
+
+  // --- E6: reenvío (canon §2.11) ---
+  "forwarding.description":
+    "Mandar una copia del correo que llega a otra dirección. La dirección tiene que verificarse primero: le enviamos un código.",
+  "forwarding.addressesTitle": "Direcciones de destino",
+  "forwarding.none": "Todavía no hay direcciones de reenvío.",
+  "forwarding.add": "Agregar una dirección de reenvío",
+  "forwarding.addPlaceholder": "vos@otrolado.com",
+  "forwarding.adding": "Enviando el código…",
+  "forwarding.addFailed": "No se pudo agregar la dirección",
+  "forwarding.pending": "Esperando el código",
+  "forwarding.accepted": "Verificada",
+  "forwarding.verifiedOn": (date: string): string => `Verificada el ${date}`,
+  "forwarding.codeSent": (address: string): string =>
+    `Te enviamos un código a ${address}. Abrí ese buzón, copiá el código y pegalo acá.`,
+  "forwarding.codeLabel": "Código de verificación",
+  "forwarding.verify": "Verificar",
+  "forwarding.verifying": "Verificando…",
+  "forwarding.verified": (address: string): string => `${address} está verificada`,
+  "forwarding.verifyFailed":
+    "Ese código no funcionó. Puede estar mal, vencido, o ser de otra dirección.",
+  "forwarding.remove": "Quitar",
+  "forwarding.removeConfirm": (address: string): string =>
+    `¿Quitar ${address}? Cualquier filtro que reenvíe ahí deja de funcionar.`,
+  "forwarding.removeFailed": "No se pudo quitar la dirección",
+  "forwarding.forwardAllTitle": "Reenviar todo el correo",
+  "forwarding.forwardAllEnable": "Reenviar una copia de cada mensaje",
+  "forwarding.forwardAllTo": "Reenviar a",
+  "forwarding.forwardAllNeedsVerified":
+    "Agregá y verificá una dirección de destino primero.",
+  "forwarding.disposition": "Conservar la copia de Moov",
+  "forwarding.dispositionKeep": "en Recibidos",
+  "forwarding.dispositionArchive": "en Archivo",
+  "forwarding.saveFailed": "El reenvío no se pudo guardar",
+  "forwarding.loadFailed": "No se pudo cargar el reenvío",
+
+  // --- E6: cuota (RFC 9425, canon §2.11) ---
+  "quota.label": "Almacenamiento",
+  "quota.description":
+    "Cuánto de tu buzón está en uso, leído del servidor de correo.",
+  "quota.used": (used: string, limit: string): string => `${used} de ${limit} usados`,
+  "quota.percent": (percent: number): string => `${percent}% ocupado`,
+  "quota.noLimit": "Este buzón no tiene límite de almacenamiento.",
+  "quota.loadFailed": "No se pudo leer el almacenamiento",
+  "quota.refresh": "Actualizar",
+
   "settings.offline.soon": "El modo sin conexión está en camino",
   "settings.offline.soonBody":
     "Leer, buscar y responder sin conexión, con el correo saliente en cola en una bandeja de salida hasta que vuelvas.",

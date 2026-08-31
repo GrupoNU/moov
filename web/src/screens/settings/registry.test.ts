@@ -39,6 +39,14 @@ import {
 const dialogSource = [
   "src/screens/settings/SettingsDialog.tsx",
   "src/screens/settings/LabelsSection.tsx",
+  // E6: four more sections that own their own bodies, for the same reason the
+  // label manager does — each is a stateful surface over server objects, not a
+  // column of preference rows.
+  "src/screens/settings/FiltersSection.tsx",
+  "src/screens/settings/BlockedSection.tsx",
+  "src/screens/settings/ForwardingSection.tsx",
+  "src/screens/settings/VacationSection.tsx",
+  "src/screens/settings/QuotaRow.tsx",
 ]
   .map((path) => readFileSync(resolve(process.cwd(), path), "utf8"))
   .join("\n");
