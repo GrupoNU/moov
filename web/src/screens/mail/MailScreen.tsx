@@ -3395,6 +3395,7 @@ export function MailScreen(): React.JSX.Element {
       const { action, nextState } = resolveShortcut(
         {
           key: event.key,
+          code: event.code,
           ctrlKey: event.ctrlKey,
           metaKey: event.metaKey,
           altKey: event.altKey,
