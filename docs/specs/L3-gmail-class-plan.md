@@ -148,6 +148,11 @@ Todo CORE del canon §2 tiene épica: conversación (E1) · archivo/spam/star/re
 | S/MIME | L | Estándar portable, fuera de MVP | Bajo |
 | Traducir mensaje / confidential mode / AMP | — | N/A-Google (canon §3) | Ninguno |
 | Cambio de contraseña / TOTP (vía API Mailcow) | M-L | Sin análogo Dovecot; panel Cuenta lo declara honesto | El hueco visible sigue; **decisión explícita de Diego** (heredada de v2) |
+| Escotilla 2 de mute ("enviado a un grupo tuyo") | — | **Arbitraje elevado del código al plan (gate final):** sin directorio de grupos no hay señal fiable; usar List-Id abriría un bypass silencioso del mute. Escotillas 1 y 3 implementadas | Mail de listas en hilo muteado se archiva donde Gmail lo dejaría pasar; test pinnea la consecuencia |
+| Reglas de corte de presentación GC-3 (split por cambio de asunto / >100 mensajes) | S | El almacenamiento (grafo References) es correcto; el corte es solo presentación; el hilo real más grande del corpus tiene 24 mensajes | Se nota recién en hilos extremos; entra en el primer ciclo post-deploy |
+| RFC 8058 one-click unsubscribe (lado servidor) | S-M | El parsing + mailto + link http shippearon (E2); el POST one-click requiere proxy server-side (CORS) | El botón funciona por mailto/link; one-click es mejora |
+| Suite e2e Playwright en repo | M | El gate en navegador corre contra el piloto desplegado (smoke de deploy + guion del dueño); infra e2e en repo exige dep nueva y job CI con browser | Cobertura de interacción sostenida por 2046 tests + smoke |
+| Check CI "Bulwark ignora la capability vendor" | S | No ejecutable en CI sin desplegar Bulwark; se verifica en cada deploy contra bulwark.atmosfera.cloud (smoke) | Riesgo 7 lo mantiene a la vista |
 
 ## 7. Riesgos
 
