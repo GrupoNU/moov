@@ -58,6 +58,88 @@
 }
 
 /*
+ * B2: the quick-settings dock, as a track appended to whichever layout is
+ * showing (canon 07 §4 — "the list SHRINKS to make room, no overlay").
+ *
+ * Written as four overrides rather than as a `grid-auto-columns` rule, and the
+ * reason is the "bottom" layout: it uses named `grid-template-areas`, and an
+ * implicitly-placed column in a grid with areas lands OUTSIDE them, which
+ * renders the panel below the reader instead of beside it. Naming the track in
+ * each template is what keeps the dock in the same place in all four.
+ *
+ * The width is fixed rather than fractional on purpose: the panel's contents
+ * are a fixed-size thumbnail plus a label, so a fractional track would leave a
+ * lake of empty space on a wide monitor and clip the previews on a laptop.
+ */
+.quickOpen.body,
+.quickOpen.readingFull {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--quick-width);
+}
+
+.quickOpen.reading {
+  grid-template-columns:
+    var(--rail-width) minmax(18rem, 26rem) minmax(0, 1fr) var(--quick-width);
+}
+
+.quickOpen.readingBottom {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--quick-width);
+  grid-template-areas:
+    "sidebar list   quick"
+    "sidebar reader quick";
+}
+
+.quickOpen.readingBottom .quickPanel {
+  grid-area: quick;
+}
+
+.body {
+  --quick-width: 19rem;
+}
+
+/* The wrapper is a pure grid cell: it establishes the track's box and lets the
+ * panel inside it scroll, and does nothing else. `display:contents` would have
+ * been tidier but breaks the panel's own `overflow-y:auto`, which needs a
+ * bounded parent to scroll against. */
+.quickPanel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.quickPanel > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * Below ~1100px the reading split already collapses to two columns; adding a
+ * 19rem dock on top of that would leave the list under 300px. The dock takes
+ * the reader's place instead, which is the same trade the reading pane already
+ * makes at this width and for the same reason.
+ */
+@media (max-width: 1100px) {
+  .quickOpen.reading {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--quick-width);
+  }
+}
+
+@media (max-width: 860px) {
+  .quickOpen.body,
+  .quickOpen.reading,
+  .quickOpen.readingFull {
+    /* On a phone the dock IS the screen: a 19rem panel beside a 360px list
+       leaves neither usable. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quickOpen .listColumn,
+  .quickOpen .readerColumn {
+    display: none;
+  }
+}
+
+/*
  * The three reading-pane layouts (E5, canon §2.4 — /9499937).
  *
  * All three are the SAME grid with different tracks. Nothing is repositioned

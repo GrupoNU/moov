@@ -1,0 +1,174 @@
+/*
+ * Quick settings — the docked panel (E12/B2, canon 07 §4).
+ *
+ * # Why it is a GRID TRACK and not an overlay
+ *
+ * Gmail's quick panel does not float above the mail: the list SHRINKS to make
+ * room for it. That is the whole reason to build a dock rather than a popover
+ * — the panel's four options are all about what the list looks like, and a
+ * surface that covers the list while you tune it is a surface that hides its
+ * own effect.
+ *
+ * So this element carries no `position: fixed`. It is a real column added to
+ * the shell's grid (see `.quickOpen` in MailScreen.module.css), and the reflow
+ * IS the feature.
+ */
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--surface-default);
+  border-left: 1px solid var(--border-subtle);
+  /* The panel is script-focused on open; the ring would otherwise be drawn
+   * around the whole column, which reads as an error state rather than as
+   * "you are here". Its heading and the focus order carry the same
+   * information, so suppressing it loses nothing. */
+  outline: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+}
+
+.close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.close:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+/* Outlined, full width, at the top — Gmail's own treatment. Outlined rather
+ * than filled because it is a NAVIGATION, not the panel's primary action: the
+ * primary actions here are the radios. */
+.seeAll {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-accent);
+  text-align: center;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.seeAll:hover {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+
+/* The fieldset's default border and padding would draw a box around every
+ * group; the legend alone is enough separation at this size. */
+.group {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.legend {
+  padding: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+/*
+ * One option: radio, label, thumbnail. The thumbnail is pushed to the right
+ * edge with `margin-left:auto` so every preview in the panel lines up in one
+ * column regardless of how long its label is — which is what lets the eye
+ * compare the three pictures instead of hunting for them.
+ */
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.option:hover {
+  background: var(--surface-sunken);
+}
+
+/* The native radio, kept. Its focus ring, its arrow-key behaviour and its
+ * forced-colors rendering all come free and are all things a styled span would
+ * have had to reimplement. */
+.radio {
+  flex: none;
+  accent-color: var(--color-accent);
+}
+
+.optionLabel {
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+}
+
+.thumb {
+  flex: none;
+  width: 48px;
+  height: 32px;
+  margin-left: auto;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * The chosen option's preview is the one the eye should land on. A ring rather
+ * than a fill, so the picture inside it is unchanged — tinting the thumbnail
+ * would make the selected density look like a different density.
+ *
+ * A `box-shadow` ring, NOT `outline`. The a11y gate (`styles/a11y.test.ts`)
+ * reserves `outline` for the focus token and it is right to: a SELECTION ring
+ * drawn with the same property as the FOCUS ring makes the two
+ * indistinguishable the moment they coincide, which is exactly when a keyboard
+ * user needs to tell "this is where I am" from "this is what is chosen".
+ * `box-shadow` leaves the focus outline free to draw on top.
+ */
+.option:has(.radio:checked) .thumb {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+.option:has(.radio:checked) .optionLabel {
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+}

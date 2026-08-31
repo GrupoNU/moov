@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,9 +24,9 @@ import { MailScreen } from "./MailScreen";
  *
  * It is a CANARY, not a suite. It asserts that the shell mounts against a fake
  * server, renders the list, opens a message with Enter, and that the settings
- * gear raises its dialog. Those four cover the shell's load-bearing seams: the
- * JMAP plumbing, the keyboard layer's connection to real state, and the modal
- * surface.
+ * gear walks its two-step path (E12: quick dock → full surface). Those cover
+ * the shell's load-bearing seams: the JMAP plumbing, the keyboard layer's
+ * connection to real state, and the settings surfaces.
  *
  * It is NOT an attempt to test the screen's behaviour exhaustively. The
  * behaviour lives in the components and hooks that already have their own
@@ -304,7 +304,16 @@ describe("MailScreen — the shell's canary", () => {
     });
   });
 
-  it("opens the settings dialog from the gear", async () => {
+  /**
+   * E12: the gear is a TWO-STEP affordance now (canon 07 §1, §4).
+   *
+   * The gear opens the quick-settings dock; the dock's "See all settings" is
+   * what opens the full surface. This walks both steps against the real shell,
+   * because the wiring between them is the thing a unit test of either piece
+   * alone cannot see — the panel does not know what a settings dialog is, and
+   * the dialog does not know a panel exists.
+   */
+  it("opens quick settings from the gear, and the full surface from there", async () => {
     const user = userEvent.setup();
     renderShell();
     await waitFor(
@@ -316,8 +325,31 @@ describe("MailScreen — the shell's canary", () => {
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
 
+    const panel = await screen.findByRole("complementary", {
+      name: "Quick settings",
+    });
+    /*
+     * The dock is NOT a modal: the mail behind it must still be on screen,
+     * which is the whole reason it is a docked panel rather than a dialog.
+     *
+     * `getAllBy`, because by this point in the file a message may be open and
+     * the subject then appears in BOTH the list row and the reader's heading.
+     * Asserting on exactly one would be asserting on the reading pane's state,
+     * which is not what this test is about.
+     */
+    expect(screen.getAllByText("The first message").length).toBeGreaterThan(0);
+
+    await user.click(
+      within(panel).getByRole("button", { name: "See all settings" }),
+    );
+
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     });
+    // The panel hands OFF rather than stacking: leaving a shrunken list behind
+    // the sheet is a layout the user never asked for.
+    expect(
+      screen.queryByRole("complementary", { name: "Quick settings" }),
+    ).not.toBeInTheDocument();
   });
 });

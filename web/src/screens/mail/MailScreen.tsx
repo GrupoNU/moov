@@ -145,6 +145,7 @@ import { MessageList } from "./MessageList";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
 import { TopBar } from "./TopBar";
+import { QuickSettingsPanel } from "../settings/QuickSettingsPanel";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import type { LabelsSectionProps } from "../settings/LabelsSection";
 import type { FiltersSectionProps } from "../settings/FiltersSection";
@@ -341,6 +342,15 @@ export function MailScreen(): React.JSX.Element {
       return next;
     });
   }, []);
+
+  /**
+   * B2: the quick-settings dock.
+   *
+   * Session state, not persisted: it is a transient surface the user opens to
+   * change one thing, and a panel that reopened itself on every load would
+   * permanently narrow the list for someone who forgot to close it once.
+   */
+  const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
 
   /*
    * E3: the recent-search history and the result snippets.
@@ -3544,16 +3554,15 @@ export function MailScreen(): React.JSX.Element {
           setHelpOpen(true);
         }}
         /*
-         * B1 wires the gear to the settings surface that EXISTS at this
-         * commit — the sheet — so the app is whole after every block. B2
-         * repoints it at the quick-settings panel and the sheet becomes that
-         * panel's "Ver todos los ajustes" destination, which is Gmail's own
-         * two-step shape.
+         * The gear opens the QUICK panel, and the panel's "See all settings"
+         * opens the full surface — Gmail's two-step shape (canon 07 §1, §4).
+         * It TOGGLES rather than only opening, because a gear that does
+         * nothing when the panel it opened is already showing reads as broken.
          */
         onOpenQuickSettings={() => {
-          setSettingsOpen(true);
+          setQuickSettingsOpen((open) => !open);
         }}
-        quickSettingsOpen={settingsOpen}
+        quickSettingsOpen={quickSettingsOpen}
       >
         <SearchBar
           ref={searchInputRef}
@@ -3599,6 +3608,13 @@ export function MailScreen(): React.JSX.Element {
            * folder list every time the layout changed width.
            */
           sidebarCollapsed ? styles.railCollapsed : "",
+          /*
+           * B2: the dock's own track. The panel renders `null` when closed, so
+           * a permanent track would leave a `0fr` column and a stray border;
+           * appending the column only while it is open keeps every other
+           * layout byte-identical to what it was.
+           */
+          quickSettingsOpen ? styles.quickOpen : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -4123,6 +4139,42 @@ export function MailScreen(): React.JSX.Element {
               onConversationControls={setConversationControls}
             />
           </aside>
+        )}
+
+        {/*
+          B2: quick settings, as the LAST GRID COLUMN.
+
+          Inside the grid, not floating above it, which is the whole design
+          (canon 07 §4): the list shrinks to make room and the page stays
+          interactive, so you change the density and watch the rows you are
+          already looking at change. A modal would hide the very thing every
+          option in the panel is about.
+        */}
+        {quickSettingsOpen && (
+          /*
+           * The wrapper exists for ONE reason: the "below the list" layout
+           * places its panes by named grid AREAS, and a grid area can only be
+           * assigned by a rule in the grid's own stylesheet. The panel's class
+           * comes from its own CSS module, which this file cannot name. One
+           * div owned here is a smaller price than either exporting a class
+           * across modules or giving the panel a `gridArea` prop it would
+           * otherwise have no business knowing about.
+           */
+          <div className={styles.quickPanel}>
+            <QuickSettingsPanel
+              isOpen={quickSettingsOpen}
+              onClose={() => {
+                setQuickSettingsOpen(false);
+              }}
+              onOpenFullSettings={() => {
+                // The panel closes as the full surface opens: leaving a
+                // shrunken list behind a settings sheet the user is about to
+                // read is a layout they never asked for and would have to undo.
+                setQuickSettingsOpen(false);
+                setSettingsOpen(true);
+              }}
+            />
+          </div>
         )}
       </div>
 

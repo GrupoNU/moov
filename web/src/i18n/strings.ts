@@ -99,6 +99,11 @@ export const en = {
   "shell.accountMenu": "Account",
   "shell.help": "Support and keyboard shortcuts",
 
+  // --- E12: quick settings, the gear's docked panel (canon 07 §4) ---
+  "quickSettings.title": "Quick settings",
+  "quickSettings.seeAll": "See all settings",
+  "quickSettings.close": "Close quick settings",
+
   // --- settings ---
   "settings.title": "Settings",
   "settings.open": "Settings",
@@ -1248,6 +1253,10 @@ export const es: Strings = {
   "shell.expandSidebar": "Expandir la lista de carpetas",
   "shell.accountMenu": "Cuenta",
   "shell.help": "Ayuda y atajos de teclado",
+
+  "quickSettings.title": "Ajustes rápidos",
+  "quickSettings.seeAll": "Ver todos los ajustes",
+  "quickSettings.close": "Cerrar los ajustes rápidos",
 
   "settings.title": "Configuración",
   "settings.open": "Configuración",

@@ -1,0 +1,320 @@
+import { useEffect, useId, useRef } from "react";
+
+import { useTranslation } from "../../i18n/I18nProvider";
+import { usePrefs } from "../../mail/PrefsProvider";
+import {
+  DENSITIES,
+  INBOX_TYPES,
+  READING_PANES,
+  THEMES,
+  type Density,
+  type InboxType,
+  type ReadingPane,
+  type Theme,
+} from "../../mail/prefs";
+import type { PlainStringKey } from "./registry";
+import {
+  DensityThumb,
+  InboxTypeThumb,
+  ReadingPaneThumb,
+  ThemeThumb,
+} from "./QuickThumbnails";
+import styles from "./QuickSettingsPanel.module.css";
+
+/**
+ * Quick settings — the gear's docked panel (E12/B2, canon 07 §4).
+ *
+ * # A dock, not a dialog, and the difference is the whole design
+ *
+ * Gmail's quick panel slides in from the right edge and the LIST SHRINKS to
+ * make room. There is no overlay, no backdrop and no inertness: the mail behind
+ * it stays live, and that is the point — you change the density and watch the
+ * rows you are already looking at change, then change it again. A modal would
+ * hide the very thing every option in the panel is about.
+ *
+ * That rules out `<dialog>.showModal()`, which the full settings sheet uses for
+ * exactly the opposite reason. So the three properties `showModal()` would have
+ * supplied are re-established by hand, and only the two that are CORRECT for a
+ * non-modal surface:
+ *
+ *   - **Escape closes**, because every dismissible surface in this app does;
+ *   - **focus moves in on open and returns to the gear on close**, because a
+ *     panel that appears without focus is a panel a keyboard user has to hunt
+ *     for with Tab, and one that drops focus on close leaves them at the top of
+ *     the document.
+ *
+ * The third — a focus TRAP — is deliberately not implemented. Trapping focus in
+ * a surface that leaves the page interactive is a lie about the page's state:
+ * Tab must be able to leave, because the user can still click out there.
+ *
+ * # Semantics: `complementary`, not `dialog`
+ *
+ * `role="dialog"` on a non-modal panel makes screen readers announce a modal
+ * context that does not exist, and some will not let the user tab out of it.
+ * A labelled `complementary` landmark is what this actually is — supporting
+ * content beside the main region — and it gives the user a landmark to jump to,
+ * which a dialog does not.
+ *
+ * # It owns no state
+ *
+ * Every control here writes the SAME `PrefsProvider` key the full settings page
+ * writes. This is a second surface over one source of truth, not a second copy
+ * of the settings: changing density here and opening the page shows the new
+ * value, because there is nothing to keep in step.
+ */
+
+/**
+ * The option labels, written out per value rather than built by templating the
+ * key.
+ *
+ * `` `settings.density.${option}` `` would need an `as PlainStringKey` to
+ * compile, and that cast is exactly the thing this table exists to avoid: it
+ * would let a renamed or deleted string key pass the type checker and reach a
+ * user as a raw key on screen. Written as literals, each one is checked against
+ * `Strings` — which is derived from the English table, so a missing SPANISH
+ * translation is a compile error too. That guarantee is the whole point of the
+ * i18n module's design and a template literal quietly opts out of it.
+ */
+const DENSITY_LABELS: Readonly<Record<Density, PlainStringKey>> = {
+  default: "settings.density.default",
+  comfortable: "settings.density.comfortable",
+  compact: "settings.density.compact",
+};
+
+const THEME_LABELS: Readonly<Record<Theme, PlainStringKey>> = {
+  light: "theme.light",
+  dark: "theme.dark",
+  system: "theme.system",
+};
+
+const INBOX_TYPE_LABELS: Readonly<Record<InboxType, PlainStringKey>> = {
+  default: "settings.inboxType.default",
+  unread_first: "settings.inboxType.unread_first",
+  starred_first: "settings.inboxType.starred_first",
+};
+
+const READING_PANE_LABELS: Readonly<Record<ReadingPane, PlainStringKey>> = {
+  none: "settings.readingPane.none",
+  right: "settings.readingPane.right",
+  bottom: "settings.readingPane.bottom",
+};
+
+export interface QuickSettingsPanelProps {
+  readonly isOpen: boolean;
+  readonly onClose: () => void;
+  /** "See all settings" — routes to the settings page (B3). */
+  readonly onOpenFullSettings: () => void;
+}
+
+export function QuickSettingsPanel({
+  isOpen,
+  onClose,
+  onOpenFullSettings,
+}: QuickSettingsPanelProps): React.JSX.Element | null {
+  const { t } = useTranslation();
+  const { prefs, setPref } = usePrefs();
+  const panelRef = useRef<HTMLElement | null>(null);
+  const headingId = useId();
+  /*
+   * Where focus came FROM, captured on open.
+   *
+   * Read from `document.activeElement` rather than taking a ref to the gear:
+   * the panel can also be opened by a route or a future shortcut, and a
+   * hard-wired return target would then send focus to a button the user never
+   * touched. Whatever had focus is the honest place to give it back.
+   */
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    /*
+     * Focus lands on the PANEL, not on its first control. Landing on "See all
+     * settings" would make Escape-then-Enter a way to navigate away by
+     * accident, and it would read the button's label before the panel's own
+     * name — so the user hears what they activated only after hearing where
+     * they can go. The container is `tabIndex={-1}` for exactly this: focusable
+     * by script, never by Tab.
+     */
+    panelRef.current?.focus();
+    return undefined;
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      /*
+       * Stopped, so the shell's global Escape does not ALSO fire on this press
+       * and close the reading pane behind the panel — dismissing two surfaces
+       * with one key is the behaviour that makes people stop trusting Escape.
+       */
+      event.stopPropagation();
+      onClose();
+    };
+    // Capture phase, so this runs before the shell's document-level handler.
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [isOpen, onClose]);
+
+  /*
+   * Focus returns on the way OUT, in a cleanup rather than in the close
+   * handler, so it happens however the panel came to be closed — the X, Escape,
+   * the gear toggling it off, or a route change that unmounted it.
+   */
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    return () => {
+      returnFocusRef.current?.focus();
+    };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    /*
+     * `<aside>` IS `role="complementary"` — the role is implicit and stating
+     * it is redundant, which the linter is right to reject. What matters is
+     * that this is not a `dialog`: see the header on why a non-modal surface
+     * must not claim modal semantics.
+     */
+    <aside
+      ref={panelRef}
+      className={styles.panel}
+      aria-labelledby={headingId}
+      tabIndex={-1}
+    >
+      <div className={styles.header}>
+        <h2 className={styles.title} id={headingId}>
+          {t("quickSettings.title")}
+        </h2>
+        <button
+          type="button"
+          className={styles.close}
+          onClick={onClose}
+          aria-label={t("quickSettings.close")}
+        >
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+            <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+          </svg>
+        </button>
+      </div>
+
+      {/*
+        The full-width outlined button at the TOP, which is where Gmail puts
+        it: the panel is a shortcut to four settings, and the door to the other
+        twenty-odd has to be the first thing you see, not something you scroll
+        past the previews to find.
+      */}
+      <button type="button" className={styles.seeAll} onClick={onOpenFullSettings}>
+        {t("quickSettings.seeAll")}
+      </button>
+
+      <div className={styles.sections}>
+        <ThumbGroup<Density>
+          legendKey="settings.density.label"
+          value={prefs.density}
+          options={DENSITIES}
+          labelKey={(option) => DENSITY_LABELS[option]}
+          onChange={(next) => {
+            void setPref("density", next);
+          }}
+          renderThumb={(option) => <DensityThumb density={option} />}
+        />
+
+        <ThumbGroup<Theme>
+          legendKey="theme.label"
+          value={prefs.theme}
+          options={THEMES}
+          labelKey={(option) => THEME_LABELS[option]}
+          onChange={(next) => {
+            void setPref("theme", next);
+          }}
+          renderThumb={(option) => <ThemeThumb theme={option} />}
+        />
+
+        <ThumbGroup<InboxType>
+          legendKey="settings.inboxType.label"
+          value={prefs.inboxType}
+          options={INBOX_TYPES}
+          labelKey={(option) => INBOX_TYPE_LABELS[option]}
+          onChange={(next) => {
+            void setPref("inboxType", next);
+          }}
+          renderThumb={(option) => <InboxTypeThumb inboxType={option} />}
+        />
+
+        <ThumbGroup<ReadingPane>
+          legendKey="settings.readingPane.label"
+          value={prefs.readingPane}
+          options={READING_PANES}
+          labelKey={(option) => READING_PANE_LABELS[option]}
+          onChange={(next) => {
+            void setPref("readingPane", next);
+          }}
+          renderThumb={(option) => <ReadingPaneThumb pane={option} />}
+        />
+      </div>
+    </aside>
+  );
+}
+
+/**
+ * One labelled group of radio-plus-thumbnail options.
+ *
+ * # Why real radios and a real fieldset
+ *
+ * The keyboard behaviour of a radio group — arrow keys move between options,
+ * the whole group is ONE tab stop, the checked option is where focus enters —
+ * comes from the browser for free and is subtly wrong in every hand-rolled
+ * version. The fieldset's legend is what names the group when a screen reader
+ * announces "Density, Compact, radio button, 3 of 3"; without it each option is
+ * announced with no idea what it is an option OF.
+ *
+ * The thumbnail is inside the `<label>` so clicking the picture selects the
+ * option — which is what a picture of the result invites, and what makes the
+ * whole panel feel like Gmail's rather than like a form with illustrations.
+ */
+function ThumbGroup<T extends string>({
+  legendKey,
+  value,
+  options,
+  labelKey,
+  onChange,
+  renderThumb,
+}: {
+  readonly legendKey: PlainStringKey;
+  readonly value: T;
+  readonly options: readonly T[];
+  readonly labelKey: (option: T) => PlainStringKey;
+  readonly onChange: (next: T) => void;
+  readonly renderThumb: (option: T) => React.ReactNode;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  const groupName = useId();
+
+  return (
+    <fieldset className={styles.group}>
+      <legend className={styles.legend}>{t(legendKey)}</legend>
+      {options.map((option) => (
+        <label key={option} className={styles.option}>
+          <input
+            type="radio"
+            className={styles.radio}
+            name={groupName}
+            value={option}
+            checked={value === option}
+            onChange={() => {
+              onChange(option);
+            }}
+          />
+          <span className={styles.optionLabel}>{t(labelKey(option))}</span>
+          {renderThumb(option)}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
