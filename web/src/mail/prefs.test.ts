@@ -11,9 +11,12 @@ import {
   paneLayout,
   parsePrefs,
   PREFS_ID,
+  PREFS_V2_KEYS,
   READING_PANES,
+  resolveSignature,
   rowHeightFor,
   savePrefs,
+  servesPrefsV2,
   sessionHasPrefs,
   sortForInboxType,
   UNDO_SEND_SECONDS,
@@ -55,6 +58,18 @@ const FULL_WIRE = {
   inboxType: "unread_first",
   notifications: "new",
   theme: "dark",
+  // v2, in the exact shape `prefsObject` renders: the two maps always present
+  // (never null), the two id references as String|null.
+  labels: { "$label:work": { color: "amber", visibility: "showIfUnread" } },
+  offlineDepth: { headersPerMailbox: 500, bodies: 250 },
+  addressAutocomplete: "manual",
+  sendAndArchive: false,
+  defaultReplyBehavior: "replyAll",
+  signatures: {
+    items: { work: { name: "Work", textBody: "-- \nD", htmlBody: "<p>D</p>" } },
+    forNew: "work",
+    forReply: null,
+  },
 };
 
 describe("parsePrefs", () => {
@@ -73,6 +88,16 @@ describe("parsePrefs", () => {
       inboxType: "unread_first",
       notifications: "new",
       theme: "dark",
+      labels: { "$label:work": { color: "amber", visibility: "showIfUnread" } },
+      offlineDepth: { headersPerMailbox: 500, bodies: 250 },
+      addressAutocomplete: "manual",
+      sendAndArchive: false,
+      defaultReplyBehavior: "replyAll",
+      signatures: {
+        items: { work: { name: "Work", textBody: "-- \nD", htmlBody: "<p>D</p>" } },
+        forNew: "work",
+        forReply: null,
+      },
     } satisfies Prefs);
   });
 
@@ -437,5 +462,219 @@ describe("paneLayout", () => {
         expect(layout.showsReader || !layout.listHidden).toBe(true);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prefs v2 — the six roaming keys
+// ---------------------------------------------------------------------------
+
+describe("parsePrefs — the v2 keys", () => {
+  it("tolerates their complete absence, which is a v1 server mid-deploy", () => {
+    /*
+     * The realistic failure this guards: a PWA newer than the moovd it is
+     * talking to. Every v2 key must fall back to its own default while the
+     * v1 keys the old server DID send survive intact.
+     */
+    // Built by FILTERING rather than by copy-then-delete: the same discipline
+    // `labelStore.withoutLabel` uses, and it avoids a dynamic `delete`.
+    const v2 = new Set<string>(PREFS_V2_KEYS);
+    const v1 = Object.fromEntries(
+      Object.entries(FULL_WIRE).filter(([key]) => !v2.has(key)),
+    );
+
+    const parsed = parsePrefs(v1);
+    expect(parsed.labels).toEqual({});
+    expect(parsed.offlineDepth).toEqual(DEFAULT_PREFS.offlineDepth);
+    expect(parsed.addressAutocomplete).toBe(DEFAULT_PREFS.addressAutocomplete);
+    expect(parsed.sendAndArchive).toBe(DEFAULT_PREFS.sendAndArchive);
+    expect(parsed.defaultReplyBehavior).toBe(DEFAULT_PREFS.defaultReplyBehavior);
+    expect(parsed.signatures).toEqual(DEFAULT_PREFS.signatures);
+    // …and the v1 half is untouched.
+    expect(parsed.density).toBe("compact");
+    expect(parsed.undoSendSeconds).toBe(30);
+  });
+
+  it("feature-detects a v2 server from the object, not from a version number", () => {
+    /*
+     * The server publishes no schema version on the wire — deliberately, since
+     * it is metadata about the STORED document (`encodePrefs`) and RFC 8621 has
+     * no place for it. Structural detection is therefore the honest answer.
+     */
+    expect(servesPrefsV2(FULL_WIRE)).toBe(true);
+
+    // One missing key is enough: a v2 server renders all six unconditionally.
+    const { signatures: _absent, ...withoutSignatures } = FULL_WIRE;
+    expect(servesPrefsV2(withoutSignatures)).toBe(false);
+    expect(servesPrefsV2(null)).toBe(false);
+  });
+
+  it("drops a half-written label entry rather than inventing a colour", () => {
+    /*
+     * The opposite of how scalars degrade, and deliberately: a scalar has one
+     * honest fallback, while a half-written label would render a chip in a
+     * colour the user never picked. Dropping it returns the label to the
+     * default swatch, which is exactly what "no metadata" already means.
+     */
+    const parsed = parsePrefs({
+      ...FULL_WIRE,
+      labels: {
+        "$label:ok": { color: "teal", visibility: "hide" },
+        "$label:noColor": { visibility: "show" },
+        "$label:badVisibility": { color: "teal", visibility: "sometimes" },
+      },
+    });
+    expect(parsed.labels).toEqual({ "$label:ok": { color: "teal", visibility: "hide" } });
+  });
+
+  it("clamps each offline depth independently, out-of-range falling to the default", () => {
+    const parsed = parsePrefs({
+      ...FULL_WIRE,
+      // Below the floor and inside the range — the floor is what the server
+      // also refuses, and the valid half must not be collateral damage.
+      offlineDepth: { headersPerMailbox: 10, bodies: 300 },
+    });
+    expect(parsed.offlineDepth.headersPerMailbox).toBe(
+      DEFAULT_PREFS.offlineDepth.headersPerMailbox,
+    );
+    expect(parsed.offlineDepth.bodies).toBe(300);
+  });
+
+  it("treats a signature reference that names no item as none", () => {
+    /*
+     * The server refuses a dangling reference on WRITE, for a stated reason:
+     * the fallback it would silently produce is a different signature going out
+     * under the user's name. The read path honours the same rule.
+     */
+    const parsed = parsePrefs({
+      ...FULL_WIRE,
+      signatures: { items: {}, forNew: "ghost", forReply: null },
+    });
+    expect(parsed.signatures.forNew).toBeNull();
+  });
+});
+
+describe("resolveSignature — the precedence rule, quoted from store.Prefs", () => {
+  const signatures = {
+    items: {
+      work: { name: "Work", textBody: "-- \nWork", htmlBody: "<p>Work</p>" },
+      plain: { name: "Plain", textBody: "-- \nPlain", htmlBody: "" },
+    },
+    forNew: "work",
+    forReply: "plain",
+  };
+
+  it("uses forNew for new mail and forReply for replies", () => {
+    expect(resolveSignature(signatures, "new")?.text).toBe("-- \nWork");
+    expect(resolveSignature(signatures, "reply")?.text).toBe("-- \nPlain");
+  });
+
+  it("falls back to the identity signature when the reference is none", () => {
+    // `undefined` is the caller's cue to use the Identity's own — the RFC 8621
+    // §6 behaviour every other JMAP client sees.
+    const none = { items: signatures.items, forNew: null, forReply: null };
+    expect(resolveSignature(none, "new")).toBeUndefined();
+    expect(resolveSignature(none, "reply")).toBeUndefined();
+  });
+
+  it("uses the text body for HTML when a named signature has no html", () => {
+    // Every signature this UI can create has an empty htmlBody, so without
+    // this the rich composer's footer would blank out on choosing one.
+    expect(resolveSignature(signatures, "reply")?.html).toBe("-- \nPlain");
+    // A signature that DOES carry html keeps it.
+    expect(resolveSignature(signatures, "new")?.html).toBe("<p>Work</p>");
+  });
+});
+
+describe("the wire shape of a v2 set — the Go↔TS seam no compiler spans", () => {
+  /*
+   * The gate's finding 2 named this precisely: "nothing pins the Go↔TS seam".
+   * Each case below asserts the EXACT JSON a set of one v2 key puts on the
+   * wire, against the shape `internal/jmap/mail/prefs.go` parses:
+   * `applyLabelsPatch`, `applyOfflineDepthPatch`, `applySignaturesPatch` and
+   * the scalar `prefsPatchEnum`/`prefsPatchBool` arms.
+   *
+   * A rename on either side now fails here instead of at a user's settings
+   * screen, which is the whole point — the two schemas are the same object
+   * written twice, across a language boundary.
+   */
+  function capture(patch: Partial<Prefs>): Record<string, unknown> {
+    const { client, calls } = fakeClient(() => ({
+      methodResponses: [
+        ["Prefs/set", { updated: { [PREFS_ID]: null } }, "p"],
+        ["Prefs/get", { state: "s2", list: [FULL_WIRE] }, "g"],
+      ],
+      sessionState: "x",
+    }) as unknown as JmapResponse);
+    void savePrefs(client, "a1", patch);
+    const [methodCalls] = calls[0] as [readonly unknown[]];
+    const [, args] = methodCalls[0] as [string, Record<string, unknown>, string];
+    const update = args.update as Record<string, Record<string, unknown>>;
+    return update[PREFS_ID] ?? {};
+  }
+
+  it("labels: an object keyed by keyword, each with color and visibility", () => {
+    expect(
+      capture({ labels: { "$label:work": { color: "amber", visibility: "showIfUnread" } } }),
+    ).toEqual({
+      // NOT `colorId` — the wire name is `color`, and the server's
+      // `parseLabelPrefs` refuses any other nested key by name.
+      labels: { "$label:work": { color: "amber", visibility: "showIfUnread" } },
+    });
+  });
+
+  it("offlineDepth: an object with headersPerMailbox and bodies", () => {
+    expect(capture({ offlineDepth: { headersPerMailbox: 500, bodies: 250 } })).toEqual({
+      offlineDepth: { headersPerMailbox: 500, bodies: 250 },
+    });
+  });
+
+  it("addressAutocomplete: the enum string, never a boolean", () => {
+    // The client speaks booleans internally; the wire is "auto"/"manual", and
+    // a boolean here would be refused with invalidProperties.
+    expect(capture({ addressAutocomplete: "manual" })).toEqual({
+      addressAutocomplete: "manual",
+    });
+  });
+
+  it("sendAndArchive: a bare boolean", () => {
+    expect(capture({ sendAndArchive: false })).toEqual({ sendAndArchive: false });
+  });
+
+  it("defaultReplyBehavior: the enum string", () => {
+    expect(capture({ defaultReplyBehavior: "replyAll" })).toEqual({
+      defaultReplyBehavior: "replyAll",
+    });
+  });
+
+  it("signatures: items plus forNew/forReply, with null (not empty string) for none", () => {
+    const patch = capture({
+      signatures: {
+        items: { work: { name: "Work", textBody: "-- \nD", htmlBody: "" } },
+        forNew: "work",
+        forReply: null,
+      },
+    });
+    expect(patch).toEqual({
+      signatures: {
+        items: { work: { name: "Work", textBody: "-- \nD", htmlBody: "" } },
+        forNew: "work",
+        forReply: null,
+      },
+    });
+    /*
+     * The null is load-bearing and worth its own assertion: `prefsOptionalID`
+     * emits null and `parseSignatureRef` reads it as "none". An empty string
+     * happens to be accepted too, but relying on that would be relying on a
+     * tolerance rather than on the contract.
+     */
+    const signatures = patch.signatures as Record<string, unknown>;
+    expect(signatures.forReply).toBeNull();
+  });
+
+  it("sends ONLY the named key, never the whole object", () => {
+    // A save that sent every key would overwrite whatever another tab changed
+    // between our read and our write.
+    expect(Object.keys(capture({ sendAndArchive: true }))).toEqual(["sendAndArchive"]);
   });
 });

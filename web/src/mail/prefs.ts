@@ -86,6 +86,110 @@ export type InboxType = (typeof INBOX_TYPES)[number];
 export const NOTIFICATION_MODES = ["new", "off"] as const;
 export type NotificationMode = (typeof NOTIFICATION_MODES)[number];
 
+// --- v2: the roaming keys of epics E5, E7, E8 and E9b ---------------------
+//
+// These six mirror `store.Prefs`' v2 block. Each replaces a localStorage
+// "named gap" its epic declared: label presentation, the offline depth, the
+// autocomplete opt-out, the Send & Archive button, the reply default and the
+// named signatures. The server validates every one of them
+// (`internal/jmap/mail/prefs.go`), so the domains below are not advisory —
+// a value outside them is refused with `invalidProperties` and rolled back.
+
+/**
+ * Gmail's three label-list visibilities (canon §2.6), governing the SIDEBAR
+ * only: a hidden label still applies to its messages and still renders on the
+ * message itself.
+ *
+ * Mirrors the server's `labelVisibilityChoices`. `labelStore.ts` carries the
+ * same triple as `LABEL_VISIBILITIES` for the local shape; a test pins that the
+ * two agree, because they are the same domain written twice.
+ */
+export const LABEL_PREF_VISIBILITIES = ["show", "showIfUnread", "hide"] as const;
+export type LabelPrefVisibility = (typeof LABEL_PREF_VISIBILITIES)[number];
+
+/** Gmail's "create contacts for autocomplete" (canon §2.3). */
+export const ADDRESS_AUTOCOMPLETE_MODES = ["auto", "manual"] as const;
+export type AddressAutocompleteMode = (typeof ADDRESS_AUTOCOMPLETE_MODES)[number];
+
+/**
+ * Which reply the reader offers FIRST (canon §2.3).
+ *
+ * Gmail's default is "reply", and the reason to adopt it is not deference: the
+ * failure modes are asymmetric. Defaulting to reply-all means a user eventually
+ * answers a mailing list in a message they meant for one person, which cannot
+ * be taken back; defaulting to reply costs a click.
+ */
+export const REPLY_BEHAVIORS = ["reply", "replyAll"] as const;
+export type ReplyBehavior = (typeof REPLY_BEHAVIORS)[number];
+
+/**
+ * The inclusive bounds the server enforces on the offline depths
+ * (`minOfflineHeaders`/`maxOfflineHeaders`/`minOfflineBodies`/`maxOfflineBodies`).
+ *
+ * They are mirrored rather than fetched from the capability so a settings
+ * control can constrain the user BEFORE a save is refused. The floors are not
+ * decoration: a header depth below a screenful makes the offline list visibly
+ * truncated at the first scroll, which reads as data loss rather than as a
+ * setting.
+ */
+export const OFFLINE_DEPTH_BOUNDS = {
+  headersPerMailbox: { min: 50, max: 1000 },
+  bodies: { min: 20, max: 500 },
+} as const;
+
+/** The caps the server enforces on the v2 collections. */
+export const MAX_LABEL_PREFS = 26;
+export const MAX_SIGNATURE_ITEMS = 10;
+
+/** One label's presentation metadata, as prefs carries it. */
+export interface LabelPrefs {
+  /** A palette id — a NAME such as "amber", never a hex value. */
+  readonly color: string;
+  readonly visibility: LabelPrefVisibility;
+}
+
+/** How much mail the PWA keeps for offline reading (E9b). */
+export interface OfflineDepth {
+  readonly headersPerMailbox: number;
+  readonly bodies: number;
+}
+
+/** One named signature (E7). `htmlBody` is sanitized by the server on the way in. */
+export interface SignatureItem {
+  readonly name: string;
+  readonly textBody: string;
+  readonly htmlBody: string;
+}
+
+/**
+ * The named-signature model (E7), and the precedence rule against the
+ * per-identity signature — MIRRORED here from `store.Prefs.Signatures`, which is
+ * where it is stated authoritatively:
+ *
+ * ```
+ * MOOV's own PWA, composing new mail : if signatures.forNew names an existing
+ *                                      item, use that item's body; otherwise
+ *                                      fall back to the Identity's signature.
+ * MOOV's own PWA, composing a reply  : the same, with forReply.
+ * Any other JMAP client              : the Identity's signature, always.
+ * ```
+ *
+ * This is a PRESENTATION-layer preference, not a protocol divergence: the
+ * composer inserts the signature into the body before submission, exactly as
+ * RFC 8621 §6 says a client SHOULD do with the Identity's own. The server
+ * assembles no signature into any message, so two clients can only ever
+ * disagree about what the composer PRE-FILLED.
+ *
+ * {@link resolveSignature} is the one implementation of the rule, and
+ * `prefs.test.ts` pins it against the quoted table above.
+ */
+export interface SignaturePrefs {
+  readonly items: Readonly<Record<string, SignatureItem>>;
+  /** An item id, or null for "fall back to the Identity's own signature". */
+  readonly forNew: string | null;
+  readonly forReply: string | null;
+}
+
 /** Account-level, like Gmail's. localStorage keeps a pre-paint COPY. */
 export const THEMES = ["light", "dark", "system"] as const;
 export type Theme = (typeof THEMES)[number];
@@ -120,7 +224,36 @@ export interface Prefs {
   readonly inboxType: InboxType;
   readonly notifications: NotificationMode;
   readonly theme: Theme;
+
+  // --- v2 ---
+
+  /** Label presentation, keyed by the IMAP keyword (`$label:work`). */
+  readonly labels: Readonly<Record<string, LabelPrefs>>;
+  readonly offlineDepth: OfflineDepth;
+  readonly addressAutocomplete: AddressAutocompleteMode;
+  readonly sendAndArchive: boolean;
+  readonly defaultReplyBehavior: ReplyBehavior;
+  readonly signatures: SignaturePrefs;
 }
+
+/**
+ * The v2 keys, as data.
+ *
+ * Used by {@link prefsSchemaVersion} to decide whether a response came from a
+ * server that serves them, and by the tests that pin the wire shape. Listing
+ * them once means a seventh key added to the interface without being added here
+ * is caught by the `satisfies` below rather than by a user.
+ */
+export const PREFS_V2_KEYS = [
+  "labels",
+  "offlineDepth",
+  "addressAutocomplete",
+  "sendAndArchive",
+  "defaultReplyBehavior",
+  "signatures",
+] as const satisfies readonly (keyof Prefs)[];
+
+export type PrefsV2Key = (typeof PREFS_V2_KEYS)[number];
 
 /**
  * The product defaults.
@@ -149,6 +282,24 @@ export const DEFAULT_PREFS: Prefs = {
   inboxType: "default",
   notifications: "off",
   theme: "light",
+
+  // v2. The two collections start EMPTY rather than absent, which is the one
+  // place this mirror deliberately differs from the stored form: the server
+  // omits an empty map (`omitempty`) because a missing key and an empty one
+  // carry the same information, but a consumer reading `undefined` would have to
+  // decide whether it meant "no labels" or "unknown", and every call site would
+  // carry that branch. An always-present object is the shape a component can
+  // read and spread without a special case — the same argument the server makes
+  // for rendering `{}` rather than null on the wire (`prefsLabelsValue`).
+  labels: {},
+  offlineDepth: { headersPerMailbox: 200, bodies: 100 },
+  addressAutocomplete: "auto",
+  // A REGISTERED DIVERGENCE from Gmail (whose setting ships off), taken after
+  // the fact: the button already shipped visible in Moov's composer, so a
+  // default of false would REMOVE a control users already have.
+  sendAndArchive: true,
+  defaultReplyBehavior: "reply",
+  signatures: { items: {}, forNew: null, forReply: null },
 };
 
 /** The keys a caller may set, one at a time. */
@@ -170,6 +321,109 @@ function oneOf<T extends string>(
 
 function boolOr(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+/** A finite whole number clamped into an inclusive range, or the fallback. */
+function boundedInt(
+  value: unknown,
+  { min, max }: { readonly min: number; readonly max: number },
+  fallback: number,
+): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) return fallback;
+  if (value < min || value > max) return fallback;
+  return value;
+}
+
+/**
+ * Reads the label-presentation map.
+ *
+ * An entry missing either half is DROPPED rather than defaulted, which is the
+ * opposite of how the scalar preferences degrade — and deliberately so. A
+ * scalar has one honest fallback (the product default); a half-written label
+ * entry would render a chip in a colour the user never picked, and dropping it
+ * returns the label to the default swatch, visible, which is exactly the state
+ * "no metadata" already means. The label itself is never affected: it lives in
+ * an IMAP keyword (A6) and nothing here can delete one.
+ *
+ * The cap is applied on the way in as well as by the server, so a map that grew
+ * past the durable-keyword ceiling by any route cannot make the sidebar render
+ * entries that can never survive an index rebuild. Extra entries are dropped in
+ * key order, which is stable.
+ */
+function parseLabelPrefs(value: unknown): Readonly<Record<string, LabelPrefs>> {
+  if (typeof value !== "object" || value === null) return {};
+  const out: Record<string, LabelPrefs> = {};
+  let kept = 0;
+  for (const [keyword, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (kept >= MAX_LABEL_PREFS) break;
+    if (typeof raw !== "object" || raw === null) continue;
+    const entry = raw as { color?: unknown; visibility?: unknown };
+    if (typeof entry.color !== "string") continue;
+    if (
+      typeof entry.visibility !== "string" ||
+      !(LABEL_PREF_VISIBILITIES as readonly string[]).includes(entry.visibility)
+    ) {
+      continue;
+    }
+    out[keyword] = { color: entry.color, visibility: entry.visibility as LabelPrefVisibility };
+    kept += 1;
+  }
+  return out;
+}
+
+/** Reads the offline depth, clamping each half independently. */
+function parseOfflineDepth(value: unknown): OfflineDepth {
+  if (typeof value !== "object" || value === null) return DEFAULT_PREFS.offlineDepth;
+  const o = value as { headersPerMailbox?: unknown; bodies?: unknown };
+  return {
+    headersPerMailbox: boundedInt(
+      o.headersPerMailbox,
+      OFFLINE_DEPTH_BOUNDS.headersPerMailbox,
+      DEFAULT_PREFS.offlineDepth.headersPerMailbox,
+    ),
+    bodies: boundedInt(
+      o.bodies,
+      OFFLINE_DEPTH_BOUNDS.bodies,
+      DEFAULT_PREFS.offlineDepth.bodies,
+    ),
+  };
+}
+
+/**
+ * Reads the named-signature model.
+ *
+ * `forNew`/`forReply` are dropped when they name no surviving item, rather than
+ * being carried as a dangling id. The server refuses a dangling reference on
+ * write for a stated reason — the fallback it would silently produce is a
+ * DIFFERENT signature going out under the user's name — and the read path
+ * honours the same rule: a reference that resolves to nothing IS "none", and
+ * {@link resolveSignature} then falls back to the Identity's signature, which is
+ * the documented behaviour for "no named signature selected".
+ */
+function parseSignaturePrefs(value: unknown): SignaturePrefs {
+  if (typeof value !== "object" || value === null) return DEFAULT_PREFS.signatures;
+  const o = value as { items?: unknown; forNew?: unknown; forReply?: unknown };
+
+  const items: Record<string, SignatureItem> = {};
+  if (typeof o.items === "object" && o.items !== null) {
+    let kept = 0;
+    for (const [id, raw] of Object.entries(o.items as Record<string, unknown>)) {
+      if (kept >= MAX_SIGNATURE_ITEMS) break;
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as { name?: unknown; textBody?: unknown; htmlBody?: unknown };
+      items[id] = {
+        name: typeof entry.name === "string" ? entry.name : "",
+        textBody: typeof entry.textBody === "string" ? entry.textBody : "",
+        htmlBody: typeof entry.htmlBody === "string" ? entry.htmlBody : "",
+      };
+      kept += 1;
+    }
+  }
+
+  const ref = (raw: unknown): string | null =>
+    typeof raw === "string" && raw !== "" && raw in items ? raw : null;
+
+  return { items, forNew: ref(o.forNew), forReply: ref(o.forReply) };
 }
 
 /**
@@ -216,7 +470,83 @@ export function parsePrefs(raw: unknown): Prefs {
     inboxType: oneOf(o.inboxType, INBOX_TYPES, DEFAULT_PREFS.inboxType),
     notifications: oneOf(o.notifications, NOTIFICATION_MODES, DEFAULT_PREFS.notifications),
     theme: oneOf(o.theme, THEMES, DEFAULT_PREFS.theme),
+
+    // v2. Every one of these tolerates ABSENCE, which is not a hypothetical:
+    // a v1 server (or a v2 one mid-deploy) sends none of them, and this build
+    // must render the settings screen from its own defaults rather than throw
+    // away the fourteen keys the old server did send.
+    labels: parseLabelPrefs(o.labels),
+    offlineDepth: parseOfflineDepth(o.offlineDepth),
+    addressAutocomplete: oneOf(
+      o.addressAutocomplete,
+      ADDRESS_AUTOCOMPLETE_MODES,
+      DEFAULT_PREFS.addressAutocomplete,
+    ),
+    sendAndArchive: boolOr(o.sendAndArchive, DEFAULT_PREFS.sendAndArchive),
+    defaultReplyBehavior: oneOf(
+      o.defaultReplyBehavior,
+      REPLY_BEHAVIORS,
+      DEFAULT_PREFS.defaultReplyBehavior,
+    ),
+    signatures: parseSignaturePrefs(o.signatures),
   };
+}
+
+/**
+ * Whether a served preference object came from a server that knows the v2 keys.
+ *
+ * # Why this is feature-detected from the OBJECT and not from a version number
+ *
+ * The server publishes no schema version on the wire, and that is by design:
+ * `store.PrefsSchemaVersion` is metadata ABOUT the stored document, spliced in
+ * at storage time and deliberately kept off the JMAP object because RFC 8621 has
+ * no place for it (`encodePrefs` states exactly this). What the session DOES
+ * advertise is the capability, and what the capability advertises is the
+ * DOMAINS — `labelColorValues`, the offline bounds, the signature caps — which
+ * exist only in the v2 server.
+ *
+ * So the honest detection is structural: a v2 server always renders all six
+ * keys (`prefsObject` writes them unconditionally, and the two maps render as
+ * `{}` rather than null precisely so a client never has to distinguish "empty"
+ * from "missing"). Their presence is therefore exactly "this server serves v2",
+ * and their absence is exactly "it does not".
+ *
+ * What it is FOR: a settings screen must not offer a control whose save the
+ * server will refuse with `unknownProperty`. A row gated on this renders as
+ * unavailable instead — the same honesty `sessionHasPrefs` buys for the whole
+ * screen, at key granularity, for the deploy window in which a new PWA is
+ * talking to an old moovd.
+ */
+export function servesPrefsV2(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const o = raw as Record<string, unknown>;
+  return PREFS_V2_KEYS.every((key) => o[key] !== undefined);
+}
+
+/**
+ * The signature body the composer pre-fills, per the precedence rule documented
+ * on {@link SignaturePrefs} (and authoritatively on `store.Prefs.Signatures`).
+ *
+ * Both halves of a named signature are returned, because the composer picks by
+ * body mode: rich composition takes `html`, plain takes `text`. A named
+ * signature with an empty `htmlBody` — which is every signature this UI can
+ * create, since HTML editing is not built — falls back to its own `textBody`
+ * for the HTML case, so choosing a named signature never blanks the rich
+ * composer's footer.
+ *
+ * Returning `undefined` means "no named signature applies": the caller uses the
+ * Identity's own `textSignature`/`htmlSignature`, which is the RFC 8621 §6
+ * behaviour every other JMAP client sees.
+ */
+export function resolveSignature(
+  signatures: SignaturePrefs,
+  intent: "new" | "reply",
+): { readonly text: string; readonly html: string } | undefined {
+  const id = intent === "new" ? signatures.forNew : signatures.forReply;
+  if (id === null) return undefined;
+  const item = signatures.items[id];
+  if (item === undefined) return undefined;
+  return { text: item.textBody, html: item.htmlBody === "" ? item.textBody : item.htmlBody };
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +641,22 @@ export async function fetchPrefs(
  * `invalidProperties` names the offending keys and the server describes each —
  * that sentence is carried through so the UI can show the server's own words
  * instead of "save failed".
+ *
+ * # The v2 keys need no encoding step, and that is a property worth naming
+ *
+ * `Partial<Prefs>` is sent VERBATIM as the PatchObject. That works for the three
+ * structured v2 properties only because this mirror was built to the server's
+ * wire shape rather than to a convenient client shape: `labels` is
+ * `{[keyword]: {color, visibility}}` on both sides, `offlineDepth` is
+ * `{headersPerMailbox, bodies}`, and `signatures` is `{items, forNew, forReply}`
+ * with `null` — not `""` — for an unset reference, which is exactly what
+ * `parseSignatureRef` accepts and what `prefsOptionalID` emits.
+ *
+ * Had the client modelled any of them differently (a `Map`, a `colorId` field,
+ * an `""` sentinel) this function would need a serializer, and a serializer is a
+ * second place for the two schemas to drift. `prefs.test.ts` pins the exact JSON
+ * of a set of each of the six keys, which is the check that keeps the shortcut
+ * honest — it is the Go↔TS seam no compiler spans.
  */
 export async function savePrefs(
   client: JmapClient,

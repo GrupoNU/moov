@@ -71,6 +71,20 @@ export interface PrefsContextValue {
    * the optimistic paint.
    */
   readonly setPref: <K extends PrefKey>(key: K, value: Prefs[K]) => Promise<boolean>;
+  /**
+   * Sets SEVERAL preferences as one save, with the same optimistic shape.
+   *
+   * It exists for the one case a sequence of {@link setPref} calls gets wrong:
+   * a change that is conceptually ONE event across several keys — the v2
+   * migration carrying a browser's local settings up to the account, or a
+   * signature editor that creates an item and selects it in the same gesture.
+   * Sent separately those are N state advances, N chances to half-succeed, and
+   * a window in which `signatures.forNew` names an item the account does not
+   * have yet, which the server correctly refuses as a dangling reference.
+   *
+   * Rollback restores the previous value of exactly the keys in the patch.
+   */
+  readonly setPrefs: (patch: Partial<Prefs>) => Promise<boolean>;
 }
 
 const PrefsContext = createContext<PrefsContextValue | undefined>(undefined);
@@ -163,14 +177,30 @@ export function PrefsProvider({
     };
   }, [client, accountId, available, initialPrefs]);
 
-  const setPref = useCallback(
-    async <K extends PrefKey>(key: K, value: Prefs[K]): Promise<boolean> => {
-      const previous = prefsRef.current[key];
-      if (previous === value) return true;
+  /*
+   * The one implementation. `setPref` is a one-key call into this rather than a
+   * parallel code path, because two optimistic-save routines are two places for
+   * the rollback rule to drift — and the rollback rule is the subtle part.
+   */
+  const setPrefsPatch = useCallback(
+    async (patch: Partial<Prefs>): Promise<boolean> => {
+      const keys = Object.keys(patch) as PrefKey[];
+      if (keys.length === 0) return true;
+
+      /*
+       * The previous values of exactly the patched keys, captured BEFORE the
+       * optimistic paint. Rolling back a snapshot of the whole object would
+       * undo a concurrent save of some other key — the reasoning
+       * `useMessageActions` gives for inverse patches over snapshots.
+       */
+      const previous: Partial<Prefs> = {};
+      for (const key of keys) {
+        (previous as Record<string, unknown>)[key] = prefsRef.current[key];
+      }
 
       // Paint first. Every consumer — the list's density, the keyboard gate,
       // the layout — reads the context, so one write moves the whole app.
-      setPrefs((current) => ({ ...current, [key]: value }));
+      setPrefs((current) => ({ ...current, ...patch }));
 
       if (client === undefined || accountId === "" || !available) {
         /*
@@ -183,7 +213,7 @@ export function PrefsProvider({
 
       setInFlight((count) => count + 1);
       try {
-        const result = await savePrefs(client, accountId, { [key]: value });
+        const result = await savePrefs(client, accountId, patch);
         /*
          * The server's ANSWER replaces the optimistic guess, rather than the
          * guess being confirmed. They are normally identical; when they are
@@ -195,8 +225,8 @@ export function PrefsProvider({
         setError(undefined);
         return true;
       } catch (cause) {
-        // Roll back exactly the one key, not the whole object.
-        setPrefs((current) => ({ ...current, [key]: previous }));
+        // Roll back exactly the patched keys, not the whole object.
+        setPrefs((current) => ({ ...current, ...previous }));
         setError(cause instanceof Error ? cause.message : String(cause));
         return false;
       } finally {
@@ -204,6 +234,21 @@ export function PrefsProvider({
       }
     },
     [client, accountId, available],
+  );
+
+  const setPref = useCallback(
+    async <K extends PrefKey>(key: K, value: Prefs[K]): Promise<boolean> => {
+      /*
+       * The identity short-circuit stays here rather than moving into the
+       * patch path, because it is only sound for a SCALAR: `===` on the two v2
+       * maps compares references, and a caller that rebuilt an equal object
+       * would be told "saved" without a request. Every key `setPref` is used
+       * for is a scalar; a structured one goes through `setPrefs`.
+       */
+      if (prefsRef.current[key] === value) return true;
+      return setPrefsPatch({ [key]: value });
+    },
+    [setPrefsPatch],
   );
 
   const value = useMemo<PrefsContextValue>(
@@ -214,8 +259,9 @@ export function PrefsProvider({
       error,
       isSaving: inFlight > 0,
       setPref,
+      setPrefs: setPrefsPatch,
     }),
-    [prefs, status, available, error, inFlight, setPref],
+    [prefs, status, available, error, inFlight, setPref, setPrefsPatch],
   );
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
@@ -244,4 +290,5 @@ const FALLBACK: PrefsContextValue = {
   error: undefined,
   isSaving: false,
   setPref: () => Promise.resolve(false),
+  setPrefs: () => Promise.resolve(false),
 };
