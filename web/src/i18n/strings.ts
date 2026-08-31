@@ -744,6 +744,10 @@ export const en = {
     "Moov shows it because you asked for it, and keeps its images and links inert. If it does not belong here, mark it as not spam.",
   "reader.spamImagesBlocked":
     "Images are never loaded for a message in Spam.",
+  // --- E10: suspicious mail outside Spam (canon §4.1.15) ---
+  "reader.suspiciousBanner": "This message looks like spam",
+  "reader.suspiciousBannerBody":
+    "The mail scanner flagged it, but a rule or setting kept it out of Spam. Its remote images stay hidden; everything else works normally.",
   "reader.originalTitle": "Original message",
   "reader.originalHeaders": "Headers, exactly as they arrived",
   "reader.originalLoading": "Loading the original…",
@@ -1728,6 +1732,10 @@ export const es: Strings = {
     "Moov lo muestra porque lo pediste, y mantiene sus imágenes y enlaces inertes. Si no corresponde que esté acá, marcalo como que no es spam.",
   "reader.spamImagesBlocked":
     "Las imágenes nunca se cargan en un mensaje que está en Spam.",
+  // --- E10: correo sospechoso fuera de Spam (canon §4.1.15) ---
+  "reader.suspiciousBanner": "Este mensaje parece spam",
+  "reader.suspiciousBannerBody":
+    "El filtro de correo lo marcó, pero una regla o configuración lo mantuvo fuera de Spam. Sus imágenes remotas quedan ocultas; todo lo demás funciona con normalidad.",
   "reader.originalTitle": "Mensaje original",
   "reader.originalHeaders": "Encabezados, tal como llegaron",
   "reader.originalLoading": "Cargando el original…",

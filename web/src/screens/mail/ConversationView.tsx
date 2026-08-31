@@ -17,7 +17,7 @@ import {
   withMarked,
   type ConversationState,
 } from "../../mail/conversation";
-import type { Email, Thread } from "../../mail/types";
+import { isSuspicious, type Email, type Thread } from "../../mail/types";
 import { ConversationMessage } from "./ConversationMessage";
 import type { SignImageUrls } from "./SecureHtmlBody";
 import styles from "./ConversationView.module.css";
@@ -414,7 +414,14 @@ export function ConversationView({
             onForward(message);
           }}
           signImageUrls={signImageUrls}
-          allowRemoteImages={allowRemoteImages}
+          /*
+           * E10 (canon §4.1.15): the folder-level rule (Junk, the prop) AND
+           * this message's own scanner verdict. Per message, because a thread
+           * is a mixed bag: the flagged solicitation and the clean reply that
+           * quoted it must not share a fate — suppressing the whole thread
+           * would punish the reply, and unlocking it would fetch for the spam.
+           */
+          allowRemoteImages={allowRemoteImages && !isSuspicious(message)}
           autoLoadImages={autoLoadImages}
           client={client}
           accountId={accountId}

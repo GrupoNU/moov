@@ -133,6 +133,27 @@ export interface Email {
   readonly textBody?: readonly EmailBodyPart[];
   readonly htmlBody?: readonly EmailBodyPart[];
   readonly attachments?: readonly EmailBodyPart[];
+  /**
+   * E10 (canon §4.1.15): Moov's vendor property — true when the delivery
+   * scanner (Rspamd on Mailcow) declared the message spam, wherever it ended
+   * up filed. Computed SERVER-side in one documented place
+   * (`internal/jmap/mail/suspicious.go`); this client never parses verdict
+   * headers itself. Only present when requested by name (DETAIL_PROPERTIES).
+   */
+  readonly "moov:suspicious"?: boolean;
+}
+
+/**
+ * True when the scanner flagged this message as spam (E10, canon §4.1.15).
+ *
+ * The consequences mirror Junk exactly — warning banner, remote images
+ * unloadable — WITHOUT hiding the mail or its other affordances. Absent
+ * property (a list row, an old cache entry) reads as not-suspicious: the
+ * degraded treatment needs a positive verdict, never the benefit of a doubt
+ * in the hostile direction.
+ */
+export function isSuspicious(email: Email): boolean {
+  return email["moov:suspicious"] === true;
 }
 
 /** RFC 8621 §3 — a Thread. `emailIds` is oldest-first. */
@@ -206,4 +227,11 @@ export const DETAIL_PROPERTIES: readonly string[] = [
    * object model.
    */
   "headers",
+  /*
+   * E10: the scanner's spam verdict, served from the same re-parse `headers`
+   * rides on — so it costs nothing extra HERE and would cost a blob read per
+   * row in LIST_PROPERTIES. It drives the suspicious-mail banner and the
+   * remote-image suppression in the reader (canon §4.1.15).
+   */
+  "moov:suspicious",
 ];

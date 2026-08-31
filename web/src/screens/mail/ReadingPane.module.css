@@ -463,6 +463,22 @@ a.attachmentName:focus-visible {
   color: var(--text-muted);
 }
 
+/*
+ * E10 (canon §4.1.15): the suspicious-mail banner — the spam banner's shape
+ * in the WARNING palette. Deliberately not danger red: the message is in the
+ * user's inbox because something (a never-spam rule, the deployment's filing
+ * threshold) put it there, and the banner degrades affordances without
+ * shouting that the mail itself is an error.
+ */
+.suspiciousBanner {
+  border-color: var(--color-warning-border, var(--border-default));
+  background: var(--color-warning-tint, var(--surface-sunken));
+}
+
+.suspiciousBanner svg {
+  color: var(--color-warning, var(--text-default));
+}
+
 /* A starred message's toggle reads as pressed, not just as a changed label. */
 .activeAction {
   border-color: var(--color-accent);

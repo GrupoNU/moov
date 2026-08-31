@@ -8,6 +8,7 @@ import { headerSection, unfoldHeaders } from "../../mail/rawMessage";
 import { displaySubject, senderLabel } from "../../mail/threading";
 import {
   isFlagged,
+  isSuspicious,
   type Email,
   type EmailAddress,
   type Mailbox,
@@ -292,6 +293,19 @@ export function ReadingPane({
   const subject = displaySubject(email.subject) ?? t("list.noSubject");
   const attachments = email.attachments ?? [];
   /*
+   * E10 (canon §4.1.15): the scanner flagged this message but something —
+   * a never-spam rule, the deployment's filing threshold — kept it out of
+   * Junk. The treatment mirrors Junk exactly where it is a security stance
+   * (remote images UNLOADABLE, not merely blocked) and diverges where Junk's
+   * treatment is about the folder: the banner offers "report spam" instead
+   * of "not spam", and nothing else about the message is degraded.
+   *
+   * Inside Junk the spam banner already says everything this one would, so
+   * the two banners are mutually exclusive by construction.
+   */
+  const suspicious = isSuspicious(email);
+  const remoteImagesAllowed = !inJunk && !suspicious;
+  /*
    * Read from the OfflineProvider rather than taken as a prop: this is the only
    * thing in this component that cares about connectivity, and threading a
    * boolean through the reader's already-long prop list to reach one paragraph
@@ -412,6 +426,29 @@ export function ReadingPane({
             </div>
             <button type="button" className={styles.primaryAction} onClick={onToggleSpam}>
               {t("action.notSpam")}
+            </button>
+          </div>
+        )}
+
+        {/*
+          E10 / canon §4.1.15: the suspicious-mail warning. Same `role="note"`
+          reasoning as the spam banner — a standing property of the message,
+          not an event. The action it offers is the one Gmail's own warnings
+          offer: confirm the scanner ("Report spam"), which files the message
+          into Junk and teaches the filter (imapsieve reports on the move).
+        */}
+        {!inJunk && suspicious && (
+          <div className={[styles.spamBanner, styles.suspiciousBanner].join(" ")} role="note">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M10 2.8L1.8 16.6h16.4z" />
+              <path d="M10 7.8v4M10 14.4v.1" />
+            </svg>
+            <div>
+              <p className={styles.spamBannerTitle}>{t("reader.suspiciousBanner")}</p>
+              <p className={styles.spamBannerBody}>{t("reader.suspiciousBannerBody")}</p>
+            </div>
+            <button type="button" className={styles.secondaryAction} onClick={onToggleSpam}>
+              {t("action.spam")}
             </button>
           </div>
         )}
@@ -732,6 +769,10 @@ export function ReadingPane({
             accountId={accountId}
             blobToken={blobToken}
             signImageUrls={signImages}
+            /* E10: the thread-level conjunct is the FOLDER rule (Junk); the
+               per-message suspicious verdict is applied inside
+               ConversationView, message by message, because a clean reply and
+               a flagged first message legitimately share a thread. */
             allowRemoteImages={!inJunk}
             autoLoadImages={autoLoadImages}
             onReply={onReplyToMessage}
@@ -746,7 +787,7 @@ export function ReadingPane({
             key={email.id}
             email={email}
             signImageUrls={signImages}
-            allowRemoteImages={!inJunk}
+            allowRemoteImages={remoteImagesAllowed}
             autoLoadImages={autoLoadImages}
           />
         )}
