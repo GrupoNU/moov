@@ -51,8 +51,23 @@
   right: 0;
   height: var(--row-height, var(--row-height-fallback));
   display: grid;
-  /* checkbox | avatar | sender | subject+preview | meta */
-  grid-template-columns: auto auto minmax(9rem, 15rem) 1fr auto;
+  /*
+   * checkbox | star | avatar | sender | subject+preview | [hover actions] | meta
+   *
+   * E12 added the star column (canon 07 §3 — after the checkbox, before the
+   * sender, which is Gmail's order and where a migrating user's hand goes).
+   *
+   * The leading `auto`s are why the checkbox and the star may each be absent
+   * without breaking the alignment: an `auto` track with no item in it collapses
+   * to zero, so a row without a checkbox simply shifts the rest left by nothing.
+   * Fixed widths here would have left two gaps in every read-only list.
+   *
+   * The hover-action cell is deliberately NOT given a track: it is positioned
+   * over the meta cell (see `.hoverActions`), because the date and the actions
+   * occupy the same space and swap on hover — giving it a track would reserve
+   * width for a strip that is invisible almost always.
+   */
+  grid-template-columns: auto auto auto minmax(9rem, 15rem) 1fr auto;
   align-items: center;
   gap: var(--row-gap, var(--row-gap-fallback));
   padding: 0 var(--row-padding-x, var(--row-padding-x-fallback));
@@ -216,6 +231,55 @@
 .flagIcon {
   width: 15px;
   height: 15px;
+  color: var(--color-warning);
+}
+
+/* --- E12: the clickable star (canon 07 §3) --- */
+
+.starCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.star {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.star svg {
+  width: 16px;
+  height: 16px;
+  /* ONE path, outlined here and filled below. Two separate paths would drift
+   * apart in shape and the half-pixel difference reads as the star jumping. */
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.star:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+/* The one state change: the outline fills. Colour ALONE would not carry it —
+ * `--color-warning` against `--text-muted` is a hue difference some users
+ * cannot see — so the fill is what does the work and the colour reinforces it. */
+.starOn svg {
+  fill: var(--color-warning);
+  stroke: var(--color-warning);
+}
+
+.starOn {
   color: var(--color-warning);
 }
 

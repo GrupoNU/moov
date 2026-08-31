@@ -1,0 +1,175 @@
+/*
+ * The list's chrome strip (E12/B4, canon 07 §3).
+ *
+ * Left: the select-all checkbox with its scope caret, refresh, the `⋮`
+ * overflow. Right: the pager. `margin-left: auto` on the pager is what pins it
+ * to the far edge without a spacer element — Gmail's own arrangement, and the
+ * one that keeps the range in the same place whatever is to its left.
+ */
+
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-default);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/*
+ * The checkbox and its caret read as ONE control and are two in the
+ * accessibility tree. The shared hover background is what fuses them visually
+ * without fusing their semantics.
+ */
+.selectGroup {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-md);
+}
+
+.selectGroup:hover {
+  background: var(--surface-sunken);
+}
+
+.selectAll {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.selectAll input {
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.caret {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 32px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.caret svg {
+  width: 14px;
+  height: 14px;
+}
+
+.caret:hover {
+  color: var(--text-strong);
+}
+
+.caret:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.iconButton svg {
+  width: 17px;
+  height: 17px;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+.iconButton:disabled {
+  /* Visibly inert rather than hidden: an arrow that vanishes at the end of a
+   * folder makes the strip's layout jump on the last page. */
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* base.css neutralises this under prefers-reduced-motion. */
+.spinning {
+  animation: toolbar-spin 900ms linear infinite;
+}
+
+@keyframes toolbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* One item of the scope menu. It matches `MoveMenu.module.css`'s own items,
+ * because PopupMenu renders both inside the same popup shell. */
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+/* --- the pager --- */
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* What pins the pager to the right edge, with no spacer element. */
+  margin-left: auto;
+}
+
+.range {
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  /* Tabular figures so the range does not shuffle sideways as the digits
+   * change under the arrows — the kind of jitter that makes a pager feel
+   * unsteady even though nothing moved. */
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * On a narrow list the range's TEXT goes and the arrows stay: the arrows are
+ * navigation and the sentence is information, and when only one fits, the one
+ * you can act on wins. A container query, because what runs out of room is the
+ * list COLUMN — which narrows when the reading pane or the quick dock opens,
+ * neither of which a viewport query can see.
+ */
+@container (max-width: 34rem) {
+  .range {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

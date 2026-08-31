@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { JmapClient, withAccessToken, type BasicCredentials } from "../../api/jmap";
 import { TokenManager } from "../../api/tokens";
@@ -21,6 +21,12 @@ import {
 import { usePrefs } from "../../mail/PrefsProvider";
 import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "../../mail/viewChrome";
+import {
+  nextPosition,
+  PAGE_SIZE,
+  previousPosition,
+  type PageState,
+} from "../../mail/paging";
 import { connectionState, shouldRecycleStream } from "../../mail/connection";
 import {
   EMPTY_ARRIVAL_STATE,
@@ -71,7 +77,6 @@ import {
   isAllSelected,
   pruneSelection,
   selectionAfterClick,
-  selectionAfterSelectAll,
   selectionByScope,
   type SelectionState,
 } from "../../mail/selection";
@@ -144,6 +149,7 @@ import { VacationBanner } from "./VacationBanner";
 import { blockAdvice, blockDraft } from "../../mail/blockedSenders";
 import { MailboxList } from "./MailboxList";
 import { mailboxLabel } from "./mailboxLabels";
+import { ListToolbar } from "./ListToolbar";
 import { MessageList } from "./MessageList";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
@@ -312,6 +318,22 @@ export function MailScreen(): React.JSX.Element {
   const [truncated, setTruncated] = useState(false);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [resultTotal, setResultTotal] = useState<number | undefined>(undefined);
+
+  /**
+   * B4: the page offset the list is showing (canon 07 §3).
+   *
+   * State rather than a route parameter, and the choice is deliberate. A page
+   * number in the URL would make "/mail/inbox?p=3" a shareable link to a
+   * position that means nothing to the recipient — their inbox's page 3 holds
+   * different mail, and mine holds different mail an hour later. Gmail's own
+   * pager is likewise not in its URL. What IS shareable stays shareable: the
+   * folder, the search, and the open message.
+   *
+   * It resets whenever the LIST identity changes, which is what keeps a folder
+   * switch from landing on page 3 of a folder with six messages — the same rule
+   * and the same `listKey` the virtualizer resets its scroll on.
+   */
+  const [position, setPosition] = useState(0);
 
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [detail, setDetail] = useState<{ email?: Email; thread?: Thread }>({});
@@ -825,6 +847,22 @@ export function MailScreen(): React.JSX.Element {
         // new one.
         `mailbox:${activeMailbox?.id ?? ""}:${prefs.inboxType}:${collapseThreads ? "c" : "m"}`;
 
+  /*
+   * B4: a NEW list starts at page one.
+   *
+   * `listKey` is exactly the identity the virtualizer resets its scroll on, and
+   * the pager has to follow it for the same reason: an offset into the previous
+   * list means nothing in this one. Without this, switching from a 15,000-row
+   * inbox at page 40 to a folder with six messages would land on an empty page
+   * that looks like the folder is empty.
+   *
+   * A layout effect, not a plain one, so the reset happens before paint —
+   * otherwise one frame renders the new folder at the old offset.
+   */
+  useLayoutEffect(() => {
+    setPosition(0);
+  }, [listKey]);
+
   useEffect(() => {
     if (client === undefined || accountId === "" || filter === undefined) {
       if (filter === undefined && route.kind === "search") {
@@ -847,6 +885,10 @@ export function MailScreen(): React.JSX.Element {
             signal: controller.signal,
             ...(sort !== undefined ? { sort } : {}),
             collapseThreads,
+            // B4: one PAGE, not the servers whole 200-row window. See
+            // mail/paging.ts on why 50 and why it is not a preference.
+            limit: PAGE_SIZE,
+            position,
           });
         } catch (error) {
           /*
@@ -875,6 +917,8 @@ export function MailScreen(): React.JSX.Element {
           page = await queryEmails(client, accountId, filter, {
             signal: controller.signal,
             ...(sort !== undefined ? { sort } : {}),
+            limit: PAGE_SIZE,
+            position,
           });
         }
         if (controller.signal.aborted) return;
@@ -939,6 +983,9 @@ export function MailScreen(): React.JSX.Element {
     refreshToken,
     sort,
     collapseThreads,
+    // B4: the pager's offset is an INPUT to the query, so moving it refetches
+    // exactly as changing the filter does — one code path for both.
+    position,
     cacheHeaders,
     recordAddresses,
   ]);
@@ -1114,6 +1161,24 @@ export function MailScreen(): React.JSX.Element {
 
   /** Snippets by id, so a row can find its own without a scan. */
   const snippetsById = useMemo(() => snippetIndex(snippets), [snippets]);
+
+  /**
+   * B4: what the pager describes.
+   *
+   * `shown` counts the ROWS on screen, not the messages fetched, and the two
+   * differ under conversation view: a collapsed query returns one message per
+   * thread, so they agree, but the client-grouped FALLBACK path (an older
+   * server that refused `collapseThreads`) collapses several messages into one
+   * row. Counting messages there would say "1–50" over a list showing 31 rows.
+   *
+   * `total` is the server's, passed through untouched — exact when it gave one
+   * and undefined when it declined. `mail/paging.ts` documents why those are
+   * two different true sentences rather than a value and a fallback.
+   */
+  const pageState = useMemo<PageState>(
+    () => ({ position, shown: groups.length, total: resultTotal }),
+    [position, groups.length, resultTotal],
+  );
 
   /** Refetches the list from the server after a write. */
   const refresh = useCallback((): void => {
@@ -1388,12 +1453,18 @@ export function MailScreen(): React.JSX.Element {
     [orderedIds],
   );
 
-  const selectAll = useCallback(
-    (all: boolean): void => {
-      setSelection(selectionAfterSelectAll(orderedIds, all));
-    },
-    [orderedIds],
-  );
+  /*
+   * B4: `selectAll` is gone, subsumed by `runSelectBy`.
+   *
+   * The toolbar's checkbox now calls `runSelectBy("all")` / `runSelectBy("none")`
+   * — the same reducer its dropdown's other four scopes use, and the same one
+   * the `* a` / `* n` chords already resolved to. Keeping a second path that
+   * only knew two of the six states would have been a second place for "select
+   * all" to mean something slightly different from what the keyboard means.
+   *
+   * `selectionAfterSelectAll` stays in `mail/selection.ts` with its own tests:
+   * it is the reducer `selectionByScope("all")` is defined in terms of.
+   */
 
   /**
    * The MESSAGE ids an action applies to.
@@ -3901,11 +3972,39 @@ export function MailScreen(): React.JSX.Element {
           {route.kind === "search" && !isOfflineMode && (
             <SearchChips query={route.query} onChange={runSearch} />
           )}
+          {/*
+            B4: the list's CHROME strip (canon 07 §3), above the verbs.
+
+            Two strips, because Gmail has two and they do different jobs: this
+            one acts on the LIST (select by scope, refresh, page), the ActionBar
+            below acts on the SELECTION. Merging them would produce one strip
+            where half the controls grey out and half do not.
+
+            Offline it renders WITHOUT a pager: the cached window is whatever
+            was stored, not a page of a server-side result, and a pager over it
+            would offer to fetch a page nothing can fetch.
+          */}
+          <ListToolbar
+            onSelectBy={runSelectBy}
+            allSelected={isAllSelected(selection, orderedIds)}
+            someSelected={selection.selected.size > 0}
+            totalCount={groups.length}
+            onRefresh={refresh}
+            isRefreshing={isLoadingList}
+            {...(isOfflineMode
+              ? {}
+              : {
+                  page: pageState,
+                  onNewerPage: () => {
+                    setPosition(previousPosition(pageState));
+                  },
+                  onOlderPage: () => {
+                    setPosition(nextPosition(pageState));
+                  },
+                })}
+          />
           <ActionBar
             selectedCount={selection.selected.size}
-            totalCount={groups.length}
-            allSelected={isAllSelected(selection, orderedIds)}
-            onSelectAll={selectAll}
             onMarkRead={() => {
               runToggleRead(true);
             }}
@@ -4038,6 +4137,28 @@ export function MailScreen(): React.JSX.Element {
               void dispatchAction(
                 { kind: value ? "markRead" : "markUnread", ids },
                 value ? t("action.markRead") : t("action.markUnread"),
+              );
+            }}
+            /*
+             * B4 (canon 07 §3): the row's clickable star.
+             *
+             * It goes through the SAME `dispatchAction` every other write does,
+             * so it paints optimistically and rolls back with the server's own
+             * words on failure — the star was already drawn here as a read-only
+             * icon, which meant the one gesture every Gmail user makes without
+             * looking silently did nothing.
+             *
+             * Like the hover actions, it acts on THAT row regardless of the
+             * selection: the pointer has already named its target. And like
+             * them it reads the row's own state for the direction, so the
+             * filled/outline icon and what the click does cannot disagree.
+             */
+            onRowToggleFlag={(group) => {
+              const ids = idsOfGroup(group);
+              const starred = group.hasFlagged;
+              void dispatchAction(
+                { kind: starred ? "unflag" : "flag", ids },
+                starred ? t("action.unflag") : t("action.flag"),
               );
             }}
             /*

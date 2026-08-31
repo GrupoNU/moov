@@ -28,9 +28,16 @@ import styles from "./ActionBar.module.css";
 
 export interface ActionBarProps {
   readonly selectedCount: number;
-  readonly totalCount: number;
-  readonly allSelected: boolean;
-  readonly onSelectAll: (selected: boolean) => void;
+  /*
+   * E12/B4: `totalCount`, `allSelected` and `onSelectAll` are GONE.
+   *
+   * The select-all checkbox moved to `ListToolbar`, where Gmail puts it —
+   * paired with the scope dropdown that supplies its other four states. This
+   * bar keeps only the verbs, every one of which needs a selection; the three
+   * props left WITH the control rather than lingering as an unused surface,
+   * because a prop nobody passes is a prop the next reader has to prove is
+   * dead.
+   */
   readonly onMarkRead: () => void;
   readonly onMarkUnread: () => void;
   readonly onFlag: () => void;
@@ -110,9 +117,6 @@ export interface ActionBarProps {
 
 export function ActionBar({
   selectedCount,
-  totalCount,
-  allSelected,
-  onSelectAll,
   onMarkRead,
   onMarkUnread,
   onFlag,
@@ -173,24 +177,15 @@ export function ActionBar({
 
       <span className={styles.divider} aria-hidden="true" />
 
-      <label className={styles.selectAll}>
-        <input
-          type="checkbox"
-          checked={allSelected && totalCount > 0}
-          // The indeterminate box is the honest state for "some but not all";
-          // a plain unchecked box would claim nothing is selected.
-          ref={(node) => {
-            if (node !== null) {
-              node.indeterminate = hasSelection && !allSelected;
-            }
-          }}
-          disabled={totalCount === 0}
-          onChange={(event) => {
-            onSelectAll(event.target.checked);
-          }}
-        />
-        <span className="visually-hidden">{t("action.selectAll")}</span>
-      </label>
+      {/*
+        E12/B4: the select-all checkbox MOVED to `ListToolbar`, where Gmail
+        puts it — in the chrome strip, paired with the scope dropdown that
+        gives it its other four states (read, unread, starred, unstarred).
+
+        It is gone from here rather than duplicated: two checkboxes over one
+        selection would have had to be kept in step, and the one that fell out
+        of step would have been the one the user happened to click.
+      */}
 
       <ActionButton
         label={t("action.markRead")}

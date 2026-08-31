@@ -104,6 +104,41 @@ export const en = {
   "quickSettings.seeAll": "See all settings",
   "quickSettings.close": "Close quick settings",
 
+  // --- E12/B4: the list toolbar (canon 07 §3) ---
+  //
+  // The six scopes of Gmail's select-all dropdown. They are the same six the
+  // `* a`/`* n`/`* r`/`* u`/`* s`/`* t` chords already resolve to (canon §2.4),
+  // wired to the same reducer — the menu is a second surface over one
+  // mechanism, not a second implementation of it.
+  "action.selectMenu": "Selection options",
+  "action.select.all": "All",
+  "action.select.none": "None",
+  "action.select.read": "Read",
+  "action.select.unread": "Unread",
+  "action.select.starred": "Starred",
+  "action.select.unstarred": "Unstarred",
+  "list.refresh": "Refresh",
+  /*
+   * The pager. Two shapes because the server's `total` is exact or ABSENT,
+   * never an estimate — see `mail/paging.ts`.
+   *
+   * The locale tag is EXPLICIT ("en" here, "es" in the Spanish table) and not
+   * a bare `toLocaleString()`. A bare call follows the ambient environment,
+   * which means the English string renders "15.224" on a machine set to
+   * Spanish — the wrong thousands separator for the language actually on
+   * screen. A test caught exactly that. The string table is the locale, so the
+   * separator belongs to the string rather than to the host.
+   */
+  "list.page.range": (first: number, last: number, total: number): string =>
+    `${first.toLocaleString("en")}–${last.toLocaleString("en")} of ${total.toLocaleString("en")}`,
+  "list.page.rangeUnknown": (first: number, last: number): string =>
+    `${first.toLocaleString("en")}–${last.toLocaleString("en")}`,
+  "list.page.newer": "Newer",
+  "list.page.older": "Older",
+  // The row's star, which toggles the same `$flagged` keyword `s` does.
+  "list.star": "Star",
+  "list.unstar": "Remove star",
+
   // --- settings ---
   "settings.title": "Settings",
   "settings.open": "Settings",
@@ -1271,6 +1306,23 @@ export const es: Strings = {
   "quickSettings.title": "Ajustes rápidos",
   "quickSettings.seeAll": "Ver todos los ajustes",
   "quickSettings.close": "Cerrar los ajustes rápidos",
+
+  "action.selectMenu": "Opciones de selección",
+  "action.select.all": "Todos",
+  "action.select.none": "Ninguno",
+  "action.select.read": "Leídos",
+  "action.select.unread": "No leídos",
+  "action.select.starred": "Destacados",
+  "action.select.unstarred": "Sin destacar",
+  "list.refresh": "Actualizar",
+  "list.page.range": (first: number, last: number, total: number): string =>
+    `${first.toLocaleString("es")}–${last.toLocaleString("es")} de ${total.toLocaleString("es")}`,
+  "list.page.rangeUnknown": (first: number, last: number): string =>
+    `${first.toLocaleString("es")}–${last.toLocaleString("es")}`,
+  "list.page.newer": "Más recientes",
+  "list.page.older": "Más antiguos",
+  "list.star": "Destacar",
+  "list.unstar": "Quitar el destacado",
 
   "settings.title": "Configuración",
   "settings.open": "Configuración",

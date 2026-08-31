@@ -220,3 +220,80 @@ describe("E4: the muted badge and the Snoozed view's rows", () => {
     expect(within(rowFor("Subject a")).queryByRole("button", { name: /traer ahora/i })).toBeNull();
   });
 });
+
+/**
+ * The row's clickable star (E12/B4, canon 07 §3).
+ *
+ * It was a read-only icon in the meta strip until E12, which meant the one
+ * gesture every Gmail user makes without looking — click the star — silently
+ * did nothing. These pin the three properties that would break it quietly.
+ */
+describe("the star", () => {
+  it("is not rendered as a control when no flag action is wired", () => {
+    /*
+     * A caller with no `onRowToggleFlag` gets INFORMATION, not a dead control:
+     * the read-only icon still shows which rows are starred. That is P4 applied
+     * to the one row element that has both a stateful and a stateless form.
+     */
+    renderList();
+    expect(
+      within(rowFor("Subject a")).queryByRole("button", { name: /destacar/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("is a toggle BUTTON, not a checkbox, and says which state it is in", () => {
+    const onRowToggleFlag = vi.fn();
+    renderList({ onRowToggleFlag });
+
+    const star = within(rowFor("Subject a")).getByRole("button", { name: "Destacar" });
+    /*
+     * `aria-pressed`, never `aria-checked`. A screen reader announces
+     * "pressed" for the first and "checked" for the second — and the row
+     * already has a real checkbox two cells to the left whose meaning is
+     * entirely different (select, not star). Two "checked" controls in one row
+     * meaning different things is the confusion this avoids.
+     */
+    expect(star).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("names what the CLICK will do, so the icon and the label cannot disagree", () => {
+    const flagged = [
+      email("a", { keywords: { $flagged: true } }),
+      email("b", { keywords: {} }),
+    ];
+    renderList({ onRowToggleFlag: vi.fn(), groups: groupByThread(flagged) });
+
+    const star = within(rowFor("Subject a")).getByRole("button", {
+      name: "Quitar el destacado",
+    });
+    expect(star).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("acts on ITS OWN row and does NOT also open the message", () => {
+    const onRowToggleFlag = vi.fn();
+    const handlers = renderList({ onRowToggleFlag });
+
+    const star = within(rowFor("Subject b")).getByRole("button", { name: "Destacar" });
+    star.click();
+
+    /*
+     * Both halves matter. The first: the pointer already named its target, so
+     * the star must not route through the selection. The second: the row's own
+     * click handler is one bubble away, and without `stopPropagation` starring
+     * a message would also open it — which is what makes a star feel dangerous
+     * rather than incidental.
+     */
+    expect(onRowToggleFlag).toHaveBeenCalledTimes(1);
+    expect(onRowToggleFlag.mock.calls[0]?.[0]).toMatchObject({ id: "t-b" });
+    expect(handlers.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("draws ONE star per row, never the button and the read-only icon together", () => {
+    const flagged = [email("a", { keywords: { $flagged: true } })];
+    renderList({ onRowToggleFlag: vi.fn(), groups: groupByThread(flagged) });
+
+    // Two stars in one row would read as two different facts about it.
+    const row = rowFor("Subject a");
+    expect(within(row).getAllByRole("button", { name: /destacado/i })).toHaveLength(1);
+  });
+});

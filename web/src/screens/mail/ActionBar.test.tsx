@@ -37,9 +37,6 @@ function mailbox(id: string, role: Mailbox["role"], name: string): Mailbox {
 function renderBar(overrides: Partial<ActionBarProps> = {}) {
   const props: ActionBarProps = {
     selectedCount: 1,
-    totalCount: 3,
-    allSelected: false,
-    onSelectAll: vi.fn(),
     onMarkRead: vi.fn(),
     onMarkUnread: vi.fn(),
     onFlag: vi.fn(),

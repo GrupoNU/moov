@@ -93,6 +93,22 @@ export interface MessageListProps {
   readonly onRowArchive?: (group: ThreadGroup) => void;
   readonly onRowDelete?: (group: ThreadGroup) => void;
   readonly onRowToggleRead?: (group: ThreadGroup) => void;
+
+  /**
+   * E12 (canon 07 §3): the row's STAR, clickable.
+   *
+   * It is not a hover action and is deliberately not gated by the
+   * `hoverActions` preference: Gmail's star is always visible, always in the
+   * same place, and is the second thing in the row after the checkbox. It was
+   * already drawn here as a read-only icon in the meta strip, which meant the
+   * one gesture every Gmail user makes without looking — click the star —
+   * silently did nothing.
+   *
+   * The visual is unchanged; what changes is that the outline fills. Absent
+   * keeps the old read-only icon, so a caller with no flag action wired renders
+   * information rather than a control that cannot act.
+   */
+  readonly onRowToggleFlag?: (group: ThreadGroup) => void;
   readonly renderRowSnooze?: (
     group: ThreadGroup,
     triggerClassName: string,
@@ -163,6 +179,7 @@ export function MessageList({
   onRowArchive,
   onRowDelete,
   onRowToggleRead,
+  onRowToggleFlag,
   renderRowSnooze,
   mutedThreadIds,
   snoozeUntilById,
@@ -324,6 +341,9 @@ export function MessageList({
                   onRowArchive={prefs.hoverActions ? onRowArchive : undefined}
                   onRowDelete={prefs.hoverActions ? onRowDelete : undefined}
                   onRowToggleRead={prefs.hoverActions ? onRowToggleRead : undefined}
+                  /* NOT gated by hoverActions: Gmail’s star is always
+                     visible and always in the same place. */
+                  onRowToggleFlag={onRowToggleFlag}
                   /* E4: the fourth hover action, under the same preference —
                      Gmail's "Disable hover actions" turns off all four. */
                   renderRowSnooze={prefs.hoverActions ? renderRowSnooze : undefined}
@@ -366,6 +386,8 @@ interface MessageRowProps {
   readonly onRowArchive: ((group: ThreadGroup) => void) | undefined;
   readonly onRowDelete: ((group: ThreadGroup) => void) | undefined;
   readonly onRowToggleRead: ((group: ThreadGroup) => void) | undefined;
+  /** E12: the row’s clickable star. Absent keeps the read-only icon. */
+  readonly onRowToggleFlag: ((group: ThreadGroup) => void) | undefined;
   /** E4: the fourth hover action, rendered by the caller (it opens a menu). */
   readonly renderRowSnooze:
     | ((group: ThreadGroup, triggerClassName: string) => React.ReactNode)
@@ -399,6 +421,7 @@ function MessageRow({
   onRowArchive,
   onRowDelete,
   onRowToggleRead,
+  onRowToggleFlag,
   renderRowSnooze,
   isMuted,
   snoozeUntil,
@@ -525,6 +548,56 @@ function MessageRow({
           />
         </span>
       )}
+
+      {/*
+        E12 (canon 07 §3): the star, AFTER the checkbox and BEFORE the sender —
+        Gmail's position, and the whole point of moving it here from the meta
+        strip on the right. It is where a migrating user's hand already goes.
+
+        `aria-pressed` rather than `aria-checked`: this is a toggle BUTTON, not
+        a checkbox. The distinction is not pedantry — a screen reader announces
+        "pressed"/"not pressed" for the first and "checked" for the second, and
+        the row already has a real checkbox two cells to the left whose meaning
+        is entirely different (select, not star).
+
+        It stops propagation on all three events for exactly the reasons
+        `RowAction` documents: without them a click would also OPEN the message,
+        and tabbing to the star would silently change the selection.
+      */}
+      {onRowToggleFlag !== undefined ? (
+        <span role="gridcell" className={styles.starCell}>
+          <button
+            type="button"
+            className={[styles.star, group.hasFlagged ? styles.starOn : ""]
+              .filter(Boolean)
+              .join(" ")}
+            /* The label says what the CLICK will do, which depends on the row's
+               own state — so the control and its name can never disagree. */
+            aria-label={group.hasFlagged ? t("list.unstar") : t("list.star")}
+            title={group.hasFlagged ? t("list.unstar") : t("list.star")}
+            aria-pressed={group.hasFlagged}
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation();
+              event.preventDefault();
+              onRowToggleFlag(group);
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+            }}
+            onFocus={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              {/* ONE path, filled or stroked by CSS. Two paths — an outline and
+                  a solid — would eventually drift apart in shape, and the
+                  half-pixel difference reads as the star jumping on click. */}
+              <path d="M10 2.6l2.3 4.7 5.2.8-3.8 3.7.9 5.2-4.6-2.4-4.6 2.4.9-5.2L2.5 8.1l5.2-.8z" />
+            </svg>
+          </button>
+        </span>
+      ) : null}
 
       <span className={styles.avatar} aria-hidden="true">
         {initialsFor(senderLabel(latest))}
@@ -730,7 +803,13 @@ function MessageRow({
             <path d="M13.4 7.6l3.6 4.8m0-4.8l-3.6 4.8" />
           </svg>
         )}
-        {group.hasFlagged && (
+        {/*
+          E12: the read-only flag icon survives ONLY where the clickable star
+          does not — a caller with no flag action wired still has to be able to
+          SEE which rows are starred. Rendering both would put two stars in one
+          row, which reads as two different facts.
+        */}
+        {group.hasFlagged && onRowToggleFlag === undefined && (
           <svg
             className={styles.flagIcon}
             viewBox="0 0 20 20"
@@ -743,6 +822,21 @@ function MessageRow({
             />
           </svg>
         )}
+        {/*
+          E12 (canon 07 §3), stated honestly: Gmail draws attachment CHIPS on a
+          second line — icon plus FILENAME, clickable — and this draws a clip.
+          The difference is not an oversight and is not a styling shortcut.
+          `LIST_PROPERTIES` deliberately excludes `attachments`, with its reason
+          written at `types.ts`: asking for it would make the server re-parse
+          every message's raw blob to paint a LIST. A named chip needs the
+          filename, the filename needs that re-parse, and paying it per row is
+          the single most expensive thing a mail list can do.
+
+          So the row says "this has an attachment" — which is true, and is what
+          `hasAttachment` costs nothing to know — and the reading pane shows the
+          cards with their names. The chip returns the day the server can serve
+          attachment metadata off the index rather than off the blob.
+        */}
         {group.hasAttachment && (
           <svg
             className={styles.attachIcon}
