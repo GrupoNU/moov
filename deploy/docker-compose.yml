@@ -284,6 +284,12 @@ services:
 
     volumes:
       - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      # Moov's own PWA, served as the default site on the branded hosts.
+      # This line existed only server-side since the 2026-08-26 switch and a
+      # container recreation from the repo's compose silently dropped the
+      # mount (found during the 2026-08-31 deploy). The repo is the source
+      # of truth; deploy config must never drift server-side again.
+      - ../web/dist:/srv/moov-pwa:ro
       # Certificates and the ACME account key. A named volume, so a container
       # recreation does not throw away valid certificates and re-issue them —
       # Let's Encrypt's rate limits are per-week, and burning them during a
