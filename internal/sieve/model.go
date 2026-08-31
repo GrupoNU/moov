@@ -249,6 +249,21 @@ type GenerateEnv struct {
 	VerifiedForward map[string]bool
 }
 
+// DefaultSpamHeader / DefaultSpamValue name Rspamd's verdict on tagged-but-
+// accepted spam as Mailcow stamps it: `X-Spam-Flag: YES`, the exact header
+// Mailcow's own global_sieve_after files into Junk on (read from the live
+// deployment, E6 recon).
+//
+// Exported because TWO layers must agree on what "the scanner said spam"
+// means, and a private default in each would drift: the Sieve generator's
+// guards (never-spam, vacation, forward-all all key on it) and the JMAP
+// layer's suspicious-mail surfacing (E10, canon §4.1.15 — a spam-verdict
+// message that was NOT filed to Junk still gets the warning treatment).
+const (
+	DefaultSpamHeader = "X-Spam-Flag"
+	DefaultSpamValue  = "YES"
+)
+
 // withDefaults fills the Mailcow defaults.
 func (e GenerateEnv) withDefaults() GenerateEnv {
 	if e.JunkFolder == "" {
@@ -261,10 +276,10 @@ func (e GenerateEnv) withDefaults() GenerateEnv {
 		e.ArchiveFolder = "Archive"
 	}
 	if e.SpamHeader == "" {
-		e.SpamHeader = "X-Spam-Flag"
+		e.SpamHeader = DefaultSpamHeader
 	}
 	if e.SpamValue == "" {
-		e.SpamValue = "YES"
+		e.SpamValue = DefaultSpamValue
 	}
 	return e
 }

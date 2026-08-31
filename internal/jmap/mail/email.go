@@ -58,6 +58,13 @@ var emailProperties = func() map[string]bool {
 		"bodyStructure": true, "bodyValues": true, "textBody": true,
 		"htmlBody": true, "attachments": true, "hasAttachment": true,
 		"preview": true,
+		// E10 vendor property (suspicious.go): the scanner's spam verdict,
+		// surfaced. Served only when requested BY NAME — it is not in the §4.6
+		// default list, so a client that never asks never sees it. Like
+		// `headers`, it is answered from the raw-blob re-parse: requesting it
+		// for a whole list would open every row's blob, so the shipped client
+		// asks only on message open (DETAIL_PROPERTIES).
+		PropSuspicious: true,
 	}
 	return m
 }()
@@ -234,6 +241,13 @@ func (d *Deps) renderEmail(
 		// §4.1.3: "headers: EmailHeader[] — This is a list of all header fields
 		// in the message, in the same order they appear in the message."
 		out["headers"] = rawHeaderList(rawParse())
+	}
+	if props[PropSuspicious] {
+		// E10 (canon §4.1.15): the scanner's verdict, from the same memoized
+		// re-parse headers ride on. A message whose blob is gone or whose
+		// parse hard-failed has no verdict, which reads as `false` — no
+		// verdict is not a verdict (suspicious.go).
+		out[PropSuspicious] = suspiciousVerdict(rawParse())
 	}
 	if props["messageId"] {
 		out["messageId"] = nilIfEmptyStrings(row.MessageID)
