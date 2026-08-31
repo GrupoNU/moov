@@ -36,19 +36,42 @@ import { ScheduleMenu } from "./ScheduleMenu";
 import styles from "./Composer.module.css";
 
 /**
- * The composer: a modal dialog that writes, saves and sends a message.
+ * The composer: a floating card, bottom-right, that writes, saves and sends a
+ * message (canon 07 §7).
  *
- * # Focus and the dialog contract
+ * # It was a centred modal until E12, and the reversal is the point
  *
- * This is a real `<dialog>` opened with `showModal()`, which gives the
- * browser's own focus trap, its own `Escape` handling, and the top-layer
- * stacking that no `z-index` fight can lose. Reimplementing those in JavaScript
- * is the classic source of "Tab escapes the dialog and lands in the message
- * list behind it".
+ * P3 opened this with `showModal()`, for three real properties: the browser's
+ * own focus trap, its own Escape, and top-layer stacking no `z-index` fight can
+ * lose. Canon 07 §7 overrules it on the only axis this epic cares about —
+ * Gmail's composer is a NON-MODAL card in the bottom-right corner, and the mail
+ * behind it stays live. That is not cosmetic: it is what lets a person look up
+ * an address, re-read the message they are answering, or start a second draft
+ * without abandoning the first. A modal makes all three impossible.
+ *
+ * So it is still a `<dialog>` — for the top layer, which is the one property
+ * worth keeping and the one that is genuinely hard to reproduce — but opened
+ * with `show()` rather than `showModal()`. What that gives up:
+ *
+ *   - **the focus trap**, correctly. Trapping focus in a surface that leaves
+ *     the page clickable is a lie about the page's state.
+ *   - **the backdrop**, correctly. There is nothing to dim; the list behind is
+ *     not inert.
+ *   - **native Escape**, which this component already intercepted anyway (see
+ *     below), so nothing changes there.
+ *
+ * # Minimise, and why it is a state and not a second component
+ *
+ * Gmail's card collapses to its own title bar, keeping the draft mounted and
+ * the autosave running. Unmounting and remounting would be visibly different:
+ * the body editor's selection, the attachment upload progress and the undo
+ * countdown all live in this component's state, and a remount would discard
+ * them. So minimising hides the FORM below the header with CSS and nothing
+ * else changes — the draft is still there, still saving, still sending.
  *
  * `Escape` is intercepted rather than allowed to close: **closing a composer
  * must never lose a draft** (deliverable 7). The handler flushes the autosave
- * first, so what the user wrote is on the server before the dialog goes away.
+ * first, so what the user wrote is on the server before the card goes away.
  *
  * # Sending, and the one thing that must never happen
  *
@@ -170,6 +193,25 @@ export function Composer({
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  /**
+   * E12: the card's size state (canon 07 §7).
+   *
+   * Three, not two, because Gmail has three and each does something the others
+   * cannot: the default card, MINIMISED to its title bar (so the mail behind
+   * is fully visible while a draft stays open and saving), and MAXIMISED to a
+   * large centred panel (for a long message, where the corner card is a
+   * letterbox).
+   *
+   * It is one state on one component rather than three components, and the
+   * reason is what would be LOST by remounting: the body editor's selection,
+   * the attachments' upload progress and the undo countdown all live in this
+   * component. Minimising hides the form below the header with CSS; the draft
+   * is still mounted, still autosaving, still able to finish sending.
+   */
+  const [cardSize, setCardSize] = useState<"normal" | "minimized" | "maximized">(
+    "normal",
+  );
+
   /** E11: the app's own confirm, replacing `window.confirm` for discard. */
   const { confirm, dialog: confirmDialog } = useConfirm();
 
@@ -233,7 +275,20 @@ export function Composer({
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog === null) return undefined;
-    if (!dialog.open) dialog.showModal();
+    /*
+     * E12: `show()`, not `showModal()` (canon 07 §7).
+     *
+     * The card is NON-MODAL — the mail behind it stays live, which is what
+     * lets someone look up an address or re-read the message they are
+     * answering without abandoning the draft. It stays a `<dialog>` for the
+     * TOP LAYER, which is the one property of the pair worth keeping: a
+     * hand-rolled overlay eventually loses a `z-index` argument with a menu.
+     *
+     * `show()` does not focus anything by itself, so the composer's own
+     * autofocus on the first empty field is what puts the caret where the user
+     * expects it — the same behaviour `showModal()` produced, now explicit.
+     */
+    if (!dialog.open) dialog.show();
     return () => {
       if (dialog.open) dialog.close();
     };
@@ -969,7 +1024,13 @@ export function Composer({
   return (
     <dialog
       ref={dialogRef}
-      className={styles.dialog}
+      className={[
+        styles.dialog,
+        cardSize === "minimized" ? styles.minimized : "",
+        cardSize === "maximized" ? styles.maximized : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       aria-label={title}
       onCancel={onDialogCancel}
     >
@@ -980,19 +1041,85 @@ export function Composer({
           void send(false);
         }}
       >
+        {/*
+          E12 (canon 07 §7): the card's title bar — the name on the left, then
+          minimise / maximise / close on the right, in Gmail's order.
+
+          The BAR itself toggles minimise on click, which is what makes a
+          collapsed strip expand again by clicking anywhere on it rather than
+          by finding a 2rem button. It is a <button> for that reason and not a
+          div with a handler: it is genuinely a control, and making it one gives
+          it keyboard operation and a role for free.
+        */}
         <header className={styles.header}>
-          <h2 className={styles.title}>{title}</h2>
           <button
             type="button"
-            className={styles.iconButton}
-            onClick={closeWithSave}
-            aria-label={t("compose.close")}
-            title={t("compose.close")}
+            className={styles.titleBar}
+            onClick={() => {
+              setCardSize((size) => (size === "minimized" ? "normal" : "minimized"));
+            }}
+            /* The heading's text is the accessible name; what the press DOES is
+               the label, so the two together read as "Mensaje nuevo, minimise". */
+            aria-label={`${title} — ${
+              cardSize === "minimized" ? t("compose.expand") : t("compose.minimize")
+            }`}
+            aria-expanded={cardSize !== "minimized"}
           >
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-              <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
-            </svg>
+            <span className={styles.title}>{title}</span>
           </button>
+
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => {
+                setCardSize((size) => (size === "minimized" ? "normal" : "minimized"));
+              }}
+              aria-label={
+                cardSize === "minimized" ? t("compose.expand") : t("compose.minimize")
+              }
+              title={cardSize === "minimized" ? t("compose.expand") : t("compose.minimize")}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                <path d="M5 14h10" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => {
+                setCardSize((size) => (size === "maximized" ? "normal" : "maximized"));
+              }}
+              aria-label={
+                cardSize === "maximized" ? t("compose.restore") : t("compose.maximize")
+              }
+              title={cardSize === "maximized" ? t("compose.restore") : t("compose.maximize")}
+              aria-pressed={cardSize === "maximized"}
+            >
+              {cardSize === "maximized" ? (
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  {/* Arrows pointing IN: this collapses back to the card. */}
+                  <path d="M9 4v5H4M11 16v-5h5" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  {/* Arrows pointing OUT: this grows to the full panel. */}
+                  <path d="M12 4h4v4M8 16H4v-4" />
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={closeWithSave}
+              aria-label={t("compose.close")}
+              title={t("compose.close")}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+              </svg>
+            </button>
+          </div>
         </header>
 
         {identity !== undefined && (

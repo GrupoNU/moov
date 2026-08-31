@@ -919,6 +919,11 @@ export const en = {
   "compose.sending": "Sending…",
   "compose.discard": "Discard",
   "compose.close": "Close the composer",
+  // E12 (canon 07 §7): the floating card's three sizes.
+  "compose.minimize": "Minimise",
+  "compose.expand": "Expand",
+  "compose.maximize": "Full screen",
+  "compose.restore": "Exit full screen",
   "compose.attach": "Attach a file",
   "compose.attachments": (count: number): string =>
     count === 1 ? "1 attachment" : `${count} attachments`,
@@ -1984,6 +1989,10 @@ export const es: Strings = {
   "compose.sending": "Enviando…",
   "compose.discard": "Descartar",
   "compose.close": "Cerrar el compositor",
+  "compose.minimize": "Minimizar",
+  "compose.expand": "Expandir",
+  "compose.maximize": "Pantalla completa",
+  "compose.restore": "Salir de pantalla completa",
   "compose.attach": "Adjuntar un archivo",
   "compose.attachments": (count: number): string =>
     count === 1 ? "1 adjunto" : `${count} adjuntos`,

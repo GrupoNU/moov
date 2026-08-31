@@ -42,6 +42,19 @@ if (typeof HTMLDialogElement !== "undefined") {
   HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
     this.open = true;
   };
+  /*
+   * E12/B6 added `show()`, the NON-MODAL open, when the composer became a
+   * floating card (canon 07 §7). jsdom implements neither.
+   *
+   * The two stubs are identical here and that is honest rather than lazy: the
+   * only difference between them in a real browser is modality — the backdrop,
+   * the focus trap, and page inertness — and none of those is simulated for
+   * `showModal()` either, for the reason above. What the components' logic
+   * actually reads is `.open`, and both set it.
+   */
+  HTMLDialogElement.prototype.show = function show(this: HTMLDialogElement) {
+    this.open = true;
+  };
   HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
     if (!this.open) return;
     this.open = false;

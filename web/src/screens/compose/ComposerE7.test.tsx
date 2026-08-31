@@ -115,14 +115,14 @@ function sendResponse(secondsAhead: number) {
 }
 
 beforeEach(() => {
-  if (typeof HTMLDialogElement !== "undefined") {
-    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-      this.open = true;
-    };
-    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-      this.open = false;
-    };
-  }
+  /*
+   * The <dialog> stub lives in `test/setup.ts` now, not here.
+   *
+   * E12/B6 added `show()` — the non-modal open the composer card uses — and
+   * this file's local copy shadowed the shared one WITHOUT it, so every test
+   * here failed with "dialog.show is not a function" while the shared stub sat
+   * one import away already correct. One stub, one place.
+   */
   window.localStorage.clear();
 });
 

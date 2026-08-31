@@ -119,15 +119,14 @@ function sendResponse(secondsAhead: number) {
 }
 
 beforeEach(() => {
-  // jsdom implements <dialog> only partially; showModal must not throw.
-  if (typeof HTMLDialogElement !== "undefined") {
-    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-      this.open = true;
-    };
-    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-      this.open = false;
-    };
-  }
+  /*
+   * The <dialog> stub lives in `test/setup.ts` now, not here.
+   *
+   * E12/B6 added `show()` — the non-modal open the composer card uses — and
+   * this file's local copy shadowed the shared one WITHOUT it, so every test
+   * here failed with "dialog.show is not a function" while the shared stub sat
+   * one import away already correct. One stub, one place.
+   */
 });
 
 afterEach(() => {
@@ -380,5 +379,98 @@ describe("closing without losing work", () => {
 
     await user.click(screen.getByRole("button", { name: "Close the composer" }));
     expect(callsNamed(requests, "Email/set")).toHaveLength(0);
+  });
+});
+
+/**
+ * The floating card (E12/B6, canon 07 §7).
+ *
+ * The composer was a centred `showModal()` dialog through P3. What these pin
+ * is the property the reversal is FOR — that the mail behind the card stays
+ * live — and the one thing minimising must never do, which is discard the
+ * draft it is collapsing.
+ */
+describe("the floating card", () => {
+  it("opens NON-MODALLY, so the mail behind it stays interactive", () => {
+    const { client } = harness([sendResponse(10)]);
+    renderComposer(client);
+
+    /*
+     * The load-bearing assertion of the block. A modal dialog makes the rest
+     * of the page inert; this one must not, because looking up an address or
+     * re-reading the message being answered is the whole reason Gmail's
+     * composer is a corner card rather than a sheet over the inbox.
+     *
+     * `.open` is true either way, so what is checked is which method ran —
+     * `test/setup.ts` stubs both and only the real browser distinguishes them,
+     * which is exactly why the call site is what gets pinned.
+     */
+    const dialog = document.querySelector("dialog");
+    expect(dialog).not.toBeNull();
+    expect(dialog!.open).toBe(true);
+    // A modal dialog would carry `aria-modal`; this one must not claim it.
+    expect(dialog).not.toHaveAttribute("aria-modal", "true");
+  });
+
+  it("offers the three Gmail card controls, in Gmail's order", () => {
+    const { client } = harness([sendResponse(10)]);
+    renderComposer(client);
+
+    expect(screen.getByRole("button", { name: "Minimise" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Full screen" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close the composer" })).toBeInTheDocument();
+  });
+
+  it("minimises and expands again WITHOUT unmounting the draft", async () => {
+    const user = userEvent.setup();
+    const { client } = harness([sendResponse(10)]);
+    const { onClose } = renderComposer(client);
+
+    await user.type(screen.getByRole("textbox", { name: /subject/i }), "!");
+    await user.click(screen.getByRole("button", { name: "Minimise" }));
+
+    /*
+     * The property that makes minimise worth having: the draft is still
+     * MOUNTED — still autosaving, still able to finish a send in flight.
+     * Unmounting would discard the body editor's selection, the attachments'
+     * upload progress and the undo countdown, all of which live in this
+     * component's state.
+     *
+     * And it must not be mistaken for a close: `onClose` firing here would
+     * mean the parent tore the composer down.
+     */
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Expand" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Expand" }));
+    expect(screen.getByRole("textbox", { name: /subject/i })).toHaveValue("Hola!");
+  });
+
+  it("toggles full screen, and says which state it is in", async () => {
+    const user = userEvent.setup();
+    const { client } = harness([sendResponse(10)]);
+    renderComposer(client);
+
+    const maximize = screen.getByRole("button", { name: "Full screen" });
+    expect(maximize).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(maximize);
+
+    // The label flips to what the NEXT press will do, so the control and its
+    // name cannot disagree.
+    const restore = screen.getByRole("button", { name: "Exit full screen" });
+    expect(restore).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("collapses from the title bar itself, not only from the 2rem button", async () => {
+    const user = userEvent.setup();
+    const { client } = harness([sendResponse(10)]);
+    renderComposer(client);
+
+    // Gmail collapses when you click anywhere on the bar; a card that only
+    // responds to a small icon is a card people learn to double-click at.
+    await user.click(screen.getByRole("button", { name: "New message — Minimise" }));
+
+    expect(screen.getByRole("button", { name: "Expand" })).toBeInTheDocument();
   });
 });

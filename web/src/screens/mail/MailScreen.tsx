@@ -3649,10 +3649,17 @@ export function MailScreen(): React.JSX.Element {
       );
 
       /*
-       * While the composer is open the list behind it is not the user's
-       * context: `e` must not archive a message they cannot see. The dialog's
-       * own Escape handling still runs, because the dialog element gets the
-       * event first.
+       * While the composer is open, the list is not the user's context.
+       *
+       * E12/B6 makes the card NON-MODAL, so the list behind it is genuinely
+       * visible now — which changes the reason for this gate without changing
+       * the gate. It used to be "`e` must not archive a message they cannot
+       * see"; it is now the stronger and more permanent one: the caret is in a
+       * text field, and a letter key there is a LETTER. Without this, typing
+       * "e" into a subject line would archive whatever the list had focused.
+       *
+       * The card's own Escape handling still runs, because the dialog element
+       * gets the event before this document-level listener.
        */
       if (composerDraft !== undefined) return;
 

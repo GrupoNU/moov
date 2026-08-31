@@ -1,42 +1,130 @@
 /*
- * The composer dialog.
+ * The composer: a floating card, bottom-right (E12/B6, canon 07 §7).
  *
- * A real <dialog> opened with showModal(), so the browser owns the focus trap,
- * the Escape handling and the top-layer stacking — none of which a
- * hand-rolled overlay gets right.
+ * # It was a centred modal, and the move is the whole block
+ *
+ * P3 used `showModal()` and centred the card. E12 keeps the `<dialog>` — for
+ * the TOP LAYER, which no `z-index` fight can lose — and opens it with `show()`
+ * instead, which makes it non-modal: no backdrop, no focus trap, and the mail
+ * behind it stays live. That is what lets someone look up an address or re-read
+ * the message they are answering without abandoning the draft.
+ *
+ * A non-modal `<dialog>` is `position: absolute` by default and inherits no
+ * centring, so the corner placement below is a plain `position: fixed` — which
+ * also keeps the card put while the list scrolls underneath it.
  */
 
 .dialog {
-  width: min(46rem, calc(100vw - 2 * var(--space-4)));
-  max-height: min(46rem, calc(100vh - 2 * var(--space-5)));
+  position: fixed;
+  inset: auto var(--space-5) 0 auto;
+  width: min(32rem, calc(100vw - 2 * var(--space-4)));
+  /* `max-height`, not `height`: a short reply's card should be short. The form
+   * below still caps at the same number so a long one scrolls internally
+   * rather than growing past the viewport. */
+  max-height: min(40rem, calc(100vh - 6rem));
+  margin: 0;
   padding: 0;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
+  /* Square at the bottom: the card sits ON the bottom edge, and rounding a
+   * corner that is flush against the viewport reads as a rendering artefact. */
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--surface-raised);
   color: var(--text-default);
   box-shadow: var(--shadow-xl);
   overflow: hidden;
 }
 
-.dialog::backdrop {
-  background: color-mix(in srgb, var(--shadow-color, #000) 46%, transparent);
-}
+/*
+ * No `::backdrop` rule, and its absence is deliberate: a non-modal dialog does
+ * not render one, and dimming the mail behind a card the user can still click
+ * would be a lie about the page's state.
+ */
 
 .form {
   display: flex;
   flex-direction: column;
   max-height: inherit;
-  height: min(46rem, calc(100vh - 2 * var(--space-5)));
+  height: min(40rem, calc(100vh - 6rem));
+}
+
+/*
+ * MINIMISED: the title bar alone.
+ *
+ * The form is hidden rather than unmounted — the draft stays mounted, still
+ * autosaving, still able to finish a send in progress. Unmounting would
+ * discard the body editor's selection, the attachments' upload progress and
+ * the undo countdown, all of which live in the component's state.
+ *
+ * `display: none` on the form specifically, so its contents also leave the tab
+ * order: a collapsed card whose invisible fields are still tabbable is a
+ * keyboard trap in a strip the user cannot see.
+ */
+.minimized {
+  max-height: none;
+}
+
+.minimized .form {
+  height: auto;
+}
+
+.minimized .form > *:not(.header) {
+  display: none;
+}
+
+/*
+ * MAXIMISED: a large centred panel, for a long message where the corner card
+ * is a letterbox. Still non-modal — the mail behind is still live, it is just
+ * mostly covered.
+ */
+.maximized {
+  inset: var(--space-5);
+  width: auto;
+  max-height: none;
+  border-radius: var(--radius-lg);
+}
+
+.maximized .form {
+  height: 100%;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 0;
   border-bottom: 1px solid var(--border-subtle);
+  /* Darker than the body, which is what makes the strip read as a title BAR —
+   * the thing you grab, collapse and close — rather than as the first row of
+   * the form. */
   background: var(--surface-sunken);
+}
+
+/*
+ * The bar itself toggles minimise. A real button, so it is keyboard-operable
+ * and announced with a role, rather than a div with a click handler — and
+ * `flex: 1` so the whole strip is the target, which is what makes a collapsed
+ * card expand by clicking anywhere on it.
+ */
+.titleBar {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.titleBar:hover {
+  background: var(--surface-default);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
 }
 
 .title {
@@ -44,6 +132,28 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * On a phone the card IS the screen: a 32rem card in a 360px viewport is
+ * neither a card nor usable, so it fills the space and behaves as the modal it
+ * effectively is at that width.
+ */
+@media (max-width: 40rem) {
+  .dialog {
+    inset: 0;
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+  }
+
+  .form {
+    height: 100dvh;
+  }
 }
 
 .iconButton {
