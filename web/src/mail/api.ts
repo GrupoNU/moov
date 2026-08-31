@@ -7,16 +7,17 @@
  * for a list would double the latency of the single most frequent operation in
  * a mail client.
  *
- * # The 200-row ceiling, and why this file surfaces it instead of hiding it
+ * # Paging, and why this file still surfaces truncation instead of hiding it
  *
- * `Email/query` on this server fetches at most 200 matches and slices
- * `position` out of THAT window (verified against the live pilot: a mailbox of
- * 626 messages answers `position:200` with zero ids). There is no offset and
- * no working cursor — `before` is applied in Go AFTER the SQL LIMIT, so it can
- * only shrink the same window, never advance past it. Deep paging is therefore
- * not expressible today, and {@link QueryPage.truncated} says so out loud so
- * the UI can tell the user the truth rather than presenting 200 of 626
- * messages as if they were all of them.
+ * HISTORY: this header once documented a real 200-row ceiling (`position`
+ * beyond the first window answered zero ids). That server limitation was
+ * fixed in E3/D-7 (2026-08-31): `Email/query` pages with a keyset cursor to
+ * `MaxQueryReach` = 100,000 rows, measured through the real paging code
+ * (internal/jmap/mail/search.go, query_paging_test.go). The E12 pager
+ * (mail/paging.ts) consumes exactly that, mirroring the 100k ceiling
+ * client-side. {@link QueryPage.truncated} remains, because a query CAN
+ * still exceed the reach — the UI keeps telling the user the truth when
+ * what it shows is not everything that matched.
  */
 
 import {
