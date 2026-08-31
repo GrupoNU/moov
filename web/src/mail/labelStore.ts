@@ -13,31 +13,37 @@
  *     in the sidebar always / only-when-unread / never — has no home on the
  *     server today.
  *
- * # The named gap: this is localStorage, and it does not roam
+ * # Where the presentation lives now: prefs v2, and it ROAMS
  *
- * The server's `Prefs` singleton (`internal/jmap/mail/prefs.go`) validates
- * STRICTLY: an unknown key is refused with `invalidProperties`, which is the
- * correct behaviour and is why this module does not invent one. There is no
- * `labels` key in the schema, and adding one is a server change that belongs to
- * the server, not to a client that decides unilaterally what the wire looks
- * like.
+ * The gap this file used to name is closed. `Prefs.labels`
+ * (`internal/jmap/mail/prefs.go`, `store.Prefs.Labels`) is the durable home —
+ * a `{ [keyword]: { color, visibility } }` map served by the existing
+ * `Prefs/get`/`Prefs/set` under `CAP_PREFS` — so a label created blue on the
+ * laptop is blue on the phone.
  *
- * So label metadata is kept in `localStorage`, per browser, and the honest
- * consequence — stated here and in the settings UI rather than discovered by a
- * user — is:
+ * `localStorage` did not go away; it changed job. It is now a MIRROR of prefs,
+ * exactly as the theme's is (`theme.ts`, and the reasoning on `store.Prefs`'
+ * Theme field): the sidebar has to draw chips on the first paint after a reload,
+ * and the session fetch has not resolved yet. The mirror is written through on
+ * every prefs change and read only before prefs arrive, so it is a cache and
+ * never a second source of truth.
  *
- *   **A label's colour and sidebar visibility do not roam between devices.**
- *   Create "Clientes" in blue on the laptop and it is grey on the phone. The
- *   label itself, its name and every message it is on are fully shared; only
- *   the presentation is local.
+ * The `known` set stays LOCAL and is not mirrored into prefs, which is a
+ * deliberate asymmetry rather than an oversight. It answers "did this browser
+ * just create a label that has no messages yet", and a label that never got
+ * applied anywhere is not a fact about the account — pushing it to the server
+ * would resurrect a discarded label on every other device. `metadata` is the
+ * half that describes a real, shared label, and it is the half that roams.
  *
- * @todo Prefs schema v2 (`internal/jmap/mail/prefs.go` + `store.Prefs`) is the
- *   durable home: a `labels` key holding
- *   `{ [keyword: string]: { color: string; visibility: LabelVisibility } }`,
- *   served by the existing `Prefs/get` / `Prefs/set` under `CAP_PREFS`. When it
- *   lands, {@link loadLabelMetadata} reads it from prefs with the localStorage
- *   copy as a one-time migration source, and this comment gets deleted rather
- *   than amended. Until then, the gap above is real and named.
+ * # The one-time migration
+ *
+ * A browser that used the old scheme holds metadata prefs has never seen.
+ * {@link labelMetadataMigration} computes the entries to push — the local ones
+ * that prefs does not already carry — and the caller writes them through once,
+ * on first load. Prefs WINS every conflict: a key present on both sides is the
+ * server's, because the server's value may have come from another device that
+ * set it more recently, and there is no local timestamp that could argue
+ * otherwise.
  *
  * # Why the metadata is keyed by KEYWORD, not by a generated id
  *
@@ -50,6 +56,7 @@
 
 import { DEFAULT_LABEL_COLOR_ID, isLabelColorId } from "./labelPalette";
 import { decodeLabelName, isLabelKeyword } from "./labels";
+import { MAX_LABEL_PREFS, type LabelPrefs, type Prefs } from "./prefs";
 
 /**
  * Gmail's `labelListVisibility`, adopted verbatim (canon §2.6, API-confirmed
@@ -172,6 +179,100 @@ export function saveLabelState(state: LabelState, storage?: Storage): void {
     // Private mode, a full quota, a locked-down browser: the labels still work,
     // they are just grey and always visible. Never a thrown error on a colour.
   }
+}
+
+// ---------------------------------------------------------------------------
+// prefs v2 — the durable home
+// ---------------------------------------------------------------------------
+
+/**
+ * The prefs `labels` map, read as this module's metadata shape.
+ *
+ * The two differ in one field NAME only — prefs calls it `color`, this module
+ * calls it `colorId` — and the rename is worth keeping rather than papering
+ * over: `colorId` says out loud that the value is a palette id and not a hex
+ * string, which is the palette's load-bearing decision (a contrast fix to the
+ * amber swatch must reach every existing label). The wire uses the shorter name
+ * because that is what the server validates.
+ *
+ * A colour the palette does not know degrades to the default, per-entry, the
+ * same way {@link parseLabelState} degrades a stored one: a newer build's
+ * swatch should make one chip grey, not take the other nineteen down with it.
+ */
+export function metadataFromPrefs(labels: Prefs["labels"]): LabelMetadataMap {
+  const out: Record<string, LabelMetadata> = {};
+  for (const [keyword, entry] of Object.entries(labels)) {
+    if (!isLabelKeyword(keyword)) continue;
+    out[keyword] = {
+      colorId: isLabelColorId(entry.color) ? entry.color : DEFAULT_LABEL_COLOR_ID,
+      visibility: entry.visibility,
+    };
+  }
+  return out;
+}
+
+/** This module's metadata shape, rendered as the prefs `labels` map. */
+export function metadataToPrefs(metadata: LabelMetadataMap): Record<string, LabelPrefs> {
+  const out: Record<string, LabelPrefs> = {};
+  for (const [keyword, meta] of Object.entries(metadata)) {
+    out[keyword] = { color: meta.colorId, visibility: meta.visibility };
+  }
+  return out;
+}
+
+/**
+ * The effective metadata: prefs when they are available, the local mirror
+ * before they arrive.
+ *
+ * Not a merge. Once prefs have loaded they are the whole truth — a keyword the
+ * mirror holds and prefs does not is a label whose metadata was DELETED on
+ * another device, and merging would resurrect it on every load here. The
+ * migration below is the one path that ever pushes local entries up, and it
+ * runs once.
+ */
+export function effectiveMetadata(
+  prefsLabels: Prefs["labels"],
+  mirror: LabelMetadataMap,
+  prefsAvailable: boolean,
+): LabelMetadataMap {
+  return prefsAvailable ? metadataFromPrefs(prefsLabels) : mirror;
+}
+
+/**
+ * The one-time migration: the local entries prefs does not already carry.
+ *
+ * Returns `undefined` when there is nothing to do, so the caller can skip the
+ * save entirely rather than write an identical object and burn a state advance
+ * in every other tab (`PutPrefs` moves `updated_at` even for a no-op, which is
+ * documented as deliberate and is exactly why we should not trigger it for
+ * nothing).
+ *
+ * PREFS WIN every conflict. A keyword present on both sides keeps the server's
+ * value, because the server's may have been set from another device more
+ * recently and no local timestamp could argue otherwise. Only keywords prefs
+ * has never heard of are pushed — which is precisely "what this browser knows
+ * that the account does not".
+ *
+ * The result is capped at {@link MAX_LABEL_PREFS}, the durable-keyword ceiling
+ * the server also enforces. A browser that accumulated more than 26 metadata
+ * entries across renames would otherwise produce a migration the server refuses
+ * WHOLE, losing all of it rather than the excess — and a refused migration
+ * would retry on every load, since nothing would have been written to mark it
+ * done.
+ */
+export function labelMetadataMigration(
+  local: LabelMetadataMap,
+  prefsLabels: Prefs["labels"],
+): Record<string, LabelPrefs> | undefined {
+  const merged: Record<string, LabelPrefs> = { ...metadataToPrefs(metadataFromPrefs(prefsLabels)) };
+  let added = 0;
+  for (const [keyword, meta] of Object.entries(local)) {
+    if (keyword in merged) continue;
+    if (Object.keys(merged).length >= MAX_LABEL_PREFS) break;
+    merged[keyword] = { color: meta.colorId, visibility: meta.visibility };
+    added += 1;
+  }
+  return added === 0 ? undefined : merged;
 }
 
 // ---------------------------------------------------------------------------

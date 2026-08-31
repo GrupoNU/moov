@@ -6,6 +6,7 @@ import { loadSession } from "./auth/session";
 import { BrandingProvider } from "./branding/BrandingProvider";
 import { I18nProvider, useTranslation } from "./i18n/I18nProvider";
 import { PrefsProvider, usePrefs } from "./mail/PrefsProvider";
+import { prefsMigrationPatch, writePrefsMirrors } from "./mail/prefsMirrors";
 import { OfflineProvider } from "./offline/OfflineProvider";
 import { RouterProvider } from "./router/RouterProvider";
 import { LoginScreen } from "./screens/login/LoginScreen";
@@ -136,7 +137,7 @@ function LocalizedFromPrefs({
 }: {
   readonly children: React.ReactNode;
 }): React.JSX.Element {
-  const { prefs, isAvailable } = usePrefs();
+  const { prefs, isAvailable, setPrefs } = usePrefs();
   const { locale } = useTranslation();
 
   /*
@@ -157,6 +158,34 @@ function LocalizedFromPrefs({
     applyTheme(prefs.theme, document.documentElement);
     saveThemePreference(prefs.theme);
   }, [isAvailable, prefs.theme]);
+
+  /*
+   * The v2 mirrors, and the one-time migration that seeds them.
+   *
+   * The ORDER inside the effect matters and is the opposite of what reads
+   * naturally: the migration is computed FIRST, from the mirrors as they still
+   * are, and only then are the mirrors overwritten from prefs. Writing through
+   * first would erase the very local values the migration exists to carry up —
+   * a browser's blue "Clientes" would become the account's absent metadata one
+   * millisecond before anything asked what the browser knew.
+   *
+   * `prefsMigrationPatch` converges by construction: once the push lands, the
+   * account carries the local values and the next call returns `undefined`. The
+   * save is fire-and-forget because its failure path is already correct — the
+   * provider rolls back and surfaces the server's words, and the migration
+   * simply retries on the next load, which is the right behaviour for a
+   * best-effort carry-up.
+   *
+   * Gated on `isAvailable` for the same reason the theme is: a server without
+   * the capability must not have its defaults overwrite choices the mirrors are
+   * legitimately holding.
+   */
+  useEffect(() => {
+    if (!isAvailable) return;
+    const patch = prefsMigrationPatch(prefs);
+    writePrefsMirrors(prefs);
+    if (patch !== undefined) void setPrefs(patch);
+  }, [isAvailable, prefs, setPrefs]);
 
   // `?? locale` keeps the browser-detected value when the preference says
   // "follow the browser", instead of re-running detection with a different
