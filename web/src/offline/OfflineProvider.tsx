@@ -10,7 +10,7 @@ import {
 
 import type { Email, Mailbox } from "../mail/types";
 import { AddressStore } from "./addressStore";
-import { MailCache } from "./cache";
+import { loadCacheDepth, MailCache } from "./cache";
 import { openDatabase } from "./idb";
 import { OutboxStore, type OutboxItem } from "./outbox";
 
@@ -109,7 +109,15 @@ export function OfflineProvider({
         return;
       }
       dbRef.current = db;
-      const mailCache = new MailCache(db, accountId);
+      /*
+       * The depth comes from the MIRROR, not from the prefs context, and that
+       * is forced rather than chosen: this provider sits above `PrefsProvider`
+       * in the tree (it takes only an account id) and, more importantly, an
+       * offline cold boot has no session to fetch prefs with at all. The mirror
+       * is written through whenever prefs load — see `useCacheDepth` — so the
+       * value read here is the user's, one boot late at worst.
+       */
+      const mailCache = new MailCache(db, accountId, loadCacheDepth());
       const queue = new OutboxStore(db, accountId);
       /*
        * Drop the other accounts' rows BEFORE exposing the cache, so no read can

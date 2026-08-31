@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BODY_CAP, HEADER_CAP, MailCache } from "./cache";
+import { BODY_CAP, HEADER_CAP, loadCacheDepth, MailCache, saveCacheDepth } from "./cache";
 import { openDatabase, SCHEMA_VERSION } from "./idb";
 import { FakeIndexedDB, installKeyRange } from "../test/fakeIndexedDB";
 import type { Email, Mailbox } from "../mail/types";
@@ -265,5 +265,88 @@ describe("clearOtherAccounts", () => {
     // Theirs is gone.
     expect(await other.stats()).toEqual({ headers: 0, bodies: 0 });
     expect(await other.mailboxes()).toEqual([]);
+  });
+});
+
+/**
+ * The configurable depth (prefs v2 `offlineDepth`, E9b).
+ *
+ * Before this the caps were two constants, and the string that told the user so
+ * (`offline.depthPending`) had no render site at all. The depth is now a
+ * preference, and the properties worth pinning are that it really governs BOTH
+ * halves — trimming on write and the default limit on read — and that an
+ * offline cold boot, which has no server to ask, still gets the user's number.
+ */
+describe("the configurable depth", () => {
+  it("defaults to the constants, so an untouched account caches what it always did", () => {
+    expect(new MailCache(db, "acc").cacheDepth).toEqual({
+      headersPerMailbox: HEADER_CAP,
+      bodies: BODY_CAP,
+    });
+  });
+
+  it("trims a mailbox to the CONFIGURED header depth, not the constant", async () => {
+    const cache = new MailCache(db, "acc", { headersPerMailbox: 10, bodies: BODY_CAP });
+    const many = Array.from({ length: 25 }, (_, index) => header(`h${String(index)}`, index));
+    await cache.putHeaders("inbox", many);
+
+    const kept = await cache.headers("inbox", 100);
+    expect(kept).toHaveLength(10);
+    // Newest kept, oldest evicted — the same order, at the new depth.
+    expect(kept.map((email) => email.id)).toContain("h24");
+    expect(kept.map((email) => email.id)).not.toContain("h0");
+  });
+
+  it("reads at the configured depth by default", async () => {
+    /*
+     * The half a default parameter would have got wrong: `headers()` cannot
+     * take `HEADER_CAP` as its fallback, or a cache configured to hold 500
+     * would still hand back 200.
+     */
+    const deep = new MailCache(db, "acc", { headersPerMailbox: 300, bodies: BODY_CAP });
+    const many = Array.from({ length: 250 }, (_, index) => header(`h${String(index)}`, index));
+    await deep.putHeaders("inbox", many);
+
+    expect(await deep.headers("inbox")).toHaveLength(250);
+    // An explicit limit still wins — the argument is not ignored.
+    expect(await deep.headers("inbox", 5)).toHaveLength(5);
+  });
+
+  it("evicts bodies at the CONFIGURED depth", async () => {
+    const cache = new MailCache(db, "acc", { headersPerMailbox: HEADER_CAP, bodies: 3 });
+    for (let index = 0; index < 6; index += 1) {
+      await cache.putBody(header(`b${String(index)}`, index));
+    }
+    expect((await cache.allBodies()).length).toBe(3);
+  });
+});
+
+describe("the depth mirror — the value an offline cold boot reads", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("round-trips through localStorage", () => {
+    saveCacheDepth({ headersPerMailbox: 500, bodies: 250 });
+    expect(loadCacheDepth()).toEqual({ headersPerMailbox: 500, bodies: 250 });
+  });
+
+  it("defaults when nothing is stored", () => {
+    // The PWA's very first boot, and every boot on a browser that blocks
+    // storage: the cache runs at the product default rather than at zero.
+    expect(loadCacheDepth()).toEqual({ headersPerMailbox: HEADER_CAP, bodies: BODY_CAP });
+  });
+
+  it("survives a corrupted mirror rather than throwing on a mail screen", () => {
+    window.localStorage.setItem("moov.offlineDepth.v1", "{not json");
+    expect(loadCacheDepth()).toEqual({ headersPerMailbox: HEADER_CAP, bodies: BODY_CAP });
+  });
+
+  it("falls back per FIELD, so a half-written mirror keeps the half that read", () => {
+    window.localStorage.setItem(
+      "moov.offlineDepth.v1",
+      JSON.stringify({ headersPerMailbox: 500, bodies: "lots" }),
+    );
+    expect(loadCacheDepth()).toEqual({ headersPerMailbox: 500, bodies: BODY_CAP });
   });
 });

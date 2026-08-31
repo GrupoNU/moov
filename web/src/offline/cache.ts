@@ -56,7 +56,8 @@ import {
 } from "./idb";
 
 /**
- * How many headers per mailbox are kept.
+ * The DEFAULT number of headers per mailbox — the depth used when no preference
+ * is known.
  *
  * 200 matches `SEARCH_WINDOW` in `mail/api.ts` — the size of the window the app
  * fetches anyway — so the common case is "cache exactly what was just
@@ -65,15 +66,18 @@ import {
  * JSON per header it costs ~200 kB per mailbox: real, bounded, and far under
  * any browser's quota for a dozen folders.
  *
- * A user-facing depth setting is Gmail's ("how many days") and is NOT in this
- * epic — see the named gap in the deliverable and `offline.depthPending` in the
- * string table, which says so on screen rather than leaving it to be
- * discovered.
+ * It is no longer the only answer: `Prefs.offlineDepth.headersPerMailbox`
+ * (E9b, `store.Prefs.OfflineDepth`) makes the depth a user's choice, because
+ * the honest number depends on the device — a phone on a metered connection and
+ * a desktop on a fast link want different answers, and the user is the only one
+ * who knows which they are on. This constant remains the value the server
+ * itself defaults to, so an account that never touched the setting caches
+ * exactly what it always did.
  */
 export const HEADER_CAP = 200;
 
 /**
- * How many message bodies are kept, evicted least-recently-read first.
+ * The DEFAULT number of message bodies kept, evicted least-recently-read first.
  *
  * Bodies are the expensive rows: a message with a long HTML part is tens of
  * kilobytes where a header is one. 100 is chosen to be generous for the actual
@@ -83,6 +87,76 @@ export const HEADER_CAP = 200;
  * competing with the browser's whole origin quota.
  */
 export const BODY_CAP = 100;
+
+/**
+ * The depths this cache is currently running at.
+ *
+ * A value rather than two constants because the cache must answer "how deep am
+ * I" identically at write time (trimming) and at read time (the default
+ * `limit`), and threading two numbers through both paths is how one of them
+ * ends up trimming to a depth the other never reads.
+ */
+export interface CacheDepth {
+  readonly headersPerMailbox: number;
+  readonly bodies: number;
+}
+
+export const DEFAULT_CACHE_DEPTH: CacheDepth = {
+  headersPerMailbox: HEADER_CAP,
+  bodies: BODY_CAP,
+};
+
+/**
+ * The localStorage mirror of the depth.
+ *
+ * # Why a mirror is REQUIRED here and not merely convenient
+ *
+ * This is the theme's problem in a harsher form. The theme mirror exists
+ * because the value is needed before first paint; this one exists because the
+ * value is needed when there may be NO SERVER AT ALL. An offline cold boot —
+ * the PWA opened on a train, which is the entire scenario this cache serves —
+ * has no session, no `Prefs/get`, and no way to ever learn the user's depth.
+ * Without a mirror the cache would silently run at the default in exactly the
+ * situation the user configured it for, and a setting that applies only when
+ * you do not need it is a setting that does nothing.
+ *
+ * Prefs remain the source of truth. This is written through whenever prefs
+ * load or change, and read only when they are unavailable.
+ */
+const DEPTH_KEY = "moov.offlineDepth.v1";
+
+/** Reads the mirrored depth. Never throws — an absent or broken one is the default. */
+export function loadCacheDepth(storage?: Storage): CacheDepth {
+  try {
+    const store = storage ?? globalThis.localStorage;
+    const raw = store?.getItem(DEPTH_KEY);
+    if (raw === null || raw === undefined) return DEFAULT_CACHE_DEPTH;
+    const parsed = JSON.parse(raw) as { headersPerMailbox?: unknown; bodies?: unknown };
+    return {
+      headersPerMailbox:
+        typeof parsed.headersPerMailbox === "number" && Number.isInteger(parsed.headersPerMailbox)
+          ? parsed.headersPerMailbox
+          : HEADER_CAP,
+      bodies:
+        typeof parsed.bodies === "number" && Number.isInteger(parsed.bodies)
+          ? parsed.bodies
+          : BODY_CAP,
+    };
+  } catch {
+    return DEFAULT_CACHE_DEPTH;
+  }
+}
+
+/** Writes the mirrored depth. A blocked storage costs the depth, never an error. */
+export function saveCacheDepth(depth: CacheDepth, storage?: Storage): void {
+  try {
+    const store = storage ?? globalThis.localStorage;
+    store?.setItem(DEPTH_KEY, JSON.stringify(depth));
+  } catch {
+    // Private mode, a full quota, a locked-down browser: the cache runs at the
+    // default depth next boot. Never a thrown error on a preference.
+  }
+}
 
 /** A cached mailbox row. */
 interface MailboxRow {
@@ -126,10 +200,25 @@ const MAX_KEY = "￿";
  * up reading another account's rows.
  */
 export class MailCache {
+  /**
+   * The depth is a CONSTRUCTOR argument with a default, not a mutable field.
+   *
+   * A cache handed a new depth is a new `MailCache`, which means the trimming a
+   * write does and the limit a read applies can never disagree within one
+   * instance. The caller that owns the prefs subscription rebuilds the object
+   * when the depth changes; that is one line there, versus a mutable field
+   * every method would have to re-read at exactly the right moment.
+   */
   constructor(
     private readonly db: IDBDatabase,
     private readonly accountId: string,
+    private readonly depth: CacheDepth = DEFAULT_CACHE_DEPTH,
   ) {}
+
+  /** The depths this instance trims and reads at. */
+  get cacheDepth(): CacheDepth {
+    return this.depth;
+  }
 
   // --- mailboxes -----------------------------------------------------------
 
@@ -184,7 +273,7 @@ export class MailCache {
    * which is what makes the cache warm without a background job, a schedule, or
    * a second code path that could disagree with what the user saw.
    *
-   * After writing, the mailbox is trimmed to {@link HEADER_CAP} newest.
+   * After writing, the mailbox is trimmed to the configured header depth.
    */
   async putHeaders(mailboxId: string, emails: readonly Email[]): Promise<void> {
     const now = Date.now();
@@ -206,7 +295,8 @@ export class MailCache {
   }
 
   /**
-   * Drops everything past {@link HEADER_CAP} in one mailbox, oldest first.
+   * Drops everything past the configured header depth in one mailbox, oldest
+   * first.
    *
    * Walks the `[mailboxId, receivedAt]` index BACKWARDS (newest first) and
    * deletes from the cap onward, which touches only the rows being evicted
@@ -223,14 +313,26 @@ export class MailCache {
     await eachCursor(index, range, "prev", (value) => {
       const row = value as HeaderRow;
       seen += 1;
-      if (seen > HEADER_CAP && row.accountId === this.accountId) doomed.push(row.id);
+      if (seen > this.depth.headersPerMailbox && row.accountId === this.accountId) {
+        doomed.push(row.id);
+      }
       return true;
     });
     for (const id of doomed) await request(store.delete(id));
   }
 
-  /** The cached headers of one mailbox, newest first, at most {@link HEADER_CAP}. */
-  async headers(mailboxId: string, limit: number = HEADER_CAP): Promise<readonly Email[]> {
+  /**
+   * The cached headers of one mailbox, newest first, at most the configured
+   * header depth.
+   *
+   * The default is resolved in the BODY rather than in the parameter list,
+   * because a default initializer cannot see `this` — and taking the depth from
+   * the instance is the whole point: a read that defaulted to the module
+   * constant would return 200 rows out of a cache the user configured to hold
+   * 500.
+   */
+  async headers(mailboxId: string, limit?: number): Promise<readonly Email[]> {
+    const cap = limit ?? this.depth.headersPerMailbox;
     const rows = await withTransaction(
       this.db,
       [STORE_HEADERS],
@@ -242,7 +344,7 @@ export class MailCache {
         await eachCursor(index, range, "prev", (value) => {
           const row = value as HeaderRow;
           if (row.accountId === this.accountId) found.push(row);
-          return found.length < limit;
+          return found.length < cap;
         });
         return found;
       },
@@ -288,12 +390,12 @@ export class MailCache {
     });
   }
 
-  /** Drops the least-recently-read bodies past {@link BODY_CAP}. */
+  /** Drops the least-recently-read bodies past the configured body depth. */
   private async evictBodies(store: IDBObjectStore): Promise<void> {
     const total = await request(store.count());
-    if (total <= BODY_CAP) return;
+    if (total <= this.depth.bodies) return;
 
-    const excess = total - BODY_CAP;
+    const excess = total - this.depth.bodies;
     const doomed: string[] = [];
     // Forward over `lastReadAt` is oldest-read first, which is the eviction
     // order by definition.
