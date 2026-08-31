@@ -72,6 +72,11 @@ import { isSearchable, normalizeQuery, refusalFor } from "../../mail/search";
 import { parseSearchQuery, type UnsupportedTerm } from "../../mail/searchQuery";
 import { planFilter, type FilterPlan, type FilterProblem } from "../../mail/searchFilter";
 import {
+  DROPPED_CRITERION_LABELS,
+  type FilterDraftFromSearch,
+} from "../../mail/searchToFilter";
+import type { FilterRuleDraft } from "../../mail/filters";
+import {
   loadRecentSearches,
   saveRecentSearches,
   withRecentSearch,
@@ -2004,6 +2009,47 @@ export function MailScreen(): React.JSX.Element {
     navigate(mailRouteRef.current);
   }, [navigate]);
 
+  /**
+   * B7: a filter rule pre-filled from the advanced-search panel (canon 07 §8).
+   *
+   * It lives HERE rather than in the settings page because the two ends are on
+   * different screens: the button is in the search box's panel and the builder
+   * is on the filters tab. This is the value that travels between them, and the
+   * navigation is what carries the user.
+   *
+   * Cleared once the builder has consumed it, so returning to the filters tab
+   * later does not silently reopen a builder the user already dismissed.
+   */
+  const [filterPrefill, setFilterPrefill] = useState<FilterRuleDraft | undefined>(
+    undefined,
+  );
+
+  /**
+   * "Crear filtro": carry the search's criteria to the filter builder.
+   *
+   * The dropped criteria are reported as a TOAST rather than swallowed. The
+   * panel already said so before the click — but the user is about to land on
+   * a different screen, and a warning they read a second ago on a surface that
+   * has since closed is a warning they will not connect to the half-empty
+   * builder in front of them.
+   */
+  const createFilterFromSearch = useCallback(
+    (result: FilterDraftFromSearch): void => {
+      if (!result.usable) return;
+      setFilterPrefill(result.draft);
+      goToSettings("filters");
+      if (result.dropped.length > 0) {
+        setToast(
+          format(
+            "search.options.filterDrops",
+            result.dropped.map((code) => t(DROPPED_CRITERION_LABELS[code])).join(", "),
+          ),
+        );
+      }
+    },
+    [goToSettings, format, t],
+  );
+
   const openLabelMenu = useRef<(() => void) | undefined>(undefined);
   const registerLabelMenu = useCallback((open: () => void): void => {
     openLabelMenu.current = open;
@@ -2120,9 +2166,18 @@ export function MailScreen(): React.JSX.Element {
             isActivating: filtersApi.isActivating,
             isBusy: filtersApi.isBusy,
             error: filtersApi.error,
+            /*
+             * B7: the rule "Crear filtro" carried here from the search panel.
+             * Cleared once the builder consumes it, so returning to this tab
+             * later does not reopen a builder already dismissed.
+             */
+            prefill: filterPrefill,
+            onPrefillConsumed: () => {
+              setFilterPrefill(undefined);
+            },
           }
         : undefined,
-    [filtersApi, mailboxes, labelsApi.labels],
+    [filtersApi, mailboxes, labelsApi.labels, filterPrefill],
   );
 
   const blockedSettings = useMemo<BlockedSectionProps | undefined>(
@@ -3770,6 +3825,14 @@ export function MailScreen(): React.JSX.Element {
           labels={sidebarLabels}
           mailboxes={mailboxes}
           onClearRecent={clearRecentSearches}
+          /*
+           * B7: "Crear filtro" (canon 07 §8). Passed only when the server
+           * offers Sieve — without it there is no builder to open, and a
+           * button that opens nothing is the dead control P4 forbids.
+           */
+          {...(filtersApi.capabilities.filters
+            ? { onCreateFilter: createFilterFromSearch }
+            : {})}
         />
       </TopBar>
 
@@ -4045,6 +4108,13 @@ export function MailScreen(): React.JSX.Element {
             E3: the chips row, under the box while a search is active (canon
             §2.5). It holds no state of its own — each chip reads and rewrites
             the query STRING, so it can never disagree with what was searched.
+
+            E12/B7 VERIFIED this against canon 07 §8 rather than moving it: it
+            sits directly under the top bar and above the toolbar row, which is
+            where Gmail's chips are. It is inside the list column rather than
+            spanning the shell so it narrows with the list when the reading pane
+            or the quick dock opens — chips that stayed full-width while the
+            results under them halved would float over the reader.
           */}
           {route.kind === "search" && !isOfflineMode && (
             <SearchChips query={route.query} onChange={runSearch} />

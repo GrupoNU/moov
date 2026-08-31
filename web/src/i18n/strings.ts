@@ -1110,6 +1110,12 @@ export const en = {
   "search.options.scopeAll": "All mail",
   "search.options.submit": "Search",
   "search.options.reset": "Clear",
+  // E12/B7 (canon 07 §8): the second button of Gmail's advanced panel.
+  "search.options.createFilter": "Create filter",
+  "search.options.createFilterUnusable":
+    "Add a sender, recipient, subject, size or attachment condition first — a filter with none would match every message.",
+  "search.options.filterDrops": (fields: string): string =>
+    `A filter cannot carry these over: ${fields}.`,
   "search.within.1d": "1 day",
   "search.within.3d": "3 days",
   "search.within.1w": "1 week",
@@ -2151,6 +2157,11 @@ export const es: Strings = {
   "search.options.scopeAll": "Todo el correo",
   "search.options.submit": "Buscar",
   "search.options.reset": "Limpiar",
+  "search.options.createFilter": "Crear filtro",
+  "search.options.createFilterUnusable":
+    "Agregá primero una condición de remitente, destinatario, asunto, tamaño o adjunto — un filtro sin ninguna coincidiría con todos los mensajes.",
+  "search.options.filterDrops": (fields: string): string =>
+    `Un filtro no puede trasladar esto: ${fields}.`,
   "search.within.1d": "1 día",
   "search.within.3d": "3 días",
   "search.within.1w": "1 semana",

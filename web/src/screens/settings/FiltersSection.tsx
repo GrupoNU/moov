@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { useConfirm } from "../../components/useConfirm";
 import { useTranslation } from "../../i18n/I18nProvider";
@@ -80,6 +80,17 @@ export interface FiltersSectionProps {
   readonly isActivating?: boolean;
   readonly isBusy?: boolean;
   readonly error?: string | undefined;
+  /**
+   * E12/B7: a rule pre-filled from the advanced-search panel (canon 07 §8).
+   *
+   * Present exactly once, right after "Crear filtro" navigated the user here.
+   * The section opens its builder on it and calls {@link onPrefillConsumed},
+   * so returning to this tab later does not reopen a builder that was already
+   * dismissed — a surface that reappears on its own is a surface people learn
+   * to distrust.
+   */
+  readonly prefill?: FilterRuleDraft | undefined;
+  readonly onPrefillConsumed?: (() => void) | undefined;
 }
 
 export function FiltersSection({
@@ -96,11 +107,27 @@ export function FiltersSection({
   isActivating = false,
   isBusy = false,
   error,
+  prefill,
+  onPrefillConsumed,
 }: FiltersSectionProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
   /** The rule being edited, `"new"` for a fresh one, undefined when closed. */
   const [editing, setEditing] = useState<FilterRule | "new" | undefined>(undefined);
+
+  /*
+   * E12/B7: a rule pre-filled from the advanced-search panel (canon 07 §8).
+   *
+   * It arrives as a PROP rather than through `setEditing`, because the trigger
+   * is on a different screen entirely — the user pressed "Crear filtro" in the
+   * search box and was navigated here. An effect opens the builder on it; the
+   * caller clears it once consumed, so pressing Back and returning does not
+   * silently reopen a builder the user already dismissed.
+   */
+  useEffect(() => {
+    if (prefill === undefined) return;
+    setEditing("new");
+  }, [prefill]);
 
   /*
    * "Bloqueados" has its own section, so the FILTERS list shows only what a
@@ -244,18 +271,20 @@ export function FiltersSection({
 
       {editing !== undefined && (
         <FilterBuilder
-          rule={editing === "new" ? undefined : editing}
+          rule={editing === "new" ? prefill : editing}
           mailboxes={mailboxes}
           labels={labels}
           verified={verified}
           hasVerifiedAddress={verified.size > 0}
           onCancel={() => {
             setEditing(undefined);
+            onPrefillConsumed?.();
           }}
           onSave={(draft) => {
             if (editing === "new") onCreate(draft);
             else onUpdate(editing.id, draft);
             setEditing(undefined);
+            onPrefillConsumed?.();
           }}
         />
       )}
@@ -342,8 +371,17 @@ function lines(value: string): readonly string[] {
     .filter((line) => line !== "");
 }
 
-function stateFromRule(rule: FilterRule | undefined): BuilderState {
-  const base = rule ?? { ...EMPTY_RULE, id: "" };
+/*
+ * E12/B7 widened this from `FilterRule` to `FilterRuleDraft`, which is
+ * `Omit<FilterRule, "id">`.
+ *
+ * It reads no id and never did, so the widening is exact rather than a
+ * loosening — and it is what lets a rule PRE-FILLED from a search (which has
+ * no id, because it does not exist yet) seed the builder through the same path
+ * an existing rule does.
+ */
+function stateFromRule(rule: FilterRuleDraft | undefined): BuilderState {
+  const base = rule ?? EMPTY_RULE;
   return {
     name: base.name,
     enabled: base.enabled,
@@ -403,7 +441,7 @@ function FilterBuilder({
   onCancel,
   onSave,
 }: {
-  readonly rule: FilterRule | undefined;
+  readonly rule: FilterRuleDraft | undefined;
   readonly mailboxes: readonly Mailbox[];
   readonly labels: readonly Label[];
   readonly verified: ReadonlySet<string>;

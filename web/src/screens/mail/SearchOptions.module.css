@@ -134,3 +134,17 @@
     padding-left: 0;
   }
 }
+
+/*
+ * E12/B7: what a filter cannot carry over from this search.
+ *
+ * Under the buttons rather than beside "Crear filtro", so it is read as a
+ * statement about what the NEXT step will produce rather than as a validation
+ * error on the button — nothing here is invalid, it simply does not translate.
+ */
+.droppedNote {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}

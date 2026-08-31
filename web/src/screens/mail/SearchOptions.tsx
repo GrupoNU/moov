@@ -1,9 +1,14 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import { mailboxSegment } from "../../mail/mailboxes";
 import { SCOPE_ANYWHERE } from "../../mail/searchFilter";
 import { formatQuery, parseSearchQuery, type QueryGroup } from "../../mail/searchQuery";
+import {
+  DROPPED_CRITERION_LABELS,
+  searchToFilterDraft,
+  type FilterDraftFromSearch,
+} from "../../mail/searchToFilter";
 import type { Mailbox } from "../../mail/types";
 import styles from "./SearchOptions.module.css";
 
@@ -29,14 +34,22 @@ import styles from "./SearchOptions.module.css";
  * rather than disabled, because a greyed-out field still advertises a feature
  * that does not exist.
  *
- * **"Create filter" is NOT here either.** It arrives with the Sieve epic (E6),
- * which owns ManageSieve and the filter builder. A disabled button would be
- * the same P4 violation, so there is a typed TODO instead of a control.
+ * # "Crear filtro" landed in E12/B7, exactly as the TODO predicted
  *
- * @todo E6 (Sieve): add the "Create filter" affordance. It takes THIS panel's
- *   {@link PanelState} — the criteria map 1:1 onto GC-4's algebra {from, to,
- *   subject, hasAttachment, size} — and hands it to the filter builder as the
- *   new rule's condition. Nothing here needs to change but the button.
+ * E3 left a typed TODO here saying the button "takes THIS panel's PanelState —
+ * the criteria map 1:1 onto GC-4's algebra {from, to, subject, hasAttachment,
+ * size} — and hands it to the filter builder as the new rule's condition.
+ * Nothing here needs to change but the button." That held: `PanelState` is
+ * structurally `searchToFilter.ts`'s `SearchCriteria`, so there is no
+ * translation layer, only a call.
+ *
+ * Two things the button does that the TODO did not anticipate, both about
+ * honesty. It is ABSENT when the server has no Sieve capability, because a
+ * button that opens nothing is the dead control P4 forbids; and it is DISABLED
+ * when the criteria map to no rule condition at all, because a rule with no
+ * conditions matches every message — a search of pure free text would otherwise
+ * offer to build a filter that files the whole inbox. What a filter cannot
+ * carry over is NAMED under the buttons rather than dropped in silence.
  */
 
 export interface SearchOptionsProps {
@@ -46,6 +59,20 @@ export interface SearchOptionsProps {
   /** Runs the composed query. */
   readonly onSubmit: (query: string) => void;
   readonly onClose: () => void;
+  /**
+   * E12/B7: opens the filter builder pre-filled from these criteria
+   * (canon 07 §8).
+   *
+   * Absent removes the button entirely rather than disabling it — which is the
+   * case when the server does not advertise the Sieve capability. There is
+   * nothing to create then, and a control that opens nothing is exactly the
+   * dead affordance P4 forbids.
+   *
+   * It receives the whole {@link FilterDraftFromSearch}, not only the rule, so
+   * the caller can also tell the user what the search expressed that a filter
+   * cannot carry.
+   */
+  readonly onCreateFilter?: ((draft: FilterDraftFromSearch) => void) | undefined;
 }
 
 /** The panel's own form state — transient, discarded on submit. */
@@ -155,8 +182,9 @@ export function SearchOptions({
   mailboxes,
   onSubmit,
   onClose,
+  onCreateFilter,
 }: SearchOptionsProps): React.JSX.Element {
-  const { t } = useTranslation();
+  const { t, format } = useTranslation();
   const [state, setState] = useState<PanelState>(() => stateFromQuery(query, mailboxes));
   const ids = useId();
   const field = (name: string): string => `${ids}-${name}`;
@@ -164,6 +192,22 @@ export function SearchOptions({
   const set = <K extends keyof PanelState>(key: K, value: PanelState[K]): void => {
     setState((current) => ({ ...current, [key]: value }));
   };
+
+  /*
+   * E12/B7: the panel's criteria as a filter rule.
+   *
+   * Recomputed on every change rather than on the click, so the button's
+   * disabled state and the "this will not carry over" note both track what is
+   * on screen. Computing it in the handler would let the user press a button
+   * that was enabled for criteria they have since cleared.
+   *
+   * `PanelState` is structurally the module's `SearchCriteria`, which is the
+   * 1:1 mapping E3's TODO predicted — so there is nothing to translate here.
+   */
+  const filterDraft = useMemo<FilterDraftFromSearch>(
+    () => searchToFilterDraft(state),
+    [state],
+  );
 
   return (
     /*
@@ -356,11 +400,6 @@ export function SearchOptions({
       </div>
 
       <div className={styles.actions}>
-        {/*
-          Gmail's "Create filter" would sit HERE. It arrives with epic E6
-          (Sieve); a disabled button now would be a control that does nothing,
-          which P4 forbids. The typed TODO is in this component's doc comment.
-        */}
         <button
           type="button"
           className={styles.secondary}
@@ -370,10 +409,62 @@ export function SearchOptions({
         >
           {t("search.options.reset")}
         </button>
+
+        {/*
+          E12/B7: "Crear filtro" (canon 07 §8), which E3's TODO predicted
+          exactly — "nothing here needs to change but the button".
+
+          It is present only when the caller wired a builder, which is only
+          when the server advertises the Sieve capability: without it there is
+          nothing to create, and a button that opened nothing would be the dead
+          control P4 forbids.
+
+          It is DISABLED when the panel's criteria map to no rule condition at
+          all. That is not defensive styling — a rule with no conditions
+          matches EVERY message, so a search of pure free text would otherwise
+          offer to build a filter that files the whole inbox. The title says
+          why, so a greyed button is never a mystery.
+        */}
+        {onCreateFilter !== undefined && (
+          <button
+            type="button"
+            className={styles.secondary}
+            disabled={!filterDraft.usable}
+            title={
+              filterDraft.usable
+                ? t("search.options.createFilter")
+                : t("search.options.createFilterUnusable")
+            }
+            onClick={() => {
+              onCreateFilter(filterDraft);
+            }}
+          >
+            {t("search.options.createFilter")}
+          </button>
+        )}
+
         <button type="submit" className={styles.primary}>
           {t("search.options.submit")}
         </button>
       </div>
+
+      {/*
+        What the filter will NOT carry over, said BEFORE the builder opens.
+
+        A search can express things a delivery-time filter cannot — free text,
+        a date range, a folder scope — and dropping them silently would give
+        the user a filter that matches far more mail than the search they built
+        it from. They would discover it weeks later, as archived mail they
+        wanted.
+      */}
+      {onCreateFilter !== undefined && filterDraft.dropped.length > 0 && (
+        <p className={styles.droppedNote} role="status">
+          {format(
+            "search.options.filterDrops",
+            filterDraft.dropped.map((code) => t(DROPPED_CRITERION_LABELS[code])).join(", "),
+          )}
+        </p>
+      )}
     </form>
   );
 }

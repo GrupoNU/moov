@@ -12,6 +12,7 @@ import { useTranslation } from "../../i18n/I18nProvider";
 import { createDebouncer, SEARCH_DEBOUNCE_MS } from "../../mail/search";
 import { buildSuggestions, type Suggestion } from "../../mail/searchSuggestions";
 import type { Label } from "../../mail/labelStore";
+import type { FilterDraftFromSearch } from "../../mail/searchToFilter";
 import type { Mailbox } from "../../mail/types";
 import { SearchOptions } from "./SearchOptions";
 import styles from "./SearchBar.module.css";
@@ -63,6 +64,16 @@ export interface SearchBarProps {
   readonly mailboxes?: readonly Mailbox[];
   /** E3: clears the stored history. Absent hides the affordance. */
   readonly onClearRecent?: (() => void) | undefined;
+  /**
+   * E12/B7: opens the filter builder pre-filled from the advanced panel
+   * (canon 07 §8).
+   *
+   * Passed straight through — this component knows nothing about filters and
+   * should not: it owns a text box, a combobox popup and the panel's
+   * placement. Absent removes the button, which is the case when the server
+   * has no Sieve capability.
+   */
+  readonly onCreateFilter?: ((draft: FilterDraftFromSearch) => void) | undefined;
 }
 
 /** The section heading each suggestion kind carries, as a lookup not a chain. */
@@ -86,6 +97,7 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     labels = NO_LABELS,
     mailboxes = NO_MAILBOXES,
     onClearRecent,
+    onCreateFilter,
   },
   ref,
 ) {
@@ -373,6 +385,17 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
           onClose={() => {
             setPanelOpen(false);
           }}
+          onCreateFilter={
+            onCreateFilter === undefined
+              ? undefined
+              : (draft) => {
+                  // The panel closes as the builder opens: leaving an advanced
+                  // search panel hanging over the settings page the builder
+                  // lives on would be two surfaces stacked for no reason.
+                  setPanelOpen(false);
+                  onCreateFilter(draft);
+                }
+          }
         />
       )}
     </div>

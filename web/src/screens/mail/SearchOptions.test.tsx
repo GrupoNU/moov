@@ -47,7 +47,7 @@ const MAILBOXES: readonly Mailbox[] = [
   mailbox("mb5", "Proyectos"),
 ];
 
-function renderPanel(query = "") {
+function renderPanel(query = "", onCreateFilter?: (draft: unknown) => void) {
   const onSubmit = vi.fn();
   const onClose = vi.fn();
   render(
@@ -57,6 +57,7 @@ function renderPanel(query = "") {
         mailboxes={MAILBOXES}
         onSubmit={onSubmit}
         onClose={onClose}
+        onCreateFilter={onCreateFilter as never}
       />
     </I18nProvider>,
   );
@@ -76,10 +77,16 @@ describe("the deliberate absences (P4: no dead controls)", () => {
     expect(screen.queryByText(/no contiene|doesn't have/i)).not.toBeInTheDocument();
   });
 
-  it("has NO 'Create filter' button — that arrives with E6 (Sieve)", () => {
+  it("has NO 'Crear filtro' button when the server offers no Sieve", () => {
+    /*
+     * E12/B7 landed the button, but only where it can DO something. Without
+     * the capability the caller passes no handler, and the button is absent
+     * rather than disabled — a control that opens nothing is the dead
+     * affordance P4 forbids, and a greyed one still advertises a feature that
+     * does not exist here.
+     */
     renderPanel();
-    expect(screen.queryByRole("button", { name: /crear filtro|create filter/i })).toBeNull();
-    // And there is no disabled button standing in for it either.
+    expect(screen.queryByRole("button", { name: /crear filtro/i })).toBeNull();
     for (const button of screen.getAllByRole("button")) {
       expect(button).not.toBeDisabled();
     }
@@ -154,5 +161,67 @@ describe("composing a query", () => {
     await user.type(screen.getByLabelText(/^De$/i), "ana{Escape}");
     expect(onClose).toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * "Crear filtro" (E12/B7, canon 07 §8).
+ *
+ * The mapping itself is tested in `mail/searchToFilter.test.ts`. What these
+ * cover is the panel's side: that the button only appears where it can act,
+ * that it refuses to build a rule with no conditions, and that what a filter
+ * cannot carry over is said BEFORE the click rather than discovered after it.
+ */
+describe("Crear filtro (E12/B7)", () => {
+  it("appears when a builder is wired", () => {
+    renderPanel("from:boletin@example.com", vi.fn());
+    expect(screen.getByRole("button", { name: /crear filtro/i })).toBeInTheDocument();
+  });
+
+  it("hands the builder the criteria the panel is showing", async () => {
+    const user = userEvent.setup();
+    const onCreateFilter = vi.fn();
+    renderPanel("from:boletin@example.com subject:Factura", onCreateFilter);
+
+    await user.click(screen.getByRole("button", { name: /crear filtro/i }));
+
+    expect(onCreateFilter).toHaveBeenCalledTimes(1);
+    const result = onCreateFilter.mock.calls[0]?.[0] as {
+      draft: { from: string[]; subject: string[] };
+      usable: boolean;
+    };
+    expect(result.draft.from).toEqual(["boletin@example.com"]);
+    expect(result.draft.subject).toEqual(["Factura"]);
+    expect(result.usable).toBe(true);
+  });
+
+  it("is DISABLED when nothing would become a rule condition", () => {
+    /*
+     * A rule with no conditions matches EVERY message. A search of pure free
+     * text maps to nothing the filter algebra can express, so offering to
+     * build a filter from it would offer to file the whole inbox.
+     */
+    renderPanel("factura", vi.fn());
+    expect(screen.getByRole("button", { name: /crear filtro/i })).toBeDisabled();
+  });
+
+  it("says what a filter will NOT carry over, before the click", async () => {
+    const user = userEvent.setup();
+    renderPanel("from:a@b.com factura", vi.fn());
+
+    /*
+     * The free text is dropped — the algebra has no full-text condition — and
+     * saying so here is what keeps the user from getting a filter that matches
+     * far more mail than the search they built it from, and discovering it
+     * weeks later as archived mail they wanted.
+     */
+    expect(screen.getByRole("status")).toHaveTextContent(/no puede trasladar/i);
+    // The button still works: the rule that CAN be built is a real one.
+    await user.click(screen.getByRole("button", { name: /crear filtro/i }));
+  });
+
+  it("says nothing when the filter matches exactly what the search did", () => {
+    renderPanel("from:a@b.com has:attachment", vi.fn());
+    expect(screen.queryByText(/no puede trasladar/i)).not.toBeInTheDocument();
   });
 });
