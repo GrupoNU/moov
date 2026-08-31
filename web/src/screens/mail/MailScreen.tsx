@@ -20,7 +20,15 @@ import {
 } from "../../keyboard/shortcuts";
 import { usePrefs } from "../../mail/PrefsProvider";
 import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs";
-import { loadSidebarCollapsed, saveSidebarCollapsed } from "../../mail/viewChrome";
+import {
+  clampPane,
+  loadPaneSize,
+  loadSidebarCollapsed,
+  PANE_BOUNDS,
+  savePaneSize,
+  saveSidebarCollapsed,
+  type PaneAxis,
+} from "../../mail/viewChrome";
 import {
   nextPosition,
   PAGE_SIZE,
@@ -151,6 +159,7 @@ import { MailboxList } from "./MailboxList";
 import { mailboxLabel } from "./mailboxLabels";
 import { ListToolbar } from "./ListToolbar";
 import { MessageList } from "./MessageList";
+import { PaneDivider } from "./PaneDivider";
 import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
 import { TopBar } from "./TopBar";
@@ -390,6 +399,47 @@ export function MailScreen(): React.JSX.Element {
    * permanently narrow the list for someone who forgot to close it once.
    */
   const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
+
+  /**
+   * B5: the reading pane's size, one value per AXIS (canon 07 §6).
+   *
+   * Two, not one, because the "right" and "below" layouts resize different
+   * dimensions and a user who tunes both should find both as they left them.
+   * One number would make switching layouts silently reinterpret a width as a
+   * height, landing the divider somewhere nonsensical.
+   *
+   * Seeded lazily from localStorage for the same reason the rail's collapse
+   * is: an effect would paint one frame at the default size and then snap,
+   * which reads as a layout glitch rather than as a restored choice. Every
+   * read clamps — see `mail/viewChrome.ts` on why a stored pixel size is
+   * untrusted input that outlives the build that wrote it.
+   */
+  const [paneWidth, setPaneWidth] = useState<number>(() => loadPaneSize("width"));
+  const [paneHeight, setPaneHeight] = useState<number>(() => loadPaneSize("height"));
+
+  /**
+   * Applies a drag or an arrow press, and persists it.
+   *
+   * The write happens on EVERY change rather than on drag end, which is
+   * affordable precisely because `viewChrome` swallows storage failures. The
+   * alternative — persisting only on `pointerup` — loses the size when the OS
+   * cancels a drag, and that is the one case a user cannot tell apart from the
+   * app having forgotten.
+   */
+  const resizePane = useCallback((axis: PaneAxis, size: number): void => {
+    const clamped = clampPane(size, axis);
+    if (axis === "width") setPaneWidth(clamped);
+    else setPaneHeight(clamped);
+    savePaneSize(axis, clamped);
+  }, []);
+
+  /** B5: the double-click / Enter reset, back to the shipped default. */
+  const resetPane = useCallback((axis: PaneAxis): void => {
+    const value = PANE_BOUNDS[axis].default;
+    if (axis === "width") setPaneWidth(value);
+    else setPaneHeight(value);
+    savePaneSize(axis, value);
+  }, []);
 
   /*
    * E3: the recent-search history and the result snippets.
@@ -3756,6 +3806,26 @@ export function MailScreen(): React.JSX.Element {
         ]
           .filter(Boolean)
           .join(" ")}
+        /*
+         * B5: the pane's size, published to the grid as a custom property.
+         *
+         * An inline style rather than a class, because the value is a
+         * continuously varying pixel number — a class per size is not
+         * expressible, and writing `gridTemplateColumns` directly here would
+         * mean this file re-deriving all four layouts' track lists that the
+         * stylesheet already owns. One variable lets each layout consume it in
+         * the track it applies to and ignore it everywhere else.
+         *
+         * Both are always set even though only one applies: which one is live
+         * is the stylesheet's business, and branching here would put the
+         * layout rules in two files.
+         */
+        style={
+          {
+            "--reader-width": `${String(paneWidth)}px`,
+            "--reader-height": `${String(paneHeight)}px`,
+          } as React.CSSProperties
+        }
       >
         <nav className={styles.sidebar} aria-label={t("shell.mailboxes")}>
           {mailboxError !== undefined ? (
@@ -4230,6 +4300,34 @@ export function MailScreen(): React.JSX.Element {
           </>
           )}
         </main>
+        )}
+
+        {/*
+          B5: the divider, in the SPLIT layouts only (canon 07 §6).
+
+          Not in "No split", where the reader replaces the list and there are
+          not two panes to divide — a splitter between a pane and nothing is a
+          control that cannot mean anything. Not while the list is hidden by the
+          responsive rules either: `layout.isSplit` is exactly the condition
+          under which both panes are genuinely on screen.
+
+          The axis follows the layout, and the two sizes are kept separately so
+          switching layouts cannot reinterpret a width as a height.
+        */}
+        {isReading && client !== undefined && layout.isSplit && (
+          <PaneDivider
+            axis={layout.mode === "bottom" ? "height" : "width"}
+            size={layout.mode === "bottom" ? paneHeight : paneWidth}
+            onResize={(size) => {
+              resizePane(layout.mode === "bottom" ? "height" : "width", size);
+            }}
+            onReset={() => {
+              resetPane(layout.mode === "bottom" ? "height" : "width");
+            }}
+            /* The "below" layout places by named areas, which only this
+               stylesheet can assign — see `PaneDividerProps.className`. */
+            className={styles.dividerCell}
+          />
         )}
 
         {isReading && client !== undefined && (

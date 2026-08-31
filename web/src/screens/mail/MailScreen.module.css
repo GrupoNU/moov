@@ -76,16 +76,21 @@
   grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--quick-width);
 }
 
+/* Five tracks with the dock open: rail | list | divider | reader | dock. The
+ * reader keeps the user's width and the LIST absorbs the dock's 19rem, which
+ * is the right give: the dock is a temporary surface and the reader's size is
+ * a choice the user made. */
 .quickOpen.reading {
   grid-template-columns:
-    var(--rail-width) minmax(18rem, 26rem) minmax(0, 1fr) var(--quick-width);
+    var(--rail-width) minmax(0, 1fr) auto var(--reader-width, 520px) var(--quick-width);
 }
 
 .quickOpen.readingBottom {
   grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--quick-width);
   grid-template-areas:
-    "sidebar list   quick"
-    "sidebar reader quick";
+    "sidebar list    quick"
+    "sidebar divider quick"
+    "sidebar reader  quick";
 }
 
 .quickOpen.readingBottom .quickPanel {
@@ -148,10 +153,24 @@
  * space is divided between the list and the reader.
  */
 
-/* "Right of the list" — the split P2 shipped. The list narrows and keeps a
- * usable minimum so it never becomes a strip of ellipses. */
+/*
+ * "Right of the list" — the split P2 shipped, made resizable by E12/B5.
+ *
+ * The READER's width is now the number the user controls (`--reader-width`,
+ * published by the shell from the stored size), and the LIST takes what is
+ * left. That is the right way round: the reader is what the divider is
+ * dragged toward, and `1fr` on the list is what keeps the two panes summing to
+ * the available width at every viewport without the shell doing arithmetic.
+ *
+ * `min-width: 0` on the list track is load-bearing: a grid track's default
+ * `auto` minimum refuses to shrink below its content, so a long subject would
+ * push the list wider than its share and the divider would appear stuck.
+ *
+ * The four tracks are rail | list | divider | reader.
+ */
 .reading {
-  grid-template-columns: var(--rail-width) minmax(20rem, 30rem) minmax(0, 1fr);
+  grid-template-columns:
+    var(--rail-width) minmax(0, 1fr) auto var(--reader-width, 520px);
 }
 
 /*
@@ -167,8 +186,27 @@
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
   grid-template-areas:
     "sidebar list"
+    "sidebar divider"
     "sidebar reader";
-  grid-template-rows: minmax(8rem, 1fr) minmax(10rem, 1.2fr);
+  /*
+   * E12/B5: three rows now — list, divider, reader. The READER's height is the
+   * user's number and the list takes what is left, mirroring the "right"
+   * layout's split for the same reason: the divider is dragged toward the
+   * reader, so that is the dimension it should name.
+   */
+  grid-template-rows: minmax(6rem, 1fr) auto var(--reader-height, 420px);
+}
+
+/*
+ * The divider's grid AREA can only be assigned from this stylesheet — the
+ * element's own class lives in `PaneDivider.module.css`, which this file
+ * cannot name. So the shell passes this class down as an extra `className`,
+ * the same seam the quick panel's wrapper solves differently. A class is
+ * enough here (unlike the panel, which needed a scroll container), so no
+ * wrapper element is introduced.
+ */
+.dividerCell {
+  grid-area: divider;
 }
 
 .readingBottom .sidebar {
@@ -373,27 +411,53 @@
   .reading .listColumn {
     display: none;
   }
+
+  /*
+   * E12/B5: the divider goes with the list.
+   *
+   * At this width there is only ONE pane, and a splitter between a pane and
+   * nothing is a control that cannot mean anything — dragging it would resize
+   * a column that is not drawn. `display: none` rather than `visibility` or
+   * opacity, deliberately: it is the only one that also takes the element out
+   * of the TAB ORDER, and a focusable separator that separates nothing is
+   * worse than an absent one — a keyboard user lands on it and finds the
+   * arrows do nothing.
+   *
+   * Whether the list is on screen is a purely CSS fact at this breakpoint, so
+   * the divider's presence has to be one too; the shell has no matchMedia
+   * listener and adding one to hide a 9px strip would be a resize observer's
+   * worth of machinery for a rule the stylesheet already states.
+   */
+  .reading [role="separator"] {
+    display: none;
+  }
 }
 
 @media (max-width: 860px) {
   .body,
-  .reading {
+  .reading,
+  /* E12/B5: the "below" layout stacks to one pane here too, so its named
+     areas — which include the divider's row — must go with them. */
+  .readingBottom {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: none;
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .sidebar {
     display: none;
   }
 
-  .headerBrand {
-    width: auto;
-  }
+  /* `headerBrand` and `account` moved to TopBar with E12/B1; their responsive
+     rules live in `TopBar.module.css` beside the elements they govern. */
 
-  .account {
+  /* Neither split survives a phone: one pane, no splitter. */
+  .body [role="separator"] {
     display: none;
   }
 
-  .reading .listColumn {
+  .reading .listColumn,
+  .readingBottom .listColumn {
     display: none;
   }
 }

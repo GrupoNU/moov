@@ -139,6 +139,13 @@ export const en = {
   "list.star": "Star",
   "list.unstar": "Remove star",
 
+  // --- E12/B5: the pane divider (canon 07 §6) ---
+  //
+  // The value is spoken with its UNIT: `aria-valuenow` alone is announced as a
+  // bare number, which for a splitter says nothing.
+  "shell.resizePane": "Resize the reading pane",
+  "shell.resizePaneValue": (pixels: number): string => `${String(pixels)} pixels`,
+
   // --- settings ---
   "settings.title": "Settings",
   "settings.open": "Settings",
@@ -1323,6 +1330,9 @@ export const es: Strings = {
   "list.page.older": "Más antiguos",
   "list.star": "Destacar",
   "list.unstar": "Quitar el destacado",
+
+  "shell.resizePane": "Redimensionar el panel de lectura",
+  "shell.resizePaneValue": (pixels: number): string => `${String(pixels)} píxeles`,
 
   "settings.title": "Configuración",
   "settings.open": "Configuración",

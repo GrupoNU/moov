@@ -1,0 +1,82 @@
+/*
+ * The pane divider (E12/B5, canon 07 §6).
+ *
+ * # The strip is wide and the RULE is thin
+ *
+ * What the user sees is a 1px border-coloured line; what they can grab is a
+ * 9px strip centred on it. A 1px drag target is a target most people miss, and
+ * the miss is expensive here — it lands on the list or the reader and either
+ * scrolls or opens something. The strip's own background stays transparent so
+ * the widened hit area is invisible until the pointer is over it.
+ */
+
+.divider {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  /* Not a scroll or a text selection: a drag on this must never start either,
+   * which on touch is the difference between resizing and panning the list. */
+  touch-action: none;
+  user-select: none;
+}
+
+.vertical {
+  width: 9px;
+  cursor: col-resize;
+}
+
+.horizontal {
+  height: 9px;
+  cursor: row-resize;
+}
+
+/* The line itself, drawn by the grip so the strip around it stays transparent. */
+.grip {
+  background: var(--border-subtle);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.vertical .grip {
+  width: 1px;
+  height: 100%;
+}
+
+.horizontal .grip {
+  width: 100%;
+  height: 1px;
+}
+
+/*
+ * On hover and while focused the line thickens and takes the accent. Both
+ * states, not only hover: a keyboard user who has tabbed here needs to see
+ * WHICH of the app's several thin grey lines they are about to move.
+ */
+.divider:hover .grip,
+.divider:focus-visible .grip {
+  background: var(--color-accent);
+}
+
+.vertical:hover .grip,
+.vertical:focus-visible .grip {
+  width: 3px;
+}
+
+.horizontal:hover .grip,
+.horizontal:focus-visible .grip {
+  height: 3px;
+}
+
+/*
+ * The focus ring is drawn on the strip, replacing the global `:focus-visible`
+ * outline — which on a 9px-wide element would render as a solid block rather
+ * than as a ring. The tinted background IS the ring here, and it is paired
+ * with the accent grip above so the state is carried by two properties rather
+ * than by colour alone.
+ */
+.divider:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+  background: var(--color-accent-tint);
+}
