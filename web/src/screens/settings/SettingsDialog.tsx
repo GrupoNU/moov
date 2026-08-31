@@ -10,10 +10,14 @@ import {
   IMAGES_POLICIES,
   INBOX_TYPES,
   LANGUAGES,
+  MAX_SIGNATURE_ITEMS,
   NOTIFICATION_MODES,
+  OFFLINE_DEPTH_BOUNDS,
   READING_PANES,
+  REPLY_BEHAVIORS,
   UNDO_SEND_SECONDS,
   type Prefs,
+  type SignatureItem,
 } from "../../mail/prefs";
 import { searchSettings, type SearchableRow } from "../../mail/settingsSearch";
 import type { Identity } from "../../mail/write";
@@ -369,6 +373,7 @@ export function SettingsDialog({
                       showRow={showRow}
                       addresses={addresses}
                       quota={quota}
+                      prefs={prefs}
                     />
                   )}
                   {sectionId === "labels" && showRow("labels") && labels !== undefined && (
@@ -420,8 +425,8 @@ export function SettingsDialog({
                         bodyKey="settings.vacation.soonBody"
                       />
                     ))}
-                  {sectionId === "offline" && showRow("offline") && (
-                    <Skeleton titleKey="settings.offline.soon" bodyKey="settings.offline.soonBody" />
+                  {sectionId === "offline" && (
+                    <OfflineSection prefs={prefs} showRow={showRow} />
                   )}
                 </SettingsSection>
               ))
@@ -586,6 +591,55 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
             onChange={(checked) => {
               void set("showSnippets", checked);
             }}
+          />
+        </SettingRow>
+      )}
+
+      {/*
+        E7 / prefs v2: Gmail's "Show 'Send & Archive' button in reply".
+
+        Ours defaults ON where Gmail's defaults off — a registered divergence
+        taken after the fact, because the button already shipped visible and a
+        default of false would REMOVE a control users already have.
+      */}
+      {showRow("sendAndArchive") && (
+        <SettingRow
+          labelKey="settings.sendAndArchive.label"
+          descriptionKey="settings.sendAndArchive.description"
+        >
+          <Switch
+            label={t("settings.sendAndArchive.label")}
+            checked={prefs.prefs.sendAndArchive}
+            onChange={(checked) => {
+              void set("sendAndArchive", checked);
+            }}
+          />
+        </SettingRow>
+      )}
+
+      {/*
+        E5 v2: which reply is the default (canon §2.3). It moves the reader's
+        primary button AND the `r` key together — the button the eye lands on
+        and the key the hand reaches for must never disagree.
+      */}
+      {showRow("replyBehavior") && (
+        <SettingRow
+          labelKey="settings.replyBehavior.label"
+          descriptionKey="settings.replyBehavior.description"
+        >
+          <Select
+            label={t("settings.replyBehavior.label")}
+            value={prefs.prefs.defaultReplyBehavior}
+            onChange={(value) => {
+              void set("defaultReplyBehavior", value as Prefs["defaultReplyBehavior"]);
+            }}
+            options={REPLY_BEHAVIORS.map((behavior) => ({
+              value: behavior,
+              label:
+                behavior === "reply"
+                  ? t("settings.replyBehavior.reply")
+                  : t("settings.replyBehavior.replyAll"),
+            }))}
           />
         </SettingRow>
       )}
@@ -776,12 +830,15 @@ function AccountSection({
   showRow,
   addresses,
   quota,
+  prefs,
 }: {
   readonly identity: Identity | undefined;
   readonly onSaveSignature: ((textSignature: string) => Promise<boolean>) | undefined;
   readonly showRow: (id: string) => boolean;
   readonly addresses: AddressSettings | undefined;
   readonly quota: QuotaRowProps | undefined;
+  /** prefs v2: the named signatures row lives in this section. */
+  readonly prefs: PrefsApi;
 }): React.JSX.Element {
   const { t, format } = useTranslation();
   const [draft, setDraft] = useState(identity?.textSignature ?? "");
@@ -883,6 +940,8 @@ function AccountSection({
         </SettingRow>
       )}
 
+      {showRow("signatures") && <SignaturesRow prefs={prefs} confirm={confirm} />}
+
       {/*
         E7: the address-autocomplete opt-out (canon §2.3).
 
@@ -935,13 +994,13 @@ function AccountSection({
               </button>
             </div>
             {/*
-              The named gap, ON SCREEN rather than in a comment: prefs v1 has
-              no key for this, so the choice is per-browser. E8 set the
-              precedent for saying so where the user can read it.
+              The "this browser only" caveat is GONE, and its string with it:
+              prefs v2 carries `addressAutocomplete`, so the choice roams. What
+              remains true and stays said — in this row's own description — is
+              that the INDEX is browser-local and never uploaded. That sentence
+              is about the data, not about the setting, and removing it would
+              have been the dishonest half of this change.
             */}
-            <span className={styles.signatureNote}>
-              {t("settings.addressAutocomplete.localOnly")}
-            </span>
           </div>
         </SettingRow>
       )}
@@ -1036,6 +1095,358 @@ function SettingsSearchBox({
 }
 
 /** A labelled select. */
+/**
+ * The named signatures (E7, prefs v2 `signatures`).
+ *
+ * # What this UI does and does not do, stated so the gap is not silent
+ *
+ * It creates, renames, edits and deletes named signatures as PLAIN TEXT, and
+ * picks which one new mail and replies start with. It does NOT edit `htmlBody`
+ * — there is no rich editor here — and that is a real limitation with a real
+ * consequence a user can hit: a signature whose HTML was set by another client
+ * shows its plain-text form in this box.
+ *
+ * The important half is what happens on save: `htmlBody` is CARRIED THROUGH
+ * untouched, never blanked. Writing an empty string would silently destroy
+ * formatting the user never asked to remove, which is the same class of failure
+ * as a dropped preference — a control that appears to edit one thing and
+ * quietly discards another. `settings.signatures.textOnly` says this on screen.
+ *
+ * # Why every mutation sends the whole `signatures` object
+ *
+ * RFC 8620 §5.3's patch pointers are one level deep, so `signatures/items` is
+ * addressable but `signatures/items/work` is not (the server refuses it as
+ * `invalidPatch`, and says so). More importantly, `forNew` and the item it
+ * names must move together: creating a signature and selecting it as two saves
+ * would put a dangling reference on the wire in between, which the server
+ * correctly refuses. One object, one save, no intermediate state.
+ */
+function SignaturesRow({
+  prefs,
+  confirm,
+}: {
+  readonly prefs: PrefsApi;
+  /*
+   * The confirmer is PASSED IN rather than created here. `useConfirm` returns a
+   * dialog element that its caller must render, and `AccountSection` already
+   * mounts one — a second would put two <dialog>s in the same section competing
+   * for the top layer, which is how a confirmation ends up behind the sheet it
+   * was opened from.
+   */
+  readonly confirm: ReturnType<typeof useConfirm>["confirm"];
+}): React.JSX.Element {
+  const { t, format } = useTranslation();
+  const signatures = prefs.prefs.signatures;
+  const entries = Object.entries(signatures.items);
+  const isFull = entries.length >= MAX_SIGNATURE_ITEMS;
+
+  const write = (next: Prefs["signatures"]): void => {
+    void prefs.setPref("signatures", next);
+  };
+
+  const updateItem = (id: string, patch: Partial<SignatureItem>): void => {
+    const current = signatures.items[id];
+    if (current === undefined) return;
+    write({
+      ...signatures,
+      items: { ...signatures.items, [id]: { ...current, ...patch } },
+    });
+  };
+
+  return (
+    <SettingRow
+      labelKey="settings.signatures.label"
+      descriptionKey="settings.signatures.description"
+    >
+      <div className={styles.signatureField}>
+        {entries.length === 0 ? (
+          <span className={styles.signatureNote}>{t("settings.signatures.empty")}</span>
+        ) : (
+          entries.map(([id, item]) => (
+            <div key={id} className={styles.signatureItem}>
+              <input
+                type="text"
+                className={styles.signatureName}
+                aria-label={t("settings.signatures.namePlaceholder")}
+                placeholder={t("settings.signatures.namePlaceholder")}
+                value={item.name}
+                onChange={(event) => {
+                  updateItem(id, { name: event.target.value });
+                }}
+              />
+              <textarea
+                className={styles.signatureInput}
+                aria-label={`${t("settings.signatures.bodyPlaceholder")} — ${item.name}`}
+                placeholder={t("settings.signatures.bodyPlaceholder")}
+                value={item.textBody}
+                onChange={(event) => {
+                  // `htmlBody` is untouched by construction: `updateItem`
+                  // spreads the current item, so formatting set elsewhere
+                  // survives an edit here rather than being blanked.
+                  updateItem(id, { textBody: event.target.value });
+                }}
+              />
+              <button
+                type="button"
+                className={styles.signatureSave}
+                onClick={() => {
+                  void (async () => {
+                    if (
+                      !(await confirm({
+                        message: format("settings.signatures.deleteConfirm", item.name),
+                        destructive: true,
+                      }))
+                    ) {
+                      return;
+                    }
+                    const { [id]: _removed, ...rest } = signatures.items;
+                    /*
+                     * The two references are cleared IN THE SAME object when
+                     * they pointed at the deleted item. A dangling `forNew` is
+                     * refused by the server — deliberately, because the
+                     * fallback it would silently produce is a DIFFERENT
+                     * signature going out under the user's name — so clearing
+                     * here is not defensive, it is what makes the save legal.
+                     */
+                    write({
+                      items: rest,
+                      forNew: signatures.forNew === id ? null : signatures.forNew,
+                      forReply: signatures.forReply === id ? null : signatures.forReply,
+                    });
+                  })();
+                }}
+              >
+                {t("settings.signatures.delete")}
+              </button>
+            </div>
+          ))
+        )}
+
+        <div className={styles.signatureActions}>
+          <button
+            type="button"
+            className={styles.signatureSave}
+            disabled={isFull}
+            onClick={() => {
+              /*
+               * The id is opaque to the server (it validates only that it is
+               * non-empty and under 64 bytes), so it is generated from the
+               * clock — unique enough for a per-account map of at most ten, and
+               * with no dependency on a UUID the bundle would have to carry.
+               */
+              const id = `sig-${String(Date.now())}`;
+              write({
+                ...signatures,
+                items: {
+                  ...signatures.items,
+                  [id]: { name: t("settings.signatures.namePlaceholder"), textBody: "", htmlBody: "" },
+                },
+              });
+            }}
+          >
+            {t("settings.signatures.add")}
+          </button>
+          {isFull && (
+            <span className={styles.signatureNote}>
+              {format("settings.signatures.full", MAX_SIGNATURE_ITEMS)}
+            </span>
+          )}
+        </div>
+
+        <div className={styles.signatureActions}>
+          <Select
+            label={t("settings.signatures.forNew")}
+            value={signatures.forNew ?? ""}
+            onChange={(value) => {
+              write({ ...signatures, forNew: value === "" ? null : value });
+            }}
+            options={[
+              { value: "", label: t("settings.signatures.none") },
+              ...entries.map(([id, item]) => ({ value: id, label: item.name })),
+            ]}
+          />
+          <Select
+            label={t("settings.signatures.forReply")}
+            value={signatures.forReply ?? ""}
+            onChange={(value) => {
+              write({ ...signatures, forReply: value === "" ? null : value });
+            }}
+            options={[
+              { value: "", label: t("settings.signatures.none") },
+              ...entries.map(([id, item]) => ({ value: id, label: item.name })),
+            ]}
+          />
+        </div>
+
+        <span className={styles.signatureNote}>{t("settings.signatures.textOnly")}</span>
+      </div>
+    </SettingRow>
+  );
+}
+
+/**
+ * The offline section (E9b, prefs v2 `offlineDepth`).
+ *
+ * It replaces the "coming with the next preferences release" skeleton, which was
+ * a string with no render site at all — the gate found it defined in both
+ * locales and shown nowhere, which is the honest-note pattern failing in the
+ * quietest possible way. Two real controls are the fix; the string is deleted.
+ */
+function OfflineSection({ prefs, showRow }: SectionProps): React.JSX.Element {
+  const { t } = useTranslation();
+  const set = prefs.setPref;
+  const depth = prefs.prefs.offlineDepth;
+
+  return (
+    <>
+      {showRow("offlineHeaders") && (
+        <SettingRow
+          labelKey="settings.offlineHeaders.label"
+          descriptionKey="settings.offlineHeaders.description"
+        >
+          <NumberField
+            label={t("settings.offlineHeaders.label")}
+            value={depth.headersPerMailbox}
+            bounds={OFFLINE_DEPTH_BOUNDS.headersPerMailbox}
+            onCommit={(next) => {
+              void set("offlineDepth", { ...depth, headersPerMailbox: next });
+            }}
+          />
+        </SettingRow>
+      )}
+
+      {showRow("offlineBodies") && (
+        <SettingRow
+          labelKey="settings.offlineBodies.label"
+          descriptionKey="settings.offlineBodies.description"
+        >
+          <div className={styles.signatureField}>
+            <NumberField
+              label={t("settings.offlineBodies.label")}
+              value={depth.bodies}
+              bounds={OFFLINE_DEPTH_BOUNDS.bodies}
+              onCommit={(next) => {
+                void set("offlineDepth", { ...depth, bodies: next });
+              }}
+            />
+            {/*
+              The limitation Gmail declares too, said NEXT TO THE NUMBER rather
+              than in a doc: without it a high depth reads as "everything is
+              available offline", and the first missing attachment on a train
+              reads as a bug.
+            */}
+            <span className={styles.signatureNote}>
+              {t("settings.offlineDepth.attachments")}
+            </span>
+          </div>
+        </SettingRow>
+      )}
+    </>
+  );
+}
+
+/**
+ * A whole number constrained to an inclusive range.
+ *
+ * # Why it commits on blur rather than on every keystroke
+ *
+ * Every other control here saves on the gesture, because the gesture IS the
+ * decision — a switch has two states and picking one is picking it. A number is
+ * typed, and typing "500" passes through "5" and "50", both of which are valid
+ * values the optimistic save would happily persist and push to every other
+ * device. Committing on blur (and on Enter) makes the decision the moment the
+ * user is done, which is what a select's `change` already means for the others.
+ *
+ * # Why an out-of-range value is refused HERE and not by the server
+ *
+ * It is refused by both. The server's `prefsPatchBoundedInt` is the real
+ * enforcement and cannot be bypassed; this check exists so the user is stopped
+ * AT the boundary with the range in front of them, rather than after a round
+ * trip that returns an error in a settings screen they have already moved on
+ * from. The bounds are mirrored from the server's own constants
+ * ({@link OFFLINE_DEPTH_BOUNDS}), which the account capability also advertises.
+ *
+ * An invalid entry reverts to the stored value on commit rather than being
+ * held: a text box that refuses to lose focus is a trap, and a red box left
+ * behind after the sheet closes is a change the user thinks they made.
+ */
+function NumberField({
+  label,
+  value,
+  bounds,
+  onCommit,
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly bounds: { readonly min: number; readonly max: number };
+  readonly onCommit: (value: number) => void;
+}): React.JSX.Element {
+  const { format } = useTranslation();
+  const [draft, setDraft] = useState(String(value));
+  const [invalid, setInvalid] = useState(false);
+
+  /*
+   * The stored value wins whenever it changes underneath us — another tab's
+   * save, or the server clamping ours. Without this the box would keep showing
+   * what was typed after the provider adopted a different answer.
+   */
+  useEffect(() => {
+    setDraft(String(value));
+    setInvalid(false);
+  }, [value]);
+
+  const commit = (): void => {
+    const parsed = Number(draft.trim());
+    if (
+      draft.trim() === "" ||
+      !Number.isInteger(parsed) ||
+      parsed < bounds.min ||
+      parsed > bounds.max
+    ) {
+      setInvalid(true);
+      setDraft(String(value));
+      return;
+    }
+    setInvalid(false);
+    if (parsed !== value) onCommit(parsed);
+  };
+
+  return (
+    <span className={styles.numberField}>
+      <input
+        type="number"
+        inputMode="numeric"
+        className={styles.numberInput}
+        aria-label={label}
+        // The native constraints too, so the browser's own stepper and its
+        // validity state agree with the check above instead of offering values
+        // `commit` would then reject.
+        min={bounds.min}
+        max={bounds.max}
+        step={1}
+        aria-invalid={invalid || undefined}
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setInvalid(false);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          }
+        }}
+      />
+      <span className={styles.signatureNote} role={invalid ? "alert" : undefined}>
+        {invalid
+          ? format("settings.offlineDepth.invalid", bounds.min, bounds.max)
+          : format("settings.offlineDepth.range", bounds.min, bounds.max)}
+      </span>
+    </span>
+  );
+}
+
 function Select({
   label,
   value,

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { en } from "../../i18n/strings";
+import { en, es } from "../../i18n/strings";
 import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS, type Prefs } from "../../mail/prefs";
 import type { Identity } from "../../mail/write";
@@ -577,7 +577,11 @@ describe("the honest skeletons (P4)", () => {
     [en["settings.section.filters"], en["settings.filters.soon"]],
     [en["settings.section.forwarding"], en["settings.forwarding.soon"]],
     [en["settings.section.vacation"], en["settings.vacation.soon"]],
-    [en["settings.section.offline"], en["settings.offline.soon"]],
+    /*
+     * Offline LEFT this list: prefs v2 gave it two real controls (the header
+     * and body depths), so a skeleton there would now be the dishonest option.
+     * Its own coverage is below.
+     */
   ])("names what is coming in %s, with no control at all", async (section, promise) => {
     const user = userEvent.setup();
     renderDialog();
@@ -616,5 +620,147 @@ describe("persistence honesty", () => {
     const snippets = screen.getByRole("switch", { name: en["settings.snippets.label"] });
     await user.click(snippets);
     expect(snippets).not.toBeChecked();
+  });
+});
+
+/**
+ * The prefs v2 rows (the gate's finding 2).
+ *
+ * Each of these six server keys was validated and roamed by the server while
+ * having ZERO client consumers — a reverse dead control. What is pinned here is
+ * that the control EXISTS and writes the key; the wire shape of each write is
+ * pinned in `mail/prefs.test.ts`, and the behaviour each one drives in the
+ * suite of the surface it drives.
+ */
+describe("the v2 rows exist and write their key", () => {
+  it("offers the Send & Archive switch, defaulting on", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openAt(user, en["settings.section.general"]);
+
+    const control = screen.getByRole("switch", { name: en["settings.sendAndArchive.label"] });
+    // A registered divergence from Gmail, taken because the button already
+    // shipped visible and defaulting to false would REMOVE a live control.
+    expect(control).toBeChecked();
+    await user.click(control);
+    expect(control).not.toBeChecked();
+  });
+
+  it("offers the reply-default select with both verbs", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openAt(user, en["settings.section.general"]);
+
+    const control = screen.getByRole("combobox", { name: en["settings.replyBehavior.label"] });
+    expect(control).toHaveValue("reply");
+    await user.selectOptions(control, "replyAll");
+    expect(control).toHaveValue("replyAll");
+  });
+
+  it("gives the offline section two real depth controls instead of a promise", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openAt(user, en["settings.section.offline"]);
+
+    expect(
+      screen.getByRole("spinbutton", { name: en["settings.offlineHeaders.label"] }),
+    ).toHaveValue(200);
+    expect(
+      screen.getByRole("spinbutton", { name: en["settings.offlineBodies.label"] }),
+    ).toHaveValue(100);
+    // The limitation Gmail declares too, said next to the number.
+    expect(screen.getByText(en["settings.offlineDepth.attachments"])).toBeInTheDocument();
+  });
+
+  it("mirrors the server's bounds on the depth inputs, so a refused save is impossible", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openAt(user, en["settings.section.offline"]);
+
+    const headers = screen.getByRole("spinbutton", {
+      name: en["settings.offlineHeaders.label"],
+    });
+    expect(headers).toHaveAttribute("min", "50");
+    expect(headers).toHaveAttribute("max", "1000");
+  });
+
+  it("REVERTS an out-of-range depth on commit rather than leaving a red box behind", async () => {
+    /*
+     * The server refuses it too (`prefsPatchBoundedInt`) — this is the copy of
+     * the check that stops the user AT the boundary. Reverting rather than
+     * holding the bad value is what keeps the sheet from closing over a change
+     * the user thinks they made.
+     */
+    const user = userEvent.setup();
+    renderDialog();
+    await openAt(user, en["settings.section.offline"]);
+
+    const headers = screen.getByRole("spinbutton", {
+      name: en["settings.offlineHeaders.label"],
+    });
+    await user.clear(headers);
+    await user.type(headers, "5");
+    await user.tab();
+
+    expect(headers).toHaveValue(200);
+    expect(screen.getByRole("alert")).toHaveTextContent("50");
+  });
+
+  it("offers named signatures: create, name, pick for new and for replies", async () => {
+    const user = userEvent.setup();
+    renderDialog({ identity: IDENTITY });
+    await openAt(user, en["settings.section.account"]);
+
+    expect(screen.getByText(en["settings.signatures.empty"])).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: en["settings.signatures.add"] }));
+
+    // The two pickers now offer the new item beside the "none" fallback.
+    const forNew = screen.getByRole("combobox", { name: en["settings.signatures.forNew"] });
+    const forReply = screen.getByRole("combobox", { name: en["settings.signatures.forReply"] });
+    expect(forNew).toHaveValue("");
+    expect(within(forNew).getAllByRole("option")).toHaveLength(2);
+    expect(within(forReply).getAllByRole("option")).toHaveLength(2);
+  });
+
+  it("says out loud that signatures are edited as plain text here", async () => {
+    // The honest limitation: htmlBody is carried through untouched but cannot
+    // be edited, and a user with a rich signature needs to know why the box
+    // shows plain text.
+    const user = userEvent.setup();
+    renderDialog({ identity: IDENTITY });
+    await openAt(user, en["settings.section.account"]);
+    expect(screen.getByText(en["settings.signatures.textOnly"])).toBeInTheDocument();
+  });
+
+  it("no longer claims the autocomplete choice is browser-only", () => {
+    /*
+     * Asserted against the STRING TABLE rather than the rendered row, because
+     * the row only renders when an `addresses` controller is supplied and this
+     * sheet's harness has none — `useAddressIndex.test.tsx` drives that
+     * controller. What matters here is the claim itself: the standalone
+     * `localOnly` disclaimer is gone, and the description now separates the two
+     * facts, since the CHOICE roams while the saved addresses do not.
+     */
+    expect(en).not.toHaveProperty("settings.addressAutocomplete.localOnly");
+    expect(es).not.toHaveProperty("settings.addressAutocomplete.localOnly");
+
+    for (const table of [en, es]) {
+      const description = table["settings.addressAutocomplete.description"];
+      expect(description).not.toMatch(/does not roam|no viaja/i);
+      expect(description).toMatch(/every device|todos tus dispositivos/i);
+      // The half that is still true is still said.
+      expect(description).toMatch(/only in this browser|solo en este navegador/i);
+    }
+  });
+
+  it("deletes the orphaned offline-depth promise, now that the control exists", () => {
+    /*
+     * `offline.depthPending` was defined in BOTH locales and rendered nowhere —
+     * the gate found it as an honest-note pattern failing in the quietest way
+     * possible. Two real controls replaced it, so the string is gone; this
+     * pins that it stays gone rather than drifting back in unrendered.
+     */
+    expect(en).not.toHaveProperty("offline.depthPending");
+    expect(es).not.toHaveProperty("offline.depthPending");
   });
 });

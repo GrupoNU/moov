@@ -211,12 +211,6 @@ export const en = {
   "offline.empty.title": "No saved mail on this device",
   "offline.empty.body":
     "You are offline and nothing has been stored yet. Connect once and the mail you read will be available here.",
-  /*
-   * The named gap, stated on screen rather than left to be discovered — E8's
-   * precedent for a limitation with a known durable home.
-   */
-  "offline.depthPending":
-    "Moov saves the 200 most recent messages per folder and the messages you open. Choosing how much to save is coming with the next preferences release.",
 
   // --- E9b: the Outbox ---
   "outbox.name": "Outbox",
@@ -251,8 +245,18 @@ export const en = {
    * index lives is the first thing someone deciding about this row wants to
    * know, and burying it costs the row its trustworthiness.
    */
+  /*
+   * Reworded for prefs v2: the CHOICE now roams, the INDEX still does not.
+   *
+   * The old sentence ran the two together ("it does not roam to your other
+   * devices"), which was accurate when both were browser-local and became
+   * misleading the moment the switch started roaming. Saying which of the two
+   * travels is the whole point of the row's honesty — a user deciding about
+   * this control wants to know where the addresses live, and separately whether
+   * turning it off here turns it off everywhere. It does.
+   */
   "settings.addressAutocomplete.description":
-    "Addresses are saved as you send and read mail, and suggested when you write. The index lives only in this browser — it is never uploaded, and it does not roam to your other devices.",
+    "Addresses are saved as you send and read mail, and suggested when you write. The saved addresses live only in this browser and are never uploaded; this on/off choice is part of your account and applies on every device.",
   "settings.addressAutocomplete.on": "Save addresses automatically",
   /* Gmail's own wording for the opt-out (/contacts/answer/1069522). */
   "settings.addressAutocomplete.off": "I'll add contacts myself",
@@ -262,8 +266,6 @@ export const en = {
   "settings.addressAutocomplete.clearConfirm":
     "Delete every address saved in this browser? Autocomplete starts over from nothing.",
   "settings.addressAutocomplete.cleared": "Saved addresses deleted",
-  "settings.addressAutocomplete.localOnly":
-    "This choice applies to this browser only, until preferences can carry it.",
 
   /*
    * The E6 skeletons survive for ONE case each: a server that does not
@@ -458,6 +460,73 @@ export const en = {
   "settings.offline.soon": "Offline mode is on its way",
   "settings.offline.soonBody":
     "Read, search and reply without a connection, with outgoing mail queued in an Outbox until you are back.",
+
+  /*
+   * --- E9b: the offline depth (prefs v2 `offlineDepth`) ---
+   *
+   * The row that replaces the "coming with the next release" note. Both
+   * descriptions state the COST of turning the number up, because that is the
+   * only thing the user cannot see for themselves — a depth control with no
+   * mention of storage is a slider people move to the maximum and then wonder
+   * why the phone complains.
+   */
+  "settings.offlineHeaders.label": "Messages saved per folder",
+  "settings.offlineHeaders.description":
+    "How many recent messages are kept on this device for reading and searching offline. More messages means more storage used.",
+  "settings.offlineBodies.label": "Message bodies saved",
+  "settings.offlineBodies.description":
+    "How many opened messages keep their full text offline. Bodies are much larger than the list entries, so this number is lower.",
+  /* The bounds, shown beside the control so a refused save is impossible. */
+  "settings.offlineDepth.range": (min: number, max: number): string =>
+    `Between ${String(min)} and ${String(max)}`,
+  "settings.offlineDepth.invalid": (min: number, max: number): string =>
+    `Enter a whole number between ${String(min)} and ${String(max)}`,
+  /*
+   * Attachments stay excluded at any depth — the same limitation Gmail
+   * declares. Saying it HERE, next to the number, is what keeps a user from
+   * reading a high depth as "everything is available offline".
+   */
+  "settings.offlineDepth.attachments":
+    "Attachments are never saved offline, at any setting.",
+
+  // --- E7: Send & Archive, the reply default, and named signatures (v2) ---
+  "settings.sendAndArchive.label": "Show “Send & Archive” in replies",
+  "settings.sendAndArchive.description":
+    "Adds a second send button to replies that files the conversation in Archive as it sends.",
+  "settings.replyBehavior.label": "Default reply behaviour",
+  "settings.replyBehavior.description":
+    "Which reply the button and the “r” key open. “Reply all” stays available either way, and Shift+A is always reply all.",
+  "settings.replyBehavior.reply": "Reply",
+  "settings.replyBehavior.replyAll": "Reply all",
+
+  "settings.signatures.label": "Signatures",
+  "settings.signatures.description":
+    "Several signatures with names, and which one new messages and replies start with. Saved to your account, so they follow you to every device.",
+  "settings.signatures.add": "New signature",
+  "settings.signatures.namePlaceholder": "Name",
+  "settings.signatures.bodyPlaceholder": "Signature text",
+  "settings.signatures.delete": "Delete",
+  "settings.signatures.deleteConfirm": (name: string): string =>
+    `Delete the signature “${name}”? Messages already sent are unaffected.`,
+  "settings.signatures.forNew": "For new messages",
+  "settings.signatures.forReply": "For replies and forwards",
+  /*
+   * The fallback, named rather than implied: with "None" chosen the composer
+   * uses the identity signature above, which is the RFC 8621 §6 behaviour every
+   * other mail client sees.
+   */
+  "settings.signatures.none": "None (use the signature above)",
+  "settings.signatures.empty": "No named signatures yet.",
+  "settings.signatures.full": (max: number): string =>
+    `${String(max)} signatures is the maximum.`,
+  /*
+   * The honest limitation. Rich signatures created elsewhere are PRESERVED —
+   * nothing here overwrites an htmlBody — they simply cannot be edited in this
+   * panel yet, and a user who has one needs to know why the box shows plain
+   * text.
+   */
+  "settings.signatures.textOnly":
+    "Signatures are edited as plain text here. Formatting set elsewhere is kept, not shown.",
 
   // --- theme control ---
   "theme.label": "Theme",
@@ -928,9 +997,14 @@ export const en = {
   "label.migrateFailed": "The label could not be changed",
   "label.abort": "Stop",
 
-  // The metadata gap, stated where the user meets it rather than in a doc.
-  "label.localOnly":
-    "Colours and sidebar visibility are stored in this browser, so they do not follow you to another device yet. The labels themselves, and the messages they are on, are shared everywhere.",
+  /*
+   * The gap this string used to declare is CLOSED (prefs v2 `labels`), so the
+   * disclaimer is gone rather than softened. What replaces it is not a smaller
+   * caveat but the positive fact — a user who read the old warning needs to be
+   * told it no longer applies, and an absence would leave them believing it.
+   */
+  "label.roams":
+    "Colours and sidebar visibility are saved to your account, so they follow you to every device.",
 
   "settings.section.labels": "Labels",
   "settings.labels.description":
@@ -1269,8 +1343,6 @@ export const es: Strings = {
   "offline.empty.title": "No hay correo guardado en este dispositivo",
   "offline.empty.body":
     "Estás sin conexión y todavía no se guardó nada. Conectate una vez y el correo que leas va a quedar disponible acá.",
-  "offline.depthPending":
-    "Moov guarda los 200 mensajes más recientes de cada carpeta y los que abrís. Elegir cuánto guardar llega con la próxima entrega de preferencias.",
 
   "outbox.name": "Bandeja de salida",
   "outbox.queued": "Esperando para enviarse",
@@ -1300,7 +1372,7 @@ export const es: Strings = {
   // --- E7: autocompletado de direcciones (canon §2.3) ---
   "settings.addressAutocomplete.label": "Autocompletado de direcciones",
   "settings.addressAutocomplete.description":
-    "Las direcciones se guardan a medida que enviás y leés correo, y se sugieren cuando escribís. El índice vive solo en este navegador — nunca se sube a ningún lado, y no viaja a tus otros dispositivos.",
+    "Las direcciones se guardan a medida que enviás y leés correo, y se sugieren cuando escribís. Las direcciones guardadas viven solo en este navegador y nunca se suben a ningún lado; esta opción de activado/desactivado es parte de tu cuenta y vale en todos tus dispositivos.",
   "settings.addressAutocomplete.on": "Guardar direcciones automáticamente",
   "settings.addressAutocomplete.off": "Yo agrego mis contactos",
   "settings.addressAutocomplete.count": (count: number): string =>
@@ -1309,8 +1381,6 @@ export const es: Strings = {
   "settings.addressAutocomplete.clearConfirm":
     "¿Borrar todas las direcciones guardadas en este navegador? El autocompletado arranca de cero.",
   "settings.addressAutocomplete.cleared": "Direcciones guardadas borradas",
-  "settings.addressAutocomplete.localOnly":
-    "Esta opción vale solo para este navegador, hasta que las preferencias puedan llevarla.",
 
   "settings.filters.soon": "Este servidor no ofrece filtros",
   "settings.filters.soonBody":
@@ -1497,6 +1567,46 @@ export const es: Strings = {
   "settings.offline.soon": "El modo sin conexión está en camino",
   "settings.offline.soonBody":
     "Leer, buscar y responder sin conexión, con el correo saliente en cola en una bandeja de salida hasta que vuelvas.",
+
+  "settings.offlineHeaders.label": "Mensajes guardados por carpeta",
+  "settings.offlineHeaders.description":
+    "Cuántos mensajes recientes se guardan en este dispositivo para leer y buscar sin conexión. Más mensajes ocupan más espacio.",
+  "settings.offlineBodies.label": "Cuerpos guardados",
+  "settings.offlineBodies.description":
+    "Cuántos mensajes abiertos conservan su texto completo sin conexión. Los cuerpos son mucho más grandes que las entradas de la lista, por eso este número es menor.",
+  "settings.offlineDepth.range": (min: number, max: number): string =>
+    `Entre ${String(min)} y ${String(max)}`,
+  "settings.offlineDepth.invalid": (min: number, max: number): string =>
+    `Ingresá un número entero entre ${String(min)} y ${String(max)}`,
+  "settings.offlineDepth.attachments":
+    "Los adjuntos nunca se guardan sin conexión, con ninguna configuración.",
+
+  "settings.sendAndArchive.label": "Mostrar «Enviar y archivar» en las respuestas",
+  "settings.sendAndArchive.description":
+    "Agrega un segundo botón de envío a las respuestas que archiva la conversación al enviarla.",
+  "settings.replyBehavior.label": "Comportamiento de respuesta por defecto",
+  "settings.replyBehavior.description":
+    "Qué respuesta abren el botón y la tecla «r». «Responder a todos» sigue disponible igual, y Shift+A siempre responde a todos.",
+  "settings.replyBehavior.reply": "Responder",
+  "settings.replyBehavior.replyAll": "Responder a todos",
+
+  "settings.signatures.label": "Firmas",
+  "settings.signatures.description":
+    "Varias firmas con nombre, y con cuál arrancan los mensajes nuevos y las respuestas. Se guardan en tu cuenta, así que te siguen a todos tus dispositivos.",
+  "settings.signatures.add": "Nueva firma",
+  "settings.signatures.namePlaceholder": "Nombre",
+  "settings.signatures.bodyPlaceholder": "Texto de la firma",
+  "settings.signatures.delete": "Borrar",
+  "settings.signatures.deleteConfirm": (name: string): string =>
+    `¿Borrar la firma «${name}»? Los mensajes ya enviados no se tocan.`,
+  "settings.signatures.forNew": "Para mensajes nuevos",
+  "settings.signatures.forReply": "Para respuestas y reenvíos",
+  "settings.signatures.none": "Ninguna (usar la firma de arriba)",
+  "settings.signatures.empty": "Todavía no hay firmas con nombre.",
+  "settings.signatures.full": (max: number): string =>
+    `${String(max)} firmas es el máximo.`,
+  "settings.signatures.textOnly":
+    "Acá las firmas se editan como texto plano. El formato puesto en otro lado se conserva, no se muestra.",
 
   "theme.label": "Tema",
   "theme.light": "Claro",
@@ -1899,8 +2009,8 @@ export const es: Strings = {
   "label.migrateFailed": "La etiqueta no se pudo cambiar",
   "label.abort": "Detener",
 
-  "label.localOnly":
-    "Los colores y la visibilidad en la barra lateral se guardan en este navegador, así que todavía no te siguen a otro dispositivo. Las etiquetas en sí, y los mensajes que las tienen, sí se ven en todos lados.",
+  "label.roams":
+    "Los colores y la visibilidad en la barra lateral se guardan en tu cuenta, así que te siguen a todos tus dispositivos.",
 
   "settings.section.labels": "Etiquetas",
   "settings.labels.description":

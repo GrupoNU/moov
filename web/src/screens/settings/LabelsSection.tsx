@@ -137,8 +137,13 @@ export function LabelsSection({
         </button>
       )}
 
-      {/* The metadata gap, named where the user meets it. */}
-      <p className={styles.note}>{t("label.localOnly")}</p>
+      {/*
+        Prefs v2 closed the metadata gap. The note is now the POSITIVE fact
+        rather than a caveat — a user who read the old "does not follow you to
+        another device" warning has to be told it no longer holds, and deleting
+        the line silently would leave them believing it.
+      */}
+      <p className={styles.note}>{t("label.roams")}</p>
 
       {/* --- create --- */}
       <form

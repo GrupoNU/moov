@@ -6,6 +6,7 @@ import { en, es, type Strings } from "../../i18n/strings";
 import { DEFAULT_PREFS, type PrefKey } from "../../mail/prefs";
 import { foldForSearch } from "../../mail/settingsSearch";
 import {
+  PREF_ROWS_BY_OTHER_MEANS,
   ROW_PREF_KEYS,
   SECTION_IDS,
   SECTION_TITLES,
@@ -61,7 +62,7 @@ describe("coverage — every preference reaches a control", () => {
      */
     const written = new Set(Object.values(ROW_PREF_KEYS));
     const missing = (Object.keys(DEFAULT_PREFS) as PrefKey[]).filter(
-      (key) => !written.has(key),
+      (key) => !written.has(key) && !(key in PREF_ROWS_BY_OTHER_MEANS),
     );
     expect(
       missing,
@@ -69,6 +70,48 @@ describe("coverage — every preference reaches a control", () => {
         ? ""
         : `These preferences have no settings row:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
+  });
+
+  it("only exempts preferences that really do have a control elsewhere", () => {
+    /*
+     * The exemption table is the escape hatch, so it needs its own guard: an
+     * entry added to silence the check above, for a preference with no control
+     * at all, would reinstate exactly the dead-control failure this file
+     * exists to catch — one indirection further away.
+     *
+     * Every exempt key must (a) be a real preference and (b) name a reason.
+     * `labels`, the only current entry, is additionally pinned by the render
+     * check below: the Labels section must actually be wired to prefs.
+     */
+    for (const [key, reason] of Object.entries(PREF_ROWS_BY_OTHER_MEANS)) {
+      expect(key in DEFAULT_PREFS, `"${key}" is exempt but is not a preference`).toBe(true);
+      expect(reason.length, `"${key}" is exempt without a reason`).toBeGreaterThan(20);
+    }
+    /*
+     * And the claim the `labels` exemption actually makes: the controller it
+     * points at really does write the preference. Reading the source is the
+     * same crude-but-safe-direction scan the drift check below uses — it can
+     * only fail when the wiring is genuinely gone.
+     */
+    const labelController = readFileSync(
+      resolve(process.cwd(), "src/screens/mail/useLabels.ts"),
+      "utf8",
+    );
+    expect(labelController).toContain('setPref("labels"');
+  });
+
+  it("keeps BOTH halves of the offline depth on screen", () => {
+    /*
+     * `offlineDepth` is one preference with two independent numbers, so only
+     * the header row carries the `ROW_PREF_KEYS` mapping (the "no two rows per
+     * key" invariant is about racing controls, and these edit different
+     * fields). That leaves the body row unpinned by the coverage check, which
+     * is exactly how the second half of a structured preference goes missing —
+     * so it is pinned here by name instead.
+     */
+    const ids = new Set(SETTINGS_ROWS.map((row) => row.id));
+    expect(ids.has("offlineHeaders")).toBe(true);
+    expect(ids.has("offlineBodies")).toBe(true);
   });
 
   it("maps every pref-writing row id to a row that actually exists", () => {

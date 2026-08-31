@@ -184,6 +184,40 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
     descriptionKey: "settings.snippets.description",
     keywords: ["snippets", "fragmentos", "preview", "vista previa", "primera linea", "first line"],
   },
+  {
+    /* E7 / prefs v2: Gmail's "Show 'Send & Archive' button in reply". */
+    id: "sendAndArchive",
+    sectionId: "general",
+    labelKey: "settings.sendAndArchive.label",
+    descriptionKey: "settings.sendAndArchive.description",
+    keywords: [
+      "send",
+      "enviar",
+      "archive",
+      "archivar",
+      "reply",
+      "responder",
+      "button",
+      "boton",
+    ],
+  },
+  {
+    /* E5 v2: which reply the button and `r` open (canon §2.3). */
+    id: "replyBehavior",
+    sectionId: "general",
+    labelKey: "settings.replyBehavior.label",
+    descriptionKey: "settings.replyBehavior.description",
+    keywords: [
+      "reply",
+      "responder",
+      "reply all",
+      "responder a todos",
+      "default",
+      "predeterminado",
+      "por defecto",
+      "r",
+    ],
+  },
 
   // --- Appearance ---
   {
@@ -317,6 +351,23 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
     ],
   },
   {
+    /* E7 / prefs v2: the named signatures, with the new/reply defaults. */
+    id: "signatures",
+    sectionId: "account",
+    labelKey: "settings.signatures.label",
+    descriptionKey: "settings.signatures.description",
+    keywords: [
+      "signature",
+      "signatures",
+      "firma",
+      "firmas",
+      "footer",
+      "pie",
+      "reply",
+      "respuesta",
+    ],
+  },
+  {
     /* E6: the storage bar, read live from Dovecot (RFC 9425, canon §2.11). */
     id: "quota",
     sectionId: "account",
@@ -435,19 +486,49 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
       "sieve",
     ],
   },
+  /*
+   * E9b / prefs v2: the offline depth.
+   *
+   * These two REPLACE the "offline" skeleton row, which pointed at
+   * `settings.offline.soon` while the string that actually described the gap
+   * (`offline.depthPending`) had no render site at all — the gate found it
+   * defined in both locales and shown nowhere. Real controls are the fix.
+   */
   {
-    id: "offline",
+    id: "offlineHeaders",
     sectionId: "offline",
-    labelKey: "settings.offline.soon",
-    descriptionKey: "settings.offline.soonBody",
+    labelKey: "settings.offlineHeaders.label",
+    descriptionKey: "settings.offlineHeaders.description",
     keywords: [
       "offline",
       "sin conexion",
-      "outbox",
-      "bandeja de salida",
       "sync",
       "sincronizacion",
       "pwa",
+      "storage",
+      "almacenamiento",
+      "depth",
+      "profundidad",
+      "messages",
+      "mensajes",
+    ],
+  },
+  {
+    id: "offlineBodies",
+    sectionId: "offline",
+    labelKey: "settings.offlineBodies.label",
+    descriptionKey: "settings.offlineBodies.description",
+    keywords: [
+      "offline",
+      "sin conexion",
+      "bodies",
+      "cuerpos",
+      "storage",
+      "almacenamiento",
+      "depth",
+      "profundidad",
+      "attachments",
+      "adjuntos",
     ],
   },
 ];
@@ -480,4 +561,50 @@ export const ROW_PREF_KEYS: Readonly<Record<string, PrefKey>> = {
   readingPane: "readingPane",
   inboxType: "inboxType",
   notifications: "notifications",
+  // --- prefs v2 ---
+  sendAndArchive: "sendAndArchive",
+  replyBehavior: "defaultReplyBehavior",
+  signatures: "signatures",
+  addressAutocomplete: "addressAutocomplete",
+  /*
+   * `offlineDepth` is ONE preference behind TWO rows — the header count and the
+   * body count are independent settings inside one object, and a user looking
+   * for either searches for that one, not for "depth".
+   *
+   * Only the header row is mapped, and that is not a shortcut: this table's
+   * "no two rows write one key" invariant is real (two controls writing one key
+   * would race and disagree on screen), and a structured preference edited
+   * field-by-field is precisely the case it was not written for. Mapping one
+   * row keeps the coverage check honest — `offlineDepth` reaches a control —
+   * without asserting a one-to-one shape that does not hold. `offlineBodies`
+   * is named in the sibling test as the documented second half.
+   */
+  offlineHeaders: "offlineDepth",
+  /*
+   * `labels` is deliberately ABSENT, and it is the one entry worth explaining
+   * rather than adding. It has a real, fully-wired UI — the Labels section's
+   * per-label colour and visibility pickers (`LabelsSection.tsx`) — but that
+   * section writes it through `useLabels`, not through a `SettingRow` whose
+   * control calls `setPref` with this key. Mapping the "labels" row would claim
+   * a shape this table describes and that the section does not have, and the
+   * drift test would then be pinning a fiction.
+   *
+   * The coverage test names it as the single documented exemption, so the
+   * absence is asserted rather than merely tolerated.
+   */
+};
+
+/**
+ * Preferences whose control exists but is NOT a `ROW_PREF_KEYS` row, with the
+ * reason each is exempt.
+ *
+ * It is a table rather than a hard-coded list in the test so the exemption and
+ * its justification live beside the mapping they are an exception to. A key
+ * added here without a real control is the failure this whole file guards
+ * against, so the reasons are load-bearing prose, not decoration.
+ */
+export const PREF_ROWS_BY_OTHER_MEANS: Readonly<Record<string, string>> = {
+  labels:
+    "The Labels section's per-label colour and visibility pickers write it through " +
+    "useLabels, not through a SettingRow control.",
 };

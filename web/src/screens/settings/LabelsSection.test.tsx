@@ -245,12 +245,23 @@ describe("a running migration is visible and stoppable", () => {
   });
 });
 
-describe("the named gap is on screen, not only in a doc", () => {
-  it("says colours and visibility do not roam between devices", () => {
+describe("the closed gap is on screen, not only in a changelog", () => {
+  it("says colours and visibility DO roam, now that prefs v2 carries them", () => {
     renderSection();
-    // The deliberate, named limitation of storing label metadata in
-    // localStorage: the user meets it here rather than discovering it on a
-    // second device.
-    expect(screen.getByText(/se guardan en este navegador/i)).toBeInTheDocument();
+    /*
+     * This test used to assert the opposite sentence, and the inversion is the
+     * deliverable: prefs v2's `labels` key made the old limitation false, so
+     * the note became the positive fact. Stating it is not decoration — a user
+     * who read the previous warning would otherwise go on believing their
+     * colours are stuck on one browser.
+     */
+    expect(screen.getByText(/se guardan en tu cuenta/i)).toBeInTheDocument();
+  });
+
+  it("no longer claims the metadata is browser-local", () => {
+    renderSection();
+    // The direction that actually matters: a leftover copy of the old caveat
+    // anywhere in this section would contradict the wiring.
+    expect(screen.queryByText(/se guardan en este navegador/i)).toBeNull();
   });
 });

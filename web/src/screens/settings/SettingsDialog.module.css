@@ -396,6 +396,57 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* --- prefs v2: the named signatures (E7) --- */
+
+.signatureItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.signatureName {
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+/* --- prefs v2: the offline depth (E9b) --- */
+
+.numberField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.numberInput {
+  /*
+   * Wide enough for four digits plus the native stepper: the largest value any
+   * bound admits is 1000, and a box that clips its own maximum reads as broken.
+   */
+  width: 6rem;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.numberInput[aria-invalid="true"] {
+  border-color: var(--danger-default, var(--border-default));
 }
 
 .signatureSave {
