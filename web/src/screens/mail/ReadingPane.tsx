@@ -95,6 +95,16 @@ export interface ReadingPaneProps {
   /** Opens the composer prefilled from a `mailto:` unsubscribe URI. */
   readonly onUnsubscribeByMail: (to: string, subject: string | undefined, body: string | undefined) => void;
 
+  /**
+   * E6: blocks this message's sender (canon §2.2 — "all future emails go to
+   * Spam"). Absent when the server has no filter capability, which removes the
+   * control rather than disabling it.
+   *
+   * The address is resolved HERE, from the message the user is looking at, so
+   * the host never has to guess which of `from`/`sender` the reader meant.
+   */
+  readonly onBlockSender?: ((address: string) => void) | undefined;
+
   // --- E8: labels ----------------------------------------------------------
   /** The known labels, for resolving this message's chips and their colours. */
   readonly labels?: readonly Label[];
@@ -190,6 +200,7 @@ export function ReadingPane({
   onMarkUnread,
   onToggleSpam,
   onUnsubscribeByMail,
+  onBlockSender,
   labels,
   onToggleLabel,
   onManageLabels,
@@ -458,6 +469,28 @@ export function ReadingPane({
           <button type="button" className={styles.secondaryAction} onClick={onToggleSpam}>
             {inJunk ? t("action.notSpam") : t("action.spam")}
           </button>
+
+          {/*
+            E6: block the sender (canon §2.2), beside "report spam" because the
+            two are the same family of answer to the same question — this one is
+            permanent and sender-scoped, that one is a single verdict.
+
+            Rendered only when the address is resolvable AND the server offers
+            filters: a block writes a Sieve rule, so without the capability it
+            is a button that cannot do its job.
+          */}
+          {onBlockSender !== undefined && senderAddress(email) !== undefined && (
+            <button
+              type="button"
+              className={styles.secondaryAction}
+              onClick={() => {
+                const address = senderAddress(email);
+                if (address !== undefined) onBlockSender(address);
+              }}
+            >
+              {t("blocked.action")}
+            </button>
+          )}
 
           {/*
             E4: snooze and mute, in the reader's own text-label idiom rather
@@ -739,6 +772,25 @@ export function ReadingPane({
       />
     </article>
   );
+}
+
+/**
+ * The address a "block this sender" would block (E6).
+ *
+ * `from` before `sender`, which is the order that matters and the one worth
+ * writing down: RFC 5322's `Sender` is who PUT the message in the mail system
+ * and `From` is who wrote it. For a list posting they differ, and blocking the
+ * list's own submission address would block every author on that list rather
+ * than the one the user is looking at. `From` is the identity the reader shows,
+ * so it is the identity the button acts on.
+ *
+ * Returns undefined when neither header carries an address, which removes the
+ * control — a block with nothing to block is not an action.
+ */
+function senderAddress(email: Email): string | undefined {
+  const address = email.from?.[0]?.email ?? email.sender?.[0]?.email;
+  if (address === undefined || address.trim() === "") return undefined;
+  return address.trim().toLowerCase();
 }
 
 /**

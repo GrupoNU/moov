@@ -135,6 +135,9 @@ import { SnoozeMenu } from "./SnoozeMenu";
 import type { ConversationControls } from "./ConversationView";
 import { LabelList } from "./LabelList";
 import { useLabels } from "./useLabels";
+import { useFilters } from "./useFilters";
+import { VacationBanner } from "./VacationBanner";
+import { blockAdvice, blockDraft } from "../../mail/blockedSenders";
 import { MailboxList } from "./MailboxList";
 import { mailboxLabel } from "./mailboxLabels";
 import { MessageList } from "./MessageList";
@@ -142,6 +145,11 @@ import { ReadingPane } from "./ReadingPane";
 import { SearchBar } from "./SearchBar";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import type { LabelsSectionProps } from "../settings/LabelsSection";
+import type { FiltersSectionProps } from "../settings/FiltersSection";
+import type { BlockedSectionProps } from "../settings/BlockedSection";
+import type { ForwardingSectionProps } from "../settings/ForwardingSection";
+import type { VacationSectionProps } from "../settings/VacationSection";
+import type { QuotaRowProps } from "../settings/QuotaRow";
 import type { MigrateResult } from "../../mail/migrateKeyword";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useMessageActions } from "./useMessageActions";
@@ -216,6 +224,28 @@ export function MailScreen(): React.JSX.Element {
     const stored: BasicCredentials | undefined = loadSession();
     return stored === undefined ? "" : encodeBasicCredentials(stored);
   }, [state.status]);
+
+  /**
+   * An authenticated GET, for the ONE aux route that is neither a JMAP method
+   * nor an upload: `GET /jmap/forwarding/verify?token=…` (E6).
+   *
+   * Built here from the same header value the upload uses rather than added to
+   * `JmapClient`, because that class's narrowness is deliberate — one
+   * credential, an enumerated set of endpoints — and widening it for a single
+   * settings route would trade a property worth keeping for one call site.
+   *
+   * `credentials: "omit"` for the same reason the client does it: the header is
+   * sent explicitly, so ambient cookies must not ride along.
+   */
+  const authedFetch = useMemo<((url: string) => Promise<Response>) | undefined>(() => {
+    if (authorization === "") return undefined;
+    return (url: string) =>
+      fetch(url, {
+        method: "GET",
+        headers: { Authorization: authorization, Accept: "application/json" },
+        credentials: "omit",
+      });
+  }, [authorization]);
 
   /*
    * E5: density, applied as CSS custom properties on the document ROOT.
@@ -1813,6 +1843,14 @@ export function MailScreen(): React.JSX.Element {
   );
 
   /** Everything the settings sheet's label manager needs, in one object. */
+  /**
+   * E6: filters, blocked senders, forwarding, vacation and quota.
+   *
+   * One controller for five surfaces because four of them ARE one Sieve script
+   * on the server (see `useFilters`), and the fifth is read on the same screen.
+   */
+  const filtersApi = useFilters({ client, session, accountId, authedFetch });
+
   const labelSettings = useMemo<LabelsSectionProps>(
     () => ({
       labels: labelsApi.labels,
@@ -1846,6 +1884,131 @@ export function MailScreen(): React.JSX.Element {
       onCreateFolder: undefined,
     }),
     [labelsApi, reportMigration, format, confirm],
+  );
+
+  /**
+   * The four E6 settings sections, each present only when its capability is.
+   *
+   * `undefined` is what makes the settings sheet render its honest skeleton, so
+   * the ternaries below are not defensive coding — they are the mechanism by
+   * which a deployment without Sieve says so instead of showing controls that
+   * cannot work. The three capabilities are checked SEPARATELY because
+   * `session.go` gates them on three independent config fields.
+   */
+  const filterSettings = useMemo<FiltersSectionProps | undefined>(
+    () =>
+      filtersApi.capabilities.filters
+        ? {
+            rules: filtersApi.rules,
+            scriptActive: filtersApi.scriptActive,
+            forwardingAddresses: filtersApi.forwardingAddresses,
+            mailboxes,
+            labels: labelsApi.labels,
+            onCreate: filtersApi.createRule,
+            onUpdate: filtersApi.updateRule,
+            onDelete: filtersApi.deleteRule,
+            onMove: filtersApi.moveRule,
+            onActivate: filtersApi.activate,
+            isActivating: filtersApi.isActivating,
+            isBusy: filtersApi.isBusy,
+            error: filtersApi.error,
+          }
+        : undefined,
+    [filtersApi, mailboxes, labelsApi.labels],
+  );
+
+  const blockedSettings = useMemo<BlockedSectionProps | undefined>(
+    () =>
+      filtersApi.capabilities.filters
+        ? {
+            rules: filtersApi.rules,
+            onBlock: filtersApi.createRule,
+            onUnblock: filtersApi.deleteRule,
+            isBusy: filtersApi.isBusy,
+            error: filtersApi.error,
+          }
+        : undefined,
+    [filtersApi],
+  );
+
+  const forwardingSettings = useMemo<ForwardingSectionProps | undefined>(
+    () =>
+      filtersApi.capabilities.filters
+        ? {
+            addresses: filtersApi.forwardingAddresses,
+            forwardAll: filtersApi.forwardAll,
+            onAdd: filtersApi.addForwardingAddress,
+            onVerify: filtersApi.verifyForwarding,
+            onRemove: filtersApi.removeForwardingAddress,
+            onSaveForwardAll: filtersApi.saveForwarding,
+            isBusy: filtersApi.isBusy,
+            error: filtersApi.error,
+          }
+        : undefined,
+    [filtersApi],
+  );
+
+  const vacationSettings = useMemo<VacationSectionProps | undefined>(
+    () =>
+      filtersApi.capabilities.vacation
+        ? {
+            vacation: filtersApi.vacation,
+            onSave: filtersApi.saveVacationResponse,
+            error: filtersApi.error,
+          }
+        : undefined,
+    [filtersApi],
+  );
+
+  const quotaSettings = useMemo<QuotaRowProps | undefined>(
+    () =>
+      filtersApi.capabilities.quota
+        ? {
+            quotas: filtersApi.quotas,
+            error: filtersApi.quotaError,
+            onRefresh: filtersApi.refreshQuota,
+          }
+        : undefined,
+    [filtersApi],
+  );
+
+  /**
+   * E6: blocking the open message's sender (canon §2.2).
+   *
+   * The dialog is here rather than in the reader because the decision needs
+   * facts the reader does not hold — whether the address is already blocked —
+   * and because "block" is a settings write that must survive the reading pane
+   * closing under it.
+   *
+   * The unsubscribe sentence is appended when the message offers one, which is
+   * the canon's own pairing: block sends future mail to Spam and does NOT
+   * unsubscribe, so a newsletter is better handled by the other button. Saying
+   * so at the moment of the decision is the only place it helps.
+   */
+  const blockSender = useCallback(
+    (address: string): void => {
+      const opened = detail.email;
+      const advice =
+        opened === undefined ? undefined : blockAdvice(opened, address);
+      void (async () => {
+        const body =
+          advice?.hasUnsubscribe === true
+            ? `${t("blocked.dialogBody")}\n\n${t("blocked.dialogUnsubscribe")}`
+            : t("blocked.dialogBody");
+        if (
+          !(await confirm({
+            title: format("blocked.dialogTitle", address),
+            message: body,
+            confirmLabel: t("blocked.confirm"),
+            destructive: true,
+          }))
+        ) {
+          return;
+        }
+        filtersApi.createRule(blockDraft(address));
+      })();
+    },
+    [detail.email, confirm, t, format, filtersApi],
   );
 
   /**
@@ -3375,6 +3538,22 @@ export function MailScreen(): React.JSX.Element {
         </div>
       </header>
 
+      {/*
+        E6: the vacation banner (canon §2.8) — between the header and the panes,
+        spanning the whole screen, which is Gmail's own placement.
+
+        Above the body rather than inside the list column on purpose: the fact
+        it reports is about the ACCOUNT, not about the folder being viewed, and
+        it has to be equally visible with the reader open. It renders nothing
+        unless the responder is enabled AND today is inside its window.
+      */}
+      {vacationSettings !== undefined && (
+        <VacationBanner
+          vacation={filtersApi.vacation}
+          onEndNow={() => filtersApi.saveVacationResponse({ isEnabled: false })}
+        />
+      )}
+
       <div
         className={[
           styles.body,
@@ -3844,6 +4023,12 @@ export function MailScreen(): React.JSX.Element {
               }}
               onToggleSpam={runToggleSpam}
               onUnsubscribeByMail={openUnsubscribeMail}
+              /*
+               * E6: block the sender. Passed only when the server offers
+               * filters — a block writes a Sieve rule, so without the
+               * capability the button would have nothing to write.
+               */
+              {...(filtersApi.capabilities.filters ? { onBlockSender: blockSender } : {})}
               labels={labelsApi.labels}
               onToggleLabel={runToggleLabel}
               onManageLabels={openLabelSettings}
@@ -3938,6 +4123,16 @@ export function MailScreen(): React.JSX.Element {
               },
             }
           : {})}
+        /*
+         * E6. Each is undefined when the server does not advertise its
+         * capability, which is what makes the sheet render the honest skeleton
+         * rather than a control that cannot work.
+         */
+        filters={filterSettings}
+        blocked={blockedSettings}
+        forwarding={forwardingSettings}
+        vacation={vacationSettings}
+        quota={quotaSettings}
       />
 
       <ShortcutsDialog

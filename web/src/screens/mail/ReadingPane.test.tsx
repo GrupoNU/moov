@@ -354,3 +354,56 @@ describe("E4: snooze and mute in the reader", () => {
     expect(onToggleMute).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("blocking the sender (E6, canon §2.2)", () => {
+  it("is absent when the server has no filter capability", () => {
+    // A block writes a Sieve rule, so without the capability the button has
+    // nothing to write — it is removed, not disabled.
+    renderPane();
+    expect(
+      screen.queryByRole("button", { name: "Bloquear al remitente" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("blocks the FROM address, which is the identity the reader shows", async () => {
+    const user = userEvent.setup();
+    const onBlockSender = vi.fn();
+    renderPane({ onBlockSender });
+    await user.click(screen.getByRole("button", { name: "Bloquear al remitente" }));
+    expect(onBlockSender).toHaveBeenCalledWith("ana@example.com");
+  });
+
+  it("prefers From over Sender — a list posting must not block every author", async () => {
+    const user = userEvent.setup();
+    const onBlockSender = vi.fn();
+    renderPane({
+      onBlockSender,
+      email: message({
+        from: [{ name: "Ana", email: "Ana@Example.com" }],
+        sender: [{ name: "La lista", email: "bounces@list.example" }],
+      }),
+    });
+    await user.click(screen.getByRole("button", { name: "Bloquear al remitente" }));
+    // Lowercased, because a header's casing is not identity.
+    expect(onBlockSender).toHaveBeenCalledWith("ana@example.com");
+  });
+
+  it("falls back to Sender when there is no From at all", async () => {
+    const user = userEvent.setup();
+    const onBlockSender = vi.fn();
+    renderPane({
+      onBlockSender,
+      email: message({ from: null, sender: [{ name: null, email: "s@example.com" }] }),
+    });
+    await user.click(screen.getByRole("button", { name: "Bloquear al remitente" }));
+    expect(onBlockSender).toHaveBeenCalledWith("s@example.com");
+  });
+
+  it("renders nothing when neither header carries an address", () => {
+    // A block with nothing to block is not an action.
+    renderPane({ onBlockSender: vi.fn(), email: message({ from: null, sender: null }) });
+    expect(
+      screen.queryByRole("button", { name: "Bloquear al remitente" }),
+    ).not.toBeInTheDocument();
+  });
+});

@@ -1,0 +1,71 @@
+/*
+ * The vacation banner (E6, canon §2.8).
+ *
+ * Full-width across the top of the mail area, above the list and the reader
+ * both — Gmail's own placement, and the reason it works: it is the one piece of
+ * state that is invisible from everywhere else in the app.
+ */
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4, 1rem);
+  border-bottom: 1px solid var(--color-info-border, #b6d4f0);
+  background: var(--color-info-bg, #eaf3fb);
+  color: var(--color-info-text, #1c4a75);
+}
+
+.banner > svg {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.endNow {
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.endNow:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.failed {
+  flex: 1 1 100%;
+  font-size: var(--text-xs);
+  color: var(--color-danger, #b91c1c);
+}
+
+/*
+ * Both themes defined explicitly — never a colour whose only definition sits
+ * inside a media query (the tokens.css discipline).
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner {
+    border-bottom-color: var(--color-info-border-dark, #2b4a68);
+    background: var(--color-info-bg-dark, #142430);
+    color: var(--color-info-text-dark, #b9d9f2);
+  }
+}
+
+:root[data-theme="dark"] .banner {
+  border-bottom-color: var(--color-info-border-dark, #2b4a68);
+  background: var(--color-info-bg-dark, #142430);
+  color: var(--color-info-text-dark, #b9d9f2);
+}
