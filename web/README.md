@@ -9,7 +9,18 @@ The reading pane renders HTML through the three-layer pipeline in
 `src/mail/html/`. P3 adds optimistic actions with rollback, multi-select, the
 composer, drafts, attachments, send-with-undo and the identity signature.
 
+> **This file documents P1–P3 only.** The Gmail-class program
+> ([`docs/specs/L3-gmail-class-plan.md`][l3]) has since shipped on top of it —
+> conversation view, the full triage set including snooze and mute, the search
+> operator language, the settings surface, labels, offline and the installable
+> PWA. Those epics are specified in the L3 plan and audited in the
+> [final gate report][gate]; this document was not extended to cover them, so
+> read it as the foundation's rationale rather than as the current feature
+> inventory.
+
 [spec]: ../docs/specs/L2-pwa.md
+[l3]: ../docs/specs/L3-gmail-class-plan.md
+[gate]: ../docs/reports/gate-final-gmail-class.md
 
 ```
 npm install
@@ -487,6 +498,14 @@ correctly while scrolling (rows 1-17 to 15-31) and **never renders the whole
 list**.
 
 ### Verified in a real browser (Playwright, live pilot)
+
+> **How much this is worth.** These were driven by hand in an ad-hoc Playwright
+> session against the live pilot; the artefacts are not versioned and there is
+> **no end-to-end suite in the repository or in CI**. Read the findings below as
+> a one-time observation that was true when made, not as a check that would
+> catch a regression. The absence of that suite is
+> [named as deferred](../docs/specs/L3-gmail-class-plan.md) rather than implied
+> to exist.
 
 Deep links (`/mail/inbox`, `/mail/inbox/:id`, `/search?q=`) restore state,
 including through the login screen — an unauthenticated deep link lands exactly

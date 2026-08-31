@@ -6,10 +6,13 @@ seriously and we would rather hear from you early than read about it later.
 
 ## Supported versions
 
-Moov Mail is **pre-alpha**. There is no released version and no supported
-version yet — the sync engine is under construction and nothing is deployed for
-end users. This policy is published now so that a channel exists from the first
-day there is code to attack.
+Moov Mail is **pre-1.0**. There is no tagged release and therefore no supported
+version: the only thing that runs is the pilot the authors operate for their own
+mail, tracking `main`. If you are running Moov at all, you are running a commit.
+
+That means security fixes land on `main` and nowhere else — there are no
+backports, because there is nothing to back-port to. **Report against a commit
+hash**, and if you are deploying this, follow `main`.
 
 Once there are releases, this section will list which ones receive security
 fixes.
@@ -108,7 +111,15 @@ that is a vulnerability, even if nothing else looks wrong:
   client, and inside a sandboxed iframe under a strict Content Security Policy
   with no script execution.
 - **Remote content in mail is proxied**, never fetched directly by the browser,
-  with HMAC-signed URLs and SSRF protection on the proxy.
+  with HMAC-signed URLs and SSRF protection on the proxy. Images are additionally
+  suppressed on anything the spam filter flagged, overriding the user's setting.
+- **Links in mail are never rewritten.** No redirector, no tracking wrapper: the
+  URL a user sees and follows is the one the sender wrote, byte for byte.
+- **Read receipts are never answered automatically**, and never requested by
+  default. `Disposition-Notification-To` is ignored.
+- **No third-party lookup identifies a sender.** No favicon or logo fetching:
+  sender identity is BIMI or initials. Nothing about opening a message reaches a
+  server other than yours.
 - **Access tokens are not credentials.** The short-lived tokens that let
   header-less browser contexts (EventSource, downloads) authenticate are
   single-scope and account-bound, expire in minutes, are revocable and die

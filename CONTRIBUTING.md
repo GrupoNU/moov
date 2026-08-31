@@ -6,9 +6,10 @@ its code, documentation and governance is part of the product rather than an
 afterthought. This document explains what that means in practice.
 
 **Please read the status section of the [README](README.md) first.** Moov is
-pre-alpha: the sync engine is under construction and nothing is usable yet.
-Contributions are welcome, but the codebase moves fast and interfaces are not
-stable.
+pre-1.0: the Gmail-class feature program is complete and running on a single
+pilot, but there is no release, no compatibility promise, and interfaces —
+including the vendor JMAP capabilities and the database schema — may still
+change.
 
 ---
 
@@ -19,16 +20,25 @@ stable.
   in Spanish, for project-heritage reasons. English translations are planned.
   You do not need Spanish to contribute to the code; the contracts you need are
   restated in English in the package documentation (`internal/*/doc.go`).
+  [`docs/README.md`](docs/README.md) indexes everything and says which language
+  each document is in.
 
 ## Before you write code
 
 For anything beyond a typo fix, **open an issue first**. Moov has an accepted
-architecture ([ADR-001](docs/adr/ADR-001-arquitectura.md)) and an accepted
-specification for the current phase
-([L2 sync engine](docs/specs/L2-sync-engine.md)) that were derived from four
-validation spikes against a real Mailcow. A change that contradicts either is
-not necessarily wrong — but it needs a conversation, not a surprise pull
-request.
+architecture ([ADR-001](docs/adr/ADR-001-arquitectura.md)) and a specification
+per subsystem, each derived from evidence rather than preference: the
+[L2s](docs/specs/) for the sync engine, the JMAP server, writes and the PWA, and
+the [L3 Gmail-class plan](docs/specs/L3-gmail-class-plan.md) above them. A
+change that contradicts one is not necessarily wrong — but it needs a
+conversation, not a surprise pull request.
+
+Two documents will save you an argument. The
+[Gmail canon](docs/research/06-gmail-canon.md) is the criterion for what belongs
+in the product at all, cited to Google's own documentation; §6 of the L3 plan
+lists what was deliberately **not** built, with the reason. If you are proposing
+a feature, check both first — it may already have been decided, in either
+direction.
 
 Two invariants are not negotiable and no pull request may weaken them:
 
@@ -45,7 +55,8 @@ imported from `internal/imap`.** It is checked by `depguard` in lint and by
 
 ## Development setup
 
-You need **Go 1.24+**, **Docker** (for the development database) and **git**.
+You need **Go 1.24+**, **Docker** (for the development database), **Node 20+**
+(for the PWA) and **git**.
 
 ```sh
 git clone https://github.com/GrupoNU/moov.git
@@ -53,7 +64,7 @@ cd moov
 
 make db-up        # PostgreSQL 17 on 127.0.0.1:5433
 make migrate      # apply the migrations
-make ci           # the full local gate: fmt, vet, lint, build, corpus, tests
+make ci           # the full local gate: fmt, vendor check, vet, lint, build, corpus, tests
 ```
 
 `make help` lists every target. The ones you will use most:
@@ -65,15 +76,50 @@ make ci           # the full local gate: fmt, vet, lint, build, corpus, tests
 | `make test-short` | Skip anything needing external services |
 | `make fmt` / `make fmt-check` | Format / verify formatting |
 | `make lint` | golangci-lint (install it once with `make lint-install`) |
+| `make vendor-check` | Fail if the vendored `go-imap` is missing a patch |
 | `make corpus-check` | Validate the MIME corpus against its manifest |
 | `make ci` | Everything CI runs, minus the service-container jobs |
 
-The store tests need a database. They read `MOOV_TEST_DATABASE_URL` and skip
-with an explanatory message when it is unset:
+### The tests that need a database
+
+The store, blob and sync suites talk to a real PostgreSQL. They read
+`MOOV_TEST_DATABASE_URL` and skip with an explanatory message when it is unset —
+so a bare `make test` passes without proving anything about them. Run them in
+two phases, the way CI does:
 
 ```sh
+# Phase 1 — everything that needs no external service
+make test-short
+
+# Phase 2 — the database-backed suites
 export MOOV_TEST_DATABASE_URL='postgres://moov:moov@localhost:5433/moov?sslmode=disable'
+go test -race -count=1 -p 1 ./internal/store/... ./internal/blob/... ./internal/sync/...
 ```
+
+**`-p 1` is not optional here.** Those packages share the one database, and
+`blob`'s global GC sweep collides with anything running concurrently against it.
+Without it you get failures that look like flakes and are not.
+
+The `internal/imap` integration suite talks to a real Dovecot and is gated the
+same way — `make test-imap-integration` names the variables it needs. Its
+password must come from the environment: this repository is public and no
+credential may ever be written into a file in it.
+
+### The PWA
+
+```sh
+cd web
+npm install
+npm run test       # vitest
+npm run typecheck  # tsc -b
+npm run lint       # eslint, --max-warnings 0 (jsx-a11y at error level)
+npm run build      # tsc -b && vite build
+npm run dev        # http://localhost:5173, proxying the API to a running server
+```
+
+All four of `test`, `typecheck`, `lint` and `build` run in CI, and `lint`
+tolerates no warnings. See [`web/README.md`](web/README.md) for the design
+rationale and what `npm run dev` proxies where.
 
 The `spikes/` directory holds separate Go modules — exploratory code kept for
 the record, deliberately outside the main module and not held to the product's
@@ -116,7 +162,8 @@ docs(adr): record the label-storage arbitration
 
 Types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `perf`, `ci`.
 Scope is the package or area (`sync`, `parser`, `store`, `imap`, `blob`,
-`index`, `crypto`, `ci`, `docs`).
+`index`, `crypto`, `jmap`, `jmaphttp`, `sieve`, `submit`, `pwa`, `deploy`,
+`ci`, `docs`).
 
 Write the description in the imperative mood, lower case, no trailing period.
 Keep commits atomic: one logical change each. Explain *why* in the body when the
