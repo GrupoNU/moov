@@ -31,15 +31,83 @@ function renderList(labels: readonly Label[], selectedKeyword?: string) {
 }
 
 describe("rendering", () => {
-  it("renders nothing when there are no labels", () => {
-    // An empty "Etiquetas" heading over nothing is a permanent reminder of a
-    // feature the user is not using.
+  /**
+   * Canon 07 §2 and the owner's finding 2.
+   *
+   * E8 rendered nothing until the first label existed. That made the section —
+   * and with it the whole feature — undiscoverable from the rail on exactly the
+   * accounts that had never used it. Gmail keeps the header and its `+`
+   * regardless, because the header IS the affordance.
+   */
+  it("shows the heading and the + even with no labels at all", () => {
+    render(
+      <I18nProvider locale="es">
+        <LabelList
+          labels={[]}
+          selectedKeyword={undefined}
+          onSelect={vi.fn()}
+          onCreate={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole("heading", { name: /etiquetas/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /etiqueta nueva/i })).toBeInTheDocument();
+  });
+
+  it("is JUST the header when empty — no placeholder row, no empty list", () => {
+    render(
+      <I18nProvider locale="es">
+        <LabelList
+          labels={[]}
+          selectedKeyword={undefined}
+          onSelect={vi.fn()}
+          onCreate={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+    /*
+     * An empty `list` is announced as "list, 0 items" — a statement about a
+     * structure the user never asked about. The header already says everything
+     * the empty state has to say.
+     */
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the rail is collapsed AND there are no labels", () => {
+    /*
+     * The one case that still renders nothing, and for a structural reason: at
+     * icon width the header is hidden (no room for a heading or a `+`), so what
+     * would remain is an empty group with nothing to act on.
+     */
     const { container } = render(
       <I18nProvider locale="es">
-        <LabelList labels={[]} selectedKeyword={undefined} onSelect={vi.fn()} />
+        <LabelList
+          labels={[]}
+          selectedKeyword={undefined}
+          onSelect={vi.fn()}
+          onCreate={vi.fn()}
+          collapsed
+        />
       </I18nProvider>,
     );
     expect(container.firstChild).toBeNull();
+  });
+
+  it("opens the label manager from the +", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+    render(
+      <I18nProvider locale="es">
+        <LabelList
+          labels={[]}
+          selectedKeyword={undefined}
+          onSelect={vi.fn()}
+          onCreate={onCreate}
+        />
+      </I18nProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: /etiqueta nueva/i }));
+    expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
   it("titles the group, so the two sidebar sections are distinguishable", () => {

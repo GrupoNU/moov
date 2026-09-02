@@ -20,12 +20,27 @@ import styles from "./LabelList.module.css";
  * server knows about), so this is a plain `list` — the honest role for a flat
  * set, and one less traversal for a screen reader to walk.
  *
- * # Rendered only when there is something to render
+ * # The heading is ALWAYS there (canon 07 §2)
  *
- * An empty "Etiquetas" heading over nothing is a permanent reminder of a
- * feature the user is not using. The section appears with the first label and
- * disappears with the last, and creation lives in Settings where the ceiling
- * can be explained.
+ * E8 rendered nothing at all until the first label existed, reasoning that an
+ * empty heading is a permanent reminder of an unused feature. Against the
+ * benchmark that governs this epic that is the wrong trade, and the owner hit
+ * it directly: on an account with no labels the "Etiquetas" section was simply
+ * missing, so there was no way to discover labels FROM the place labels live.
+ * The feature was reachable only by already knowing it was in Settings.
+ *
+ * Gmail keeps the heading and its `+` in the rail whether or not any label
+ * exists — the header IS the affordance, and a section that appears only once
+ * you have used it cannot teach you it is there.
+ *
+ * The empty state is therefore just the header: no placeholder row, no
+ * explanatory paragraph. There is nothing to say that the `+` does not already
+ * say, and prose in a rail is noise on every future render.
+ *
+ * One exception, and it is structural rather than a second opinion: with the
+ * rail COLLAPSED to icons the header is hidden (there is no room for a heading
+ * or a `+` at 68px). A collapsed rail with zero labels would then be an empty
+ * bordered group, so in exactly that combination the section renders nothing.
  */
 
 export interface LabelListProps {
@@ -59,7 +74,12 @@ export function LabelList({
   collapsed = false,
 }: LabelListProps): React.JSX.Element | null {
   const { t } = useTranslation();
-  if (labels.length === 0) return null;
+  /*
+   * The ONLY case that renders nothing: collapsed AND empty. The header — the
+   * whole point of always rendering — is hidden at icon width, so what would
+   * be left is a group with no content and no way to act on it.
+   */
+  if (labels.length === 0 && collapsed) return null;
 
   return (
     <div
@@ -85,6 +105,13 @@ export function LabelList({
           </button>
         )}
       </div>
+      {/*
+        The list is omitted entirely when there are no labels, rather than
+        rendered empty. An empty `list` is announced as "list, 0 items", which
+        is a statement about a structure the user did not ask about; the header
+        alone already says everything the empty state has to say.
+      */}
+      {labels.length > 0 && (
       <ul className={styles.list} aria-labelledby="sidebar-labels">
         {labels.map((label) => {
           const isSelected = label.keyword === selectedKeyword;
@@ -119,6 +146,7 @@ export function LabelList({
           );
         })}
       </ul>
+      )}
     </div>
   );
 }
