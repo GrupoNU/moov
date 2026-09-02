@@ -150,6 +150,7 @@ import {
 } from "../../mail/triage";
 import { fetchScheduled, type ScheduledSend } from "../../mail/scheduled";
 import { ActionBar } from "./ActionBar";
+import { ComposeButton } from "./ComposeButton";
 import { ConnectionPill } from "./ConnectionPill";
 import { OutboxView } from "./OutboxView";
 import { ScheduledView } from "./ScheduledView";
@@ -3974,6 +3975,18 @@ export function MailScreen(): React.JSX.Element {
         }
       >
         <nav className={styles.sidebar} aria-label={t("shell.mailboxes")}>
+          {/*
+            Canon 07 §2: "Redactar" is the FIRST thing in the rail, above the
+            folder list — the most prominent control on the page. It sat in the
+            list's chrome strip until now, which is not where a Gmail user's
+            hand goes.
+
+            Above the `mailboxError` branch on purpose: composing a message does
+            not depend on the folder list having loaded, so a rail that failed
+            to fetch its mailboxes must still let the user write mail.
+          */}
+          <ComposeButton onCompose={openCompose} collapsed={sidebarCollapsed} />
+
           {mailboxError !== undefined ? (
             <div className={styles.sidebarError}>
               <p>{t("mailbox.loadFailed")}</p>
@@ -4241,7 +4254,6 @@ export function MailScreen(): React.JSX.Element {
             mailboxes={mailboxes}
             currentMailboxId={activeMailbox?.id}
             deleteIsPermanent={willDeletePermanently}
-            onCompose={openCompose}
             isBusy={actions.isBusy}
             onToggleSpam={runToggleSpam}
             inJunk={inJunk}

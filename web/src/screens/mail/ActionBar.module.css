@@ -8,29 +8,9 @@
   background: var(--surface-default);
 }
 
-.compose {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-}
-
-.compose:hover {
-  background: var(--color-accent-hover);
-}
-
-.compose svg {
-  width: 1rem;
-  height: 1rem;
-}
+/* `.compose` lived here until the pill moved to the rail (canon 07 §2). Its
+ * rules went with it, to ComposeButton.module.css — a dead class in a
+ * stylesheet is the kind of thing that gets copied back into use by accident. */
 
 .divider {
   width: 1px;

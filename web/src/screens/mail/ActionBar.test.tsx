@@ -46,7 +46,6 @@ function renderBar(overrides: Partial<ActionBarProps> = {}) {
     mailboxes: [mailbox("inbox", "inbox", "Inbox"), mailbox("junk", "junk", "Junk")],
     currentMailboxId: "inbox",
     deleteIsPermanent: false,
-    onCompose: vi.fn(),
     isBusy: false,
     onToggleSpam: vi.fn(),
     inJunk: false,

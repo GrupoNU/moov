@@ -901,7 +901,9 @@ export const en = {
     "It can take a few days for the sender to stop sending.",
 
   // --- P3: the composer ---
-  "compose.new": "Write",
+  // Gmail's own word for the rail's pill (canon 07 §2), not a synonym of it:
+  // the label is muscle memory, and "Write" is a word Gmail never shows.
+  "compose.new": "Compose",
   "compose.title": "New message",
   "compose.titleReply": "Reply",
   "compose.titleForward": "Forward",
@@ -1977,7 +1979,10 @@ export const es: Strings = {
     "El remitente puede tardar unos días en dejar de enviar.",
 
   // --- P3: el compositor ---
-  "compose.new": "Escribir",
+  // La palabra exacta de Gmail en es-419 (canon 07 §2). "Escribir" era un
+  // sinónimo razonable y por eso mismo estaba mal: la etiqueta es memoria
+  // muscular, y Gmail nunca muestra esa palabra.
+  "compose.new": "Redactar",
   "compose.title": "Mensaje nuevo",
   "compose.titleReply": "Responder",
   "compose.titleForward": "Reenviar",

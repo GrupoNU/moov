@@ -1,0 +1,63 @@
+/*
+ * The rail's "Redactar" pill (canon 07 §2).
+ *
+ * Gmail's shape: a large, fully rounded pill with a pencil icon and the word,
+ * sitting above the folder list and reading as the most prominent control on
+ * the page. The height and the generous radius are what make it read as a
+ * "primary action" rather than as another row of the rail.
+ */
+.compose {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* Left-aligned content in a pill that does NOT stretch to the rail's width:
+   * Gmail's own pill is intrinsically sized, which is what keeps it reading as
+   * a button rather than as a full-width banner. */
+  align-self: flex-start;
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  border: 0;
+  /* A pill, not a rounded rectangle — the radius is half the height. */
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.compose:hover {
+  background: var(--color-accent-hover);
+}
+
+.compose svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  /* The icon must not shrink when the rail is narrow: a squashed pencil is the
+   * first thing that reads as "broken" at small widths. */
+  flex: none;
+}
+
+.label {
+  /* Nothing but a hook for the gap above; the text needs no styling of its own
+   * beyond inheriting the button's font. */
+  display: inline;
+}
+
+/*
+ * The collapsed rail: a round pencil button.
+ *
+ * Same background, same icon, same accessible name — only the word and the
+ * horizontal padding go, which is exactly what Gmail does when the hamburger
+ * narrows the rail.
+ */
+.composeCollapsed {
+  align-self: center;
+  padding: var(--space-3);
+  /* Square box + the 999px radius above = a circle, without hard-coding a
+   * diameter that would drift from the icon's size. */
+  aspect-ratio: 1;
+  justify-content: center;
+}

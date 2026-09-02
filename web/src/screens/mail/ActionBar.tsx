@@ -49,7 +49,6 @@ export interface ActionBarProps {
   readonly currentMailboxId: string | undefined;
   /** True when `delete` will erase rather than move to Trash (W-A2). */
   readonly deleteIsPermanent: boolean;
-  readonly onCompose: () => void;
   readonly isBusy: boolean;
   /** E2: report spam, or — inside Junk — take it back out. */
   readonly onToggleSpam: () => void;
@@ -126,7 +125,6 @@ export function ActionBar({
   mailboxes,
   currentMailboxId,
   deleteIsPermanent,
-  onCompose,
   isBusy,
   onToggleSpam,
   inJunk,
@@ -151,9 +149,15 @@ export function ActionBar({
   /*
    * E11 — `,` moves focus into the bar (canon §2.7).
    *
-   * The first ENABLED control is the target. With no selection most buttons
-   * are `disabled`, and focusing one of those would silently do nothing —
-   * the compose button is always enabled, so the key always lands somewhere.
+   * The first ENABLED control is the target, and the query below says so:
+   * focusing a `disabled` button would silently do nothing.
+   *
+   * Until the compose pill moved to the rail (canon 07 §2) there was always
+   * one such control, because compose is never disabled. Now, with an empty
+   * selection, the bar may legitimately have none — and in that case focus
+   * stays where it was rather than moving somewhere useless. That is the
+   * honest outcome: `,` reaches the bar's actions, and with nothing selected
+   * there are no actions to reach.
    */
   const barRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -168,14 +172,16 @@ export function ActionBar({
 
   return (
     <div className={styles.bar} role="toolbar" aria-label={t("action.more")} ref={barRef}>
-      <button type="button" className={styles.compose} onClick={onCompose}>
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-          <path d="M13.6 3.6l2.8 2.8L7.6 15.2 4 16l.8-3.6z" />
-        </svg>
-        {t("compose.new")}
-      </button>
+      {/*
+        The compose button MOVED to the top of the left rail (canon 07 §2).
 
-      <span className={styles.divider} aria-hidden="true" />
+        It was here, in the chrome strip above the list, which is not where
+        Gmail puts it — and this is the one control whose position is pure
+        muscle memory. It is gone rather than duplicated, for the same reason
+        the select-all checkbox below is: two doors to one action means a user
+        who finds one never learns the other, and the rail is the one Gmail
+        taught them.
+      */}
 
       {/*
         E12/B4: the select-all checkbox MOVED to `ListToolbar`, where Gmail
