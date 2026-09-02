@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import {
@@ -63,6 +63,23 @@ export interface MailboxListProps {
     readonly onSelect: () => void;
   };
   /**
+   * "Destacados" — the starred view (canon 07 §2, owner's finding 3).
+   *
+   * ALWAYS drawn, unlike the Outbox and Scheduled rows below. Gmail lists it
+   * second in the rail whether or not anything is starred, and that is the
+   * point: the entry is how a user learns the star leads somewhere. A row that
+   * appeared only once you had already starred something could never teach it.
+   *
+   * No count. Gmail shows none here either, and the honest reason is that we
+   * have nothing cheap to show: JMAP publishes an unread count per MAILBOX,
+   * and there is no per-keyword counter — producing one would mean an extra
+   * query on every load to badge a row nobody asked to have badged.
+   */
+  readonly starred?: {
+    readonly isSelected: boolean;
+    readonly onSelect: () => void;
+  };
+  /**
    * E4: the Scheduled view (canon §2.3 — Gmail's own left-nav "Scheduled").
    *
    * Like the Outbox, absent means the row is not drawn: nothing is scheduled,
@@ -87,6 +104,25 @@ export interface MailboxListProps {
    * the message list working on it with no special case.
    */
   readonly snoozedMailboxName?: string | undefined;
+  /**
+   * "Pospuestos" when the Snoozed FOLDER does not exist yet (owner's finding 3).
+   *
+   * GC-10 makes snoozing a real IMAP move, and `internal/sync/snooze.go`
+   * creates the folder on demand — so until the user snoozes for the first
+   * time there is no mailbox for the tree to draw, and the entry was simply
+   * absent. Gmail shows Pospuestos always.
+   *
+   * This prop draws the entry in that gap. It navigates to an EMPTY STATE and
+   * creates nothing: a client that made a folder just to have a row to point
+   * at would be writing to Dovecot — the source of truth — to satisfy its own
+   * layout, which is exactly backwards. The folder still appears the moment a
+   * real snooze creates it, at which point the tree draws it and this row is
+   * not passed.
+   */
+  readonly snoozedPlaceholder?: {
+    readonly isSelected: boolean;
+    readonly onSelect: () => void;
+  };
   /**
    * E12: the rail is collapsed to icons (the hamburger, canon 07 §1-2).
    *
@@ -225,7 +261,9 @@ export function MailboxList({
   isEmptyingTrash = false,
   outbox,
   scheduled,
+  starred,
   snoozedMailboxName,
+  snoozedPlaceholder,
   collapsed = false,
 }: MailboxListProps): React.JSX.Element {
   const { t, format } = useTranslation();
@@ -259,7 +297,7 @@ export function MailboxList({
          */
         const isSnoozed =
           snoozedMailboxName !== undefined && node.mailbox.name === snoozedMailboxName;
-        return (
+        const row = (
           <MailboxRow
             key={node.mailbox.id}
             node={node}
@@ -273,10 +311,107 @@ export function MailboxList({
               : {})}
           />
         );
+        /*
+         * Gmail's rail order (canon 07 §2): Recibidos, Destacados, Pospuestos,
+         * then everything else. The two virtual entries are emitted right after
+         * the Inbox row rather than appended at the end, because their POSITION
+         * is the muscle memory — Destacados is "the one under the inbox".
+         *
+         * Keyed off the inbox ROLE rather than an index, so a server that puts
+         * Inbox somewhere else in `sortOrder` still gets them in the right
+         * place, and an account with no inbox at all simply does not show them
+         * mid-tree.
+         */
+        if (node.mailbox.role !== "inbox") return row;
+        return (
+          <Fragment key={node.mailbox.id}>
+            {row}
+            {starred !== undefined && <StarredRow {...starred} />}
+            {snoozedPlaceholder !== undefined && (
+              <SnoozedPlaceholderRow {...snoozedPlaceholder} />
+            )}
+          </Fragment>
+        );
       })}
       {outbox !== undefined && <OutboxRow {...outbox} />}
       {scheduled !== undefined && <ScheduledRow {...scheduled} />}
     </ul>
+  );
+}
+
+/**
+ * "Destacados" — the starred row (canon 07 §2).
+ *
+ * A virtual destination with no `Mailbox` behind it, so it is its own component
+ * for the same reason `OutboxRow` is. It reuses the `flagged` star icon the
+ * icon table already carries, which is deliberate: the rail entry and the star
+ * on every row must be the same mark, or the connection between "I clicked the
+ * star" and "they live here" has to be learned instead of seen.
+ *
+ * No badge. There is no per-keyword unread count in JMAP, and Gmail shows none
+ * here either.
+ */
+function StarredRow({
+  isSelected,
+  onSelect,
+}: {
+  readonly isSelected: boolean;
+  readonly onSelect: () => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+
+  return (
+    <li role="treeitem" aria-level={1} aria-selected={isSelected} className={styles.item}>
+      <button
+        type="button"
+        className={[styles.row, isSelected ? styles.selected : ""].filter(Boolean).join(" ")}
+        onClick={onSelect}
+        style={{ paddingLeft: "var(--space-3)" }}
+        title={t("starred.viewName")}
+        {...(isSelected ? { "aria-current": "page" as const } : {})}
+      >
+        <MailboxIcon iconKey="flagged" />
+        <span className={styles.name}>{t("starred.viewName")}</span>
+      </button>
+    </li>
+  );
+}
+
+/**
+ * "Pospuestos" before the Snoozed folder exists (owner's finding 3).
+ *
+ * Visually identical to the real folder's row — same clock icon, same name — so
+ * that the entry does not appear to CHANGE when the folder is finally created;
+ * from the user's side it was always there, which is Gmail's behaviour.
+ *
+ * It carries no badge because there is nothing to count, and it creates
+ * nothing when clicked: it routes to an empty state. Making a folder to justify
+ * a row would mean the client writing to Dovecot — the source of truth — for
+ * the sake of its own layout.
+ */
+function SnoozedPlaceholderRow({
+  isSelected,
+  onSelect,
+}: {
+  readonly isSelected: boolean;
+  readonly onSelect: () => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+
+  return (
+    <li role="treeitem" aria-level={1} aria-selected={isSelected} className={styles.item}>
+      <button
+        type="button"
+        className={[styles.row, isSelected ? styles.selected : ""].filter(Boolean).join(" ")}
+        onClick={onSelect}
+        style={{ paddingLeft: "var(--space-3)" }}
+        title={t("snooze.mailboxName")}
+        {...(isSelected ? { "aria-current": "page" as const } : {})}
+      >
+        <MailboxIcon iconKey="snoozed" />
+        <span className={styles.name}>{t("snooze.mailboxName")}</span>
+      </button>
+    </li>
   );
 }
 

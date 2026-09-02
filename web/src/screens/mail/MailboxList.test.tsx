@@ -179,3 +179,83 @@ describe("E4: the Snoozed folder and the Scheduled entry", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * "Destacados" and "Pospuestos" — the two rail entries the owner found missing
+ * (canon 07 §2, finding 3).
+ *
+ * What is worth pinning is not that they render, but WHEN and WHERE: both are
+ * always-visible entries whose position under Recibidos is the muscle memory,
+ * and Pospuestos must not double up once its real folder exists.
+ */
+describe("the always-visible virtual entries", () => {
+  it("shows Destacados, and immediately after Recibidos", () => {
+    renderSidebar({ starred: { isSelected: false, onSelect: vi.fn() } });
+
+    const names = screen.getAllByRole("treeitem").map((item) => item.textContent ?? "");
+    // Moov's own name for the inbox is "Bandeja de entrada"; Gmail says
+    // "Recibidos". That difference is not this test's subject — the ORDER is.
+    const inbox = names.findIndex((name) => /bandeja de entrada/i.test(name));
+    const starred = names.findIndex((name) => /destacados/i.test(name));
+    expect(inbox).toBeGreaterThanOrEqual(0);
+    expect(starred).toBeGreaterThanOrEqual(0);
+    /*
+     * Adjacency, not mere presence. Gmail puts Destacados directly under the
+     * inbox, and "the one under Recibidos" is how a migrating user finds it —
+     * appending it at the end of the rail would render the same row somewhere
+     * the hand does not go.
+     */
+    expect(starred).toBe(inbox + 1);
+  });
+
+  it("navigates to Destacados on click", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderSidebar({ starred: { isSelected: false, onSelect } });
+    await user.click(screen.getByRole("button", { name: /destacados/i }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Pospuestos even though no Snoozed folder exists yet", () => {
+    /*
+     * The gap the placeholder exists for: GC-10 creates the Snoozed folder on
+     * the first real snooze, so before then the tree has nothing to draw and
+     * the entry was simply absent — where Gmail shows it always.
+     */
+    renderSidebar({ snoozedPlaceholder: { isSelected: false, onSelect: vi.fn() } });
+    expect(screen.getByRole("button", { name: /pospuestos/i })).toBeInTheDocument();
+  });
+
+  it("draws Pospuestos ONCE when the real folder exists", () => {
+    /*
+     * The caller stops passing the placeholder as soon as the folder is in the
+     * tree. Two rows both labelled "Pospuestos" — one routing to a real folder
+     * and one to an empty state — is the failure this guards.
+     */
+    renderSidebar({
+      mailboxes: [...MAILBOXES, mailbox("snz", null, "Snoozed")],
+      snoozedMailboxName: "Snoozed",
+    });
+    /*
+     * Counted across BOTH roles on purpose. A real folder row is a `link` (it
+     * has a URL a middle-click can open) and the placeholder is a `button`, so
+     * querying either role alone would miss exactly the duplicate this guards.
+     */
+    const rows = [
+      ...screen.queryAllByRole("link", { name: /pospuestos/i }),
+      ...screen.queryAllByRole("button", { name: /pospuestos/i }),
+    ];
+    expect(rows).toHaveLength(1);
+  });
+
+  it("omits both entries when the caller does not pass them", () => {
+    // They are the caller's decision, not the list's: nothing here invents a
+    // destination the shell has not wired.
+    renderSidebar();
+    expect(screen.queryByRole("button", { name: /destacados/i })).not.toBeInTheDocument();
+    // Neither role: the fixture has no Snoozed folder either, so nothing at all
+    // should name Pospuestos.
+    expect(screen.queryByRole("button", { name: /pospuestos/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /pospuestos/i })).not.toBeInTheDocument();
+  });
+});

@@ -90,6 +90,12 @@ describe("round-tripping", () => {
     { kind: "search", query: "arquitectura" },
     { kind: "search", query: "diseño de lista" },
     { kind: "search", query: "a b", messageId: "e1" },
+    // "Destacados" (canon 07 §2): a list of real messages, so a link to one of
+    // them has to restore the starred list underneath it.
+    { kind: "starred" },
+    { kind: "starred", messageId: "e42" },
+    // "Pospuestos" before the Snoozed folder exists — one fixed segment.
+    { kind: "snoozedEmpty" },
     // E12: every settings tab, so a renamed one cannot break its own URL.
     ...SETTINGS_TABS.map((tab) => ({ kind: "settings", tab }) as const),
   ];

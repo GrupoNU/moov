@@ -847,9 +847,45 @@ export function MailScreen(): React.JSX.Element {
     if (route.kind === "label") {
       return { kind: "label", keyword: encodeLabelKeyword(route.name) };
     }
+    /*
+     * "Destacados" (canon 07 §2): starred mail in the Inbox.
+     *
+     * # Why it is scoped to a folder, and why that is the honest shape
+     *
+     * A star is `$flagged`, an IMAP SYSTEM flag — which the server answers with
+     * a bitmask predicate (`store.Narrowing`, added by E3 precisely to make
+     * Gmail's `is:starred` answerable), NOT with the keywords array a label
+     * uses. That distinction is what makes this view possible at all.
+     *
+     * But `internal/jmap/mail/query.go`'s `answerable` still requires an
+     * `inMailbox` or a text condition: a filter naming only a keyword is
+     * refused with "this filter needs an inMailbox or a text condition to be
+     * answerable". Verified against the real handler rather than inferred — a
+     * bare `{hasKeyword:"$flagged"}` is refused, and
+     * `{AND:[{inMailbox:X},{hasKeyword:"$flagged"}]}` is accepted.
+     *
+     * So the view is Inbox-scoped, which is also where Gmail puts the entry
+     * (second in the rail, under Recibidos) and what the overwhelming majority
+     * of starred mail is. It is deliberately NOT dressed up as account-wide:
+     * showing an Inbox-scoped list under a label that promises everything
+     * starred would be the silent mis-answer this codebase refuses elsewhere.
+     * Widening it to the whole account needs a server change (a keyword-aware
+     * account-wide shape), which is named in the report rather than faked here.
+     */
+    if (route.kind === "starred") {
+      /*
+       * Resolved from `mailboxes` directly rather than through
+       * `roleMailboxId`, which is declared further down this component. The
+       * lookup is the same one-line find; hoisting the helper for a single
+       * caller would have moved a dozen dependent declarations with it.
+       */
+      const inbox = mailboxes.find((mailbox) => mailbox.role === "inbox");
+      if (inbox === undefined) return undefined;
+      return { kind: "starred", mailboxId: inbox.id };
+    }
     if (activeMailbox === undefined) return undefined;
     return { kind: "mailbox", mailboxId: activeMailbox.id };
-  }, [route, activeMailbox, searchPlan]);
+  }, [route, activeMailbox, searchPlan, mailboxes]);
 
   /**
    * E5: the inbox-type sort.
@@ -895,6 +931,11 @@ export function MailScreen(): React.JSX.Element {
       ? `search:${normalizeQuery(route.query)}:${collapseThreads ? "c" : "m"}`
       : route.kind === "label"
       ? `label:${route.name}:${collapseThreads ? "c" : "m"}`
+      : route.kind === "starred"
+      ? // Its own identity, so switching between Recibidos and Destacados
+        // resets the scroll rather than carrying an offset into a list that
+        // holds entirely different rows.
+        `starred:${collapseThreads ? "c" : "m"}`
       : // The inbox type is part of the list's identity: changing it reorders
         // every row, so the scroll position from the previous order is
         // meaningless and must reset rather than land the user mid-list.
@@ -2687,6 +2728,18 @@ export function MailScreen(): React.JSX.Element {
     setSearchText("");
   }, [navigate]);
 
+  /** "Destacados" (canon 07 §2). */
+  const goToStarred = useCallback((): void => {
+    navigate({ kind: "starred" });
+    setSearchText("");
+  }, [navigate]);
+
+  /** "Pospuestos" before the folder exists — an empty state, not a folder. */
+  const goToSnoozedEmpty = useCallback((): void => {
+    navigate({ kind: "snoozedEmpty" });
+    setSearchText("");
+  }, [navigate]);
+
   /**
    * Sends everything the queue is holding.
    *
@@ -4027,9 +4080,38 @@ export function MailScreen(): React.JSX.Element {
                   }
                 : {})}
               /*
+               * "Destacados" (canon 07 §2), ALWAYS drawn — unlike the Outbox
+               * and Scheduled rows, which appear only when they hold something.
+               * Gmail lists it second in the rail whether or not anything is
+               * starred, and that is what makes the star's destination
+               * discoverable at all.
+               */
+              starred={{ isSelected: route.kind === "starred", onSelect: goToStarred }}
+              /*
+               * "Pospuestos" when the Snoozed FOLDER does not exist yet.
+               *
+               * GC-10 creates that folder on the first real snooze, so before
+               * then the tree has nothing to draw and the entry was missing —
+               * where Gmail shows it always. This fills exactly that gap and
+               * creates nothing: it routes to an empty state, because a client
+               * that made a folder to justify a row would be writing to
+               * Dovecot for the sake of its own layout.
+               *
+               * Once the folder exists the tree draws it (with the same icon
+               * and name) and this is not passed, so the entry never doubles.
+               */
+              {...(snoozedMailbox === undefined
+                ? {
+                    snoozedPlaceholder: {
+                      isSelected: route.kind === "snoozedEmpty",
+                      onSelect: goToSnoozedEmpty,
+                    },
+                  }
+                : {})}
+              /*
                * E4: Scheduled, on the same "only when it holds something" rule
-               * as the Outbox. Snoozed is NOT here and does not need to be: it
-               * is a real folder in the tree above, and canon §2.2's `g b`
+               * as the Outbox. Snoozed is NOT here when the folder EXISTS: it
+               * is then a real folder in the tree above, and canon §2.2's `g b`
                * navigation means Gmail shows it always — which a real folder
                * does for free.
                */
@@ -4171,6 +4253,19 @@ export function MailScreen(): React.JSX.Element {
               busyId={scheduleBusyId}
               locale={locale}
             />
+          ) : route.kind === "snoozedEmpty" ? (
+            /*
+             * "Pospuestos" with no folder behind it yet (owner's finding 3).
+             *
+             * There is nothing to query — GC-10 creates the folder on the first
+             * real snooze — so this states that rather than issuing a request
+             * for a mailbox that does not exist. It is a `status`, not an
+             * error: an empty destination is the normal state of this entry
+             * until the user snoozes something.
+             */
+            <div className={styles.noticeInfo} role="status">
+              {t("snooze.emptyPlaceholder")}
+            </div>
           ) : (
           <>
           {/*
@@ -4459,6 +4554,7 @@ export function MailScreen(): React.JSX.Element {
               <EmptyState
                 isSearch={route.kind === "search"}
                 labelName={route.kind === "label" ? route.name : undefined}
+                isStarred={route.kind === "starred"}
                 query={route.kind === "search" ? route.query : ""}
                 hasRefusal={refusal !== undefined}
                 /*
@@ -4995,6 +5091,7 @@ function EmptyState({
   query,
   hasRefusal,
   labelName,
+  isStarred = false,
   offlineEmpty = false,
 }: {
   readonly isSearch: boolean;
@@ -5002,6 +5099,8 @@ function EmptyState({
   readonly hasRefusal: boolean;
   /** E8: the label being viewed, when the route is a label view. */
   readonly labelName?: string | undefined;
+  /** "Destacados" — the starred view, whose empty state names its scope. */
+  readonly isStarred?: boolean;
   /** E9: offline with nothing cached — a fact about the device, not the mailbox. */
   readonly offlineEmpty?: boolean;
 }): React.JSX.Element | null {
@@ -5033,12 +5132,23 @@ function EmptyState({
    * account is not empty; nothing carries this label yet, which is a different
    * and actionable fact.
    */
-  const title = labelName !== undefined
+  /*
+   * "Destacados" with nothing starred. Its own wording because the generic
+   * "this folder has no messages" would be wrong twice: it is not a folder,
+   * and the sentence has to say the list is INBOX-SCOPED — the server cannot
+   * answer a keyword filter without a folder beside it, so a user with starred
+   * mail in Archive must not read an empty list as "nothing is starred".
+   */
+  const title = isStarred
+    ? t("starred.viewName")
+    : labelName !== undefined
     ? t("list.emptyLabel")
     : isSearch
       ? t("list.emptySearch")
       : t("list.empty");
-  const body = labelName !== undefined
+  const body = isStarred
+    ? t("starred.empty")
+    : labelName !== undefined
     ? format("list.emptyLabelBody", labelName)
     : isSearch
       ? format("list.emptySearchBody", query)

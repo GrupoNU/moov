@@ -70,6 +70,35 @@ export type Route =
    */
   | { readonly kind: "outbox" }
   /**
+   * "Destacados" — the starred view (canon 07 §2, owner's finding 3).
+   *
+   * Gmail lists it second in the rail, right under Recibidos, and it is not a
+   * folder: a star is the `$flagged` IMAP system flag on a message that stays
+   * where it is. So this is a virtual view, its own route kind for the same
+   * reason `label` is one — its result set is a `hasKeyword` condition, not a
+   * mailbox, and every code path that resolves `mailboxId` against the fetched
+   * folder list would otherwise have to special-case it.
+   *
+   * It carries a `messageId` (unlike the Outbox) because the rows ARE real
+   * messages: opening one from here has to be a link a user can share, and
+   * coming back has to land on the starred list rather than on the inbox.
+   */
+  | { readonly kind: "starred"; readonly messageId?: string }
+  /**
+   * "Pospuestos" before the Snoozed folder exists (owner's finding 3).
+   *
+   * GC-10 makes snoozing a real IMAP move and the folder is created on demand,
+   * so an account that has never snoozed anything has no mailbox to route to —
+   * while Gmail shows the entry always. This route is that gap: it renders an
+   * empty state and creates nothing.
+   *
+   * It is deliberately NOT a `mailbox` route with a missing id. A mailbox route
+   * whose folder cannot be resolved is an ERROR everywhere else in the app, and
+   * making one legitimate here would weaken that check for every real folder.
+   * It carries no `messageId` because there is nothing to open.
+   */
+  | { readonly kind: "snoozedEmpty" }
+  /**
    * E4: the Scheduled view — messages with a future `sendAt` (canon §2.3).
    *
    * Its own kind for the same reason the Outbox is, and for a second one the
@@ -230,6 +259,22 @@ export function parseRoute(url: string): Route {
       : { kind: "label", name: decoded };
   }
 
+  /*
+   * "Destacados". `/starred` and `/starred/:messageId`, the same shape the
+   * label route uses — the view is a list of real messages, so a link to one
+   * of them has to restore the list it was opened from.
+   */
+  if (segments[0] === "starred") {
+    const messageId = segments[1];
+    return messageId !== undefined && messageId !== ""
+      ? { kind: "starred", messageId: decodeURIComponent(messageId) }
+      : { kind: "starred" };
+  }
+
+  // Like the Outbox: one fixed segment, nothing to parameterise, no message to
+  // open. `snoozed` rather than `pospuestos` — paths are not localised.
+  if (segments[0] === "snoozed") return { kind: "snoozedEmpty" };
+
   // E9: a single fixed segment; there is nothing to parameterise.
   if (segments[0] === "outbox") return { kind: "outbox" };
   // E4: likewise — the Scheduled view lists submissions, not messages.
@@ -302,6 +347,12 @@ export function formatRoute(route: Route): string {
           : "/search";
       return `${base}${suffix}`;
     }
+    case "starred":
+      return route.messageId !== undefined
+        ? `/starred/${encodeURIComponent(route.messageId)}`
+        : "/starred";
+    case "snoozedEmpty":
+      return "/snoozed";
     case "outbox":
       return "/outbox";
     case "scheduled":
@@ -341,6 +392,11 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
       ? { kind: "label", name: route.name }
       : { kind: "label", name: route.name, messageId };
   }
+  if (route.kind === "starred") {
+    // A list of real messages, so it behaves like the mailbox and label views:
+    // opening one keeps the starred list underneath it.
+    return messageId === undefined ? { kind: "starred" } : { kind: "starred", messageId };
+  }
   /*
    * E9: the Outbox holds no messages the reader can open, so it absorbs the
    * request rather than inventing a route. Returning the outbox unchanged is
@@ -354,6 +410,9 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
   if (
     route.kind === "outbox" ||
     route.kind === "scheduled" ||
+    // The empty Pospuestos state holds no messages either — there is no folder
+    // behind it yet, so there is nothing for the reader to open.
+    route.kind === "snoozedEmpty" ||
     route.kind === "settings"
   ) {
     return route;
@@ -367,6 +426,7 @@ export function withMessage(route: Route, messageId: string | undefined): Route 
 export function openMessageId(route: Route): string | undefined {
   return route.kind === "outbox" ||
     route.kind === "scheduled" ||
+    route.kind === "snoozedEmpty" ||
     route.kind === "settings"
     ? undefined
     : route.messageId;

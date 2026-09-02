@@ -225,6 +225,33 @@ describe("the label filter (E8)", () => {
     }
   });
 
+  /**
+   * "Destacados" — the starred view's wire shape (canon 07 §2).
+   *
+   * This is the assertion that matters most in this file, because the shape is
+   * NOT free: it was verified against the real `handleEmailQuery`, and the
+   * server's answers were
+   *
+   *   {"hasKeyword":"$flagged"}                       -> unsupportedFilter,
+   *      "this filter needs an inMailbox or a text condition to be answerable"
+   *   {AND:[{inMailbox:m1},{hasKeyword:"$flagged"}]}  -> accepted
+   *
+   * `$flagged` is answerable at all only because it is an IMAP SYSTEM flag:
+   * `applyHasKeyword` routes it through `systemFlagBit` to a bitmask
+   * predicate, which E3's `store.Narrowing` gave to every store shape. A user
+   * label takes the keywords-array path instead — which is why the two are
+   * separate filter kinds rather than one carrying a different string.
+   *
+   * If this shape ever drifts, the user gets an empty Destacados list with no
+   * error, so it is pinned here rather than left to a browser to discover.
+   */
+  it("builds the starred view as the AND the server accepts, never a bare hasKeyword", () => {
+    expect(toJmapFilter({ kind: "starred", mailboxId: "m1" })).toEqual({
+      operator: "AND",
+      conditions: [{ inMailbox: "m1" }, { hasKeyword: KEYWORD_FLAGGED }],
+    });
+  });
+
   it("sends the filter through queryEmails unchanged", () => {
     const { client, sent } = stub({ q: { ids: ["e1"], queryState: "1" }, g: { list: [ROW] } });
     void queryEmails(client, ACCOUNT, { kind: "label", keyword: "$label:work" });

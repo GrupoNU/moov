@@ -1187,6 +1187,11 @@ export const en = {
   "snooze.pickDateConfirm": "Snooze",
   "snooze.pickDateInvalid": "Choose a date and time in the future.",
   "snooze.mailboxName": "Snoozed",
+  /* The empty state for Pospuestos before anything has ever been snoozed. The
+     folder is created on the first real snooze (GC-10), so until then there is
+     a rail entry and nothing behind it — this says so without implying an
+     error. */
+  "snooze.emptyPlaceholder": "Snoozed messages will show up here.",
   "snooze.done": (count: number): string =>
     count === 1 ? "Conversation snoozed" : `${count} conversations snoozed`,
   "snooze.undone": "Back in your inbox",
@@ -1225,6 +1230,13 @@ export const en = {
   "schedule.scheduled": (when: string): string => `Scheduled for ${when}`,
   "schedule.viewName": "Scheduled",
   "schedule.empty": "Nothing is scheduled to be sent.",
+  /* "Destacados" — the starred view (canon 07 §2). Gmail's own word in each
+     locale, because the rail entry is muscle memory. */
+  "starred.viewName": "Starred",
+  /* The list is Inbox-scoped, and the empty state says so rather than claiming
+     the account holds no starred mail at all — the server cannot answer a
+     keyword filter without a folder beside it. */
+  "starred.empty": "No starred messages in your inbox.",
   "schedule.explain":
     "These messages are still drafts. They go out at the time you chose, and cancelling one leaves the draft where it is.",
   "schedule.cancel": "Cancel send",
@@ -2229,6 +2241,7 @@ export const es: Strings = {
   "snooze.pickDateConfirm": "Posponer",
   "snooze.pickDateInvalid": "Elegí una fecha y hora futuras.",
   "snooze.mailboxName": "Pospuestos",
+  "snooze.emptyPlaceholder": "Los correos pospuestos aparecerán acá.",
   "snooze.done": (count: number): string =>
     count === 1 ? "Conversación pospuesta" : `${count} conversaciones pospuestas`,
   "snooze.undone": "De vuelta en tu bandeja",
@@ -2266,6 +2279,8 @@ export const es: Strings = {
   "schedule.scheduled": (when: string): string => `Programado para ${when}`,
   "schedule.viewName": "Programados",
   "schedule.empty": "No hay nada programado para enviarse.",
+  "starred.viewName": "Destacados",
+  "starred.empty": "No hay mensajes destacados en tu bandeja de entrada.",
   "schedule.explain":
     "Estos mensajes siguen siendo borradores. Salen a la hora que elegiste, y si cancelás uno el borrador se queda donde está.",
   "schedule.cancel": "Cancelar envío",

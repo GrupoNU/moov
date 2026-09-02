@@ -129,12 +129,16 @@ let threadOneEmailIds: readonly string[] = ["e1"];
 /** Every `update` object the shell sent to `Email/set`, in order. */
 let emailSetCalls: Record<string, unknown>[] = [];
 
+/** Every `filter` the shell sent to `Email/query`, in order. */
+let emailQueryFilters: unknown[] = [];
+
 /** Answers one JMAP method call with something shaped like the real thing. */
 function respond(name: string, args: Record<string, unknown>): Record<string, unknown> {
   switch (name) {
     case "Mailbox/get":
       return { accountId: ACCOUNT, state: "mb-1", list: [INBOX], notFound: [] };
     case "Email/query":
+      emailQueryFilters.push(args.filter);
       return {
         accountId: ACCOUNT,
         queryState: "q-1",
@@ -306,6 +310,7 @@ describe("MailScreen — the shell's canary", () => {
     vi.stubGlobal("EventSource", StubEventSource);
     threadOneEmailIds = ["e1"];
     emailSetCalls = [];
+    emailQueryFilters = [];
     /*
      * The router is backed by `window.location`, which jsdom keeps for the
      * whole FILE. Without this reset a test that navigated (the settings walk
@@ -404,6 +409,43 @@ describe("MailScreen — the shell's canary", () => {
       screen.queryByRole("complementary", { name: "Quick settings" }),
     ).not.toBeInTheDocument();
   });
+
+  /**
+   * "Destacados" end to end (owner's finding 3).
+   *
+   * The rail entry, the route, and — the part that would fail silently — the
+   * FILTER that reaches the wire. A bare `{hasKeyword:"$flagged"}` is refused
+   * by the real server ("this filter needs an inMailbox or a text condition to
+   * be answerable"), and a refusal renders as an empty list, so a drift here
+   * would look exactly like "you have no starred mail".
+   */
+  it("routes to Destacados from the rail and asks the server the shape it accepts", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await waitFor(
+      () => {
+        expect(screen.getAllByText("The first message").length).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+
+    const entries = screen.getAllByRole("button", { name: /starred/i });
+    const entry = entries[entries.length - 1];
+    if (entry === undefined) throw new Error("no Destacados entry in the rail");
+    await user.click(entry);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/starred");
+    });
+
+    const starredQuery = emailQueryFilters.find(
+      (filter) => JSON.stringify(filter).includes("$flagged"),
+    );
+    expect(starredQuery).toEqual({
+      operator: "AND",
+      conditions: [{ inMailbox: "mb-inbox" }, { hasKeyword: "$flagged" }],
+    });
+  }, 20000);
 
   /**
    * The star regression (owner's finding 4: "clicking the star errors").

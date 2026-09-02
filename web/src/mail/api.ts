@@ -30,6 +30,7 @@ import {
 import { ApiError } from "../api/errors";
 import {
   DETAIL_PROPERTIES,
+  KEYWORD_FLAGGED,
   LIST_PROPERTIES,
   type Email,
   type Mailbox,
@@ -154,13 +155,36 @@ export type MailFilter =
    *
    * The four system flags are NOT expressible here and this type cannot carry
    * them by accident: `$seen` is refused (the repertoire exposes only its
-   * negation, `notKeyword:$seen`), and `$flagged`/`$answered`/`$draft` live in
-   * a bitmask the repertoire has no predicate for. Since every keyword this
-   * kind ever carries is a `$label:` one, the refusals are unreachable — which
-   * `api.test.ts` pins, so a future caller passing `$flagged` fails a test
-   * rather than shipping an `unsupportedFilter` to a user.
+   * negation, `notKeyword:$seen`), and `$answered`/`$draft` have no predicate
+   * the repertoire exposes to a filter. Since every keyword this kind ever
+   * carries is a `$label:` one, the refusals are unreachable — which
+   * `api.test.ts` pins, so a future caller passing one fails a test rather than
+   * shipping an `unsupportedFilter` to a user.
+   *
+   * `$flagged` is the exception, and it has its OWN kind below rather than
+   * riding this one — see `starred`.
    */
   | { readonly kind: "label"; readonly keyword: string; readonly mailboxId?: string }
+  /**
+   * "Destacados" — starred mail in one folder (canon 07 §2).
+   *
+   * Its own kind rather than a `label` carrying `$flagged`, because the two are
+   * different things to the server even though both spell `hasKeyword` on the
+   * wire. A label goes to the keywords ARRAY (`keywords @> ARRAY[...]`);
+   * `$flagged` is an IMAP system flag and becomes a BITMASK predicate
+   * (`applyHasKeyword` routes it through `systemFlagBit`, and E3's
+   * `store.Narrowing` is what gave that predicate to all four store shapes).
+   * Naming them separately keeps `label`'s documented promise true — that it
+   * only ever carries `$label:` keywords — instead of quietly widening it.
+   *
+   * `mailboxId` is REQUIRED here, unlike on `label`. The server's `answerable`
+   * refuses a filter naming only a keyword ("this filter needs an inMailbox or
+   * a text condition"), verified against the real handler: a bare
+   * `{hasKeyword:"$flagged"}` is refused and the AND with `inMailbox` is
+   * accepted. Making the field non-optional means the unanswerable shape cannot
+   * be constructed at all, rather than being refused at runtime.
+   */
+  | { readonly kind: "starred"; readonly mailboxId: string }
   /**
    * E3: a filter already composed by the operator grammar.
    *
@@ -215,6 +239,20 @@ export function toJmapFilter(filter: MailFilter): Record<string, unknown> | null
             ],
           }
         : { hasKeyword: filter.keyword };
+    case "starred":
+      /*
+       * The only shape the server accepts for a starred view: the keyword needs
+       * a folder beside it to be answerable. `KEYWORD_FLAGGED` rather than a
+       * literal, so the wire word and the one the rest of the app toggles are
+       * the same constant.
+       */
+      return {
+        operator: "AND",
+        conditions: [
+          { inMailbox: filter.mailboxId },
+          { hasKeyword: KEYWORD_FLAGGED },
+        ],
+      };
     case "search":
       return filter.mailboxId !== undefined
         ? {
