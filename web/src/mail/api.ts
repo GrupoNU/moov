@@ -177,12 +177,22 @@ export type MailFilter =
    * Naming them separately keeps `label`'s documented promise true — that it
    * only ever carries `$label:` keywords — instead of quietly widening it.
    *
-   * `mailboxId` is REQUIRED here, unlike on `label`. The server's `answerable`
-   * refuses a filter naming only a keyword ("this filter needs an inMailbox or
-   * a text condition"), verified against the real handler: a bare
-   * `{hasKeyword:"$flagged"}` is refused and the AND with `inMailbox` is
-   * accepted. Making the field non-optional means the unanswerable shape cannot
-   * be constructed at all, rather than being refused at runtime.
+   * `mailboxId` is REQUIRED here, unlike on `label`, and the asymmetry is the
+   * point: the two keywords live in different columns, so the server answers
+   * them with different shapes.
+   *
+   * A LABEL goes to the keywords ARRAY, and a bare `{hasKeyword:"$label:x"}` is
+   * now served account-wide — `answerable` scopes it to the account-wide walk,
+   * which carries the `keywords @> ARRAY[...]` predicate (migration 0011 made
+   * that plan fast enough: 89 ms p95 at 400,000 messages).
+   *
+   * `$flagged` is a BITMASK bit, and a bare one is STILL refused ("this filter
+   * needs an inMailbox or a text condition"). That refusal was re-verified
+   * against the real handler rather than assumed: the bitmask has no index, and
+   * `store.Narrowing.FlagsAll` measures it at 77.5 ms by a parallel sequential
+   * scan on a 120,000-message account — account-wide and unbounded, that is the
+   * scan the repertoire exists to forbid. Making the field non-optional means
+   * the unanswerable shape cannot be constructed at all.
    */
   | { readonly kind: "starred"; readonly mailboxId: string }
   /**
@@ -229,6 +239,14 @@ export function toJmapFilter(filter: MailFilter): Record<string, unknown> | null
        * `hasKeyword`, which is what a label view wants: a label is
        * cross-cutting by definition, so scoping it to a folder by default would
        * hide exactly the messages the user filed away.
+       */
+      /*
+       * NOTE the asymmetry with `search` below: a bare `hasKeyword` is served
+       * (the account-wide label view), but a label AND a mailbox is REFUSED —
+       * `ListMailboxMessages` has no keyword predicate, so the server names
+       * that rather than silently widening the scope. Passing `mailboxId` here
+       * therefore only works alongside a text condition; the sidebar never
+       * does, which is why the account-wide branch is the one that ships.
        */
       return filter.mailboxId !== undefined
         ? {

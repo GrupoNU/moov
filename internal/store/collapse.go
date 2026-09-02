@@ -156,7 +156,23 @@ type CollapsedQuery struct {
 	UnreadOnly bool
 
 	// Keyword restricts to messages carrying an IMAP keyword — where labels
-	// live after arbitration A6. Only honored alongside Text.
+	// live after arbitration A6, so this is what collapses a LABEL VIEW into
+	// conversations.
+	//
+	// It used to be honored only alongside Text, and this method refused it
+	// otherwise ("the folder view has no keyword predicate"). That refusal was
+	// true of the builders when written and stopped being true here first: both
+	// conditions() and dedupeClause() already emitted the containment predicate
+	// unconditionally, so the guard was rejecting a query the SQL underneath it
+	// could already express. Migration 0011 made the plan fast enough to serve
+	// it (the message_state probe is now index-only), and search.go's
+	// AccountListQuery.Keyword carries the same predicate on the uncollapsed
+	// path.
+	//
+	// It is applied to BOTH the window and the dedupe anti-join, which is not
+	// optional: a thread whose only newer member lacks the label was never on an
+	// earlier page, so excluding it there would silently drop a conversation —
+	// the failure dedupeClause documents for every other condition.
 	Keyword string
 
 	// Narrow carries the E3 filter conditions (see Narrowing).
@@ -265,13 +281,27 @@ type CollapsedResult struct {
 func (s *Store) ListCollapsedMessages(ctx context.Context, q CollapsedQuery) (CollapsedResult, error) {
 	var out CollapsedResult
 
-	if q.Keyword != "" && q.Text == "" {
-		// The folder and account-wide walks join message_state for the mailbox
-		// and the flags, but neither has a keyword predicate — the same gap
-		// ListMailboxMessages documents. Refusing beats returning a list that
-		// silently ignores the label the user filtered by.
-		return out, fmt.Errorf("collapsed search: a keyword filter requires a text condition; " +
-			"the folder view has no keyword predicate")
+	if q.Keyword != "" && q.Text == "" && q.MailboxID != nil {
+		// The FOLDER path with a keyword and no text.
+		//
+		// This refusal used to cover every text-free keyword collapse, and its
+		// stated reason ("the folder view has no keyword predicate") was already
+		// wrong about THIS builder: conditions() and dedupeClause() both emit the
+		// containment predicate unconditionally, so the account-wide collapse
+		// could always have served it. That half is now allowed, which is what
+		// makes a label view collapsible.
+		//
+		// The MAILBOX half stays refused, and it is a policy rather than a
+		// missing predicate: the uncollapsed sibling this shape must agree with
+		// (store.ListMailboxMessages) genuinely takes no keyword parameter, so
+		// serving "this label, in this folder" here and refusing it there would
+		// make the same filter answerable or not depending on collapseThreads —
+		// a difference the caller never asked for. The JMAP layer refuses the
+		// same shape with the same reasoning (query.go's answerable).
+		return out, fmt.Errorf("collapsed search: a keyword filter combined with a mailbox " +
+			"requires a text condition; the folder view has no keyword predicate, while the " +
+			"account-wide label view has one — omit the mailbox to collapse the label across " +
+			"the account")
 	}
 
 	limit := q.effectiveLimit()

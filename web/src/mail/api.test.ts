@@ -177,17 +177,26 @@ describe("the conversation reader's two fetch stages", () => {
 /**
  * E8 — the label filter's SHAPE, pinned to what the server accepts.
  *
- * `internal/jmap/mail/query.go` translates one `hasKeyword` per filter and
- * refuses the four system flags for reasons it states: `$seen` is only
- * expressible as its negation (`notKeyword`), and `$flagged`/`$answered`/
- * `$draft` live in a bitmask the repertoire has no predicate for. A client that
- * sent one would get `unsupportedFilter` and the user would see an empty list.
+ * `internal/jmap/mail/query.go` translates one `hasKeyword` per filter. A USER
+ * LABEL takes the keywords-array path, and a BARE one is served account-wide —
+ * which is what a label view is (canon §2.1). The four system flags take the
+ * bitmask path instead and a bare one of those is still refused, so this kind
+ * must never carry one; `encodeLabelKeyword` is what makes that impossible, and
+ * the test below asserts the property rather than the absence of a call site.
  *
  * These tests do not talk to the server; they pin the shape so a change here
  * that would produce a refusal fails in CI instead of in a browser.
  */
 describe("the label filter (E8)", () => {
   it("is a bare hasKeyword — a label is cross-cutting, never folder-scoped", () => {
+    /*
+     * THE SHAPE THE SIDEBAR SENDS, and the one that used to come back refused.
+     * `answerable` rejected a filter naming only a keyword, so this rendered an
+     * empty list from a REFUSAL rather than from an empty mailbox. It is now
+     * scoped to the account-wide walk (migration 0011 made that plan fast
+     * enough), and `internal/jmap/mail/query_label_test.go` pins the server end
+     * of the same contract — the two must not drift apart.
+     */
     expect(toJmapFilter({ kind: "label", keyword: "$label:work" })).toEqual({
       hasKeyword: "$label:work",
     });

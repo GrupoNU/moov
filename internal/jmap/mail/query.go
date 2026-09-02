@@ -698,7 +698,8 @@ func translateFilter(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 		}
 		return f, nil
 	}
-	if merr := answerable(f); merr != nil {
+	f, merr = answerable(f)
+	if merr != nil {
 		return f, merr
 	}
 	return applyDefaultExclusion(f), nil
@@ -712,36 +713,67 @@ func translateFilter(raw json.RawMessage) (searchFilter, *jmap.MethodError) {
 // must be a filter this server would serve on its own", and this function IS
 // "would serve on its own". Sharing it is what keeps the two from drifting into
 // different notions of answerable.
-func answerable(f searchFilter) *jmap.MethodError {
-	// A filter with only a date range or only a keyword names no mailbox and no
-	// text. The account-wide listing (J4) can serve the plain `filter: null`
-	// case, but NOT one carrying conditions the account-wide method has no
-	// parameters for — that would silently drop the condition, which is the
-	// privacy failure this file exists to avoid.
+//
+// It RETURNS the filter because deciding a bare label filter is answerable also
+// decides its SCOPE (accountWide), and those two must not come apart: a caller
+// that took the verdict but dropped the scope would send a keyword filter down
+// the folder-view branch, which has no mailbox to walk. Returning the value
+// makes losing it a compile error rather than an empty inbox.
+func answerable(f searchFilter) (searchFilter, *jmap.MethodError) {
+	// A BARE CUSTOM KEYWORD IS ANSWERABLE ACCOUNT-WIDE — the label view.
+	//
+	// `{"hasKeyword":"$label:work"}` with nothing beside it is what a Gmail
+	// label view IS (canon §2.1): clicking a label in the sidebar shows every
+	// message carrying it, in every folder. The PWA's sidebar (L3 epic E8)
+	// sends exactly this shape, and until migration 0011 it was refused — so
+	// the feature rendered an empty list from a refusal rather than from an
+	// empty mailbox.
+	//
+	// It is served by the account-wide walk carrying the same
+	// `ms.keywords @> ARRAY[...]` containment predicate the text path always
+	// had (store.AccountListQuery.Keyword). Measured at 400,000 messages:
+	// 89 ms p95 at the realistic 2% label density, against 230 ms before 0011
+	// made the message_state probe index-only.
+	//
+	// The scope is set HERE rather than by the caller, because a label filter
+	// naming no mailbox means "the whole account" — and saying so explicitly
+	// keeps the account-wide walk's contract ("this shape enumerates the
+	// account") true instead of inferred.
+	if f.keyword != "" && f.text == "" && f.mailboxID == nil && !f.accountWide {
+		f.accountWide = true
+	}
+
+	// A filter with only a date range names no mailbox and no text. The
+	// account-wide listing (J4) can serve the plain `filter: null` case, but
+	// NOT one carrying conditions the account-wide method has no parameters
+	// for — that would silently drop the condition, which is the privacy
+	// failure this file exists to avoid.
 	if f.text == "" && f.mailboxID == nil && !f.accountWide {
-		return jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+		return f, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
 			WithDescription("this filter needs an inMailbox or a text condition to be answerable")
 	}
-	// A keyword filter is only answerable on the TEXT path: it becomes the
-	// `ms.keywords @> ARRAY[...]` predicate of store.SearchQuery, and the
-	// folder-view method (ListMailboxMessages) takes no keyword parameter and
-	// returns no keywords column to post-filter on.
+
+	// A keyword AND a mailbox, with no text, is the one keyword shape still
+	// refused — and the reason is narrow and current: the FOLDER VIEW
+	// (store.ListMailboxMessages) takes no keyword parameter. The two shapes
+	// that do carry the containment predicate are the text search and the
+	// account-wide walk, and neither is what this filter names.
 	//
-	// Refusing is the only honest option — the alternative is a folder listing
-	// that silently ignores the label the user filtered by. The store change
-	// that lifts this is in the J3 report (a keyword-aware folder view).
+	// It is refused rather than silently widened to the whole account, because
+	// a client that asked for "this label, in this folder" and got the label
+	// across every folder would be shown mail it excluded — the privacy failure
+	// this file exists to avoid, arriving as a helpful-looking fallback.
 	//
-	// Note this restriction does NOT extend to the E3 conditions: every one of
-	// them (hasAttachment, cc, bcc, the size bounds, the flag bitmask, the
-	// mailbox exclusion) was added to all four store shapes at once
-	// (store.Narrowing), precisely so that a condition could not be answerable
-	// on one path and silently dropped on another.
-	if f.keyword != "" && f.text == "" {
-		return jmap.NewMethodError(jmap.CodeUnsupportedFilter).
-			WithDescription("filter condition %q is not supported without a text condition: "+
-				"the folder view has no keyword predicate", "hasKeyword")
+	// The remedy is named so a client can act on it: drop the mailbox (a label
+	// view is account-wide anyway, canon §2.1) or add a text condition.
+	if f.keyword != "" && f.text == "" && f.mailboxID != nil {
+		return f, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
+			WithDescription("filter condition %q cannot be combined with %q without a text condition: "+
+				"the folder view has no keyword predicate, while the account-wide label view has one — "+
+				"drop the %q to search the label across the account, or add a text condition",
+				"hasKeyword", "inMailbox", "inMailbox")
 	}
-	return nil
+	return f, nil
 }
 
 // applyDefaultExclusion implements Gmail's rule that a search does not return
@@ -1018,7 +1050,12 @@ func translateOr(conditions []json.RawMessage) (searchFilter, *jmap.MethodError)
 		// a branch that would scan the account as a standalone query scans it
 		// here too — and translateFilter's own answerability check is the exact
 		// test for "would this server serve it".
-		if merr := answerable(branch); merr != nil {
+		// The RETURNED branch is appended, not the one that went in: a bare
+		// label branch is answerable only because answerable() scopes it
+		// account-wide, and dropping that scope here would push a keyword
+		// filter down the folder-view branch with no mailbox to walk.
+		branch, merr = answerable(branch)
+		if merr != nil {
 			return searchFilter{}, jmap.NewMethodError(jmap.CodeUnsupportedFilter).
 				WithDescription("branch %d of the OR is not answerable on its own, and a disjunction cannot "+
 					"narrow it: %s", i, merr.Description)

@@ -445,6 +445,16 @@ func (q AccountListQuery) build() (string, []any) {
 		// message_state_unread exactly.
 		conds = append(conds, "(ms.flags & 1) = 0")
 	}
+	if q.Keyword != "" {
+		// The SAME containment predicate the text path and the collapsed shape
+		// spell, character for character. It is written out here rather than
+		// shared because the three builders number their parameters
+		// differently (see CollapsedQuery.conditions for the same reasoning) —
+		// but the PREDICATE TEXT must not drift, so a divergence would be a
+		// silent plan change rather than a compile error.
+		args = append(args, q.Keyword)
+		conds = append(conds, fmt.Sprintf("ms.keywords @> ARRAY[$%d]::text[]", len(args)))
+	}
 	conds, args = q.Narrow.appendConditions(conds, args, "m", "ms")
 	if q.After != nil {
 		args = append(args, q.After.Date, q.After.MessageID)
@@ -482,6 +492,44 @@ type AccountListQuery struct {
 
 	// UnreadOnly restricts to unread messages.
 	UnreadOnly bool
+
+	// Keyword restricts to messages carrying an IMAP keyword — which is where
+	// arbitration A6 puts user labels, so this is what serves a LABEL VIEW.
+	//
+	// # Why the account-wide shape is the RIGHT home for it
+	//
+	// A Gmail label is account-wide by definition (canon §2.1): clicking a
+	// label in the sidebar shows every message carrying it, in every folder.
+	// Scoping it to one mailbox would hide exactly the mail the user filed
+	// away, so the label view is this shape with a keyword, not the folder
+	// view with one.
+	//
+	// # What it costs, and why it is not indexed
+	//
+	// It is the `keywords @> ARRAY[$n]` containment predicate the text path
+	// already carries — applied as a FILTER on the (account_id, date DESC)
+	// walk this shape already performs, exactly like HasAttachment and the
+	// size bounds (see Narrowing).
+	//
+	// It gets no index of its own, and migration 0011's header explains at
+	// length why it CANNOT have a useful one: the predicate column lives in
+	// message_state and the sort column lives in messages, so no single index
+	// spans both. The `gin(account_id, keywords)` that looks like the answer was
+	// built, measured, declined by the planner, and dropped.
+	//
+	// What 0011 does instead is make the message_state probe INDEX-ONLY, which
+	// is where the cost actually was. Measured at 400,000 messages, LIMIT 200,
+	// 10 runs (p95): a 2%-density label — the realistic case — went from 230 ms
+	// to 89 ms; 0.05% from 99 ms to 17 ms; 25% from 4.3 ms to 9 ms. All inside
+	// the Gmail-class bar.
+	//
+	// THE HONEST BOUND: cost scales with how DEEP the date walk must go to find
+	// a page of hits, so it is worst for a SPARSE label on a LARGE account — at
+	// 2% density the walk visits ~10,011 rows to fill 200. A label carried by a
+	// handful of messages in a million-message account is the shape to watch;
+	// it is bounded by the same LIMIT as every other method here, so it stays a
+	// bounded walk rather than an unbounded one, but it is not free.
+	Keyword string
 
 	// Narrow carries the E3 filter conditions (see Narrowing).
 	Narrow Narrowing

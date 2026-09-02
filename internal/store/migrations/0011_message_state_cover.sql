@@ -1,0 +1,168 @@
+-- Moov Mail — migration 0011: the covering index that makes an account-wide
+-- label view answerable.
+--
+-- Source of truth: RFC 8621 §4.4.1 (`hasKeyword`), arbitration A6 (labels live
+-- in message_state.keywords), docs/research/06-gmail-canon.md §2.1 — a Gmail
+-- label view is ACCOUNT-WIDE by definition: clicking a label in the sidebar
+-- shows every message carrying it, in every folder. Scoping it to one folder
+-- would hide exactly the mail the user filed away.
+--
+-- ===========================================================================
+-- 1. THE REFUSAL THIS EXISTS TO LIFT
+-- ===========================================================================
+--
+-- Until this migration, internal/jmap/mail/query.go's `answerable()` refused a
+-- bare `{"hasKeyword":"$label:work"}` with "this filter needs an inMailbox or a
+-- text condition to be answerable", and a second refusal added "the folder view
+-- has no keyword predicate". Both were TRUE of the code and both made the PWA's
+-- sidebar label views (L3 epic E8) render an empty list — the client sends
+-- exactly that bare filter (web/src/mail/api.ts, the `label` kind), so the
+-- feature was dead at the server, not at the client.
+--
+-- ===========================================================================
+-- 2. WHAT WAS MEASURED, AND WHY THE OBVIOUS INDEX IS NOT THE ANSWER
+-- ===========================================================================
+--
+-- Corpus: 400,000 messages on the account under test, 100,000 on a second
+-- account so a missing account scope shows up as WRONG ROWS rather than as a
+-- passing test — the same discipline the E3 bench corpus uses. Label density
+-- mirrors real use, where a label is a MINORITY of a mailbox: $label:work on
+-- 2%, $label:rare on 0.05%, $label:bulk on 25% so the low-selectivity case is
+-- measured too. PostgreSQL 17, the dev instance. `date` correlation 0.248 —
+-- the seed is not artificially clustered.
+--
+-- BASELINE (no new index), account-wide `keywords @> ARRAY[...]`, LIMIT 200:
+--
+--     $label:work (2%)     230 ms   walks messages_acct_date, probing
+--                                   message_state by PK ~10,011 times and
+--                                   discarding ~99% of them (63,496 buffers)
+--     $label:rare (0.05%)   99 ms   bitmap on message_state_keywords
+--     $label:bulk (25%)    4.3 ms   dense enough that the date walk hits early
+--
+-- The 2% case — the MIDDLE of the distribution, and the shape a real label
+-- actually has — is 2.3x over the Gmail-class bar.
+--
+-- THE INDEX THAT LOOKS RIGHT AND IS NOT: `gin (account_id, keywords)`, the
+-- direct analogue of the composite gin(account_id, tsv) that S3 §5.2 made
+-- mandatory. It was built and measured, and the planner NEVER CHOSE IT: it
+-- preferred the narrower message_state_keywords and post-filtered account_id.
+-- Forced (by marking the narrow index invalid in a rolled-back transaction) it
+-- was chosen and STILL did not scope the bitmap —
+--
+--     Bitmap Index Scan on message_state_acct_keywords
+--       Index Cond: (keywords @> '{$label:work}')      <- account_id ABSENT
+--     Filter: (account_id = ...)  Rows Removed by Filter: 2000
+--
+-- — those 2,000 removed rows are the SECOND account's, which is S3 §5.2's
+-- corpus-wide bitmap arriving by a different door. btree_gin scopes the tsv
+-- index because the tsquery and the scalar are ANDed inside one GIN; here the
+-- containment operator drives the scan alone. The index was dropped, not
+-- shipped: an index the planner declines is 1 MB of write amplification that
+-- buys nothing, and shipping it would have LOOKED like the account scope was
+-- handled.
+--
+-- ===========================================================================
+-- 3. WHY THE PREDICATE AND THE SORT CANNOT SHARE AN INDEX — the real constraint
+-- ===========================================================================
+--
+-- The filter column is `message_state.keywords`. The sort column is
+-- `messages.date`. THEY ARE IN DIFFERENT TABLES (arbitration A5 split the
+-- volatile row out precisely so flag churn would not rewrite the tsv), and no
+-- single index spans two tables. So there is no index that both finds the
+-- label's messages and returns them newest-first, and every plan must either
+-- walk the date order and test each row's keywords, or find the keyword's rows
+-- and sort them.
+--
+-- That is a structural fact about the schema, not a missing index, and it is
+-- why this migration does NOT try to make the label predicate indexed. It
+-- attacks the cost that is actually dominant instead.
+--
+-- ===========================================================================
+-- 4. WHAT THIS INDEX DOES
+-- ===========================================================================
+--
+-- In every plan above, the dominant cost is not finding the candidates — it is
+-- the ~10,000 HEAP PROBES into message_state, one per candidate, to read four
+-- narrow columns (85,218 buffers in the 2% case). This index carries those four
+-- columns in the index tuple, so each probe becomes an INDEX ONLY SCAN and
+-- never touches the message_state heap at all.
+--
+-- Measured after (10 runs each, sorted, ms — p95 is the last value):
+--
+--     $label:work (2%)     60.6 … 89.3   (was 230 ms)   Index Only Scan
+--     $label:rare (0.05%)   8.0 … 17.2   (was  99 ms)
+--     $label:bulk (25%)     2.7 …  9.0   (was 4.3 ms)
+--
+-- All three inside the Gmail-class bar, worst case 89 ms.
+--
+-- IT IS NOT ONLY THE LABEL VIEW THAT GAINS. The same probe is performed by
+-- every shape in the repertoire, because message_state is joined by primary key
+-- on all four of them. Re-measured as regression canaries:
+--
+--     plain text search (composite GIN)   1.5 ms, now Index Only Scan
+--     plain folder view                   0.8 ms, now Index Only Scan
+--     label + inMailbox                 292 ms -> 130 ms
+--     label + text (already permitted!)  195 ms -> 136 ms
+--
+-- The last line is worth stating plainly: the shapes `answerable()` ALREADY
+-- allowed were slower than the one it refused. The refusal was never protecting
+-- a fast path.
+--
+-- ===========================================================================
+-- 5. THE COST, STATED HONESTLY
+-- ===========================================================================
+--
+-- SIZE: 36 MB on a 500,000-row message_state — the largest index on the table
+-- (the PK is 11 MB). It carries `keywords`, a text[], which is why.
+--
+-- WRITES: this is the number that matters, because migration 0002 split this
+-- table out on the grounds that FLAG CHURN DOMINATES WRITES on an established
+-- mailbox. INCLUDE(flags) means a flag update now maintains this index too.
+-- Measured, 5,000 flag updates, 5 runs, median:
+--
+--     without the index   175 ms
+--     with the index      230 ms      -> ~+35%, ~8 microseconds per message
+--
+-- That is the trade, and it is accepted deliberately: ~8 us per flag change
+-- against 170 ms off the worst read. Reads are user-facing and synchronous;
+-- flag churn is the sync engine's background work, already batched. It is
+-- recorded here rather than discovered later, so that if flag throughput ever
+-- becomes the binding constraint, THIS is the index to reconsider — and the
+-- first thing to try is dropping `flags` from the INCLUDE list, which costs the
+-- index-only property only for the shapes that read flags.
+--
+-- WHY NOT A PARTIAL INDEX (`WHERE deleted_at IS NULL`): it would be smaller,
+-- but migration 0004's rule applies — a partial index is silently ignored by
+-- any query whose predicate PostgreSQL cannot prove implies the index
+-- predicate, and this index must serve EVERY message_state probe in the
+-- repertoire, including the /changes feeds that deliberately read tombstones.
+-- A full index that always applies beats a smaller one that sometimes does.
+--
+-- +goose Up
+-- +goose StatementBegin
+
+-- The four columns every repertoire shape reads from message_state after
+-- joining it by primary key. Keyed on message_id (the PK, which is the join
+-- key) and INCLUDEing the payload, so the join becomes an index-only lookup.
+--
+-- INCLUDE rather than a composite key: these four are never search keys here —
+-- they are read, not compared — and keeping them out of the key keeps the
+-- B-tree's own comparisons on the single bigint the join uses.
+CREATE INDEX IF NOT EXISTS message_state_cover
+    ON message_state (message_id)
+    INCLUDE (keywords, deleted_at, mailbox_id, flags);
+
+COMMENT ON INDEX message_state_cover IS
+    'Covering index for the repertoire''s message_state probe: makes the '
+    'primary-key join index-only. Lifts the account-wide label view from '
+    '230 ms to 89 ms p95 (migration 0011 header has the full measurement). '
+    'Costs ~35% on flag-update throughput.';
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+
+DROP INDEX IF EXISTS message_state_cover;
+
+-- +goose StatementEnd

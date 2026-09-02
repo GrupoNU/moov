@@ -857,11 +857,16 @@ export function MailScreen(): React.JSX.Element {
      * Gmail's `is:starred` answerable), NOT with the keywords array a label
      * uses. That distinction is what makes this view possible at all.
      *
-     * But `internal/jmap/mail/query.go`'s `answerable` still requires an
-     * `inMailbox` or a text condition: a filter naming only a keyword is
-     * refused with "this filter needs an inMailbox or a text condition to be
-     * answerable". Verified against the real handler rather than inferred — a
-     * bare `{hasKeyword:"$flagged"}` is refused, and
+     * `internal/jmap/mail/query.go`'s `answerable` refuses a BARE SYSTEM FLAG,
+     * and that refusal survived the change that made a bare LABEL answerable —
+     * deliberately, because the two are different predicates. A label is a
+     * `keywords @> ARRAY[...]` containment served by the account-wide walk;
+     * `$flagged` is a bitmask with no index, measured by `store.Narrowing`
+     * .FlagsAll at 77.5 ms via a PARALLEL SEQUENTIAL SCAN on 120,000 messages.
+     * Account-wide that is the unbounded scan the repertoire forbids.
+     *
+     * Verified against the real handler rather than inferred — a bare
+     * `{hasKeyword:"$flagged"}` is refused, and
      * `{AND:[{inMailbox:X},{hasKeyword:"$flagged"}]}` is accepted.
      *
      * So the view is Inbox-scoped, which is also where Gmail puts the entry
@@ -869,8 +874,13 @@ export function MailScreen(): React.JSX.Element {
      * of starred mail is. It is deliberately NOT dressed up as account-wide:
      * showing an Inbox-scoped list under a label that promises everything
      * starred would be the silent mis-answer this codebase refuses elsewhere.
-     * Widening it to the whole account needs a server change (a keyword-aware
-     * account-wide shape), which is named in the report rather than faked here.
+     *
+     * The account-wide keyword shape this once waited on now EXISTS — it is
+     * what serves the label views above — but it does not widen this one,
+     * because the blocker here was never the missing shape: it is that
+     * `$flagged` is not IN the keywords array. Making Destacados account-wide
+     * means giving the bitmask its own account-scoped index and measuring it,
+     * which `store.Narrowing.FlagsAll` names as the condition for revisiting.
      */
     if (route.kind === "starred") {
       /*

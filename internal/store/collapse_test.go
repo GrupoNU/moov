@@ -367,7 +367,31 @@ func TestCollapsePlanStaysBounded(t *testing.T) {
 	// Enough rows that a sequential scan is not simply the cheapest honest plan.
 	// A handful would let the planner pick a Seq Scan on size alone, which would
 	// make the assertion meaningless rather than wrong.
-	const threads, perThread = 700, 4 // 2,800 messages
+	//
+	// # Why this was raised from 2,800 (migration 0011)
+	//
+	// The number has to be big enough that the BOUNDED WALK is genuinely the
+	// cheapest plan, because that is the only condition under which "the planner
+	// chose the walk" is evidence of anything. At 2,800 messages it no longer
+	// was: 0011's covering index made message_state index-only, and PostgreSQL
+	// correctly concluded that hashing 2,800 covered index tuples beats walking
+	// the date index — materializing the whole folder and sorting it, which is
+	// exactly the unbounded shape this test exists to forbid.
+	//
+	// That was measured rather than assumed, and the fixture was the thing at
+	// fault, not the index. On the SAME query with the SAME index at a realistic
+	// folder size (60,000 messages) the planner walks messages_acct_date, stops
+	// at 1,001 rows, and probes index-only — 8.3 ms against 8.1 ms without the
+	// index, i.e. the plan this test demands. At 2,800 the two plans measured
+	// 29.8-36.4 ms and 18.8-37.2 ms: overlapping, because at that size nothing
+	// is slow enough to matter and the assertion was testing the planner's
+	// small-table heuristics rather than the shape's boundedness.
+	//
+	// 12,000 is where the walk wins decisively on this instance while keeping the
+	// fixture cheap to seed. If a future index makes the hash cheaper again at
+	// THIS size, raise it again — but measure first, because the honest failure
+	// this test catches looks identical to the artifact it caught here.
+	const threads, perThread = 3000, 4 // 12,000 messages
 	acct, inbox, _ := collapseCorpus(t, s, threads, perThread)
 	if _, err := s.Pool().Exec(ctx, `ANALYZE messages; ANALYZE message_state`); err != nil {
 		t.Fatalf("ANALYZE: %v", err)

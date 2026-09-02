@@ -173,29 +173,40 @@ func (a *Adapter) fetchPage(
 		})
 
 	case f.accountWide:
-		// RFC 8620 §5.5 `filter: null` — the whole account, newest first (J4).
+		// RFC 8620 §5.5 `filter: null` — the whole account, newest first (J4) —
+		// AND the account-wide label view, which is the same walk carrying a
+		// keyword.
 		//
 		// Since E3 the shape carries the same narrowing its two siblings do: the
 		// account-wide method grew Since, UnreadOnly and Narrow so that a
 		// condition could not be answerable on the folder path and silently
-		// dropped here. The keyword predicate is still the exception, and
-		// answerable() still refuses it without a text condition.
+		// dropped here. Keyword was the last exception and migration 0011 closed
+		// it — the label view a Gmail sidebar issues is a bare hasKeyword, which
+		// answerable() now scopes here rather than refusing.
 		return a.store.ListAccountMessages(ctx, store.AccountListQuery{
 			AccountID:  accountID,
 			Since:      f.since,
 			Until:      f.before,
 			UnreadOnly: f.unreadOnly,
+			Keyword:    f.keyword,
 			Narrow:     narrowing(f),
 			After:      cursor,
 			Limit:      limit,
 		})
 
 	default:
-		// The folder view. A keyword filter cannot reach it: translateCondition
-		// refuses a keyword filter that names no text (query.go
-		// applyHasKeyword), because this shape has no keyword predicate. The
-		// assertion is kept so that relaxing the refusal without a store change
-		// surfaces here instead of silently returning unfiltered mail.
+		// The folder view — a mailbox and no text. A keyword filter still
+		// cannot reach it, but for a DIFFERENT reason than before: a bare label
+		// is now scoped account-wide by answerable() and leaves through the
+		// branch above, while a label AND a mailbox is a shape
+		// ListMailboxMessages has no keyword parameter for.
+		//
+		// That second case is the one this assertion guards, and it is a real
+		// gap rather than a theoretical one — see the refusal in query.go's
+		// answerable() for what a client is told. The assertion stays so that
+		// giving the folder view a keyword predicate without wiring it here
+		// surfaces as an error instead of a folder listing that silently
+		// ignores the label the user filtered by.
 		if f.keyword != "" {
 			return nil, errKeywordNeedsTextPath
 		}
