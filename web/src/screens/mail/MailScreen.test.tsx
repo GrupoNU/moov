@@ -116,6 +116,19 @@ const EMAILS = [
   },
 ];
 
+/**
+ * What `Thread/get` claims thread `t1` contains.
+ *
+ * The default matches the window, which is the easy case. The star regression
+ * overrides it with the shape the REAL server returns: `Thread/get` is
+ * account-wide (RFC 8621 §3), so a thread whose other messages live in Archive
+ * or Sent reports ids the inbox window never held.
+ */
+let threadOneEmailIds: readonly string[] = ["e1"];
+
+/** Every `update` object the shell sent to `Email/set`, in order. */
+let emailSetCalls: Record<string, unknown>[] = [];
+
 /** Answers one JMAP method call with something shaped like the real thing. */
 function respond(name: string, args: Record<string, unknown>): Record<string, unknown> {
   switch (name) {
@@ -153,11 +166,41 @@ function respond(name: string, args: Record<string, unknown>): Record<string, un
         accountId: ACCOUNT,
         state: "th-1",
         list: [
-          { id: "t1", emailIds: ["e1"] },
+          { id: "t1", emailIds: threadOneEmailIds },
           { id: "t2", emailIds: ["e2"] },
         ],
         notFound: [],
       };
+    case "Email/set": {
+      /*
+       * The real server answers §5.3 per record: an id it cannot resolve comes
+       * back in `notUpdated`, never as a thrown batch. Modelling that is the
+       * whole point of the star regression below — a fake that blindly
+       * succeeds would report green for the exact shape that fails in
+       * production.
+       */
+      const update = (args.update ?? {}) as Record<string, unknown>;
+      emailSetCalls.push(update);
+      const updated: Record<string, null> = {};
+      const notUpdated: Record<string, unknown> = {};
+      for (const id of Object.keys(update)) {
+        if (EMAILS.some((email) => email.id === id)) {
+          updated[id] = null;
+        } else {
+          /*
+           * What the real server does with a thread member this view never
+           * fetched: `applyEmailUpdate` re-reads the row and answers §5.3
+           * `notFound` when it cannot resolve the message's mailbox. One of
+           * these is enough to make `dispatchAction` show the failure toast.
+           */
+          notUpdated[id] = {
+            type: "notFound",
+            description: "no Email with that id in this account",
+          };
+        }
+      }
+      return { accountId: ACCOUNT, oldState: "e-1", newState: "e-2", updated, notUpdated };
+    }
     default:
       // Anything else the shell probes for (submission, vendor capabilities)
       // answers empty rather than erroring: an unimplemented extra must not
@@ -261,6 +304,15 @@ describe("MailScreen — the shell's canary", () => {
     );
     vi.stubGlobal("fetch", vi.fn(fakeFetch));
     vi.stubGlobal("EventSource", StubEventSource);
+    threadOneEmailIds = ["e1"];
+    emailSetCalls = [];
+    /*
+     * The router is backed by `window.location`, which jsdom keeps for the
+     * whole FILE. Without this reset a test that navigated (the settings walk
+     * ends on /settings/general) leaves the next shell mounting on that route,
+     * where there is no message list at all.
+     */
+    window.history.replaceState(null, "", "/");
   });
 
   afterEach(() => {
@@ -352,4 +404,80 @@ describe("MailScreen — the shell's canary", () => {
       screen.queryByRole("complementary", { name: "Quick settings" }),
     ).not.toBeInTheDocument();
   });
+
+  /**
+   * The star regression (owner's finding 4: "clicking the star errors").
+   *
+   * # The root cause, and why every test before this one missed it
+   *
+   * `idsOfGroup` answers "what is this conversation, really" from the
+   * `Thread/get` that rides the list's batch. `Thread/get` is ACCOUNT-WIDE
+   * (RFC 8621 §3): its `emailIds` name every message of the thread, including
+   * the ones sitting in Archive, Sent or Trash that the inbox window never
+   * fetched. The star handed that whole set to `Email/set`.
+   *
+   * Client-side, `planAction` silently SKIPS the ids it cannot find in the
+   * window — so the optimistic paint covered one message while the request
+   * carried five. Server-side, the ids are real, but nothing guarantees the
+   * shell can resolve them, and any the server declines come back in
+   * `notUpdated`. `dispatchAction` then reads `result.failed.length > 0` and
+   * shows "Esa acción no se aplicó" — the error the owner saw — on a star that
+   * had, in fact, partially worked.
+   *
+   * The fix scopes the row action to the messages the LIST actually holds:
+   * `idsOfGroup` intersects the thread's membership with the current window.
+   * That is also the semantically right answer for a folder view — starring a
+   * conversation in the inbox stars the inbox's copy, not a reply filed away
+   * in Archive months ago.
+   *
+   * Every earlier test missed it because the fixture's `Thread/get` returned
+   * exactly the windowed id. This one returns the real shape.
+   */
+  it("stars a conversation without erroring when its thread reaches outside the window", async () => {
+    // `t1` really has three messages; the inbox window holds only `e1`.
+    threadOneEmailIds = ["e1", "e-archived", "e-sent"];
+    const user = userEvent.setup();
+    renderShell();
+    await waitFor(
+      () => {
+        expect(screen.getByText("The first message")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    /*
+     * The LAST matching row. This file renders the shell once per test into a
+     * shared document (there is no global `cleanup()`), so earlier renders are
+     * still mounted and `getAllByRole("row")` sees their rows too. Taking the
+     * most recent one keeps this test about the shell it just rendered.
+     */
+    const rows = screen
+      .getAllByRole("row")
+      .filter((candidate) => within(candidate).queryByText("The first message") !== null);
+    const row = rows[rows.length - 1];
+    if (row === undefined) throw new Error("no row for the first message");
+    await user.click(within(row).getByRole("button", { name: "Star" }));
+
+    await waitFor(() => {
+      expect(emailSetCalls.length).toBeGreaterThan(0);
+    }, { timeout: 4000 });
+
+    /*
+     * The request carries ONLY what the window holds. Sending `e-archived`
+     * would be asking the server to change a message this view never showed —
+     * and would come back `notUpdated`, which is what produced the error.
+     */
+    const update = emailSetCalls[0] ?? {};
+    expect(Object.keys(update)).toEqual(["e1"]);
+    expect(update.e1).toEqual({ "keywords/$flagged": true });
+
+    // And the user sees the success sentence, never the failure one.
+    expect(screen.queryByText(/did not go through/i)).not.toBeInTheDocument();
+    /*
+     * A longer budget than the file's default: this is the fourth shell in one
+     * jsdom document (no global cleanup), and userEvent's pointer sequence
+     * walks all of them. The assertions above are what the test is about; the
+     * clock is only the cost of running last.
+     */
+  }, 20000);
 });

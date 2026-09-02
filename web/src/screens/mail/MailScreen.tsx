@@ -1555,6 +1555,56 @@ export function MailScreen(): React.JSX.Element {
     [threadMembers],
   );
 
+  /**
+   * The message ids a KEYWORD action on one row applies to.
+   *
+   * # Why the star cannot use `idsOfGroup`
+   *
+   * `idsOfGroup` answers with the thread's ACCOUNT-WIDE membership, because
+   * that is what archive and delete mean: archiving a conversation moves the
+   * whole conversation, wherever its messages sit. `Thread/get` (RFC 8621 §3)
+   * is account-wide by definition, so those ids routinely name messages this
+   * view never fetched — replies filed in Archive, the user's own answers in
+   * Sent.
+   *
+   * For a keyword that is wrong twice over.
+   *
+   * It is wrong at the server: `Email/set` validates each id against the
+   * folder the message is actually in — it re-reads the row and refuses one
+   * whose mailbox it cannot resolve (`notFound`), and it counts the durable
+   * keyword ceiling against THAT folder, per message. A star on a thread
+   * spanning four folders is therefore four independent writes, any of which
+   * can be declined for reasons having nothing to do with the row the user
+   * clicked. One refusal is enough: `dispatchAction` sees a non-empty `failed`
+   * and shows "that action did not go through" over a star that visibly
+   * turned yellow — which is the error the owner hit.
+   *
+   * It is wrong at the client too: `planAction` builds its optimistic patch
+   * only for ids present in the window and silently skips the rest, so the
+   * request carried strictly more messages than the paint ever covered. The
+   * two halves of one action disagreed about their own scope.
+   *
+   * And it is wrong as product behaviour: a star is a per-message flag
+   * ($flagged is an IMAP system flag on one message), and starring a
+   * conversation in the inbox should star what the inbox shows — not reach
+   * back into a reply the user archived months ago.
+   *
+   * So this resolver intersects the conversation with the window the list is
+   * actually holding. The fallback keeps the row working when `Thread/get` did
+   * not ride the batch (the uncollapsed path), where `group.messages` already
+   * is the windowed set.
+   */
+  const windowedIdsOfGroup = useCallback(
+    (group: ThreadGroup): readonly string[] => {
+      const inWindow = new Set(group.messages.map((message) => message.id));
+      const ids = idsOfGroup(group).filter((id) => inWindow.has(id));
+      // Never return empty: a row the user can see must always have a target,
+      // and an empty action is a control that silently does nothing.
+      return ids.length > 0 ? ids : group.messages.map((message) => message.id);
+    },
+    [idsOfGroup],
+  );
+
   const targetMessageIds = useCallback(
     (): readonly string[] => {
       const groupIds = actionTargets(selection, selectedId);
@@ -1567,6 +1617,30 @@ export function MailScreen(): React.JSX.Element {
       return out;
     },
     [selection, selectedId, groups, idsOfGroup],
+  );
+
+  /**
+   * `targetMessageIds` for a KEYWORD action — the selection's messages, scoped
+   * to the window.
+   *
+   * The star and the read/unread toggle reach the same server validation the
+   * row star does (`windowedIdsOfGroup` documents it in full), so they must
+   * scope their ids the same way. Keeping the two resolvers side by side is
+   * deliberate: the difference between "this action means the conversation"
+   * and "this action means the messages on screen" is the whole point, and it
+   * should be visible in one place rather than inferred from call sites.
+   */
+  const targetKeywordIds = useCallback(
+    (): readonly string[] => {
+      const wanted = new Set(actionTargets(selection, selectedId));
+      const out: string[] = [];
+      for (const group of groups) {
+        if (!wanted.has(group.id)) continue;
+        for (const id of windowedIdsOfGroup(group)) out.push(id);
+      }
+      return out;
+    },
+    [selection, selectedId, groups, windowedIdsOfGroup],
   );
 
   // --- P3: running an action ------------------------------------------------
@@ -1924,7 +1998,9 @@ export function MailScreen(): React.JSX.Element {
   );
 
   const runToggleFlag = useCallback((): void => {
-    const ids = targetMessageIds();
+    // Scoped to the window for the same reason the row star is — a keyword is
+    // written per message against its own folder.
+    const ids = targetKeywordIds();
     const idSet = new Set(ids);
     const targets = projected.filter((email) => idSet.has(email.id));
     const value = resolveToggle(targets, KEYWORD_FLAGGED).value;
@@ -1932,7 +2008,7 @@ export function MailScreen(): React.JSX.Element {
       { kind: value ? "flag" : "unflag", ids },
       value ? t("action.flag") : t("action.unflag"),
     );
-  }, [targetMessageIds, projected, dispatchAction, t]);
+  }, [targetKeywordIds, projected, dispatchAction, t]);
 
   // --- E8: applying and removing labels -------------------------------------
 
@@ -4301,7 +4377,15 @@ export function MailScreen(): React.JSX.Element {
              * filled/outline icon and what the click does cannot disagree.
              */
             onRowToggleFlag={(group) => {
-              const ids = idsOfGroup(group);
+              /*
+               * `windowedIdsOfGroup`, NOT `idsOfGroup`: a keyword is written
+               * per message against the folder that message is in, so a
+               * conversation reaching outside this view must not be dragged
+               * into the request. See the resolver for the full reasoning —
+               * this is the fix for the star that reported an error while
+               * visibly working.
+               */
+              const ids = windowedIdsOfGroup(group);
               const starred = group.hasFlagged;
               void dispatchAction(
                 { kind: starred ? "unflag" : "flag", ids },
