@@ -351,6 +351,7 @@ describe("branding", () => {
   const acme: Branding = {
     name: "Acme Mail",
     logoUrl: "/branding/assets/mail.acme.test/logo.png",
+    logoDarkUrl: "",
     splashUrl: "/branding/assets/mail.acme.test/splash.jpg",
     colors: {
       primary: "#c0ffee",
@@ -363,21 +364,45 @@ describe("branding", () => {
     isDefault: false,
   };
 
-  it("shows the customer's name, logo and tagline", () => {
+  it("shows the customer's logo and tagline", () => {
     renderLogin({ branding: acme });
 
-    expect(screen.getAllByText("Acme Mail").length).toBeGreaterThan(0);
+    /*
+     * The logo REPLACES the text name rather than sitting beside it: a
+     * wordmark already says the name graphically, and rendering both printed
+     * the brand twice — which then ellipsised inside the panel's 44ch content
+     * column ("[LOGO] Acme …"). So the name is the image's accessible name and
+     * appears nowhere as text.
+     */
+    // The screen renders the mark twice (the form header at `sm`, the brand
+    // panel at `lg`), so the assertion is on the ABSENCE of a text duplicate
+    // rather than on a single image.
+    expect(screen.getAllByAltText("Acme Mail").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Acme Mail")).not.toBeInTheDocument();
+
+    // The tagline is genuine content and stays.
     expect(screen.getByText("Correo de Acme")).toBeInTheDocument();
 
-    // The logo is rendered with alt="" — decorative, because the product name
-    // is right beside it as text — so it has role="presentation" and no
-    // accessible name. That is the correct markup, and it means the element is
-    // found through the DOM rather than through a role query.
     const sources = Array.from(document.querySelectorAll("img")).map((img) =>
       img.getAttribute("src"),
     );
     expect(sources).toContain("/branding/assets/mail.acme.test/logo.png");
     expect(sources).toContain("/branding/assets/mail.acme.test/splash.jpg");
+  });
+
+  it("keeps the heading and tagline layout when the brand has a logo", () => {
+    /*
+     * The brand panel is imagery plus the tagline; the FORM owns the heading.
+     * The logo change must not have moved either — a brand may change identity
+     * and colour, never layout or behaviour.
+     */
+    renderLogin({ branding: acme });
+    expect(
+      screen.getByRole("heading", { name: en["login.heading"] }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(en["login.emailLabel"])).toBeInTheDocument();
+    expect(screen.getByLabelText(en["login.passwordLabel"])).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en["login.submit"] })).toBeInTheDocument();
   });
 
   it("shows Moov's own brand when nothing is configured", () => {

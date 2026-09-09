@@ -17,6 +17,19 @@ import styles from "./BrandMark.module.css";
  * The mark itself: a rounded square with an "M" cut through it as a continuous
  * stroke, suggesting a path/route (the product is "Moov"). It reads at 24px.
  *
+ * # A logo REPLACES the name; it does not accompany it
+ *
+ * When a customer has a logo, it IS their wordmark — it already says the name,
+ * graphically. Rendering the text name beside it printed the brand twice, and
+ * on the login panel (where the content column is capped at 44ch) the duplicate
+ * then ellipsised, so a real pilot brand's panel read "[LOGO] Área …". Gmail
+ * shows its mark alone for the same reason.
+ *
+ * So the name is rendered as TEXT only beside the drawn glyph, where it is
+ * doing real work (the glyph is an abstract mark that names nothing). With a
+ * logo the name lives in the image's `alt`, which is where a screen reader
+ * wants it anyway.
+ *
  * # Why a customer's logo is sized by HEIGHT alone
  *
  * The drawn fallback is square; an uploaded logo is usually not. Sizing a
@@ -25,19 +38,40 @@ import styles from "./BrandMark.module.css";
  * broken. So the logo is given a fixed height, a free width, `object-fit:
  * contain`, and a per-size `max-width` ceiling — the brand may be any shape it
  * likes, within a width the layout has already budgeted for.
+ *
+ * # Dark contexts, without asking JavaScript what the theme is
+ *
+ * A wordmark is usually one flat colour, and the common upload is a dark one.
+ * A pilot brand's is pure black: invisible on the login panel's dark gradient,
+ * and invisible in the dark theme's top bar. Two cases, handled without a
+ * single theme read in JS:
+ *
+ *   - The customer supplied `logoDarkUrl`. BOTH images are rendered and CSS
+ *     picks one, using the same three-state pattern tokens.css uses
+ *     (`[data-theme="dark"]`, plus a `prefers-color-scheme` block guarded with
+ *     `:not([data-theme="light"])`). A JS theme check would be a second source
+ *     of truth for something CSS already knows, and would flash the wrong logo
+ *     on first paint.
+ *   - They did not. The light logo is drawn on a small light PLATE — a
+ *     surface-coloured rounded rectangle behind it — so a black wordmark stays
+ *     legible. Recolouring the logo instead (a CSS filter, a blend mode) is the
+ *     obvious-looking option and it is wrong: it mangles any logo that is not a
+ *     flat silhouette, which is most of them.
  */
 
 export interface BrandMarkProps {
   readonly branding: Branding;
   readonly size?: "sm" | "md" | "lg";
   /**
-   * Renders the mark alone, without the product name beside it. Used where the
-   * name is already present as a heading.
+   * Renders the mark alone, without the product name beside it. Only affects
+   * the FALLBACK glyph: a customer's logo is always alone, because the logo
+   * already is the name.
    */
   readonly iconOnly?: boolean;
   /**
    * Inverts the colours for use on the brand panel's dark gradient, where the
-   * normal accent-on-surface pairing would have no contrast.
+   * normal accent-on-surface pairing would have no contrast. Also selects the
+   * dark logo variant, because that gradient is dark in every theme.
    */
   readonly onDark?: boolean;
 }
@@ -61,49 +95,112 @@ export function BrandMark({
   iconOnly = false,
   onDark = false,
 }: BrandMarkProps): React.JSX.Element {
-  const classes = [styles.mark, styles[size], onDark ? styles.onDark : ""]
+  const hasLogo = branding.logoUrl !== "";
+
+  /*
+   * The plate is the no-dark-variant fallback, and it is only needed where the
+   * background is actually dark. `onDark` is one such place unconditionally
+   * (the brand panel's gradient is dark in every theme); the other is the dark
+   * THEME, which this component cannot see — so the class is emitted and the
+   * stylesheet decides whether it paints, exactly like the image swap.
+   */
+  const needsPlate = hasLogo && branding.logoDarkUrl === "";
+
+  const classes = [
+    styles.mark,
+    styles[size],
+    onDark ? styles.onDark : "",
+    needsPlate ? styles.plated : "",
+  ]
     .filter(Boolean)
     .join(" ");
 
   return (
     <span className={classes}>
-      {branding.logoUrl !== "" ? (
-        <img
-          className={styles.logo}
-          src={branding.logoUrl}
-          /*
-           * The alt text is the product name, because the logo IS the product
-           * name rendered graphically — a screen reader user must hear the
-           * brand, not "logo". When the name is also rendered as text beside
-           * it, the image becomes decorative and alt="" avoids a stutter.
-           */
-          alt={iconOnly ? branding.name : ""}
-          /*
-           * HEIGHT only, and it is deliberate.
-           *
-           * A logo is not square. Customers upload wordmarks — "ACME MAIL" at
-           * 4:1 is the common case — and a `width` attribute alongside the
-           * height is an aspect ratio the browser will honour, so it squashed
-           * every one of them into a 32x32 box. The CSS gives the element a
-           * fixed height, `width: auto` and `object-fit: contain`, so the
-           * intrinsic ratio is what decides the width.
-           *
-           * The attribute stays for the CLS reserve it was added for: with a
-           * height attribute and `width: auto` the browser still reserves a
-           * line box of the right HEIGHT before the bytes arrive, and the CSS
-           * `min-width` reserves a square's worth of horizontal space so a
-           * slow logo grows sideways into room already held rather than
-           * shoving what follows it. The value is per-size in CSS; this
-           * attribute only has to be non-absurd for the pre-load reserve.
-           */
-          height={SIZE_HEIGHTS[size]}
-          decoding="async"
-        />
+      {hasLogo ? (
+        <LogoImages branding={branding} size={size} onDark={onDark} />
       ) : (
-        <MoovGlyph />
+        <>
+          <MoovGlyph />
+          {!iconOnly && <span className={styles.name}>{branding.name}</span>}
+        </>
       )}
-      {!iconOnly && <span className={styles.name}>{branding.name}</span>}
     </span>
+  );
+}
+
+/**
+ * The customer's logo: one `<img>`, or two when a dark variant exists.
+ *
+ * Two elements rather than one with a swapped `src`, because the swap has to
+ * happen in CSS (see the component's docs). `<picture>` with a
+ * `prefers-color-scheme` media source would cover the media query but NOT the
+ * explicit `data-theme` attribute, and that is a class of user this app has to
+ * serve: someone who chose dark while their OS is light.
+ */
+function LogoImages({
+  branding,
+  size,
+  onDark,
+}: {
+  readonly branding: Branding;
+  readonly size: NonNullable<BrandMarkProps["size"]>;
+  readonly onDark: boolean;
+}): React.JSX.Element {
+  const hasDarkLogo = branding.logoDarkUrl !== "";
+
+  /*
+   * The alt text is the product name, because the logo IS the product name
+   * rendered graphically — a screen reader user must hear the brand, not
+   * "logo". With two images only ONE may carry it: the other is the same
+   * information in a different colour, so it is decorative by definition and
+   * announcing it would make the brand be read out twice.
+   */
+  const shared = { height: SIZE_HEIGHTS[size], decoding: "async" } as const;
+
+  if (!hasDarkLogo) {
+    /*
+     * On the dark panel this is a dark wordmark on a light plate, which is a
+     * deliberate look rather than a fault; `onDark` does not change the source
+     * because there is no other source to choose.
+     */
+    return (
+      <img className={styles.logo} src={branding.logoUrl} alt={branding.name} {...shared} />
+    );
+  }
+
+  /*
+   * `onDark` is unconditional: the gradient is dark whatever the theme, so the
+   * dark variant is the only correct one there and the light one must not be
+   * rendered at all — a CSS-hidden sibling would still be fetched.
+   */
+  if (onDark) {
+    return (
+      <img
+        className={styles.logo}
+        src={branding.logoDarkUrl}
+        alt={branding.name}
+        {...shared}
+      />
+    );
+  }
+
+  return (
+    <>
+      <img
+        className={[styles.logo, styles.logoLight].join(" ")}
+        src={branding.logoUrl}
+        alt={branding.name}
+        {...shared}
+      />
+      <img
+        className={[styles.logo, styles.logoDark].join(" ")}
+        src={branding.logoDarkUrl}
+        alt=""
+        aria-hidden="true"
+        {...shared}
+      />
+    </>
   );
 }
 
