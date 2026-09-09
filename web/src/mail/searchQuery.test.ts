@@ -109,9 +109,30 @@ describe("header-field operators", () => {
     expect(q.unsupported).toEqual([]);
   });
 
-  it("refuses an empty value", () => {
+  it("calls an empty value INCOMPLETE, not bad (E-02)", () => {
+    /*
+     * `from:` is the state every operator query passes through. Reported as a
+     * `badValue` it produced a refusal card over "no matches" while the user
+     * was still typing the name — the review's hostile intermediate state. The
+     * term is still excluded from the filter; it is just not complained about.
+     */
     const q = parseSearchQuery("from:", NOW);
-    expect(q.unsupported[0]).toMatchObject({ operator: "from", reason: "badValue" });
+    expect(q.unsupported[0]).toMatchObject({ operator: "from", reason: "incomplete" });
+    expect(q.groups[0]?.fields.from).toBeUndefined();
+  });
+
+  it("calls every valueless operator incomplete, not just the text ones", () => {
+    // The date and size parsers would otherwise report `""` as a value that
+    // failed to parse — true, and useless to a user mid-word.
+    for (const raw of ["before:", "after:", "larger:", "newer_than:", "label:", "in:", "is:"]) {
+      expect(parseSearchQuery(raw, NOW).unsupported[0]?.reason).toBe("incomplete");
+    }
+  });
+
+  it("still refuses a value that is present and wrong", () => {
+    // The distinction only pays if the genuine mistake still speaks up.
+    expect(parseSearchQuery("before:tuesday", NOW).unsupported[0]?.reason).toBe("badValue");
+    expect(parseSearchQuery("larger:huge", NOW).unsupported[0]?.reason).toBe("badValue");
   });
 });
 

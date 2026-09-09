@@ -20,16 +20,20 @@ import styles from "./SearchBar.module.css";
 /**
  * The search field (P2 deliverable 5; extended in L3 epic E3).
  *
- * Debouncing lives here rather than in the screen because the field is what
- * knows about keystrokes: `onChange` fires per character, and the debouncer
- * collapses a burst into one request. The reason is not our latency (the
- * server answers well inside the bar) but the server's `maxConcurrentRequests`
- * of 8 — typing a 12-character query un-debounced would fire 12 requests and
- * earn a 429.
+ * # Typing does not search (P0-3)
  *
- * `Enter` FLUSHES rather than waiting: a user who has stopped typing and
- * pressed Enter has told us they are done, and making them wait out a timer
- * they cannot see is the cheapest kind of sluggishness.
+ * `onChange` fires per character and updates the TEXT; it does not call
+ * `onSearch`. The screen answers a search with a route change, so a debounced
+ * search-per-keystroke meant navigating mid-word — most visibly on `from:`,
+ * an operator with no value yet, which came back "no matches" under a warning
+ * card while the user was still typing the name. Gmail holds the box until
+ * Enter, and so does this.
+ *
+ * The debouncer survives for the paths that DO search but can repeat: the
+ * advanced panel and an accepted suggestion. Its original reason — the
+ * server's `maxConcurrentRequests` of 8 — is why it is a cancel-and-fire seam
+ * rather than a bare call.
+ *
  *
  * # E3: the combobox, and how it coexists with the debounce
  *
@@ -42,9 +46,7 @@ import styles from "./SearchBar.module.css";
  *
  * The debounce is untouched by it. Suggestions are computed synchronously from
  * data already in memory (recent searches, labels, the operator table), so
- * they appear on the keystroke while the SEARCH still waits out its 180 ms.
- * Accepting a suggestion flushes, because a click or an Enter is a completed
- * intention.
+ * they appear on the keystroke while nothing is searched at all.
  */
 
 export interface SearchBarProps {
@@ -52,7 +54,12 @@ export interface SearchBarProps {
   readonly value: string;
   /** Fires on every keystroke, for the controlled input. */
   readonly onChange: (value: string) => void;
-  /** Fires debounced — this is the one that costs a request. */
+  /**
+   * Runs a search — the one that costs a request and moves the route.
+   *
+   * Fired by Enter, by accepting a suggestion, by the advanced panel and by
+   * the clear button. NEVER by a keystroke (P0-3).
+   */
   readonly onSearch: (value: string) => void;
   readonly isSearching: boolean;
 
@@ -157,12 +164,24 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     (event: React.ChangeEvent<HTMLInputElement>): void => {
       const next = event.target.value;
       onChange(next);
-      debouncer.run(next);
+      /*
+       * P0-3: typing does NOT search.
+       *
+       * `debouncer.run(next)` used to live here, and 180 ms after any pause it
+       * called `onSearch` — which the screen answers with a route change. So
+       * the user typing `from:ana` navigated on `f`, on `fr`, and finally on
+       * `from:` — a half-typed operator, which the list answered with "no
+       * matches" while the caret was still mid-word. Gmail does not do this:
+       * the box holds text until Enter.
+       *
+       * The debouncer stays for the paths that DO search — Enter flushes it,
+       * accepting a suggestion cancels and fires — so nothing else changes.
+       */
       setOpen(true);
       // A new keystroke invalidates the cursor: the list under it has changed.
       setActiveIndex(-1);
     },
-    [onChange, debouncer],
+    [onChange],
   );
 
   const clear = useCallback((): void => {
@@ -217,9 +236,17 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
           accept(active);
           return;
         }
-        // The user has finished; do not make them wait out the debounce.
+        /*
+         * The user has finished. Since P0-3 no keystroke queues a search, so
+         * `flush()` would have nothing to flush — Enter is now the thing that
+         * SEARCHES, not the thing that hurries an already-pending one along.
+         * `cancel()` first anyway: the panel and a suggestion still use the
+         * debouncer, and a stale timer firing after this would replace this
+         * result with an older query's.
+         */
         setOpen(false);
-        debouncer.flush();
+        debouncer.cancel();
+        onSearchRef.current(value);
         return;
       }
 

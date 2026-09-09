@@ -4943,6 +4943,13 @@ function refusedTermMessage(
       return format("search.refused.deferred", term.operator);
     case "badValue":
       return format("search.refused.badValue", term.operator);
+    case "incomplete":
+      /*
+       * Unreachable: the caller filters these out before rendering (E-02). The
+       * arm exists so the switch stays exhaustive — a new reason then fails the
+       * typecheck here instead of silently rendering nothing.
+       */
+      return format("search.refused.badValue", term.operator);
   }
 }
 
@@ -5009,7 +5016,19 @@ function ListNotice({
    * believed were answerable.
    */
   const problems = plan?.problems ?? [];
-  const unsupported = plan?.unsupported ?? [];
+  /*
+   * E-02: a half-typed operator is not a refusal.
+   *
+   * `from:` with the caret still after the colon parses as `incomplete`, and
+   * showing that as a refused term put a warning card over "no matches" while
+   * the user was mid-word — the review's hostile intermediate state. The term
+   * is still not sent (the parser saw to that); it is simply not COMPLAINED
+   * about, which is the only difference a user can perceive between "you typed
+   * something wrong" and "you have not finished typing".
+   */
+  const unsupported = (plan?.unsupported ?? []).filter(
+    (term) => term.reason !== "incomplete",
+  );
   if (refusal !== undefined || problems.length > 0 || unsupported.length > 0) {
     return (
       <div className={styles.noticeWarn} role="status">

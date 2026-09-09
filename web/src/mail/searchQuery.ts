@@ -145,7 +145,18 @@ export type UnsupportedReason =
   /** A `-` on a term whose complement no index can produce (query.go NOT). */
   | "negationUnanswerable"
   /** The operator's value did not parse (a date that is not a date). */
-  | "badValue";
+  | "badValue"
+  /**
+   * The operator was typed with NO value yet — `from:`, `before:`, `label:`.
+   *
+   * A distinct reason and not a `badValue`, because it is not a mistake: it is
+   * the state every operator query passes through on its way to being typed.
+   * Reported as "bad" it produced the hostile intermediate the review logged
+   * as E-02 — a red card saying the query was refused, over "no matches",
+   * while the user's finger was still on the next key. Callers are expected to
+   * stay SILENT about this reason; the term is simply not sent.
+   */
+  | "incomplete";
 
 /** One conjunctive group: everything ANDed together. */
 export interface QueryGroup {
@@ -516,12 +527,21 @@ export function parseSearchQuery(input: string, now: Date = new Date()): ParsedQ
       continue;
     }
 
+    /*
+     * E-02: an operator with no value yet is INCOMPLETE, not wrong.
+     *
+     * Hoisted above every operator's own handling so the rule is stated once
+     * and no branch can forget it — the date and size parsers in particular
+     * would otherwise report `""` as a value that failed to parse, which is
+     * true and useless.
+     */
+    if (value === "") {
+      refuse(token, signedName, "incomplete");
+      continue;
+    }
+
     if ((TEXT_FIELDS as readonly string[]).includes(operator)) {
       const field = operator as TextField;
-      if (value === "") {
-        refuse(token, operator, "badValue");
-        continue;
-      }
       if (draft.fields[field] !== undefined && draft.fields[field] !== value) {
         // A second, different value for the same field. The server refuses two
         // different conditions on one column ("two different cc conditions"),
@@ -556,19 +576,12 @@ export function parseSearchQuery(input: string, now: Date = new Date()): ParsedQ
       }
 
       case "in": {
-        if (value === "") {
-          refuse(token, operator, "badValue");
-          break;
-        }
+        // An empty value was already refused as `incomplete` above.
         draft.inMailbox = value.toLowerCase();
         break;
       }
 
       case "label": {
-        if (value === "") {
-          refuse(token, operator, "badValue");
-          break;
-        }
         draft.label = value;
         break;
       }
