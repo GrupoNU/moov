@@ -98,6 +98,20 @@
   outline-offset: 1px;
 }
 
+/*
+ * E-20: the note standing where Gmail's "Doesn't have the words" would be.
+ *
+ * Indented to the FIELD column rather than the label's, so it reads as an
+ * answer about the missing field rather than as a heading for the row below.
+ */
+.absentNote {
+  margin: 0;
+  padding-left: calc(7rem + var(--space-3));
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
 .checkboxRow {
   display: flex;
   align-items: center;
@@ -159,7 +173,8 @@
     gap: var(--space-1);
   }
 
-  .checkboxRow {
+  .checkboxRow,
+  .absentNote {
     padding-left: 0;
   }
 }

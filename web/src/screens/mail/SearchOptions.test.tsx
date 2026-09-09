@@ -82,6 +82,17 @@ describe("the deliberate absences (P4: no dead controls)", () => {
     expect(screen.queryByText(/no contiene|doesn't have/i)).not.toBeInTheDocument();
   });
 
+  it("E-20: SAYS why the exclude field is missing, rather than leaving a hole", () => {
+    /*
+     * The reasoning has always been in the component's doc comment. The
+     * review's point is that a doc comment is not on screen: a user who knows
+     * Gmail's panel counts the fields, finds one missing, and concludes either
+     * that they mis-remembered or that this is unfinished. Neither is true.
+     */
+    renderPanel();
+    expect(screen.getByRole("note")).toHaveTextContent(/no puede responder/i);
+  });
+
   it("has NO 'Crear filtro' button when the server offers no Sieve", () => {
     /*
      * E12/B7 landed the button, but only where it can DO something. Without

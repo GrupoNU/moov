@@ -330,11 +330,24 @@ export function SearchOptions({
         </label>
 
         {/*
-          Gmail's "Doesn't have the words" would sit HERE. It is absent by
-          decision, not by oversight: the server refuses NOT on principle
-          (query.go translateOperator), so the field could only ever produce an
-          error. See this component's doc comment.
+          E-20: Gmail's "Doesn't have the words" would sit HERE, and the note
+          is what makes its absence a DECISION rather than a hole.
+
+          The reasoning has always been in this file's doc comment; the review's
+          point is that the doc comment is not on screen. A user who knows
+          Gmail's panel counts the fields, finds one missing, and concludes
+          either that they mis-remembered or that this is unfinished. Neither is
+          true, and one sentence settles it.
+
+          It is a note and NOT a disabled field: a greyed-out input still
+          advertises a feature that does not exist, and this one cannot be
+          built — the server refuses NOT on principle (query.go
+          translateOperator), because a complement is a set no index can
+          produce.
         */}
+        <p className={styles.absentNote} role="note">
+          {t("search.options.noExcludeNote")}
+        </p>
 
         <div className={styles.row}>
           <span className={styles.label} id={field("size-label")}>

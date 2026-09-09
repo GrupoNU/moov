@@ -1251,6 +1251,11 @@ export const en = {
   "search.options.dateWithin": "Date within",
   "search.options.dateOf": "of",
   "search.options.dateAnchor": "Date to search around",
+  /* E-20: why a field a Gmail user expects is missing. A note, never a
+     disabled input: this one cannot be built, and a greyed field would still
+     advertise it. */
+  "search.options.noExcludeNote":
+    "There is no field for excluding words: this server cannot answer a search for everything that does NOT match, so the field would only ever fail.",
   "search.options.hasAttachment": "Has attachment",
   "search.options.scope": "Search",
   /* E-15: the DEFAULT scope, named for what it actually is. An empty `in:`
@@ -2416,6 +2421,8 @@ export const es: Strings = {
   "search.options.dateWithin": "Fecha dentro de",
   "search.options.dateOf": "de",
   "search.options.dateAnchor": "Fecha alrededor de la cual buscar",
+  "search.options.noExcludeNote":
+    "No hay campo para excluir palabras: este servidor no puede responder una búsqueda por todo lo que NO coincide, así que el campo solo podría fallar.",
   "search.options.hasAttachment": "Tiene adjunto",
   "search.options.scope": "Buscar en",
   "search.options.scopeDefault": "Todo el correo (salvo Spam y Papelera)",
