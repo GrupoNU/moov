@@ -40,6 +40,7 @@
 const SIDEBAR_KEY = "moov.chrome.sidebarCollapsed";
 const PANE_WIDTH_KEY = "moov.chrome.readerWidth";
 const PANE_HEIGHT_KEY = "moov.chrome.readerHeight";
+const RAIL_MORE_KEY = "moov.chrome.railMoreOpen";
 
 /**
  * The reading pane's size limits, in pixels.
@@ -122,4 +123,26 @@ export function loadSidebarCollapsed(): boolean {
 
 export function saveSidebarCollapsed(collapsed: boolean): void {
   writeItem(SIDEBAR_KEY, collapsed ? "1" : "0");
+}
+
+/**
+ * Whether the rail's "Más" section was left open (P0-5).
+ *
+ * Chrome, not a preference, on the same test the three above pass: it is an
+ * answer about the screen in front of you, not about the account. A tall
+ * monitor happily shows every folder expanded while a laptop wants the five
+ * canonical rows, and roaming the choice would make each device keep undoing
+ * the other's.
+ *
+ * CLOSED is the default — Gmail's, and the point of the collapse: a rail that
+ * restored itself open for a first-time user would be the dump of folders this
+ * whole change exists to end. Only the exact string `"1"` opens it, for the
+ * same reason the rail's collapse only accepts `"1"`.
+ */
+export function loadRailMoreOpen(): boolean {
+  return readItem(RAIL_MORE_KEY) === "1";
+}
+
+export function saveRailMoreOpen(open: boolean): void {
+  writeItem(RAIL_MORE_KEY, open ? "1" : "0");
 }

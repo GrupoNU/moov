@@ -713,4 +713,8 @@ export const PREF_ROWS_BY_OTHER_MEANS: Readonly<Record<string, string>> = {
   labels:
     "The Labels section's per-label colour and visibility pickers write it through " +
     "useLabels, not through a SettingRow control.",
+  folderVisibility:
+    "The Labels tab's Carpetas table (P0-5c) writes one entry per folder from a " +
+    "select beside each name, not through a SettingRow control — a row per folder " +
+    "would be a settings page as long as the account's folder list.",
 };

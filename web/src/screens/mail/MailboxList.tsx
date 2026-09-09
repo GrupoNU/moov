@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import {
@@ -7,6 +7,13 @@ import {
   mailboxSegment,
   type MailboxNode,
 } from "../../mail/mailboxes";
+import {
+  curateRail,
+  disambiguateName,
+  normalizeFolderName,
+  orderMore,
+} from "../../mail/railCuration";
+import type { FolderVisibility } from "../../mail/prefs";
 import type { Mailbox, MailboxRole } from "../../mail/types";
 import { mailboxLabel } from "./mailboxLabels";
 import styles from "./MailboxList.module.css";
@@ -137,7 +144,29 @@ export interface MailboxListProps {
    * hovering rather than by expanding.
    */
   readonly collapsed?: boolean;
+  /**
+   * P0-5: the user's per-folder rail visibility, keyed by mailbox NAME.
+   *
+   * From the server's `folderVisibility` preference (schema v3). Omitted — the
+   * case on a v2 server, and the case for every account that has never touched
+   * the settings table — means the policy in `railCuration.ts` decides alone,
+   * which is the correct fallback rather than a degraded one: the policy is
+   * the DEFAULT, and an empty map is exactly "no choices have been made".
+   */
+  readonly folderVisibility?: Readonly<Record<string, FolderVisibility>>;
+  /**
+   * P0-5: whether "Más" is open, and how to remember the answer.
+   *
+   * Lifted rather than kept here so the state survives this component
+   * remounting (a route change does that) and so the localStorage read happens
+   * once in the shell, beside the rail's own collapse. Omitted, the section
+   * still works — it just forgets between mounts, which is what a test wants.
+   */
+  readonly moreOpen?: boolean;
+  readonly onToggleMore?: (() => void) | undefined;
 }
+
+const NO_FOLDER_VISIBILITY: Readonly<Record<string, FolderVisibility>> = {};
 
 /**
  * Localised names for the folders whose names Dovecot supplies in English.
@@ -265,17 +294,156 @@ export function MailboxList({
   snoozedMailboxName,
   snoozedPlaceholder,
   collapsed = false,
+  folderVisibility = NO_FOLDER_VISIBILITY,
+  moreOpen,
+  onToggleMore,
 }: MailboxListProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const roleName = useRoleName();
+
+  /*
+   * P0-5: "Más" keeps its own state when the shell does not lift it.
+   *
+   * Closed by default either way — Gmail's shape, and the point of the
+   * collapse. A caller that passes `moreOpen` owns it (and persists it); one
+   * that does not gets a working section that forgets on remount, which is
+   * what the tests and any future embedding want.
+   */
+  const [localMoreOpen, setLocalMoreOpen] = useState(false);
+  const isMoreOpen = moreOpen ?? localMoreOpen;
+  const toggleMore = (): void => {
+    if (onToggleMore !== undefined) onToggleMore();
+    else setLocalMoreOpen((open) => !open);
+  };
 
   // Sorting 24 folders on every keystroke elsewhere in the app would be
   // wasteful; the tree only changes when the mailboxes do.
   const tree = useMemo(() => buildMailboxTree(mailboxes), [mailboxes]);
 
+  /*
+   * P0-5: the rail, curated. Three steps, each a pure function tested on its
+   * own in `railCuration.test.ts`:
+   *
+   *   1. drop what the policy (or the user) hides,
+   *   2. split into the canonical rows and the rest,
+   *   3. order the rest so Archivo/Spam/Papelera lead.
+   *
+   * Memoized together because they are one derivation of one input; splitting
+   * them into three `useMemo`s would buy nothing and let them drift apart.
+   */
+  const { primary, more } = useMemo(() => {
+    const split = curateRail(
+      tree,
+      (node) => node.mailbox,
+      mailboxes,
+      folderVisibility,
+      snoozedMailboxName,
+    );
+    return {
+      primary: split.primary,
+      more: orderMore(split.more, (node) => node.mailbox),
+    };
+  }, [tree, mailboxes, folderVisibility, snoozedMailboxName]);
+
+  /*
+   * P0-5b: the section opens itself when what you are LOOKING AT is inside it.
+   *
+   * Without this, navigating to Papelera — from the keyboard, a deep link or
+   * the reader's delete — leaves the rail with no row marked current and the
+   * folder you are in nowhere on screen. That is disorienting in exactly the
+   * way the collapse was meant to prevent, and it is also what breaks the
+   * "Vaciar la papelera" affordance, which by design renders only on the Trash
+   * ROW and only while Trash is open.
+   *
+   * Derived rather than an effect on selection: an effect would paint one
+   * frame with the section shut and then open it, and would also fight a user
+   * who deliberately closed it while standing in one of its folders.
+   */
+  const selectionInMore =
+    selectedId !== undefined && more.some((node) => node.mailbox.id === selectedId);
+  const showMore = (isMoreOpen || selectionInMore) && !collapsed;
+
+  /*
+   * P0-5d: the names a ROLE row already occupies, folded for comparison.
+   *
+   * Built from the roled mailboxes' DISPLAY labels rather than their raw
+   * names, because that is what the user sees: the role folder called
+   * "Archive" renders as "Archivo", and it is "Archivo" that a custom folder
+   * can collide with.
+   */
+  const roleLabels = useMemo(() => {
+    const taken = new Set<string>();
+    for (const mailbox of mailboxes) {
+      if (mailbox.role !== null) taken.add(normalizeFolderName(roleName(mailbox)));
+    }
+    return taken;
+    // `roleName` closes over the translator, which is stable per locale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mailboxes, t]);
+
   if (isLoading && mailboxes.length === 0) {
     return <SidebarSkeleton />;
   }
+
+  const renderNode = (node: MailboxNode): React.JSX.Element => {
+    /*
+     * E4: the Snoozed folder is a REAL mailbox (GC-10 makes snoozing an IMAP
+     * move), so it comes through the tree like any other and every existing
+     * code path — routing, deep links, the message list, `g b` — works on it
+     * unchanged. Only two things differ, and both are presentation: it gets
+     * the clock icon and a localised name, because Dovecot supplies its name
+     * in English exactly as it does for Sent and Drafts.
+     */
+    const isSnoozed =
+      snoozedMailboxName !== undefined && node.mailbox.name === snoozedMailboxName;
+    const label = isSnoozed ? t("snooze.mailboxName") : roleName(node.mailbox);
+    const row = (
+      <MailboxRow
+        key={node.mailbox.id}
+        node={node}
+        isSelected={node.mailbox.id === selectedId}
+        /*
+         * P0-5d: a custom folder whose name collides with a role's label is
+         * qualified, so the rail can never draw two rows reading "Archivo"
+         * with no way to tell them apart. The ROLE keeps the plain label — it
+         * is the one the move menu, the keyboard and the URL all mean.
+         */
+        name={disambiguateName(
+          node.mailbox,
+          label,
+          roleLabels,
+          mailboxes,
+          t("mailbox.customSuffix"),
+        )}
+        onSelect={onSelect}
+        formatUnread={(count) => format("mailbox.unreadCount", count)}
+        {...(isSnoozed ? { iconKey: "snoozed" } : {})}
+        {...(onEmptyTrash !== undefined && node.mailbox.role === "trash"
+          ? { onEmptyTrash, isEmptyingTrash }
+          : {})}
+      />
+    );
+    /*
+     * Gmail's rail order (canon 07 §2): Recibidos, Destacados, Pospuestos,
+     * then Enviados and Borradores. The two virtual entries are emitted right
+     * after the Inbox row rather than appended at the end, because their
+     * POSITION is the muscle memory — Destacados is "the one under the inbox".
+     *
+     * Keyed off the inbox ROLE rather than an index, so a server that puts
+     * Inbox somewhere else in `sortOrder` still gets them in the right place,
+     * and an account with no inbox at all simply does not show them mid-tree.
+     */
+    if (node.mailbox.role !== "inbox") return row;
+    return (
+      <Fragment key={node.mailbox.id}>
+        {row}
+        {starred !== undefined && <StarredRow {...starred} />}
+        {snoozedPlaceholder !== undefined && (
+          <SnoozedPlaceholderRow {...snoozedPlaceholder} />
+        )}
+      </Fragment>
+    );
+  };
 
   return (
     <ul
@@ -285,57 +453,83 @@ export function MailboxList({
       role="tree"
       aria-label={t("shell.mailboxes")}
     >
-      {tree.map((node) => {
-        /*
-         * E4: the Snoozed folder is a REAL mailbox (GC-10 makes snoozing an
-         * IMAP move), so it comes through the tree like any other and every
-         * existing code path — routing, deep links, the message list, `g b` —
-         * works on it unchanged. Only two things differ, and both are
-         * presentation: it gets the clock icon and a localised name, because
-         * Dovecot supplies its name in English exactly as it does for Sent and
-         * Drafts.
-         */
-        const isSnoozed =
-          snoozedMailboxName !== undefined && node.mailbox.name === snoozedMailboxName;
-        const row = (
-          <MailboxRow
-            key={node.mailbox.id}
-            node={node}
-            isSelected={node.mailbox.id === selectedId}
-            name={isSnoozed ? t("snooze.mailboxName") : roleName(node.mailbox)}
-            onSelect={onSelect}
-            formatUnread={(count) => format("mailbox.unreadCount", count)}
-            {...(isSnoozed ? { iconKey: "snoozed" } : {})}
-            {...(onEmptyTrash !== undefined && node.mailbox.role === "trash"
-              ? { onEmptyTrash, isEmptyingTrash }
-              : {})}
-          />
-        );
-        /*
-         * Gmail's rail order (canon 07 §2): Recibidos, Destacados, Pospuestos,
-         * then everything else. The two virtual entries are emitted right after
-         * the Inbox row rather than appended at the end, because their POSITION
-         * is the muscle memory — Destacados is "the one under the inbox".
-         *
-         * Keyed off the inbox ROLE rather than an index, so a server that puts
-         * Inbox somewhere else in `sortOrder` still gets them in the right
-         * place, and an account with no inbox at all simply does not show them
-         * mid-tree.
-         */
-        if (node.mailbox.role !== "inbox") return row;
-        return (
-          <Fragment key={node.mailbox.id}>
-            {row}
-            {starred !== undefined && <StarredRow {...starred} />}
-            {snoozedPlaceholder !== undefined && (
-              <SnoozedPlaceholderRow {...snoozedPlaceholder} />
-            )}
-          </Fragment>
-        );
-      })}
+      {primary.map(renderNode)}
+      {/*
+        P0-5b: the two outgoing rows stay ABOVE "Más".
+        Both are drawn only when non-empty, so they are never noise, and when
+        they ARE drawn they are urgent — mail that has not gone out. Burying
+        that behind a collapse would be the one place the curation could cost
+        a user something real.
+      */}
       {outbox !== undefined && <OutboxRow {...outbox} />}
       {scheduled !== undefined && <ScheduledRow {...scheduled} />}
+
+      {/*
+        P0-5b/e: "Más", and what it hides.
+
+        Rendered only when there is something behind it — a disclosure that
+        reveals nothing is a control that lies. With the rail COLLAPSED the
+        section's contents stay closed regardless: canon 07 §2 collapses the
+        rail to a handful of DISTINCT icons, and a dozen identical generic
+        folder glyphs is precisely the state the owner's screenshot showed.
+      */}
+      {more.length > 0 && (
+        <>
+          <MoreToggle open={showMore} onToggle={toggleMore} />
+          {showMore && more.map(renderNode)}
+        </>
+      )}
     </ul>
+  );
+}
+
+/**
+ * The "Más" disclosure (P0-5b, canon 07 §2).
+ *
+ * A `treeitem` like every other row rather than a `group` with an
+ * `aria-expanded` parent, because it is not a folder and has no children in
+ * the tree's sense — the rows it reveals are siblings at level 1, exactly
+ * where they were before the collapse existed. `aria-expanded` on the button
+ * states what it does; the revealed rows are found by continuing down the
+ * tree, which is where a screen-reader user is already looking.
+ */
+function MoreToggle({
+  open,
+  onToggle,
+}: {
+  readonly open: boolean;
+  readonly onToggle: () => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  const label = open ? t("mailbox.less") : t("mailbox.more");
+
+  return (
+    <li role="treeitem" aria-level={1} aria-selected={false} className={styles.item}>
+      <button
+        type="button"
+        className={`${styles.row} ${styles.moreToggle}`}
+        onClick={onToggle}
+        aria-expanded={open}
+        title={label}
+      >
+        <svg
+          className={[styles.chevron, open ? styles.chevronOpen : ""]
+            .filter(Boolean)
+            .join(" ")}
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="M6 8l4 4 4-4" />
+        </svg>
+        <span className={styles.name}>{label}</span>
+      </button>
+    </li>
   );
 }
 

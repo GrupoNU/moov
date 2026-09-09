@@ -12,17 +12,19 @@ import type { Mailbox, MailboxRole } from "./types";
 /**
  * The order roles appear in the sidebar.
  *
- * This is the deliverable's specified order (Inbox, Drafts, Sent, Archive,
- * Junk, Trash) and it is NOT the server's `sortOrder`. The server orders
- * Archive(40) before Junk(70) and Trash(80) but puts Drafts(20) before
- * Sent(30) — close, but it also interleaves `flagged`(50) and `all`(60),
- * which are Gmail-style virtual folders we surface differently. Owning the
- * order here means the sidebar reads the same against any server.
+ * NOT the server's `sortOrder`. The server orders Archive(40) before Junk(70)
+ * and Trash(80) but also interleaves `flagged`(50) and `all`(60), which are
+ * Gmail-style virtual folders we surface differently. Owning the order here
+ * means the sidebar reads the same against any server.
+ *
+ * P0-5 (review A-03): Enviados now precedes Borradores. The old order had
+ * Drafts second, which was P2's own spec and is not Gmail's — canon 07 §2 puts
+ * Enviados before Borradores, and this is a rail people navigate from memory.
  */
 const ROLE_ORDER: readonly MailboxRole[] = [
   "inbox",
-  "drafts",
   "sent",
+  "drafts",
   "archive",
   "junk",
   "trash",

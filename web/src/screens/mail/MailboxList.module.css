@@ -21,11 +21,31 @@
   display: block;
 }
 
+/*
+ * P0-5a — the UA button reset, and why it is not optional here.
+ *
+ * Most rows are anchors (a folder is a link: middle-click opens a tab). The
+ * VIRTUAL rows — Destacados, Pospuestos, Programados, Salida — have nothing to
+ * link to, so they are `<button>`s, and a button carries user-agent chrome an
+ * anchor does not: a border, a grey background, the platform's control font,
+ * centred text and its own colour. The owner's screenshot showed exactly that
+ * — four grey boxes among the folder rows, in a rail that is supposed to read
+ * as one list.
+ *
+ * The reset lives on `.row`, the class both element types share, rather than
+ * on a button-only class: two rows that must look identical should not be
+ * styled by two rules that can drift.
+ */
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  width: 100%;
   border-radius: var(--radius-md);
   color: var(--text-default);
   text-decoration: none;
@@ -37,8 +57,42 @@
     color var(--duration-fast) var(--ease-out);
 }
 
+/* An anchor's default; a reset button would otherwise revert to the arrow and
+ * give the two row kinds different affordances under the same pointer. */
+button.row {
+  cursor: pointer;
+}
+
 .row:hover {
   background: var(--surface-sunken);
+}
+
+/*
+ * The "Más" disclosure (P0-5b, canon 07 §2).
+ *
+ * Styled AS a row rather than as a distinct control: it sits in the same list,
+ * at the same rhythm, and Gmail's own is a row with a chevron. It carries the
+ * `.row` reset above, so only the chevron and the muted colour are new.
+ */
+.moreToggle {
+  color: var(--text-muted);
+}
+
+.chevron {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* With the rail collapsed the label is folded away and only icons remain, so
+ * the chevron takes the icon slot's place at the row's start. */
+.treeCollapsed .moreToggle .chevron {
+  margin: 0 auto;
 }
 
 .selected {

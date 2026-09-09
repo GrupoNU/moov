@@ -17,6 +17,7 @@ import {
   rowHeightFor,
   savePrefs,
   servesPrefsV2,
+  servesPrefsV3,
   sessionHasPrefs,
   sortForInboxType,
   UNDO_SEND_SECONDS,
@@ -70,6 +71,10 @@ const FULL_WIRE = {
     forNew: "work",
     forReply: null,
   },
+  // v3 (P0-5): a flat map keyed by mailbox DISPLAY NAME. Rendered as `{}` when
+  // empty rather than null, the same as `labels`, so a client never has to
+  // tell "no choices" from "unknown".
+  folderVisibility: { Calendario: "hide", Avisos: "showIfUnread" },
 };
 
 describe("parsePrefs", () => {
@@ -98,6 +103,7 @@ describe("parsePrefs", () => {
         forNew: "work",
         forReply: null,
       },
+      folderVisibility: { Calendario: "hide", Avisos: "showIfUnread" },
     } satisfies Prefs);
   });
 
@@ -509,6 +515,41 @@ describe("parsePrefs — the v2 keys", () => {
     expect(servesPrefsV2(null)).toBe(false);
   });
 
+  it("detects v3 at its OWN granularity, not v2's (P0-5)", () => {
+    /*
+     * A deploy window can serve v2 and not v3, and the difference is
+     * user-visible: the folder-visibility table must render as unavailable
+     * rather than offering a switch whose save comes back `unknownProperty`
+     * and silently reverts. Detection folded into `servesPrefsV2` would have
+     * offered it.
+     */
+    expect(servesPrefsV3(FULL_WIRE)).toBe(true);
+
+    const { folderVisibility: _absent, ...v2Only } = FULL_WIRE;
+    expect(servesPrefsV3(v2Only)).toBe(false);
+    // ...and the v2 keys are still all there, so a v2 server is still a v2
+    // server: the two detections are independent, which is the point.
+    expect(servesPrefsV2(v2Only)).toBe(true);
+  });
+
+  it("hands a folder back to the POLICY when its stored value is nonsense", () => {
+    /*
+     * Dropped, not defaulted to "show". Defaulting would reveal a folder the
+     * user had hidden — the wrong way for a parse failure to fall — while
+     * dropping restores the state before anyone chose.
+     */
+    const parsed = parsePrefs({
+      ...FULL_WIRE,
+      folderVisibility: { Calendario: "maybe", Avisos: "hide", Otra: 7 },
+    });
+    expect(parsed.folderVisibility).toEqual({ Avisos: "hide" });
+  });
+
+  it("treats an absent folderVisibility as an empty map, never undefined", () => {
+    const { folderVisibility: _absent, ...v2Only } = FULL_WIRE;
+    expect(parsePrefs(v2Only).folderVisibility).toEqual({});
+  });
+
   it("drops a half-written label entry rather than inventing a colour", () => {
     /*
      * The opposite of how scalars degrade, and deliberately: a scalar has one
@@ -634,6 +675,26 @@ describe("the wire shape of a v2 set — the Go↔TS seam no compiler spans", ()
     // a boolean here would be refused with invalidProperties.
     expect(capture({ addressAutocomplete: "manual" })).toEqual({
       addressAutocomplete: "manual",
+    });
+  });
+
+  it("folderVisibility: a flat map keyed by mailbox NAME (v3, P0-5)", () => {
+    /*
+     * Keys are display names, not ids, matching `store.Prefs.FolderVisibility`.
+     * Sent as the WHOLE map, which is the server's whole-map replacement arm —
+     * the per-folder `folderVisibility/<name>` pointer form exists too and is
+     * deliberately unused here, because a folder name may contain a slash and
+     * would then need RFC 6901 escaping on the way out.
+     */
+    expect(
+      capture({ folderVisibility: { Calendario: "hide", Avisos: "showIfUnread" } }),
+    ).toEqual({ folderVisibility: { Calendario: "hide", Avisos: "showIfUnread" } });
+  });
+
+  it("folderVisibility: a name with a slash rides the whole map untouched", () => {
+    // The case that would have forced an escaping step if this used pointers.
+    expect(capture({ folderVisibility: { "Problemas/Conflictos": "hide" } })).toEqual({
+      folderVisibility: { "Problemas/Conflictos": "hide" },
     });
   });
 

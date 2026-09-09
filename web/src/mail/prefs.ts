@@ -141,6 +141,25 @@ export const OFFLINE_DEPTH_BOUNDS = {
 export const MAX_LABEL_PREFS = 26;
 export const MAX_SIGNATURE_ITEMS = 10;
 
+// --- v3: the folder rail's visibility map (P0-5) --------------------------
+
+/**
+ * Which folders the rail draws, keyed by mailbox DISPLAY NAME.
+ *
+ * The same three values Gmail gives its label list, and deliberately the same
+ * three {@link LabelPrefVisibility} already carries: a user who has learned
+ * "mostrar / ocultar / mostrar si hay sin leer" in one table meets it again in
+ * the other. Mirrors the server's `folderVisibilityChoices`.
+ *
+ * Keyed by NAME rather than id because that is what the settings table shows
+ * and what survives a folder being recreated — ids are per-account and opaque.
+ */
+export const FOLDER_VISIBILITIES = ["show", "hide", "showIfUnread"] as const;
+export type FolderVisibility = (typeof FOLDER_VISIBILITIES)[number];
+
+/** The cap the server enforces on the folder-rail map. */
+export const MAX_FOLDER_VISIBILITY = 200;
+
 /** One label's presentation metadata, as prefs carries it. */
 export interface LabelPrefs {
   /** A palette id — a NAME such as "amber", never a hex value. */
@@ -234,6 +253,18 @@ export interface Prefs {
   readonly sendAndArchive: boolean;
   readonly defaultReplyBehavior: ReplyBehavior;
   readonly signatures: SignaturePrefs;
+
+  // --- v3 ---
+
+  /**
+   * Rail visibility per folder, keyed by display NAME (P0-5).
+   *
+   * ABSENT entries are the common case and mean "the policy decides" — see
+   * `railCuration.ts`, which owns the default. An empty map is therefore not
+   * "everything hidden"; it is "the user has said nothing", which is where
+   * every account starts.
+   */
+  readonly folderVisibility: Readonly<Record<string, FolderVisibility>>;
 }
 
 /**
@@ -254,6 +285,18 @@ export const PREFS_V2_KEYS = [
 ] as const satisfies readonly (keyof Prefs)[];
 
 export type PrefsV2Key = (typeof PREFS_V2_KEYS)[number];
+
+/**
+ * The v3 keys, as data — one, so far.
+ *
+ * Separate from {@link PREFS_V2_KEYS} rather than appended to it, because
+ * feature detection is per-SCHEMA: a server may serve v2 and not v3 for the
+ * length of a deploy, and a settings table gated on "serves v2" would offer a
+ * control whose save comes back `unknownProperty`.
+ */
+export const PREFS_V3_KEYS = ["folderVisibility"] as const satisfies readonly (keyof Prefs)[];
+
+export type PrefsV3Key = (typeof PREFS_V3_KEYS)[number];
 
 /**
  * The product defaults.
@@ -300,6 +343,12 @@ export const DEFAULT_PREFS: Prefs = {
   sendAndArchive: true,
   defaultReplyBehavior: "reply",
   signatures: { items: {}, forNew: null, forReply: null },
+
+  // v3. Empty for the same reason `labels` is: the server omits an empty map,
+  // and a consumer reading `undefined` would have to branch on "no choices"
+  // versus "unknown". Empty here means the POLICY decides every folder, which
+  // is where every account starts.
+  folderVisibility: {},
 };
 
 /** The keys a caller may set, one at a time. */
@@ -366,6 +415,29 @@ function parseLabelPrefs(value: unknown): Readonly<Record<string, LabelPrefs>> {
       continue;
     }
     out[keyword] = { color: entry.color, visibility: entry.visibility as LabelPrefVisibility };
+    kept += 1;
+  }
+  return out;
+}
+
+/**
+ * Reads the folder-rail visibility map (v3).
+ *
+ * An entry whose value is not one of the three is DROPPED, not defaulted, for
+ * the same reason a malformed label entry is: defaulting it to "show" would
+ * silently reveal a folder the user had hidden, which is the wrong way for a
+ * parse failure to fall. Dropping it hands the folder back to the policy,
+ * which is the state it was in before anyone chose.
+ */
+function parseFolderVisibility(value: unknown): Readonly<Record<string, FolderVisibility>> {
+  if (typeof value !== "object" || value === null) return {};
+  const out: Record<string, FolderVisibility> = {};
+  let kept = 0;
+  for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (kept >= MAX_FOLDER_VISIBILITY) break;
+    if (typeof raw !== "string") continue;
+    if (!(FOLDER_VISIBILITIES as readonly string[]).includes(raw)) continue;
+    out[name] = raw as FolderVisibility;
     kept += 1;
   }
   return out;
@@ -489,6 +561,11 @@ export function parsePrefs(raw: unknown): Prefs {
       DEFAULT_PREFS.defaultReplyBehavior,
     ),
     signatures: parseSignaturePrefs(o.signatures),
+
+    // v3. Absent on a v2 server, and absence is not a problem: an empty map
+    // means the rail's own policy decides, which is what a v2 server's rail
+    // did anyway.
+    folderVisibility: parseFolderVisibility(o.folderVisibility),
   };
 }
 
@@ -521,6 +598,24 @@ export function servesPrefsV2(raw: unknown): boolean {
   if (typeof raw !== "object" || raw === null) return false;
   const o = raw as Record<string, unknown>;
   return PREFS_V2_KEYS.every((key) => o[key] !== undefined);
+}
+
+/**
+ * Whether a served preference object came from a server that knows v3.
+ *
+ * The same structural detection as {@link servesPrefsV2} and for the same
+ * reason — no version rides the wire — read at v3's own granularity because a
+ * deploy window can serve v2 and not v3.
+ *
+ * What it is FOR here: the folder-visibility TABLE in settings. On a v2 server
+ * the rail still curates itself (the policy needs no preference), but a switch
+ * the user flips would come back `unknownProperty` and silently revert. The
+ * table renders as unavailable instead — the same honesty the v2 rows get.
+ */
+export function servesPrefsV3(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const o = raw as Record<string, unknown>;
+  return PREFS_V3_KEYS.every((key) => o[key] !== undefined);
 }
 
 /**
@@ -584,6 +679,16 @@ export interface PrefsResult {
   readonly prefs: Prefs;
   /** The server's state cursor, for a future `Prefs/changes`. */
   readonly state: string;
+  /**
+   * Whether this server serves the v3 keys (P0-5).
+   *
+   * Carried on the RESULT rather than recomputed by callers, because it can
+   * only be read from the RAW response: `parsePrefs` fills every absent key
+   * with a default, so by the time a `Prefs` object exists the evidence of
+   * what the server actually sent is gone. Detected once, where the raw object
+   * is still in hand.
+   */
+  readonly servesV3: boolean;
 }
 
 function firstResponse(
@@ -625,6 +730,7 @@ export async function fetchPrefs(
   return {
     prefs: parsePrefs(list[0]),
     state: typeof args.state === "string" ? args.state : "",
+    servesV3: servesPrefsV3(list[0]),
   };
 }
 
@@ -657,6 +763,14 @@ export async function fetchPrefs(
  * second place for the two schemas to drift. `prefs.test.ts` pins the exact JSON
  * of a set of each of the six keys, which is the check that keeps the shortcut
  * honest — it is the Go↔TS seam no compiler spans.
+ *
+ * v3's `folderVisibility` inherits the property without adding a case: it is a
+ * flat `{[name]: "show"|"hide"|"showIfUnread"}` on both sides. Sending the
+ * whole map replaces it, which is the server's documented whole-map patch; the
+ * per-folder `folderVisibility/<name>` pointer form exists there too and is not
+ * used here, because a folder name may contain a slash and would then need RFC
+ * 6901 escaping on the way out — a second encoding, for no gain over sending
+ * the map the settings table is already holding.
  */
 export async function savePrefs(
   client: JmapClient,
@@ -697,6 +811,7 @@ export async function savePrefs(
   return {
     prefs: parsePrefs(list[0]),
     state: typeof getArgs.state === "string" ? getArgs.state : "",
+    servesV3: servesPrefsV3(list[0]),
   };
 }
 

@@ -12,6 +12,8 @@ import {
   type LabelBudget,
   type LabelNameProblem,
 } from "../../mail/labels";
+import { FOLDER_VISIBILITIES, type FolderVisibility } from "../../mail/prefs";
+import type { Mailbox } from "../../mail/types";
 import type { PlainStringKey } from "./registry";
 import styles from "./LabelsSection.module.css";
 
@@ -63,6 +65,26 @@ export interface LabelsSectionProps {
   readonly onAbortMigration?: (() => void) | undefined;
   /** Opens the new-folder flow — the alternative offered when the budget is 0. */
   readonly onCreateFolder?: (() => void) | undefined;
+  /**
+   * P0-5c: the folder-visibility table, below the labels.
+   *
+   * Optional so the section keeps working where there is no mailbox list to
+   * show — the tests, and any host that has not loaded folders yet. Absent
+   * renders no table at all rather than an empty one, because a heading over
+   * nothing is worse than silence.
+   */
+  readonly folders?: FoldersTableProps | undefined;
+}
+
+/** What the folder table needs. Exported so the settings page can build it. */
+export interface FoldersTableProps {
+  /** Every folder in the account, in the rail's own order. */
+  readonly folders: readonly Mailbox[];
+  /** The visibility in force — the stored choice, or the policy's default. */
+  readonly visibilityOf: (folder: Mailbox) => FolderVisibility;
+  readonly onSetVisibility: (folder: Mailbox, visibility: FolderVisibility) => void;
+  /** False on a server that does not serve prefs v3 — the table goes read-only. */
+  readonly isAvailable: boolean;
 }
 
 export function LabelsSection({
@@ -76,6 +98,7 @@ export function LabelsSection({
   migrationStatus,
   onAbortMigration,
   onCreateFolder,
+  folders,
 }: LabelsSectionProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const [name, setName] = useState("");
@@ -301,7 +324,86 @@ export function LabelsSection({
 
         {labels.length === 0 && <li className={styles.empty}>{t("label.none")}</li>}
       </ul>
+
+      {folders !== undefined && <FoldersTable {...folders} />}
     </div>
+  );
+}
+
+/**
+ * The system-folder table (P0-5c, review F-28).
+ *
+ * # Why this lives in the LABELS tab
+ *
+ * Gmail's Etiquetas tab opens with a "System labels" table — Recibidos,
+ * Destacados, Enviados… each with mostrar / ocultar — above the user's own
+ * labels. This is that table, for the thing Moov has that Gmail does not: an
+ * IMAP account whose folder list includes Calendario, Diario, Fuentes RSS and
+ * Problemas de sincronización, none of which hold mail.
+ *
+ * It is the OTHER HALF of the rail's curation, and the half that makes the
+ * curation defensible. The rail hides those folders by a NAME heuristic, which
+ * can be wrong — someone's real folder might be called "Notas". Nothing is
+ * deleted, and this is where a user sees every folder the account has, sees
+ * which are hidden, and changes their mind. Without it the heuristic would be
+ * an unexplained disappearance.
+ *
+ * # The three states, and why they are the label list's three
+ *
+ * "Mostrar / Ocultar / Mostrar si hay sin leer" — the same triple, the same
+ * words, in a table one tab-stop away from the label list that already uses
+ * them. A user who learned them once should not learn them twice.
+ *
+ * # Unavailable, rather than broken, on an older server
+ *
+ * The choice is stored server-side (prefs v3) so it roams. Against a v2 server
+ * a switch would be accepted by the UI and refused by `Prefs/set` with
+ * `unknownProperty` — silently reverting on reload, which is the worst kind of
+ * failure. `isAvailable: false` renders the table read-only with a sentence
+ * saying why, exactly as the other v2-gated rows do. The RAIL still curates
+ * itself either way: the policy needs no preference to run.
+ */
+function FoldersTable({
+  folders,
+  visibilityOf,
+  onSetVisibility,
+  isAvailable,
+}: FoldersTableProps): React.JSX.Element {
+  const { t } = useTranslation();
+
+  return (
+    <section className={styles.folders} aria-labelledby="settings-folders-heading">
+      <h3 id="settings-folders-heading" className={styles.foldersHeading}>
+        {t("folders.heading")}
+      </h3>
+      <p className={styles.foldersHelp}>{t("folders.help")}</p>
+      {!isAvailable && <p className={styles.foldersHelp}>{t("folders.unavailable")}</p>}
+
+      <ul className={styles.list}>
+        {folders.map((folder) => (
+          <li key={folder.id} className={styles.row}>
+            <span className={styles.folderName}>{folder.name}</span>
+            <select
+              className={styles.select}
+              aria-label={`${t("folders.visibility")}: ${folder.name}`}
+              value={visibilityOf(folder)}
+              disabled={!isAvailable}
+              onChange={(event) => {
+                onSetVisibility(folder, event.target.value as FolderVisibility);
+              }}
+            >
+              {FOLDER_VISIBILITIES.map((visibility) => (
+                <option key={visibility} value={visibility}>
+                  {t(FOLDER_VISIBILITY_KEYS[visibility])}
+                </option>
+              ))}
+            </select>
+          </li>
+        ))}
+
+        {folders.length === 0 && <li className={styles.empty}>{t("folders.none")}</li>}
+      </ul>
+    </section>
   );
 }
 
@@ -362,6 +464,13 @@ const PROBLEM_KEYS: Readonly<Record<LabelNameProblem | "full", PlainStringKey>> 
 };
 
 const VISIBILITY_KEYS: Readonly<Record<LabelVisibility, PlainStringKey>> = {
+  show: "label.visibility.show",
+  showIfUnread: "label.visibility.showIfUnread",
+  hide: "label.visibility.hide",
+};
+
+/* The SAME three words the label list uses, deliberately: one vocabulary. */
+const FOLDER_VISIBILITY_KEYS: Readonly<Record<FolderVisibility, PlainStringKey>> = {
   show: "label.visibility.show",
   showIfUnread: "label.visibility.showIfUnread",
   hide: "label.visibility.hide",

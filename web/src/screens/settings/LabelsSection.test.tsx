@@ -6,6 +6,7 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import { labelBudget, MAX_DURABLE_KEYWORDS } from "../../mail/labels";
 import { DEFAULT_LABEL_COLOR_ID, LABEL_COLORS } from "../../mail/labelPalette";
 import type { Label } from "../../mail/labelStore";
+import type { Mailbox } from "../../mail/types";
 import { LabelsSection } from "./LabelsSection";
 
 /**
@@ -263,5 +264,119 @@ describe("the closed gap is on screen, not only in a changelog", () => {
     // The direction that actually matters: a leftover copy of the old caveat
     // anywhere in this section would contradict the wiring.
     expect(screen.queryByText(/se guardan en este navegador/i)).toBeNull();
+  });
+});
+
+/**
+ * P0-5c — the folder-visibility table (review F-28).
+ *
+ * This is the OTHER HALF of the rail's curation, and the half that makes it
+ * defensible. The rail hides Calendario, Diario and Problemas de
+ * sincronización by a NAME heuristic, which can be wrong about someone's real
+ * folder called "Notas". Nothing is deleted, and this table is where a user
+ * sees every folder the account has, sees what the rail is doing with it, and
+ * changes their mind. Without it the hiding would be an unexplained
+ * disappearance — which is worse than the folder dump it replaced.
+ */
+describe("P0-5c: the Carpetas table", () => {
+  function folder(id: string, name: string): Mailbox {
+    return {
+      id,
+      name,
+      parentId: null,
+      role: null,
+      sortOrder: 100,
+      totalEmails: 0,
+      unreadEmails: 0,
+      totalThreads: 0,
+      unreadThreads: 0,
+      isSubscribed: true,
+      myRights: {
+        mayReadItems: true,
+        mayAddItems: true,
+        mayRemoveItems: true,
+        maySetSeen: true,
+        maySetKeywords: true,
+        mayCreateChild: true,
+        mayRename: true,
+        mayDelete: true,
+        maySubmit: true,
+      },
+    };
+  }
+
+  const FOLDERS = [folder("c", "Calendario"), folder("w", "Trabajo")];
+
+  function renderWithFolders(overrides: Record<string, unknown> = {}) {
+    const onSetVisibility = vi.fn();
+    renderSection({
+      folders: {
+        folders: FOLDERS,
+        visibilityOf: (box: Mailbox) => (box.name === "Calendario" ? "hide" : "show"),
+        onSetVisibility,
+        isAvailable: true,
+        ...overrides,
+      },
+    });
+    return { onSetVisibility };
+  }
+
+  it("lists every folder, hidden ones included — nothing is deleted", () => {
+    renderWithFolders();
+    expect(screen.getByText("Calendario")).toBeInTheDocument();
+    expect(screen.getByText("Trabajo")).toBeInTheDocument();
+  });
+
+  it("shows what the rail is currently doing with each one", () => {
+    renderWithFolders();
+    expect(
+      screen.getByRole("combobox", { name: /en el riel de carpetas: Calendario/i }),
+    ).toHaveValue("hide");
+    expect(
+      screen.getByRole("combobox", { name: /en el riel de carpetas: Trabajo/i }),
+    ).toHaveValue("show");
+  });
+
+  it("flips one back, by name", async () => {
+    const user = userEvent.setup();
+    const { onSetVisibility } = renderWithFolders();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /en el riel de carpetas: Calendario/i }),
+      "show",
+    );
+    expect(onSetVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Calendario" }),
+      "show",
+    );
+  });
+
+  it("offers the SAME three words the label list uses", () => {
+    renderWithFolders();
+    const select = screen.getByRole("combobox", {
+      name: /en el riel de carpetas: Trabajo/i,
+    });
+    const options = within(select).getAllByRole("option").map((o) => o.textContent);
+    // One vocabulary across both tables: a user should not learn it twice.
+    expect(options).toHaveLength(3);
+  });
+
+  it("goes read-only, and says why, on a server that cannot store the choice", () => {
+    /*
+     * A switch the UI accepts and `Prefs/set` refuses with `unknownProperty`
+     * reverts silently on reload — the worst kind of failure. The rail still
+     * curates itself there, which is why the table stays VISIBLE rather than
+     * disappearing and leaving the hiding unexplained.
+     */
+    renderWithFolders({ isAvailable: false });
+    expect(
+      screen.getByRole("combobox", { name: /en el riel de carpetas: Trabajo/i }),
+    ).toBeDisabled();
+    expect(screen.getByText(/no puede guardar la elección/i)).toBeInTheDocument();
+  });
+
+  it("draws no table at all when the host has no folders to show", () => {
+    // A heading over nothing is worse than silence.
+    renderSection();
+    expect(screen.queryByText(/^Carpetas$/)).not.toBeInTheDocument();
   });
 });

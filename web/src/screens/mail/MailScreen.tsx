@@ -23,9 +23,11 @@ import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs
 import {
   clampPane,
   loadPaneSize,
+  loadRailMoreOpen,
   loadSidebarCollapsed,
   PANE_BOUNDS,
   savePaneSize,
+  saveRailMoreOpen,
   saveSidebarCollapsed,
   type PaneAxis,
 } from "../../mail/viewChrome";
@@ -68,6 +70,7 @@ import { encodeLabelKeyword } from "../../mail/labels";
 import type { Label } from "../../mail/labelStore";
 import { visibleLabels } from "../../mail/labelStore";
 import { mailboxSegment, resolveMailbox } from "../../mail/mailboxes";
+import { effectiveVisibility } from "../../mail/railCuration";
 import { isSearchable, normalizeQuery, refusalFor } from "../../mail/search";
 import { parseSearchQuery, type UnsupportedTerm } from "../../mail/searchQuery";
 import { planFilter, type FilterPlan, type FilterProblem } from "../../mail/searchFilter";
@@ -208,7 +211,7 @@ export function MailScreen(): React.JSX.Element {
   const branding = useBranding();
   const { t, format, locale } = useTranslation();
   const { route, navigate, replace } = useRouter();
-  const { prefs } = usePrefs();
+  const { prefs, servesV3, setPref } = usePrefs();
 
   /*
    * E11: the app's own confirm, replacing `window.confirm` at every site on
@@ -393,6 +396,24 @@ export function MailScreen(): React.JSX.Element {
     setSidebarCollapsed((collapsed) => {
       const next = !collapsed;
       saveSidebarCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  /*
+   * P0-5: whether the rail's "Más" section is open.
+   *
+   * Lifted here rather than kept in `MailboxList` so it survives that
+   * component remounting on a route change, and seeded lazily for the same
+   * reason the rail's collapse is: an effect would paint one frame of the
+   * open section and then snap it shut. Device-local chrome, not a preference
+   * — a laptop and a 27" monitor want different answers.
+   */
+  const [railMoreOpen, setRailMoreOpen] = useState<boolean>(() => loadRailMoreOpen());
+  const toggleRailMore = useCallback((): void => {
+    setRailMoreOpen((open) => {
+      const next = !open;
+      saveRailMoreOpen(next);
       return next;
     });
   }, []);
@@ -2264,8 +2285,41 @@ export function MailScreen(): React.JSX.Element {
         : undefined,
       onAbortMigration: labelsApi.isMigrating ? labelsApi.abort : undefined,
       onCreateFolder: undefined,
+      /*
+       * P0-5c: the folder-visibility table — the OTHER HALF of the rail's
+       * curation, and the half that makes it defensible. The rail hides
+       * Calendario, Diario and friends by a name heuristic that can be wrong;
+       * this is where every folder the account has is listed, with what the
+       * rail is doing with it and a way to change it.
+       *
+       * Read-only against a v2 server rather than absent: the rail still
+       * curates itself there (the policy needs no preference), and a table
+       * that vanished would leave the hiding unexplained. `isAvailable:false`
+       * shows the folders and says why the switches cannot be moved yet.
+       */
+      folders: {
+        folders: mailboxes,
+        visibilityOf: (folder) =>
+          effectiveVisibility(folder, mailboxes, prefs.folderVisibility),
+        onSetVisibility: (folder, visibility) => {
+          void setPref("folderVisibility", {
+            ...prefs.folderVisibility,
+            [folder.name]: visibility,
+          });
+        },
+        isAvailable: servesV3,
+      },
     }),
-    [labelsApi, reportMigration, format, confirm],
+    [
+      labelsApi,
+      reportMigration,
+      format,
+      confirm,
+      mailboxes,
+      prefs.folderVisibility,
+      servesV3,
+      setPref,
+    ],
   );
 
   /**
@@ -4136,6 +4190,19 @@ export function MailScreen(): React.JSX.Element {
                 : {})}
               snoozedMailboxName={snoozedFolderName}
               collapsed={sidebarCollapsed}
+              /*
+               * P0-5: the user's per-folder rail visibility (prefs v3).
+               *
+               * Passed unconditionally. On a v2 server it parses to `{}`, and
+               * `{}` is not a degraded state — it is exactly "the user has made
+               * no choices", which is when the rail's own policy decides. So
+               * the curation works identically against an older moovd; what a
+               * v2 server cannot do is REMEMBER a change, which is why the
+               * settings table (not the rail) is what gates on `servesPrefsV3`.
+               */
+              folderVisibility={prefs.folderVisibility}
+              moreOpen={railMoreOpen}
+              onToggleMore={toggleRailMore}
             />
           )}
 

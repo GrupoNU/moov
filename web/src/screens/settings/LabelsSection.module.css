@@ -222,3 +222,44 @@
   background: var(--label-bg-dark);
   color: var(--label-fg-dark);
 }
+
+/*
+ * P0-5c: the folder-visibility table, under the labels.
+ *
+ * Deliberately reuses `.list`, `.row`, `.select` and `.empty` above rather
+ * than growing a parallel set: it is the same shape of table with one column
+ * fewer, and Gmail's own system-labels table sits in this very tab for the
+ * same reason. A second set of rules is a second place for the two to drift
+ * apart visually, which is the one thing that would make them read as
+ * unrelated features.
+ */
+.folders {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.foldersHeading {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.foldersHelp {
+  margin: 0 0 var(--space-3);
+  max-width: 46rem;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* A minimum so the selects line up down the table instead of stepping in and
+ * out with each folder's name length. */
+.folderName {
+  flex: 1;
+  min-width: 12rem;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

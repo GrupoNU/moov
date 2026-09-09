@@ -102,6 +102,24 @@ describe("coverage — every preference reaches a control", () => {
       "utf8",
     );
     expect(labelController).toContain('setPref("labels"');
+
+    /*
+     * The same claim for P0-5c's `folderVisibility`: the Carpetas table in the
+     * Labels tab is what writes it. Both halves are checked — the table exists
+     * in the section, and the screen hands it a writer — because either one
+     * missing turns the rail's hiding into an unexplained disappearance the
+     * user cannot undo.
+     */
+    const labelsSection = readFileSync(
+      resolve(process.cwd(), "src/screens/settings/LabelsSection.tsx"),
+      "utf8",
+    );
+    expect(labelsSection).toContain("FoldersTable");
+    const mailScreen = readFileSync(
+      resolve(process.cwd(), "src/screens/mail/MailScreen.tsx"),
+      "utf8",
+    );
+    expect(mailScreen).toContain('setPref("folderVisibility"');
   });
 
   it("keeps BOTH halves of the offline depth on screen", () => {

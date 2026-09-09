@@ -48,7 +48,9 @@ function mailbox(
 }
 
 describe("buildMailboxTree", () => {
-  it("orders roles Inbox, Drafts, Sent, Archive, Junk, Trash before custom folders", () => {
+  it("orders roles Inbox, Sent, Drafts, Archive, Junk, Trash before custom folders", () => {
+    // P0-5 (review A-03): Enviados before Borradores — canon 07 §2's order,
+    // not P2's. The rail is navigated from memory, so the order is the API.
     // Deliberately supplied in a scrambled order.
     const tree = buildMailboxTree([
       mailbox("m1", "Zeta"),
@@ -63,8 +65,8 @@ describe("buildMailboxTree", () => {
 
     expect(tree.map((node) => node.mailbox.name)).toEqual([
       "INBOX",
-      "Drafts",
       "Sent",
+      "Drafts",
       "Archive",
       "Junk",
       "Trash",

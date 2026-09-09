@@ -622,6 +622,11 @@ export const en = {
   "mailbox.expand": "Expand folder",
   "mailbox.loadFailed": "Could not load your folders",
   "mailbox.retry": "Try again",
+  // P0-5: the rail's collapse, and the qualifier a custom folder gets when its
+  // name collides with a role row's label.
+  "mailbox.more": "More",
+  "mailbox.less": "Less",
+  "mailbox.customSuffix": "folder",
 
   // --- P2: the message list ---
   "list.loading": "Loading messages…",
@@ -1029,6 +1034,14 @@ export const en = {
   "label.labelAs": "Label as",
   "label.manage": "Manage labels…",
   "label.none": "No labels yet",
+  // P0-5c: the folder-visibility table, the other half of the rail's curation.
+  "folders.heading": "Folders",
+  "folders.help":
+    "Folders your mail client created to sync calendars, contacts or sync errors are hidden from the rail by default. Nothing is deleted — show any of them here.",
+  "folders.unavailable":
+    "This server cannot store the choice yet, so it would not survive a reload. The rail still hides the folders it recognises.",
+  "folders.visibility": "In the folder rail",
+  "folders.none": "No folders",
   "label.more": (count: number): string => `+${count}`,
   "label.openLabel": (name: string): string => `Show everything labelled "${name}"`,
   "label.create": "New label",
@@ -1761,6 +1774,9 @@ export const es: Strings = {
   "mailbox.expand": "Expandir carpeta",
   "mailbox.loadFailed": "No se pudieron cargar tus carpetas",
   "mailbox.retry": "Reintentar",
+  "mailbox.more": "Más",
+  "mailbox.less": "Menos",
+  "mailbox.customSuffix": "carpeta",
 
   "list.loading": "Cargando mensajes…",
   "list.empty": "No hay nada acá",
@@ -2107,6 +2123,13 @@ export const es: Strings = {
   "label.labelAs": "Etiquetar como",
   "label.manage": "Administrar etiquetas…",
   "label.none": "Todavía no hay etiquetas",
+  "folders.heading": "Carpetas",
+  "folders.help":
+    "Las carpetas que tu cliente de correo crea para sincronizar calendarios, contactos o errores de sincronización quedan ocultas del riel por defecto. No se borra nada: mostrá acá la que quieras.",
+  "folders.unavailable":
+    "Este servidor todavía no puede guardar la elección, así que no sobreviviría a una recarga. El riel sigue ocultando las carpetas que reconoce.",
+  "folders.visibility": "En el riel de carpetas",
+  "folders.none": "Sin carpetas",
   "label.more": (count: number): string => `+${count}`,
   "label.openLabel": (name: string): string => `Ver todo lo etiquetado como «${name}»`,
   "label.create": "Etiqueta nueva",

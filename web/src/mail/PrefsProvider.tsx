@@ -58,6 +58,16 @@ export interface PrefsContextValue {
   readonly status: PrefsStatus;
   /** True when the server advertises the capability and a load succeeded. */
   readonly isAvailable: boolean;
+  /**
+   * True when the loaded object carried the v3 keys (P0-5).
+   *
+   * Detected from the RAW response by `fetchPrefs`, because `parsePrefs` fills
+   * every absent key with a default and destroys the evidence. What it gates:
+   * a control whose save an older moovd would refuse with `unknownProperty`,
+   * silently reverting on reload. False during the load, which is correct — a
+   * control must not appear enabled before we know it works.
+   */
+  readonly servesV3: boolean;
   /** The last save failure, in the server's own words. Cleared by a success. */
   readonly error: string | undefined;
   /** True while at least one save is in flight. */
@@ -116,6 +126,8 @@ export function PrefsProvider({
     initialPrefs === undefined ? "loading" : "ready",
   );
   const [error, setError] = useState<string | undefined>(undefined);
+  /* P0-5: false until a load proves otherwise — see PrefsContextValue. */
+  const [servesV3, setServesV3] = useState(false);
   const [inFlight, setInFlight] = useState(0);
 
   const available = sessionHasPrefs(session, accountId);
@@ -156,6 +168,7 @@ export function PrefsProvider({
         const result = await fetchPrefs(client, accountId, controller.signal);
         if (controller.signal.aborted) return;
         setPrefs(result.prefs);
+        setServesV3(result.servesV3);
         setStatus("ready");
         setError(undefined);
       } catch (cause) {
@@ -256,12 +269,13 @@ export function PrefsProvider({
       prefs,
       status,
       isAvailable: available && status === "ready",
+      servesV3: available && status === "ready" && servesV3,
       error,
       isSaving: inFlight > 0,
       setPref,
       setPrefs: setPrefsPatch,
     }),
-    [prefs, status, available, error, inFlight, setPref, setPrefsPatch],
+    [prefs, status, available, servesV3, error, inFlight, setPref, setPrefsPatch],
   );
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
@@ -287,6 +301,7 @@ const FALLBACK: PrefsContextValue = {
   prefs: DEFAULT_PREFS,
   status: "unavailable",
   isAvailable: false,
+  servesV3: false,
   error: undefined,
   isSaving: false,
   setPref: () => Promise.resolve(false),

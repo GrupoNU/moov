@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -117,7 +120,13 @@ describe("empty trash (E2 item 7)", () => {
   it("keeps the tree semantics intact", () => {
     renderSidebar();
     expect(screen.getByRole("tree")).toBeInTheDocument();
-    expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+    /*
+     * Three, not two: P0-5's "Más" is a treeitem like every other row, and it
+     * is drawn here because Trash fell behind the collapse. That is the shape
+     * the disclosure has to have — a row in the same list, at the same rhythm,
+     * as Gmail's own.
+     */
+    expect(screen.getAllByRole("treeitem")).toHaveLength(3);
   });
 });
 
@@ -257,5 +266,168 @@ describe("the always-visible virtual entries", () => {
     // should name Pospuestos.
     expect(screen.queryByRole("button", { name: /pospuestos/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /pospuestos/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * P0-5 — the rail is curated, not dumped (canon 07 §2).
+ *
+ * The state these tests prevent is the one in the owner's screenshot: about
+ * twenty-five IMAP folders in the sidebar, Calendario and Diario and Fuentes
+ * RSS among them, "Problemas de sincronización" whose Conflictos child carried
+ * a badge of 26 demanding attention about a folder holding no mail, and — with
+ * the rail collapsed — twenty identical grey rectangles.
+ *
+ * The POLICY itself is tested in `mail/railCuration.test.ts`, on its own, as
+ * data. What is tested here is what the component does with it.
+ */
+describe("P0-5: the curated rail", () => {
+  const CURATED = [
+    mailbox("inbox", "inbox", "Inbox"),
+    mailbox("sent", "sent", "Sent"),
+    mailbox("drafts", "drafts", "Drafts"),
+    mailbox("archive", "archive", "Archive"),
+    mailbox("trash", "trash", "Trash"),
+    mailbox("cal", null, "Calendario"),
+    mailbox("work", null, "Trabajo"),
+  ];
+
+  function renderCurated(overrides: Record<string, unknown> = {}) {
+    render(
+      <I18nProvider locale="es">
+        <MailboxList
+          mailboxes={CURATED}
+          selectedId="inbox"
+          onSelect={vi.fn()}
+          {...overrides}
+        />
+      </I18nProvider>,
+    );
+  }
+
+  it("shows the canonical rows and hides the rest behind Más", () => {
+    renderCurated();
+    expect(screen.getByRole("link", { name: /bandeja de entrada/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^enviados/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^borradores/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^archivo/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^papelera/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /trabajo/i })).not.toBeInTheDocument();
+  });
+
+  it("does not draw the system folders at all — they are not even in Más", async () => {
+    const user = userEvent.setup();
+    renderCurated();
+    await user.click(screen.getByRole("button", { name: /^más$/i }));
+    expect(screen.getByRole("link", { name: /^archivo/i })).toBeInTheDocument();
+    // Calendario stays hidden: this is the whole point of the policy.
+    expect(screen.queryByRole("link", { name: /calendario/i })).not.toBeInTheDocument();
+  });
+
+  it("opens Más on demand and closes it again", async () => {
+    const user = userEvent.setup();
+    renderCurated();
+    const toggle = screen.getByRole("button", { name: /^más$/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggle);
+    expect(screen.getByRole("link", { name: /trabajo/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^menos$/i }));
+    expect(screen.queryByRole("link", { name: /trabajo/i })).not.toBeInTheDocument();
+  });
+
+  it("opens itself when the folder you are IN is behind the collapse", () => {
+    /*
+     * Otherwise navigating to Papelera — by keyboard, deep link, or deleting a
+     * message — leaves no row marked current and the folder you are standing
+     * in nowhere on screen.
+     */
+    renderCurated({ selectedId: "trash" });
+    expect(screen.getByRole("link", { name: /^papelera/i })).toBeInTheDocument();
+  });
+
+  it("honours a stored choice over the policy, in both directions", async () => {
+    const user = userEvent.setup();
+    renderCurated({ folderVisibility: { Calendario: "show", Trabajo: "hide" } });
+    await user.click(screen.getByRole("button", { name: /^más$/i }));
+    expect(screen.getByRole("link", { name: /calendario/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /trabajo/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps Pospuestos in Gmail's place — third, above Enviados", () => {
+    /*
+     * The Snoozed folder has no RFC 6154 role, so nothing structural puts it
+     * there: the tree sorts unroled folders after every roled one, which would
+     * land it below Borradores. Canon 07 §2 lists it third.
+     */
+    render(
+      <I18nProvider locale="es">
+        <MailboxList
+          mailboxes={[...CURATED, mailbox("snz", null, "Snoozed")]}
+          selectedId="inbox"
+          onSelect={vi.fn()}
+          snoozedMailboxName="Snoozed"
+          starred={{ isSelected: false, onSelect: vi.fn() }}
+        />
+      </I18nProvider>,
+    );
+    const rows = screen
+      .getAllByRole("treeitem")
+      .map((item) => item.textContent ?? "");
+    const index = (needle: RegExp): number => rows.findIndex((row) => needle.test(row));
+    expect(index(/pospuestos/i)).toBeGreaterThan(index(/destacados/i));
+    expect(index(/pospuestos/i)).toBeLessThan(index(/enviados/i));
+  });
+
+  it("keeps the outgoing rows ABOVE Más — they are urgent when they exist", () => {
+    renderCurated({
+      outbox: { count: 2, hasFailures: false, isSelected: false, onSelect: vi.fn() },
+    });
+    // Drawn without opening anything: mail that has not gone out must not be
+    // one click further away than it was.
+    expect(screen.getByRole("button", { name: /salida|outbox/i })).toBeInTheDocument();
+  });
+
+  it("collapses to icons WITHOUT unfolding Más into a wall of them", () => {
+    // Canon 07 §2: the collapsed rail is a handful of distinct icons. A dozen
+    // identical generic folder glyphs is the state being fixed.
+    renderCurated({ collapsed: true, moreOpen: true });
+    expect(screen.queryByRole("link", { name: /trabajo/i })).not.toBeInTheDocument();
+  });
+
+  it("disambiguates a custom folder colliding with a role's label", async () => {
+    const user = userEvent.setup();
+    renderCurated({ mailboxes: [...CURATED, mailbox("dup", null, "Archivo")] });
+    await user.click(screen.getByRole("button", { name: /^más$/i }));
+    // Two rows both reading exactly "Archivo" is the defect: the role keeps the
+    // plain label, the custom one is qualified.
+    expect(screen.getByRole("link", { name: /archivo \(carpeta\)/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * P0-5a — the virtual rows must not look like buttons.
+ *
+ * Four rail entries (Destacados, Pospuestos, Programados, Salida) have nothing
+ * to link to, so they are `<button>`s among anchors — and a bare button brings
+ * a border, a grey fill, the platform control font and centred text. The
+ * owner's screenshot showed exactly that: grey boxes in a list of plain rows.
+ *
+ * Asserted against the STYLESHEET, because jsdom applies no UA stylesheet and
+ * resolves no cascade: a render test would pass with the reset deleted.
+ */
+describe("P0-5a: the row reset", () => {
+  it("neutralises the UA button chrome on the class both row kinds share", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/screens/mail/MailboxList.module.css"),
+      "utf8",
+    );
+    const rule = /\.row \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/border:\s*0/);
+    expect(rule).toMatch(/background:\s*transparent/);
+    expect(rule).toMatch(/font:\s*inherit/);
+    expect(rule).toMatch(/text-align:\s*left/);
+    expect(rule).toMatch(/width:\s*100%/);
   });
 });
