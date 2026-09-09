@@ -2097,6 +2097,31 @@ export function MailScreen(): React.JSX.Element {
     [targetMessageIds, projected, dispatchAction, t],
   );
 
+  /**
+   * B-05: "mark everything on this page as read", from the view's `⋮`.
+   *
+   * # Why the page and not the folder
+   *
+   * Gmail's menu item acts on the conversations it has, and so does this — but
+   * ours has to say so, because our server does not always know how big the
+   * folder is: `queryTotal` omits an exact count whenever the result filled its
+   * window (452 ms p95 was past the bar), so "mark the folder read" would be a
+   * job of unknown size started from a menu. The label names the bound rather
+   * than the menu quietly meaning something smaller than it says.
+   *
+   * It goes through `dispatchAction` like every other write, which is what
+   * gives it the optimistic projection, the undo toast and the rollback for
+   * free — a second path here would be a second set of those, or none.
+   */
+  const runMarkPageRead = useCallback((): void => {
+    // Only the rows that are actually unread. Rewriting `$seen` onto messages
+    // that already have it would be a no-op the server still has to process,
+    // and it would make the undo toast offer to un-read mail nobody changed.
+    const ids = groups.filter((group) => group.hasUnread).flatMap(idsOfGroup);
+    if (ids.length === 0) return;
+    void dispatchAction({ kind: "markRead", ids }, t("action.markRead"));
+  }, [groups, idsOfGroup, dispatchAction, t]);
+
   const runToggleFlag = useCallback((): void => {
     // Scoped to the window for the same reason the row star is — a keyword is
     // written per message against its own folder.
@@ -4456,6 +4481,61 @@ export function MailScreen(): React.JSX.Element {
                     setPosition(nextPosition(pageState));
                   },
                 })}
+            /*
+             * B-05: the view's `⋮`, finally cabled.
+             *
+             * `ListToolbar` has implemented and enabled this menu since B4 —
+             * the review's correction to its own driver was that it is "not
+             * broken, just not wired": nothing passed `renderOverflow`, so the
+             * button never rendered at all.
+             *
+             * A render prop rather than three callbacks, for the reason the
+             * component's header gives: the items need the dispatcher and the
+             * selection reducer, neither of which a strip should acquire in
+             * order to draw itself. The items act on the LIST, never on a
+             * selection — which is what makes them belong here and not in the
+             * ActionBar overlay next door.
+             */
+            renderOverflow={(close, itemClassName) => (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={itemClassName}
+                  onClick={() => {
+                    runMarkPageRead();
+                    close();
+                  }}
+                >
+                  {t("list.overflow.markPageRead")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={itemClassName}
+                  onClick={() => {
+                    // The SAME reducer the `* a` chord and the checkbox use, so
+                    // a third surface over the selection cannot disagree with
+                    // the other two about what "all" means.
+                    runSelectBy("all");
+                    close();
+                  }}
+                >
+                  {t("list.overflow.selectMatching")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={itemClassName}
+                  onClick={() => {
+                    refresh();
+                    close();
+                  }}
+                >
+                  {t("list.overflow.refresh")}
+                </button>
+              </>
+            )}
           />
           {/*
             Mounted, not merely hidden: with no selection the verbs are gone

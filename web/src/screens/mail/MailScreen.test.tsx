@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider } from "../../auth/AuthProvider";
 import { I18nProvider } from "../../i18n/I18nProvider";
+// The shell renders in English under jsdom, so assertions read their expected
+// names out of the table rather than hard-coding either language's literals.
+import { en } from "../../i18n/strings";
 import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS } from "../../mail/prefs";
 import { OfflineProvider } from "../../offline/OfflineProvider";
@@ -662,13 +665,13 @@ describe("MailScreen — the shell's canary", () => {
     // The chrome strip, by contrast, is there the whole time — this is a swap,
     // not a toolbar that comes and goes.
     const refresh = (): HTMLElement =>
-      screen.getByRole("button", { name: /actualizar|refresh/i });
+      screen.getByRole("button", { name: en["list.refresh"] });
     expect(refresh()).toBeInTheDocument();
 
     // Select one row through its own checkbox: the user's gesture, not a
     // reducer call, so this also proves the selection reaches the shell.
     const boxes = screen.getAllByRole("checkbox", {
-      name: /seleccionar esta conversación|select this conversation/i,
+      name: en["action.selectRow"],
     });
     await user.click(boxes[0]!);
 
@@ -678,5 +681,67 @@ describe("MailScreen — the shell's canary", () => {
     // And the chrome is still mounted underneath, which is what makes the
     // overlay a swap rather than a replacement.
     expect(refresh()).toBeInTheDocument();
+  });
+
+  /**
+   * B-05: the view's `⋮` opens with NOTHING selected.
+   *
+   * That is the whole point of it and the reason it is on the chrome strip
+   * rather than in the ActionBar next door: its items act on the LIST. The
+   * review's correction to its own driver was that the menu was never broken —
+   * `ListToolbar` implements it with `disabled={false}` — it simply had no
+   * `renderOverflow` passed, so the trigger did not render at all. This is the
+   * assertion that would have caught that.
+   */
+  it("opens the view's overflow menu with an empty selection (B-05)", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await waitFor(
+      () => {
+        expect(screen.getByText("The first message")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    // No selection: the bulk bar is absent (B-06) and this menu is still here.
+    expect(screen.queryByRole("toolbar")).toBeNull();
+
+    /*
+     * The EXACT labels from the string table, not hand-written regexes.
+     *
+     * Two things this test learned by failing. The shell renders in ENGLISH
+     * under jsdom, so Spanish literals matched nothing — and the failure read
+     * as "the menu never opened" rather than "the assertion is in the wrong
+     * language". And a loose `/more/i` matches other chrome besides this
+     * trigger, so the click landed elsewhere. Reading the names out of `en`
+     * makes the test wrong in exactly one place if a string is ever renamed,
+     * instead of silently passing against a stale copy of it.
+     */
+    const more = screen.getByRole("button", { name: en["action.more"] });
+    expect(more).not.toBeDisabled();
+    await user.click(more);
+
+    // Gmail's three view-level items, all of which act on the list.
+    expect(
+      await screen.findByRole("menuitem", { name: en["list.overflow.markPageRead"] }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: en["list.overflow.selectMatching"] }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: en["list.overflow.refresh"] }),
+    ).toBeInTheDocument();
+
+    /*
+     * And "select everything that matches" reaches the SAME reducer the
+     * checkbox and the `* a` chord do — proven by the bulk bar appearing,
+     * which only happens when the shell's selection state actually changed.
+     */
+    await user.click(
+      screen.getByRole("menuitem", { name: en["list.overflow.selectMatching"] }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole("toolbar")).not.toBeNull();
+    });
   });
 });

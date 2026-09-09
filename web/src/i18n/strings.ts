@@ -144,6 +144,19 @@ export const en = {
     `${first.toLocaleString("en")}–${last.toLocaleString("en")} of more than ${atLeast.toLocaleString("en")}`,
   "list.page.newer": "Newer",
   "list.page.older": "Older",
+  /*
+   * B-05: the view-level `⋮`, which acts on the LIST rather than on a
+   * selection — Gmail's own menu at the same spot.
+   *
+   * "Mark all as read" is bounded to the loaded page and the label says so.
+   * Gmail's is bounded too (it acts on the conversations it has); ours cannot
+   * honestly claim more, because the server counts a folder's contents only
+   * when the count is cheap and this menu is not a place to start a job whose
+   * size nobody knows.
+   */
+  "list.overflow.markPageRead": "Mark everything on this page as read",
+  "list.overflow.selectMatching": "Select everything that matches",
+  "list.overflow.refresh": "Refresh",
   // The row's star, which toggles the same `$flagged` keyword `s` does.
   "list.star": "Star",
   "list.unstar": "Remove star",
@@ -749,13 +762,13 @@ export const en = {
   // C-06: the open conversation's place in the list, beside ‹ ›.
   "reader.positionOf": (index: number, total: number): string =>
     `${index.toLocaleString("en")} of ${total.toLocaleString("en")}`,
+  // C-07: the × on the folder chip beside the subject — Gmail's "Recibidos ×",
+  // which removes the conversation from Inbox (archives it).
+  "reader.removeFromFolder": (name: string): string => `Remove from ${name}`,
   "reader.threadLoadFailed":
     "The rest of this conversation could not be loaded. The message you opened is shown below.",
   "reader.emptyBody": "This message has no text content.",
   "reader.bodyTruncated":
-  // C-07: the × on the folder chip beside the subject — Gmail's "Recibidos ×",
-  // which removes the conversation from Inbox (archives it).
-  "reader.removeFromFolder": (name: string): string => `Remove from ${name}`,
     "This message is long and has been shortened. Download the original to read all of it.",
   // --- the secure HTML renderer (W-A4) ---
   // The iframe's accessible name: what the region IS, for a screen-reader
@@ -1468,6 +1481,12 @@ export const es: Strings = {
     `${first.toLocaleString("es")}–${last.toLocaleString("es")} de más de ${atLeast.toLocaleString("es")}`,
   "list.page.newer": "Más recientes",
   "list.page.older": "Más antiguos",
+  /* B-05: el `⋮` de la vista — actúa sobre la LISTA, no sobre la selección.
+     El alcance de "marcar como leído" está acotado a la página cargada y el
+     texto lo dice, en vez de prometer una carpeta entera. */
+  "list.overflow.markPageRead": "Marcar todo lo de esta página como leído",
+  "list.overflow.selectMatching": "Seleccionar todo lo que coincide",
+  "list.overflow.refresh": "Actualizar",
   "list.star": "Destacar",
   "list.unstar": "Quitar el destacado",
 
@@ -1963,12 +1982,12 @@ export const es: Strings = {
   "reader.collapseAll": "Contraer todo",
   "reader.positionOf": (index: number, total: number): string =>
     `${index.toLocaleString("es")} de ${total.toLocaleString("es")}`,
+  "reader.removeFromFolder": (name: string): string => `Quitar de ${name}`,
   "reader.threadLoadFailed":
     "No se pudo cargar el resto de esta conversación. Abajo se muestra el mensaje que abriste.",
   "reader.emptyBody": "Este mensaje no tiene contenido de texto.",
   "reader.bodyTruncated":
     "Este mensaje es largo y se acortó. Descargá el original para leerlo completo.",
-  "reader.removeFromFolder": (name: string): string => `Quitar de ${name}`,
   "reader.htmlFrameTitle": "Contenido del mensaje",
   "reader.imagesBlocked": (count: number): string =>
     count === 1

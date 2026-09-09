@@ -72,7 +72,9 @@ export interface ListToolbarProps {
    * confirm dialog, none of which this component has or should acquire to draw
    * a strip.
    */
-  readonly renderOverflow?: ((close: () => void) => React.ReactNode) | undefined;
+  readonly renderOverflow?:
+    | ((close: () => void, itemClassName: string) => React.ReactNode)
+    | undefined;
 }
 
 /** The six scopes, with their labels, in Gmail's own order. */
@@ -226,7 +228,14 @@ export function ListToolbar({
             </svg>
           }
         >
-          {(close) => renderOverflow(close)}
+          {/*
+            The item class travels WITH the render prop (B-05), the same way
+            `MessageList` hands the snooze trigger its styling: the caller owns
+            what the items DO and this component owns what a menu item in this
+            menu looks like, and the class lives in a CSS module the caller
+            cannot import without reaching into another component's styling.
+          */}
+          {(close) => renderOverflow(close, styles.menuItem ?? "")}
         </PopupMenu>
       )}
 
