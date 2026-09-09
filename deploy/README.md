@@ -170,6 +170,7 @@ per-host directories:
 ├── mail.acme.example/
 │   ├── branding.json
 │   ├── logo.png
+│   ├── icon.png
 │   └── splash.jpg
 └── correo.otracosa.example/
     ├── branding.json
@@ -201,6 +202,7 @@ them:
   "tagline": "Correo corporativo de Acme S.A.",
   "supportUrl": "mailto:soporte@acme.example",
   "logo": "logo.png",
+  "icon": "icon.png",
   "splash": "splash.jpg",
   "colors": {
     "primary": "#0f766e",
@@ -224,9 +226,19 @@ stays "Acme Mail"; "Correo Corporativo Acme" becomes "Correo").
 characters); empty renders nothing. `supportUrl` is where "contact your
 administrator" points and accepts **only** `https://`, `http://` or `mailto:` —
 so it can never become a `javascript:` URL on the page where passwords are
-typed. `logo` and `splash` name **files sitting beside `branding.json`**, never
-URLs: a customer-supplied external URL would be a tracking pixel on our login
-page and a mixed-content risk.
+typed. `logo`, `icon` and `splash` name **files sitting beside `branding.json`**,
+never URLs: a customer-supplied external URL would be a tracking pixel on our
+login page and a mixed-content risk.
+
+`logo` is what the top bar and the login panel show — usually a wordmark, often
+wide. `icon` is the **optional square mark the installed app's icons and the
+favicon are rendered from**, and it exists because those are not the same
+picture: the maskable and Apple icons sit on an **opaque plate of `primary`**,
+so a brand whose primary is `#000000` and whose logo is a black wordmark ships
+a black glyph on a black plate — invisible on a home screen. Most brand kits
+already have the square glyph drawn for dark backgrounds; that file goes here.
+Leave `icon` out and everything behaves exactly as before: the icons are
+rendered from `logo`.
 
 The four colours are seed tokens, and CSS derives hovers, borders and surfaces
 from them — a customer configures four values, not forty. Each must be a CSS
@@ -262,22 +274,30 @@ Sanitising SVG correctly is a project in itself. Export to PNG.
 - **4096 px maximum on each side** for the logo (`MaxBrandingLogoDimension`),
   checked from the image header before any pixels are decoded — a 40,000 px PNG
   that inflates to gigabytes costs us a few bytes to refuse.
-- **A WebP logo displays fine on the page but cannot become PWA icons.** Its
-  decoder is not vendored, and the vendor tree is hermetic. The host then gets
-  **Moov's** icons on the home screen — which would be a nasty surprise on a
-  customer's phone, so it is declared twice, never silently: `moovctl branding
-  set` prints `Note: the PWA icons will stay Moov's — …` the moment you pass
-  the file, `moovctl branding show` says so in its `PWA ICONS` row, and `moovd`
-  logs one warning per host per cache TTL. The same declaration covers an
-  undecodable, oversized or missing logo.
+- **A WebP image displays fine on the page but cannot become PWA icons.** Its
+  decoder is not vendored, and the vendor tree is hermetic. The icons then come
+  from the next link of the chain — `icon`, then `logo`, then **Moov's** — and
+  ending up on Moov's would be a nasty surprise on a customer's phone, so it is
+  declared twice, never silently: `moovctl branding set` prints `Note: the PWA
+  icons will not be rendered from this icon — …` the moment you pass the file,
+  `moovctl branding show` says in its `PWA ICONS` row which file is in use and
+  why the one you asked for is not, and `moovd` logs one warning per host per
+  cache TTL naming the file that failed. The same declaration covers an
+  undecodable, oversized or missing image.
 
 **Recommended logo:** PNG with an alpha channel, at least 512 px on the long
-side. Roughly square reads best as a launcher icon; a wide wordmark is fine in
-the top bar and on the login panel, it simply ends up small inside a square
-icon. **Recommended splash:** a photograph at least 1600 px wide — it is
-rendered `object-fit: cover`, so it is cropped to the panel, not letterboxed.
+side. A wide wordmark is exactly right in the top bar and on the login panel.
+**Recommended icon:** **square, at least 512 px, PNG with alpha** — and **use
+the glyph your kit draws for dark backgrounds if your primary is dark**, since
+the maskable and Apple icons sit on a plate of the primary color. `moovctl`
+warns when an `-icon` is further than 10% from 1:1, because a launcher shows a
+square and a wide image ends up small between bands of that plate.
+**Recommended splash:** a photograph at least 1600 px wide — it is rendered
+`object-fit: cover`, so it is cropped to the panel, not letterboxed.
 
-What the icon generator does with the logo, on demand and cached:
+What the icon generator does, on demand and cached. Its source is `icon` when
+there is a usable one, `logo` otherwise, and Moov's own mark when neither can
+be rendered:
 
 | Icon | Size | Padding each side | Plate |
 |---|---|---|---|
@@ -286,11 +306,14 @@ What the icon generator does with the logo, on demand and cached:
 | `apple-touch-icon` | 180 | 10% | opaque, the primary colour |
 | `favicon-32` | 32 | none | transparent |
 
-The logo is contained inside the padded square with its aspect ratio preserved
-and centred. The maskable pair pads to 20% because Android adaptive icons keep
+The source image is contained inside the padded square with its aspect ratio
+preserved and centred — which is why a square `icon` fills it and a wide `logo`
+does not. The maskable pair pads to 20% because Android adaptive icons keep
 only the inner 80% circle, and paints the plate because a transparent one would
 be masked onto whatever the launcher picks (usually white). `apple-touch-icon`
-is opaque because iOS discards alpha and composites onto **black**.
+is opaque because iOS discards alpha and composites onto **black**. **Those
+three plates are the reason `icon` exists:** on a dark primary, a dark mark
+disappears into them.
 
 ### The `moovctl` workflow
 
@@ -311,6 +334,7 @@ moovctl branding set \
   -tagline 'Correo corporativo de Acme S.A.' \
   -support-url 'mailto:soporte@acme.example' \
   -logo /root/brand/acme-logo.png \
+  -icon /root/brand/acme-glyph-on-dark.png \
   -splash /root/brand/acme-office.jpg \
   -color-primary '#0f766e' \
   -color-on-primary '#ffffff' \
@@ -325,10 +349,11 @@ CLI takes `MOOV_BRANDING_DIR`, then `/etc/moov/branding`.
 adjusting one colour does not re-upload the logo, and — the reason it works
 this way — adjusting one colour cannot silently delete the customer's logo.
 Passing a flag with an *empty* value clears that field (`-logo ''` stops
-advertising the logo; the file itself is left on disk, because deleting an
-operator's file as a side effect of a config change would be a surprise). The
-stored filename is always ours (`logo.png`, `splash.jpg`, from the sniffed
-type), never the source filename.
+advertising the logo, `-icon ''` returns the app icons to being rendered from
+the logo; the file itself is left on disk, because deleting an operator's file
+as a side effect of a config change would be a surprise). The stored filename
+is always ours (`logo.png`, `icon.png`, `splash.jpg`, from the sniffed type),
+never the source filename.
 
 ```bash
 moovctl branding show -host mail.acme.example   # every field, plus where the PWA icons come from
@@ -383,7 +408,8 @@ Then in a browser, which is where the parts `curl` cannot see live:
 - the tab shows the customer's name and favicon;
 - the install prompt offers the customer's `short_name`;
 - **DevTools → Application → Manifest** shows the name, the theme colour and
-  every icon rendered from the customer's logo.
+  every icon rendered from the customer's `icon` (or its logo when it has
+  none).
 
 Browsers cache a manifest and the icons of an **installed** app aggressively,
 and far beyond our five minutes. To see new icons, **uninstall and reinstall
