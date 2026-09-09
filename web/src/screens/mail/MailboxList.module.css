@@ -95,22 +95,54 @@ button.row {
   margin: 0 auto;
 }
 
+/*
+ * A-04 — the active row is a FILLED PILL.
+ *
+ * The review found two rows reading as active at once and named a persistent
+ * focus ring as the cause. That half is already fixed and stays fixed: the ring
+ * is drawn by ONE rule, `:focus-visible` in base.css, which a pointer press
+ * never triggers — and T1's `.row` reset removed the user-agent button chrome
+ * that was making the last-pressed virtual row look permanently pressed.
+ *
+ * What was left was the other half, and it is why "which one is active" was
+ * ambiguous at all: `.selected` was `--color-accent-tint`, ten per cent of the
+ * brand over *transparent*. Against the rail's own surface that is a whisper —
+ * the review called it "tenue" — so the genuinely-selected row was barely
+ * louder than a hovered one. Gmail's is unmistakable: a filled light-accent
+ * pill with bold text, the single strongest mark in the rail.
+ *
+ * `color-mix` against `--surface-default` rather than the tint token, for the
+ * same reason `ComposeButton` does it: an opaque fill has the contrast it
+ * appears to have, instead of one that depends on what scrolls behind it.
+ * 16% sits deliberately just UNDER the compose pill's 18%: the two are
+ * neighbours in the same column, and the row that says "where you are" must
+ * not out-shout the button that is the rail's primary action.
+ *
+ * `--radius-full` makes it a pill rather than the rounded rectangle `.row`
+ * gives every other row, which is what Gmail's shape actually is and what
+ * keeps the state legible when the tint is the only thing carrying it.
+ */
 .selected {
-  background: var(--color-accent-tint);
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--surface-default));
   color: var(--text-strong);
   font-weight: var(--weight-semibold);
+  border-radius: var(--radius-full);
 }
 
 .selected:hover {
-  background: var(--color-accent-tint-strong);
+  background: color-mix(in srgb, var(--color-accent) 24%, var(--surface-default));
 }
 
 /* A selected row gets an accent spine, so the state survives forced-colors
- * mode and is not carried by background colour alone. */
+ * mode and is not carried by background colour alone.
+ *
+ * Inset by 2 px since A-04 made the row a full-radius pill: at `left: 0` the
+ * bar would sit on the flat edge the row no longer has, poking out of the
+ * curve at both ends. */
 .selected::before {
   content: "";
   position: absolute;
-  left: 0;
+  left: 2px;
   width: 3px;
   height: 18px;
   border-radius: var(--radius-full);

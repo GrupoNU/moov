@@ -475,3 +475,68 @@ describe("A-09: the rail counters", () => {
     expect(css).not.toMatch(/\.selected \.badge \{/);
   });
 });
+
+/**
+ * A-04 — one row looks active at a time.
+ *
+ * The review saw TWO rows reading as active and named a persistent focus ring
+ * on the last-pressed row as the cause. The diagnosis had two halves and they
+ * are fixed in different places, so both are pinned here.
+ *
+ * The ring: it is drawn by exactly one rule, `:focus-visible` in `base.css`,
+ * which a pointer press never triggers. The regression to guard against is a
+ * bare `:focus` appearing in this stylesheet — a single one would restore the
+ * defect, because a mouse-clicked row would keep an outline until something
+ * else was clicked, and it would sit beside a genuinely selected row.
+ *
+ * The tint: `.selected` was `--color-accent-tint`, ten per cent of the brand
+ * over *transparent*, which against the rail's own surface was barely louder
+ * than a hover — the review's "tenue". A state whose whole job is to answer
+ * "where am I" cannot be a whisper, so it is a filled pill now.
+ */
+describe("A-04: the active row", () => {
+  /*
+   * Comments are stripped before anything is counted. This file explains its
+   * own focus policy IN a comment, so a naive scan finds `:focus-visible`
+   * twice and reports two rules where there is one — a test that fails on its
+   * subject's documentation is a test nobody will trust the next time it goes
+   * red.
+   */
+  const css = readFileSync(
+    resolve(process.cwd(), "src/screens/mail/MailboxList.module.css"),
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("declares no focus styling outside `:focus-visible`", () => {
+    /*
+     * Matches `:focus` only when it is NOT the start of `:focus-visible` or
+     * `:focus-within`. A plain `:focus` rule anywhere in this file re-creates
+     * the sticky ring the review photographed.
+     */
+    expect(css).not.toMatch(/:focus(?!-visible|-within)/);
+  });
+
+  it("leaves the ONE ring rule to base.css rather than drawing its own", () => {
+    // Two competing rings are how a ring ends up outliving its element's
+    // focus. `.emptyTrash:focus-visible` is the file's only focus rule and is
+    // deliberately narrow — it is a nested control, not a row.
+    const focusRules = css.match(/:focus-visible/g) ?? [];
+    expect(focusRules).toHaveLength(1);
+    expect(css).toMatch(/\.emptyTrash:focus-visible/);
+  });
+
+  it("draws the selected row as a filled, opaque pill", () => {
+    const selected = /\.selected \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+    // Mixed against a SURFACE, so the fill is opaque and its contrast does not
+    // depend on what happens to scroll behind it — the same reason the compose
+    // pill does it. The old `--color-accent-tint` was alpha over transparent.
+    expect(selected).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--color-accent\)\s*16%,\s*var\(--surface-default\)\)/,
+    );
+    expect(selected).not.toMatch(/var\(--color-accent-tint\)/);
+    // A pill, not the rounded rectangle every other row gets — Gmail's shape,
+    // and a second signal beyond the fill.
+    expect(selected).toMatch(/border-radius:\s*var\(--radius-full\)/);
+    expect(selected).toMatch(/font-weight:\s*var\(--weight-semibold\)/);
+  });
+});
