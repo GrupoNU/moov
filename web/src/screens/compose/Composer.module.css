@@ -181,6 +181,19 @@
   height: 1.1rem;
 }
 
+/*
+ * D-01: the `Aa` toggle while the formatting row is showing.
+ *
+ * A tinted background AND a border, so the state survives forced-colors mode
+ * where background-color is overridden — the same rule the rich-text command
+ * buttons follow. `aria-expanded` carries it for assistive technology.
+ */
+.iconButtonOn {
+  color: var(--text-strong);
+  background: var(--color-accent-tint);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
 .fromLine {
   display: flex;
   gap: var(--space-3);
@@ -260,15 +273,41 @@
   color: var(--color-danger);
 }
 
+/*
+ * D-01: the footer is now TWO rows — the formatting bar on top, the actions
+ * under it (canon 07 §7).
+ *
+ * Gmail's composer puts the formatting controls immediately above Send rather
+ * than under the subject, and the reason is not aesthetic: the controls that
+ * act on the message you are writing belong next to the button that finishes
+ * it, and the top of the card belongs to WHO the message is for. So this
+ * stacks, and `.actionRow` carries what the flex row used to.
+ */
 .footer {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+}
+
+/*
+ * The portal target for `BodyEditor`'s toolbar (D-01).
+ *
+ * Empty and zero-height until `Aa` reveals the row, which is why it carries no
+ * padding or border of its own: the toolbar brings both, so an empty host is
+ * genuinely invisible rather than a 1px line under the message.
+ */
+.formatRow {
+  display: contents;
+}
+
+.actionRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  flex: none;
   padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-sunken);
 }
 
 .footerLeft {

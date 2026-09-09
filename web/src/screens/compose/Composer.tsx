@@ -26,6 +26,7 @@ import { resolveSignature } from "../../mail/prefs";
 import type { IndexedAddress } from "../../mail/addressIndex";
 import { isBlockedAttachment } from "../../mail/blockedExtensions";
 import { loadBodyMode, saveBodyMode } from "../../mail/composePrefs";
+import { loadComposeFormatBar, saveComposeFormatBar } from "../../mail/viewChrome";
 import { useConfirm } from "../../components/useConfirm";
 import { AddressField } from "./AddressField";
 import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
@@ -240,6 +241,19 @@ export function Composer({
   );
   /** E7: the honest refusal shown when a file is blocked outright. */
   const [blockedNotice, setBlockedNotice] = useState<string | undefined>(undefined);
+
+  /*
+   * D-01: the footer's formatting row, and the `Aa` that reveals it.
+   *
+   * The row is portalled into `formatHost` by `BodyEditor` — see that file's
+   * header for why a portal rather than lifted state. The HOST is held in
+   * component state rather than a ref because a ref assignment does not
+   * re-render, and the portal cannot be created until the node exists: with a
+   * ref the first render would portal into `null` and the row would never
+   * appear until something else happened to re-render the composer.
+   */
+  const [formatHost, setFormatHost] = useState<HTMLDivElement | null>(null);
+  const [showFormatBar, setShowFormatBar] = useState(() => loadComposeFormatBar());
 
   const [draftId, setDraftId] = useState<string | undefined>(draft.existingDraftId);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
@@ -1219,7 +1233,8 @@ export function Composer({
 
         <BodyEditor
           isRich={isRich}
-          onToggleRich={toggleRich}
+          toolbarHost={formatHost}
+          showToolbar={showFormatBar}
           text={text}
           onTextChange={(next) => {
             setText(next);
@@ -1260,6 +1275,18 @@ export function Composer({
         )}
 
         <footer className={styles.footer}>
+          {/*
+            D-01: the formatting row's home (canon 07 §7).
+
+            An empty div until `Aa` is pressed and `BodyEditor` portals its
+            toolbar in. It is the FIRST child of the footer, so the row lands
+            directly above Send exactly as Gmail's does — and it is rendered
+            unconditionally so the portal target exists before the toggle is
+            ever pressed.
+          */}
+          <div ref={setFormatHost} className={styles.formatRow} />
+
+          <div className={styles.actionRow}>
           <div className={styles.footerLeft}>
             <button
               type="submit"
@@ -1335,6 +1362,43 @@ export function Composer({
                 }
               />
             )}
+
+            {/*
+              D-01/D-04: `Aa` — the formatting row's toggle.
+
+              Gmail's composer keeps its formatting controls behind exactly this
+              button, collapsed by default, and that is what makes a corner card
+              usable for a two-line reply. It is `aria-expanded`, not
+              `aria-pressed`: it discloses a region rather than latching a mode.
+
+              It is also the surviving INDICATOR of rich vs plain now that the
+              segmented control is gone (D-04) — pressing it in plain mode
+              switches to rich first, because revealing a bold button over a
+              textarea would be four controls that do nothing. Going the other
+              way is the ⋯ menu's `menuitemcheckbox`, which is the canonical
+              control for that state and always was.
+            */}
+            <button
+              type="button"
+              className={[styles.iconButton, showFormatBar && isRich ? styles.iconButtonOn : ""]
+                .filter(Boolean)
+                .join(" ")}
+              aria-expanded={showFormatBar && isRich}
+              aria-label={t("compose.formatOptions")}
+              title={t("compose.formatOptions")}
+              onClick={() => {
+                const next = !(showFormatBar && isRich);
+                if (next && !isRich) toggleRich(true);
+                setShowFormatBar(next);
+                saveComposeFormatBar(next);
+              }}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <text x="10" y="14.5" textAnchor="middle" fontSize="12" fontWeight="600" fill="currentColor">
+                  Aa
+                </text>
+              </svg>
+            </button>
 
             <input
               ref={fileInputRef}
@@ -1415,6 +1479,7 @@ export function Composer({
                 ? t("draft.saved")
                 : ""}
           </p>
+          </div>
         </footer>
 
         {pending !== undefined && (

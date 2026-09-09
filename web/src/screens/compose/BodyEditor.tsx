@@ -1,5 +1,6 @@
 import { PromptDialog } from "../../components/ModalDialog";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import { sanitizeEmailHtml } from "../../mail/html/sanitize";
@@ -49,12 +50,33 @@ import styles from "./BodyEditor.module.css";
  * Plenty of mail is better as text: a short reply, a message to a list, a
  * paste of a log. Offering the choice costs one toggle and makes the HTML path
  * optional rather than imposed.
+ *
+ * # D-01/D-04: the toolbar left the top of the card and became a portal
+ *
+ * The formatting row used to sit UNDER THE SUBJECT, above the body, carrying a
+ * permanent "Texto plano | Formato" segmented control. Gmail puts neither
+ * there: the formatting row lives at the FOOTER, directly above Send, hidden by
+ * default and revealed by an `Aa` toggle, and the plain/rich choice is a
+ * checked item in the ⋯ menu — which this composer already had, so the
+ * segmented control was a second control for one state (the review's D-04).
+ *
+ * Moving the row means it must render inside the footer while the commands it
+ * runs still act on THIS component's `contentEditable` — `runCommand` focuses
+ * the surface and reads its selection, and lifting that machinery into the
+ * composer would mean lifting the ref, the sanitizer round trip and the
+ * active-command tracking with it. So the row is rendered where it belongs in
+ * the tree and PORTALLED to the node the composer hands down. React portals
+ * keep the React parentage (events, context, the i18n provider) while changing
+ * only the DOM position, which is exactly the split this needs.
+ *
+ * `toolbarHost` absent — a test rendering `BodyEditor` on its own, say — means
+ * no toolbar renders at all rather than one appearing in the old place: two
+ * possible positions for the same row is how a layout drifts back.
  */
 
 export interface BodyEditorProps {
   /** True for the rich surface, false for the textarea. */
   readonly isRich: boolean;
-  readonly onToggleRich: (isRich: boolean) => void;
   /** The plain-text body (the source of truth in text mode). */
   readonly text: string;
   readonly onTextChange: (text: string) => void;
@@ -68,17 +90,27 @@ export interface BodyEditorProps {
    */
   readonly seedKey: string;
   readonly bodyRef?: React.MutableRefObject<HTMLElement | null>;
+  /**
+   * D-01: the footer node the formatting row is portalled into.
+   *
+   * `null`/absent renders no toolbar. See the file header for why the row moved
+   * and why a portal rather than lifted state.
+   */
+  readonly toolbarHost?: HTMLElement | null;
+  /** D-01: whether the `Aa` toggle currently has the row revealed. */
+  readonly showToolbar?: boolean;
 }
 
 export function BodyEditor({
   isRich,
-  onToggleRich,
   text,
   onTextChange,
   html,
   onHtmlChange,
   seedKey,
   bodyRef,
+  toolbarHost,
+  showToolbar = false,
 }: BodyEditorProps): React.JSX.Element {
   const { t } = useTranslation();
   const editableRef = useRef<HTMLDivElement | null>(null);
@@ -250,33 +282,19 @@ export function BodyEditor({
     [t],
   );
 
-  return (
-    <div className={styles.wrapper}>
-      <div className={styles.toolbar} role="toolbar" aria-label={t("compose.richText")}>
-        <div className={styles.modeGroup}>
-          <button
-            type="button"
-            className={[styles.modeButton, isRich ? "" : styles.modeActive].filter(Boolean).join(" ")}
-            aria-pressed={!isRich}
-            onClick={() => {
-              onToggleRich(false);
-            }}
-          >
-            {t("compose.plainText")}
-          </button>
-          <button
-            type="button"
-            className={[styles.modeButton, isRich ? styles.modeActive : ""].filter(Boolean).join(" ")}
-            aria-pressed={isRich}
-            onClick={() => {
-              onToggleRich(true);
-            }}
-          >
-            {t("compose.richText")}
-          </button>
-        </div>
-
-        {isRich && (
+  /*
+   * D-01: the formatting row, rendered here and portalled into the footer.
+   *
+   * It exists only in RICH mode and only while the `Aa` toggle has it
+   * revealed — a row of bold/italic buttons over a textarea would be four
+   * controls that do nothing, which is the dead affordance this review is full
+   * of. The composer's `Aa` is what makes it appear, and `Aa` is also what
+   * carries the rich/plain state now that the segmented control is gone.
+   */
+  const toolbar =
+    toolbarHost === undefined || toolbarHost === null || !showToolbar || !isRich ? null : (
+      createPortal(
+        <div className={styles.toolbar} role="toolbar" aria-label={t("compose.richText")}>
           <div className={styles.commands}>
             {RICH_TEXT_BUTTONS.map(({ command, labelKey, shortcut }) => (
               <button
@@ -322,8 +340,14 @@ export function BodyEditor({
               </svg>
             </button>
           </div>
-        )}
-      </div>
+        </div>,
+        toolbarHost,
+      )
+    );
+
+  return (
+    <div className={styles.wrapper}>
+      {toolbar}
 
       {/*
         E11: the link error used to be a banner HERE, because `window.prompt`

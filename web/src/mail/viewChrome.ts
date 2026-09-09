@@ -41,6 +41,7 @@ const SIDEBAR_KEY = "moov.chrome.sidebarCollapsed";
 const PANE_WIDTH_KEY = "moov.chrome.readerWidth";
 const PANE_HEIGHT_KEY = "moov.chrome.readerHeight";
 const RAIL_MORE_KEY = "moov.chrome.railMoreOpen";
+const FORMAT_BAR_KEY = "moov.chrome.composeFormatBar";
 
 /**
  * The reading pane's size limits, in pixels.
@@ -145,4 +146,26 @@ export function loadRailMoreOpen(): boolean {
 
 export function saveRailMoreOpen(open: boolean): void {
   writeItem(RAIL_MORE_KEY, open ? "1" : "0");
+}
+
+/**
+ * Whether the composer's formatting row was left revealed by `Aa` (D-01).
+ *
+ * Chrome rather than a preference, on this module's own test: it is an answer
+ * about the SCREEN — a 13" laptop wants the corner card's few rows back, a wide
+ * monitor does not care — and prefs v2 has no key for it, so inventing one
+ * client-side is what `labelStore` explains we do not do.
+ *
+ * HIDDEN is the default, matching Gmail: its composer opens with the row
+ * collapsed under `Aa`, and a composer that opens with eight formatting buttons
+ * over a message nobody has written yet is a wall, not a feature. Only the
+ * exact string `"1"` reveals it, for the same reason the rail's collapse only
+ * accepts `"1"`.
+ */
+export function loadComposeFormatBar(): boolean {
+  return readItem(FORMAT_BAR_KEY) === "1";
+}
+
+export function saveComposeFormatBar(open: boolean): void {
+  writeItem(FORMAT_BAR_KEY, open ? "1" : "0");
 }

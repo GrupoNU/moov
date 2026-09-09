@@ -5,38 +5,25 @@
   min-height: 0;
 }
 
+/*
+ * D-01: the formatting row, now the FOOTER's top row (canon 07 §7).
+ *
+ * `border-top`, not `border-bottom`: it separates itself from the message body
+ * above it, and it sits directly on top of Send — which is Gmail's shape and
+ * the reason it is worth moving. It is portalled into the composer's footer, so
+ * the horizontal padding matches the footer's rather than the body's.
+ *
+ * The mode segmented control that lived beside it is GONE (D-04): the ⋯ menu's
+ * `menuitemcheckbox` is the canonical control for that one state, and `Aa`
+ * indicates it. Two controls for one boolean is how they end up disagreeing.
+ */
 .toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
   padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.modeGroup {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
-}
-
-.modeButton {
-  padding: var(--space-1) var(--space-3);
-  border: 0;
-  border-radius: calc(var(--radius-md) - 2px);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.modeActive {
-  background: var(--surface-default);
-  color: var(--text-strong);
-  box-shadow: var(--shadow-sm);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .commands {
