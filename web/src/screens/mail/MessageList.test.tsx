@@ -367,3 +367,38 @@ describe("the conversation's size in the row (B-09)", () => {
     expect(row.textContent).toMatch(/2 mensajes de esta conversación en estos resultados/);
   });
 });
+
+/**
+ * Review §4.3 — the blue unread dot is gone (owner's decision).
+ *
+ * It was an addition over Gmail, and B-07 made it redundant: an unread row is
+ * already the bold one and the white one punching through the list's tint. The
+ * dot said a third time what two signals were already saying, in the same
+ * 200 px of row as the star and the label chips.
+ *
+ * Two assertions, because the risk is on both sides. One: nothing round and
+ * accented renders in the sender cell any more — the regression to guard is
+ * somebody restoring it as "just a small marker". Two: the state is STILL
+ * announced. The dot was `aria-hidden` and never carried the information, but a
+ * removal that quietly took the announcement with it would be a real
+ * accessibility loss dressed up as a design cleanup.
+ */
+describe("§4.3: the unread dot is removed", () => {
+  it("draws no dot element on an unread row", () => {
+    // Row "b" is the unread one — `keywords: {}` means no `$seen`.
+    renderList();
+    const row = rowFor("Subject b");
+    // Asserted through the CSS-module class, which is what the element had:
+    // the dot was a bare decorative span with no role, no text and no name, so
+    // there is nothing else about it to query by.
+    expect(row.querySelector('[class*="unreadDot"]')).toBeNull();
+  });
+
+  it("still announces the unread state to a screen reader", () => {
+    renderList();
+    expect(rowFor("Subject b").textContent).toMatch(/Sin leer/);
+    // And says nothing of the sort on the read row, so the assertion above is
+    // not passing on a string the list prints unconditionally.
+    expect(rowFor("Subject a").textContent).not.toMatch(/Sin leer/);
+  });
+});

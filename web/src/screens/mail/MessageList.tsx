@@ -616,9 +616,20 @@ function MessageRow({
       </span>
 
       <span role="gridcell" className={styles.sender}>
-        {/* The unread dot is decorative; the row's state is announced by the
-            visually-hidden text below, so it is not colour-only information. */}
-        {group.hasUnread && <span className={styles.unreadDot} aria-hidden="true" />}
+        {/*
+          The blue unread dot is GONE (review §4.3, owner's decision).
+
+          It was an addition over Gmail, and by the time B-07 landed it was
+          saying the same thing twice over: an unread row is already the bold
+          one AND the white one punching through the list's tint. A third
+          marker in the same 200 px of row competes with the two signals that
+          are doing the work — and with the star and the label chips, which are
+          the only other round, coloured things a row is allowed to carry.
+
+          Nothing is lost for a screen reader: the state was never announced by
+          the dot (it was `aria-hidden`), it is announced by the
+          visually-hidden "Sin leer" further down, which is untouched.
+        */}
         <span className={styles.senderText}>{sender}</span>
         {/*
           E1: the conversation's size.

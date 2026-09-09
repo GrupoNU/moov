@@ -214,13 +214,9 @@
   white-space: nowrap;
 }
 
-.unreadDot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-}
+/* `.unreadDot` was here and is deleted with its element (review §4.3): the
+ * unread state is carried by B-07's white surface and by the bold weight
+ * below, and a third marker for the same fact only cost the row space. */
 
 .unread .senderText,
 .unread .subject {
@@ -233,10 +229,9 @@
  *
  * A BARE NUMBER beside the sender — "Google 2" — not a pill. Gmail gives it no
  * background, no border and no chip shape, and that restraint is the design:
- * the row already carries three chip-shaped things (the label chips, the
- * unread dot, the star) and a fourth would compete with them for the reading
- * that matters, which is the sender's name. It is a modifier ON the name, so it
- * is styled like one.
+ * the row already carries chip-shaped things (the label chips, the star) and
+ * one more would compete with them for the reading that matters, which is the
+ * sender's name. It is a modifier ON the name, so it is styled like one.
  *
  * `tabular-nums` so a column of counts does not shimmer as the digits change
  * width, the same reason the date has it.
