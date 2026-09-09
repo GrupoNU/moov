@@ -117,6 +117,306 @@ docker compose restart moovd
 
 ---
 
+## Branding a hostname
+
+One Moov install can serve several customers, each on its own hostname, each
+with its own name, logo and colours. Nothing is duplicated to do it: the same
+`moovd`, the same store, one directory of files per host.
+
+**What branding covers.** The login split panel (logo, product name, tagline,
+splash image or gradient, the "contact your administrator" link), the logo and
+name in the top bar, the accent palette in **both** the light and the dark
+theme, the browser tab's title and favicon, the PWA manifest's `name`,
+`short_name` and `theme_color`, the icons of the installed app on a phone or a
+desktop launcher, and the icon on a desktop notification.
+
+**What it never covers.** Layout, behaviour and keyboard. Every shortcut, every
+row, every menu is in the same place on every host — the Gmail muscle memory
+this product is built on is not something a customer gets to move. Status
+colours are not brand colours either: red still means destructive and green
+still means sent, whatever the accent is.
+
+### How a host is resolved
+
+By the `Host` header of the request, and by nothing else. There is no
+`?brand=` parameter and the email address being typed is never sent to find
+out: either of those would turn the login page into an oracle for *which
+customers exist on this server*, enumerable one guess at a time. The caller
+already had to know the hostname to reach us.
+
+**A hostname with no configuration is served Moov's own brand, and it is
+indistinguishable from a hostname configured to look like Moov.** Existence is
+never confirmed or denied. That is also why "the whole install is unbranded" is
+a complete, correct configuration — it is what the pilot runs.
+
+**Why your change is not visible yet.** Two caches sit in front of a brand:
+
+| | Duration | Where |
+|---|---|---|
+| Resolved document, in process | 60 s (`brandingCacheTTL`) | `moovd` |
+| `Cache-Control: public, max-age` | 300 s (`BrandingMaxAge`) | browsers, any shared proxy |
+
+So a `moovctl branding set` takes effect **within a minute without a restart**,
+and a browser that already loaded the old one may hold it for up to five more.
+Both routes answer `If-None-Match` with a 304, so a reload is cheap, not free.
+
+### The directory layout
+
+`MOOV_BRANDING_DIR` (inside the container: `/etc/moov/branding`) is a root of
+per-host directories:
+
+```
+/etc/moov/branding/
+├── mail.acme.example/
+│   ├── branding.json
+│   ├── logo.png
+│   └── splash.jpg
+└── correo.otracosa.example/
+    ├── branding.json
+    └── logo.png
+```
+
+The directory name is the **lowercase hostname without a port** —
+`mail.acme.example`, never `Mail.Acme.Example:8443`. Only `[a-z0-9.-]` is
+accepted; anything else (a path separator, `..`, a percent escape, an IPv6
+literal) resolves to "no configuration" rather than to a filesystem read.
+`moovctl` normalises what you pass to `-host` by the *same* rule the server
+applies, so a host the CLI writes is a host the server will find.
+
+Permissions: `0755` on the directories and `0644` on the files, which is what
+`moovctl` writes. This is not laxity — `moovd` runs **distroless as a different,
+unprivileged user** than the operator running the CLI, and it must be able to
+traverse and read these. Every byte here is published to anonymous callers by
+design; there is nothing secret to protect.
+
+### `branding.json`
+
+Written by `moovctl branding set`. Every field is optional, and this is all of
+them:
+
+```json
+{
+  "name": "Acme Mail",
+  "shortName": "Acme",
+  "tagline": "Correo corporativo de Acme S.A.",
+  "supportUrl": "mailto:soporte@acme.example",
+  "logo": "logo.png",
+  "splash": "splash.jpg",
+  "colors": {
+    "primary": "#0f766e",
+    "onPrimary": "#ffffff",
+    "splashFrom": "#042f2e",
+    "splashTo": "#115e59"
+  }
+}
+```
+
+`name` is the product name in the UI and the browser tab (capped at 64
+characters). `shortName` is the label under the installed icon on a home
+screen; it is **at most 12 characters**, because that is where launchers
+truncate, and `moovctl` *refuses* a longer one rather than cutting it silently
+— an operator who typed "Correo Corporativo" should learn at the terminal that
+the phone will say "Correo Corpo". Leave it unset and it is derived from
+`name`: the name itself when it fits, otherwise its first word ("Acme Mail"
+stays "Acme Mail"; "Correo Corporativo Acme" becomes "Correo").
+
+`tagline` is the optional line under the name on the login panel (160
+characters); empty renders nothing. `supportUrl` is where "contact your
+administrator" points and accepts **only** `https://`, `http://` or `mailto:` —
+so it can never become a `javascript:` URL on the page where passwords are
+typed. `logo` and `splash` name **files sitting beside `branding.json`**, never
+URLs: a customer-supplied external URL would be a tracking pixel on our login
+page and a mixed-content risk.
+
+The four colours are seed tokens, and CSS derives hovers, borders and surfaces
+from them — a customer configures four values, not forty. Each must be a CSS
+hex literal, `#rgb` or `#rrggbb`; named colours, `rgb()` and `hsl()` are
+refused, so the client can compare and contrast-check them without a CSS
+parser. `primary` is the accent (buttons, links, focus rings); `onPrimary` is
+the text drawn *on* the accent, its own token because guessing it is exactly
+how a contrast failure gets shipped; `splashFrom`/`splashTo` are the two stops
+of the login panel's gradient, used when there is no splash image and as its
+backdrop while it loads.
+
+**An invalid field falls back to Moov's value for that field only** — never to
+an unstyled page, and never to a refusal to render. A malformed `#00ff0` gives
+you Moov's indigo with the rest of your brand intact; a `branding.json` that is
+not valid JSON at all gives you Moov's whole brand, and says so in the daemon
+log so you learn the typo did not take effect. A login screen that refuses to
+render is far worse than one that renders unbranded.
+
+### The images
+
+Accepted: **PNG, JPEG, WebP and GIF**, decided by the file's magic bytes, not
+by its extension — a file called `logo.png` that contains HTML is refused, not
+served as an image the browser then re-sniffs for itself.
+
+**SVG is refused, deliberately, in both the CLI and the server.** An SVG is an
+XML document that can carry `<script>`, external references and CSS; serving an
+operator-supplied one from our own origin would hand anyone who can supply a
+logo a stored-XSS primitive on the page that exists to receive passwords.
+Sanitising SVG correctly is a project in itself. Export to PNG.
+
+- **2 MiB per file** (`MaxBrandingAssetBytes`), enforced when the file is
+  *read*, so dropping a bigger one into the directory later does not slip past.
+- **4096 px maximum on each side** for the logo (`MaxBrandingLogoDimension`),
+  checked from the image header before any pixels are decoded — a 40,000 px PNG
+  that inflates to gigabytes costs us a few bytes to refuse.
+- **A WebP logo displays fine on the page but cannot become PWA icons.** Its
+  decoder is not vendored, and the vendor tree is hermetic. The host then gets
+  **Moov's** icons on the home screen — which would be a nasty surprise on a
+  customer's phone, so it is declared twice, never silently: `moovctl branding
+  set` prints `Note: the PWA icons will stay Moov's — …` the moment you pass
+  the file, `moovctl branding show` says so in its `PWA ICONS` row, and `moovd`
+  logs one warning per host per cache TTL. The same declaration covers an
+  undecodable, oversized or missing logo.
+
+**Recommended logo:** PNG with an alpha channel, at least 512 px on the long
+side. Roughly square reads best as a launcher icon; a wide wordmark is fine in
+the top bar and on the login panel, it simply ends up small inside a square
+icon. **Recommended splash:** a photograph at least 1600 px wide — it is
+rendered `object-fit: cover`, so it is cropped to the panel, not letterboxed.
+
+What the icon generator does with the logo, on demand and cached:
+
+| Icon | Size | Padding each side | Plate |
+|---|---|---|---|
+| `icon-192`, `icon-512` | 192, 512 | 10% | transparent |
+| `icon-maskable-192`, `icon-maskable-512` | 192, 512 | 20% | opaque, the primary colour |
+| `apple-touch-icon` | 180 | 10% | opaque, the primary colour |
+| `favicon-32` | 32 | none | transparent |
+
+The logo is contained inside the padded square with its aspect ratio preserved
+and centred. The maskable pair pads to 20% because Android adaptive icons keep
+only the inner 80% circle, and paints the plate because a transparent one would
+be masked onto whatever the launcher picks (usually white). `apple-touch-icon`
+is opaque because iOS discards alpha and composites onto **black**.
+
+### The `moovctl` workflow
+
+`moovctl` writes to the **host** filesystem, and `moovd`'s image is distroless
+— so run it either from a checkout on the host, or through the container the
+way the `account` commands above are run. Note that the container sees the
+branding mount **read-only**, so a write must run on the host (or set `-dir` to
+a writable path):
+
+```bash
+# On the host (a checkout, or the moovctl binary copied out of the image):
+export MOOV_BRANDING_DIR=/etc/moov/branding
+
+moovctl branding set \
+  -host mail.acme.example \
+  -name 'Acme Mail' \
+  -short-name 'Acme' \
+  -tagline 'Correo corporativo de Acme S.A.' \
+  -support-url 'mailto:soporte@acme.example' \
+  -logo /root/brand/acme-logo.png \
+  -splash /root/brand/acme-office.jpg \
+  -color-primary '#0f766e' \
+  -color-on-primary '#ffffff' \
+  -color-splash-from '#042f2e' \
+  -color-splash-to '#115e59'
+```
+
+Every subcommand takes a `-dir` flag that overrides the root; without it the
+CLI takes `MOOV_BRANDING_DIR`, then `/etc/moov/branding`.
+
+**`set` is incremental: a flag you do not pass keeps its current value.** So
+adjusting one colour does not re-upload the logo, and — the reason it works
+this way — adjusting one colour cannot silently delete the customer's logo.
+Passing a flag with an *empty* value clears that field (`-logo ''` stops
+advertising the logo; the file itself is left on disk, because deleting an
+operator's file as a side effect of a config change would be a surprise). The
+stored filename is always ours (`logo.png`, `splash.jpg`, from the sniffed
+type), never the source filename.
+
+```bash
+moovctl branding show -host mail.acme.example   # every field, plus where the PWA icons come from
+moovctl branding list                            # every configured host
+moovctl branding unset -host mail.acme.example   # back to Moov's defaults
+```
+
+`unset` removes `branding.json` and the image files it wrote (only those, by
+their recorded names — never a blanket wipe of a directory an operator may have
+put something else in); `-keep-assets` leaves the images.
+
+### Deploy wiring
+
+`MOOV_BRANDING_HOST_DIR` in `.env` is the **host** path; compose bind-mounts it
+**read-only** at `/etc/moov/branding` and sets `MOOV_BRANDING_DIR` to that
+container path for you. It defaults to `/etc/moov/branding` on both sides, so
+the CLI and the daemon agree without configuration.
+
+A missing directory is a valid configuration: Docker creates it empty on first
+start, and an empty root means every host is served Moov's brand. An unreadable
+one logs a warning and falls back to the same defaults — it never fails
+startup, because refusing to boot a mail server over a logo directory would be
+the wrong trade.
+
+**The front must route `/branding*` to `moovd`.** `Caddyfile.public` and
+`Caddyfile.pilot` already do, in the same `@jmap` matcher as `/jmap*`. Any
+other reverse proxy in front of Moov must do the same, or the SPA's catch-all
+answers `/branding`, `/branding/manifest.webmanifest` and `/branding/icons/*`
+with `index.html`. **This exact failure was found live on 2026-09-09:** the
+shell swallowed the endpoint, so every host installed as Moov, with Moov's name
+and Moov's icons, and nothing in the daemon log said a word — moovd was never
+asked.
+
+### Verifying
+
+```bash
+# The resolved document, as the login page sees it. "default": false means
+# your configuration was found; true means it was not (or it is Moov's).
+curl -s https://mail.acme.example/branding | jq
+
+# The manifest must come back as application/manifest+json, not text/html.
+# text/html here is the SPA-fallback failure above.
+curl -sI https://mail.acme.example/branding/manifest.webmanifest
+
+# An icon must be image/png.
+curl -s -o /dev/null -w '%{content_type}\n' \
+  https://mail.acme.example/branding/icons/icon-192.png
+```
+
+Then in a browser, which is where the parts `curl` cannot see live:
+
+- the tab shows the customer's name and favicon;
+- the install prompt offers the customer's `short_name`;
+- **DevTools → Application → Manifest** shows the name, the theme colour and
+  every icon rendered from the customer's logo.
+
+Browsers cache a manifest and the icons of an **installed** app aggressively,
+and far beyond our five minutes. To see new icons, **uninstall and reinstall
+the PWA** — a reload will not do it, and neither will a hard reload.
+
+### Choosing the colour
+
+Pick **one** primary that reads as text on white, and let the app do the rest:
+it derives both themes from it and **guarantees WCAG AA** — the accent clears
+4.5:1 as text against both surfaces of its theme, and the label on a button
+clears it against the accent's normal, hover and active steps. When the colour
+as sent cannot satisfy that, it is **adjusted**: lightness is moved in OKLCH
+toward the constraint with hue kept and chroma kept as far as the sRGB gamut
+allows, so an adjusted brand still reads as the customer's colour. A primary
+that already passes is returned **exactly** — Moov's own `#5b5bd6` never
+shifts. `onPrimary` is treated as a hint: used when it clears the constraint
+against the final accent, replaced (and declared) when it does not.
+
+So a customer can never make the app unreadable. But a colour that needs heavy
+adjustment **will not look like their brand** — a pale mint arrives as a much
+deeper green — and the app tells you which: it logs one line in the browser
+console, naming the theme and the reason:
+
+```
+[branding] Acme Mail: colours adjusted for WCAG AA — light: … | dark: …
+```
+
+If that line is there, check the result with the customer before calling it
+done. Sending a darker or deeper variant of their brand colour is usually a
+better answer than shipping the adjustment.
+
+---
+
 ## Pointing a JMAP client at it
 
 Browser clients need the JMAP server and the web app on **one origin** (spike S1
