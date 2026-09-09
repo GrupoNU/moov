@@ -140,6 +140,13 @@
   --surface-default: #ffffff;
   --surface-raised: #ffffff;
   --surface-sunken: #eef0f6;
+  /*
+   * NOT a surface to put a menu on: this is the SCRIM — the translucent wash a
+   * `::backdrop` paints over the page behind a modal. Three popup menus once
+   * used it as their background and the rows underneath read straight through
+   * them (P0-2). A popup that floats above the page wants `--surface-raised`.
+   * `overlayScrim.test.ts` keeps that straight.
+   */
   --surface-overlay: rgba(15, 18, 34, 0.45);
 
   /* Text. `--text-muted` is the lightest text allowed on --surface-default and

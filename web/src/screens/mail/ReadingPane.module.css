@@ -518,7 +518,7 @@ a.attachmentName:focus-visible {
   padding: 0;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  background: var(--surface-overlay);
+  background: var(--surface-raised);
   color: var(--text-default);
 }
 
