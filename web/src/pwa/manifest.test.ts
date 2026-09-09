@@ -109,6 +109,43 @@ describe("the web app manifest", () => {
   });
 });
 
+describe("the app shell's brand-resolved links", () => {
+  const indexHtml = readFileSync(resolve(here, "../../index.html"), "utf8");
+
+  it("links the manifest, the favicon and the apple-touch-icon under /branding", () => {
+    /*
+     * The installed app is the one surface that cannot be rebranded after the
+     * fact: the name under the home-screen icon and the icon itself are frozen
+     * at install time. All three links must therefore resolve through the
+     * server, which answers them per Host header.
+     *
+     * A regression here is invisible in development (an unbranded host serves
+     * Moov's own bytes either way) and only shows up as a customer installing
+     * an app with somebody else's icon.
+     */
+    expect(indexHtml).toContain('href="/branding/manifest.webmanifest"');
+    expect(indexHtml).toContain('href="/branding/icons/favicon-32.png"');
+    expect(indexHtml).toContain('href="/branding/icons/apple-touch-icon.png"');
+  });
+
+  it("no longer links any icon straight out of /public", () => {
+    // The complement of the test above: a leftover static link would silently
+    // win for the favicon, because a browser honours the first one it parses.
+    expect(indexHtml).not.toContain('href="/favicon.svg"');
+    expect(indexHtml).not.toContain('href="/manifest.webmanifest"');
+    expect(indexHtml).not.toContain('href="/icons/');
+  });
+
+  it("keeps the static originals on disk as the server's embedded defaults", () => {
+    // moovd embeds these and serves them for an unbranded host; a Go test pins
+    // byte-equality against exactly these paths. Deleting them because the
+    // shell stopped linking them would break the unbranded install.
+    expect(() => readPublic("manifest.webmanifest")).not.toThrow();
+    expect(() => readPublic("favicon.svg")).not.toThrow();
+    expect(() => readPublic("icons/apple-touch-icon.png")).not.toThrow();
+  });
+});
+
 describe("the service worker", () => {
   const source = readPublic(SERVICE_WORKER_URL.replace(/^\//, ""));
 

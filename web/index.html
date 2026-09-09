@@ -9,7 +9,7 @@
       (applyBrandingToDocument). These are the pre-brand values: Moov's own,
       which is also the correct final value for every unbranded installation.
     -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/branding/icons/favicon-32.png" />
     <title>Moov Mail</title>
     <meta name="theme-color" content="#5b5bd6" />
     <meta name="description" content="Moov Mail" />
@@ -20,14 +20,34 @@
       window, and what registers `mailto:` so the OS can hand a compose to us
       (see src/pwa/mailto.ts for the receiving half).
 
+      # Why these three point at /branding and not at /public
+
+      An installed app is the one surface a customer cannot rebrand after the
+      fact: the name under the home-screen icon and the icon itself are baked
+      in at install time, and nothing in the running app can correct them. So
+      the shell links the SERVER-RESOLVED variants, which the server answers
+      per Host header — a branded host installs as that customer, an
+      unbranded host gets Moov's own bytes, indistinguishably.
+
+      The static `public/manifest.webmanifest` and `public/icons/*` stay on
+      disk unchanged: they are what the Go server embeds and serves as the
+      unbranded default, and a Go test pins them byte-for-byte against these
+      files. They are the source, not dead weight.
+
       `apple-touch-icon` is separate because iOS still does not read the
       manifest's icons for a home-screen bookmark; without this line an
       installed Moov on iOS gets a screenshot of the page as its icon. It is a
       PNG with opaque corners on purpose — iOS discards alpha and would
       otherwise composite the rounded plate onto black.
+
+      The favicon is a PNG rather than the `public/favicon.svg` that used to be
+      linked here for the same reason: there is no per-host SVG to serve, and a
+      tab showing Moov's mark next to a customer's branded login screen is the
+      one place the seam is visible on every single page load. The SVG stays on
+      disk as the asset the server's own favicon is rendered from.
     -->
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/branding/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/branding/icons/apple-touch-icon.png" />
 
     <!--
       A login page must never be indexed or previewed by a crawler: it is a
