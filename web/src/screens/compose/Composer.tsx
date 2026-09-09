@@ -1466,9 +1466,6 @@ export function Composer({
               )}
             </PopupMenu>
 
-            <button type="button" className={styles.discard} onClick={() => void discard()}>
-              {t("compose.discard")}
-            </button>
           </div>
 
           {/* The draft status. Always in the DOM so its changes are announced. */}
@@ -1479,6 +1476,34 @@ export function Composer({
                 ? t("draft.saved")
                 : ""}
           </p>
+
+          {/*
+            D-02: discard is a TRASH ICON alone at the far right (canon 07 §7).
+
+            It was a word — "Descartar" — sitting immediately beside the ⋯, in
+            the same run as attach and the overflow. That is the one place it
+            must not be: the row's other controls add to the message, this one
+            destroys it, and a destructive verb rendered like its neighbours is
+            a destructive verb someone eventually hits by reflex. Gmail isolates
+            it at the opposite end of the footer, and the distance IS the
+            affordance.
+
+            The confirmation for a non-empty draft is unchanged (E11's own
+            dialog): the icon reduces the chance of an accidental press, it does
+            not replace the guard behind it.
+          */}
+          <button
+            type="button"
+            className={styles.discard}
+            onClick={() => void discard()}
+            aria-label={t("compose.discard")}
+            title={t("compose.discard")}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M4.5 6h11M8 6V4.6h4V6M6 6l.7 9.2a1 1 0 0 0 1 .8h4.6a1 1 0 0 0 1-.8L14 6" />
+              <path d="M8.6 8.8v4.6M11.4 8.8v4.6" />
+            </svg>
+          </button>
           </div>
         </footer>
 

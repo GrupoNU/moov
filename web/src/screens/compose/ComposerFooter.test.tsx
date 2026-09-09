@@ -133,3 +133,38 @@ describe("D-01/D-04 — the formatting row lives in the footer, behind Aa", () =
     expect(screen.getByRole("toolbar", { name: "Formatting" })).not.toBeNull();
   });
 });
+
+describe("D-02 — discard is a trash icon isolated at the right", () => {
+  it("is no longer a word beside the ... menu", () => {
+    renderComposer();
+    const discard = screen.getByRole("button", { name: "Discard" });
+    // An icon-only control: its accessible name comes from aria-label, and its
+    // visible text is empty. A word here is what put it next to the overflow.
+    expect(discard.textContent).toBe("");
+    expect(discard.querySelector("svg")).not.toBeNull();
+  });
+
+  it("sits after every other footer control, at the far right", () => {
+    renderComposer();
+    const footer = screen.getByRole("button", { name: "Send" }).closest("footer");
+    expect(footer).not.toBeNull();
+    const buttons = [...(footer?.querySelectorAll("button") ?? [])];
+    const discard = screen.getByRole("button", { name: "Discard" });
+    expect(buttons[buttons.length - 1]).toBe(discard);
+  });
+
+  it("still confirms before destroying a draft that has content", async () => {
+    const user = userEvent.setup();
+    renderComposer({
+      draft: { ...newDraft(true), to: [], subject: "algo", text: "cuerpo" },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    // E11's own dialog, unchanged: the icon lowers the chance of a reflex
+    // press, it does not replace the guard behind it.
+    expect(
+      await screen.findByText("Discard this draft? What you wrote will be lost."),
+    ).not.toBeNull();
+  });
+});

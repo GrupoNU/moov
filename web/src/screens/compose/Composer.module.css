@@ -302,10 +302,18 @@
   display: contents;
 }
 
+/*
+ * D-02: three zones, not two — actions left, status in the middle, trash right.
+ *
+ * The status takes the slack (`flex: 1`) rather than the row using
+ * `space-between`, so the trash is pinned to the right edge whatever the status
+ * says. Under `space-between` an empty status would let the trash drift left
+ * into the ⋯'s neighbourhood, which is precisely the adjacency this item exists
+ * to end.
+ */
 .actionRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
 }
@@ -407,15 +415,32 @@
   width: 0.8em;
 }
 
+/*
+ * D-02: the discard trash, isolated at the right end of the footer.
+ *
+ * `margin-left: auto` is what pins it there and what puts the gap between it
+ * and the ⋯ — the isolation is the affordance, not decoration. It turns danger
+ * red only on hover/focus, so the resting footer is not shouting.
+ */
 .discard {
-  padding: var(--space-2) var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-left: auto;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font: inherit;
-  font-size: var(--text-sm);
   cursor: pointer;
+}
+
+.discard svg {
+  width: 1.1rem;
+  height: 1.1rem;
 }
 
 .discard:hover,
