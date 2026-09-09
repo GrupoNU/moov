@@ -1153,27 +1153,38 @@ export function Composer({
           {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
           autoFocusField={draft.focusField === "to"}
           trailing={
+            /*
+              D-05: "Cc  Cco" — two quiet words, as Gmail writes them.
+
+              The visible text is the FIELD NAME alone; the verb lives in the
+              accessible name, because "Cc" on screen is what a person scans for
+              and "Add Cc" is what a screen reader has to hear to know it is a
+              control rather than a heading. Splitting them is not a compromise
+              between the two — it is what each surface actually needs.
+            */
             <div className={styles.ccToggles}>
               {!showCc && (
                 <button
                   type="button"
                   className={styles.linkButton}
+                  aria-label={t("compose.showCc")}
                   onClick={() => {
                     setShowCc(true);
                   }}
                 >
-                  {t("compose.showCc")}
+                  {t("compose.cc")}
                 </button>
               )}
               {!showBcc && (
                 <button
                   type="button"
                   className={styles.linkButton}
+                  aria-label={t("compose.showBcc")}
                   onClick={() => {
                     setShowBcc(true);
                   }}
                 >
-                  {t("compose.showBcc")}
+                  {t("compose.bcc")}
                 </button>
               )}
             </div>

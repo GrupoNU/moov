@@ -215,16 +215,33 @@
   align-self: center;
 }
 
+/*
+ * D-05: "Cc" and "Cco" are plain muted text, not accent links.
+ *
+ * They were underlined and in the accent colour, which is the styling this app
+ * reserves for a LINK — something that takes you somewhere. These do neither:
+ * they reveal a field that is already part of this form. Gmail draws them as
+ * quiet grey words on the right of the To row, and the quietness is the point:
+ * they must be findable by someone looking for them and invisible to everyone
+ * else, because most messages have no Cc.
+ *
+ * They gain the accent only on hover/focus, which is where an affordance is
+ * supposed to announce itself.
+ */
 .linkButton {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-accent);
+  color: var(--text-muted);
   font: inherit;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration: none;
+}
+
+.linkButton:hover,
+.linkButton:focus-visible {
+  color: var(--color-accent);
 }
 
 .subjectRow {

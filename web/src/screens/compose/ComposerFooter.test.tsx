@@ -134,6 +134,25 @@ describe("D-01/D-04 — the formatting row lives in the footer, behind Aa", () =
   });
 });
 
+describe("D-05 — Cc/Cco are quiet words, not accent links", () => {
+  it("shows the field name and keeps the verb for assistive technology", () => {
+    renderComposer();
+    const cc = screen.getByRole("button", { name: "Add Cc" });
+    // On screen it is what a person scans for; in the a11y tree it is what
+    // tells a screen reader this is a control and not a heading.
+    expect(cc.textContent).toBe("Cc");
+    const bcc = screen.getByRole("button", { name: "Add Bcc" });
+    expect(bcc.textContent).toBe("Bcc");
+  });
+
+  it("still reveals the field it names", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    await user.click(screen.getByRole("button", { name: "Add Cc" }));
+    expect(screen.getByRole("textbox", { name: "Cc" })).not.toBeNull();
+  });
+});
+
 describe("D-02 — discard is a trash icon isolated at the right", () => {
   it("is no longer a word beside the ... menu", () => {
     renderComposer();
