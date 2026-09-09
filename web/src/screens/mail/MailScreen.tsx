@@ -517,6 +517,18 @@ export function MailScreen(): React.JSX.Element {
     readonly ComposerAttachment[] | undefined
   >(undefined);
   const [identity, setIdentity] = useState<Identity | undefined>(undefined);
+  /**
+   * D-08: how many identities this account actually has.
+   *
+   * The composer's "De" row renders a caret only when there is more than one —
+   * a dropdown over a single choice is a control that cannot change anything,
+   * which is the dead affordance the review keeps finding. Only the COUNT is
+   * kept rather than the whole list, because that is all the current UI can
+   * act on: picking a second identity is not built (`fetchIdentities` returns
+   * the list and this screen has always used `[0]`), so storing the rest would
+   * be state nothing reads.
+   */
+  const [identityCount, setIdentityCount] = useState(0);
   /** A refetch trigger: bumped after a write so the list re-reads the truth. */
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -1146,11 +1158,17 @@ export function MailScreen(): React.JSX.Element {
     void (async () => {
       try {
         const identities = await fetchIdentities(client, accountId, controller.signal);
-        if (!controller.signal.aborted) setIdentity(identities[0]);
+        if (!controller.signal.aborted) {
+          setIdentity(identities[0]);
+          setIdentityCount(identities.length);
+        }
       } catch {
         // A missing identity does not break reading; it disables SENDING, and
         // the composer says so rather than the whole screen failing.
-        if (!controller.signal.aborted) setIdentity(undefined);
+        if (!controller.signal.aborted) {
+          setIdentity(undefined);
+          setIdentityCount(0);
+        }
       }
     })();
     return () => {
@@ -5062,6 +5080,8 @@ export function MailScreen(): React.JSX.Element {
           client={client}
           accountId={accountId}
           identity={identity}
+          /* D-08: the caret on "De" appears only above one identity. */
+          identityCount={identityCount}
           draftsMailboxId={roleMailboxId("drafts")}
           sentMailboxId={roleMailboxId("sent")}
           sessionCapabilities={session?.capabilities}

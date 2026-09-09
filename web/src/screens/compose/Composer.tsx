@@ -87,6 +87,15 @@ export interface ComposerProps {
   readonly client: JmapClient;
   readonly accountId: string;
   readonly identity: Identity | undefined;
+  /**
+   * D-08: how many identities the account has, so the "De" row knows whether a
+   * caret would mean anything.
+   *
+   * Defaults to 1 — the overwhelmingly common case and the one every existing
+   * caller was implicitly in — so a composer rendered without it shows the
+   * collapsed row rather than a dropdown over a single choice.
+   */
+  readonly identityCount?: number;
   readonly draftsMailboxId: string | undefined;
   readonly sentMailboxId: string | undefined;
   readonly sessionCapabilities: Readonly<Record<string, unknown>> | undefined;
@@ -165,6 +174,7 @@ export function Composer({
   client,
   accountId,
   identity,
+  identityCount = 1,
   draftsMailboxId,
   sentMailboxId,
   sessionCapabilities,
@@ -1136,10 +1146,33 @@ export function Composer({
           </div>
         </header>
 
+        {/*
+          D-08: "De" says the address once, and carries a caret only when there
+          is somewhere for it to go.
+
+          Two defects in one line. The row rendered `name <email>` even when the
+          display name IS the mailbox — which is the default on every account
+          this product provisions — so it read "moov-test@… <moov-test@…>". And
+          it had no caret at all, which on an account with a second identity
+          would leave the sending address unchangeable with no sign that it
+          could be otherwise.
+
+          `identityCount` decides the caret, not a preference and not a guess:
+          above one identity the caret is honest and below it a dropdown would
+          be a control that cannot change anything. Choosing the identity is not
+          built yet — this screen has always used `identities[0]` — so the caret
+          is deliberately NOT rendered as a dead menu button; when the picker
+          lands it goes here, and until then the collapse is the whole fix.
+        */}
         {identity !== undefined && (
           <p className={styles.fromLine}>
             <span className={styles.fromLabel}>{t("compose.from")}</span>
-            <span>{identity.name === "" ? identity.email : `${identity.name} <${identity.email}>`}</span>
+            <span>{fromLineText(identity)}</span>
+            {identityCount > 1 && (
+              <span className={styles.fromCaret} aria-hidden="true">
+                ▾
+              </span>
+            )}
           </p>
         )}
 
@@ -1585,6 +1618,24 @@ function signatureIntent(intent: ComposeIntent): "new" | "reply" {
     case "draft":
       return "new";
   }
+}
+
+/**
+ * The "De" row's text (D-08).
+ *
+ * `Nombre <buzón>` only when the name adds something. When the display name IS
+ * the address — the default on every account this product provisions — the pair
+ * is the same string twice, which is what made the row read
+ * "moov-test@atmosfera.cloud <moov-test@atmosfera.cloud>".
+ *
+ * Compared case-insensitively because a mailbox's local part is case-preserving
+ * but not case-sensitive, and a name that differs from its address only in
+ * capitalisation is still the same thing said twice.
+ */
+function fromLineText(identity: Identity): string {
+  const name = identity.name.trim();
+  if (name === "" || name.toLowerCase() === identity.email.toLowerCase()) return identity.email;
+  return `${name} <${identity.email}>`;
 }
 
 function withSignature(body: string, signature: string, isHtml: boolean): string {

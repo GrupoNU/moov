@@ -134,6 +134,33 @@ describe("D-01/D-04 — the formatting row lives in the footer, behind Aa", () =
   });
 });
 
+describe("D-08 — the From row says the address once", () => {
+  it("collapses to the mailbox when the display name IS the mailbox", () => {
+    renderComposer({
+      identity: { ...identity, name: "moov-test@atmosfera.cloud" },
+    });
+    // Not "moov-test@… <moov-test@…>", which is what it rendered.
+    expect(screen.getByText("moov-test@atmosfera.cloud")).not.toBeNull();
+    expect(
+      screen.queryByText("moov-test@atmosfera.cloud <moov-test@atmosfera.cloud>"),
+    ).toBeNull();
+  });
+
+  it("keeps 'Name <mailbox>' when the name adds something", () => {
+    renderComposer();
+    expect(screen.getByText("Moov Test <moov-test@atmosfera.cloud>")).not.toBeNull();
+  });
+
+  it("shows no caret above a single identity, and one above two", () => {
+    renderComposer();
+    expect(screen.queryByText("▾")).toBeNull();
+    cleanup();
+
+    renderComposer({ identityCount: 2 });
+    expect(screen.getByText("▾")).not.toBeNull();
+  });
+});
+
 describe("D-07 — the subject says 'Asunto' once", () => {
   it("keeps the label in the accessibility tree but hides it from sight", () => {
     renderComposer();
