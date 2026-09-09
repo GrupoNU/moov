@@ -34,42 +34,80 @@
   gap: var(--space-2);
 }
 
-.attachment {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+/*
+ * C-10: attachment CARDS — Gmail's shape. A fixed-width tile: the picture (or
+ * the file icon) on top, the name and size under it, the whole tile the
+ * download. The tile's width is what makes a row of them read as a gallery
+ * rather than as a list of links.
+ */
+.card {
+  flex: none;
+  width: 11rem;
+  max-width: 100%;
   font-size: var(--text-sm);
   background: var(--surface-default);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  max-width: 100%;
+  overflow: hidden;
 }
 
-.attachmentIcon {
-  flex: none;
-  width: 16px;
-  height: 16px;
+.cardLink {
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.cardLink:hover,
+a.cardLink:focus-visible {
+  background: var(--surface-raised);
+}
+
+a.cardLink:hover .attachmentName,
+a.cardLink:focus-visible .attachmentName {
+  text-decoration: underline;
+}
+
+.cardThumb,
+.cardIcon {
+  display: grid;
+  place-items: center;
+  height: 6.5rem;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cardIcon {
   color: var(--text-muted);
 }
 
+.cardIcon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.cardImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cardCaption {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
 .attachmentName {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-default);
-}
-
-/* The name is a real download link when the server gave the part a blobId
-   and a blob token is held; it reads like the plain name until pointed at. */
-a.attachmentName {
-  text-decoration: none;
-}
-
-a.attachmentName:hover,
-a.attachmentName:focus-visible {
-  text-decoration: underline;
 }
 
 .attachmentMeta {

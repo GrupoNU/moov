@@ -1,10 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
 import { withAccessToken, type JmapClient } from "../../api/jmap";
+import { isThumbnailable } from "../../mail/attachmentThumbnail";
 import { formatBytes } from "../../mail/format";
 import { displaySubject } from "../../mail/threading";
 import type { Email, EmailBodyPart } from "../../mail/types";
+import { useOffline } from "../../offline/OfflineProvider";
 import styles from "./MessageAttachments.module.css";
 
 /**
@@ -22,7 +24,12 @@ import styles from "./MessageAttachments.module.css";
  */
 
 /**
- * The attachment list.
+ * The attachment list, as CARDS (C-10, canon 07 §6: "attachment cards at
+ * bottom").
+ *
+ * An image attachment shows its own pixels; anything else a file icon. Both
+ * carry the name and the size and both download on click. No Drive, no
+ * preview pane — a thumbnail and a download are what the canon asks for.
  *
  * Per-attachment download is real: the server advertises a derived per-part
  * `blobId` (P2 gap 5, closed), and a `blob`-scoped token turns each attachment
@@ -70,33 +77,46 @@ export function AttachmentList({
       <ul className={styles.attachmentList}>
         {attachments.map((part, index) => {
           const href = hrefFor(part);
-          return (
-            <li key={part.partId ?? index} className={styles.attachment}>
-              <svg
-                className={styles.attachmentIcon}
-                viewBox="0 0 20 20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                aria-hidden="true"
-                focusable="false"
-              >
+          const name = part.name ?? part.type;
+          const visual = isThumbnailable(part) ? (
+            <AttachmentThumbnail part={part} client={client} accountId={accountId} />
+          ) : (
+            <span className={styles.cardIcon} aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" focusable="false">
                 <path d="M11.5 2.5H5.8a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h8.4a1 1 0 0 0 1-1V6.2z" />
                 <path d="M11.5 2.5v3.7h3.7" />
               </svg>
+            </span>
+          );
+          const caption = (
+            <span className={styles.cardCaption}>
+              <span className={styles.attachmentName}>{name}</span>
+              <span className={styles.attachmentMeta}>{formatBytes(part.size, locale)}</span>
+            </span>
+          );
+          return (
+            <li key={part.partId ?? index} className={styles.card}>
+              {/*
+                The whole card is the download when the link exists — the
+                thumbnail is what a person clicks, not the caption under it.
+                `download` keeps the browser from navigating into the image.
+              */}
               {href !== undefined ? (
                 <a
-                  className={styles.attachmentName}
+                  className={styles.cardLink}
                   href={href}
                   download={part.name ?? "attachment"}
                   title={t("reader.download")}
                 >
-                  {part.name ?? part.type}
+                  {visual}
+                  {caption}
                 </a>
               ) : (
-                <span className={styles.attachmentName}>{part.name ?? part.type}</span>
+                <span className={styles.cardLink}>
+                  {visual}
+                  {caption}
+                </span>
               )}
-              <span className={styles.attachmentMeta}>{formatBytes(part.size, locale)}</span>
             </li>
           );
         })}
@@ -115,6 +135,79 @@ export function AttachmentList({
         toolbar's menu item calls the same download path.
       */}
     </section>
+  );
+}
+
+/**
+ * An image attachment's thumbnail (C-10), through the authenticated blob path.
+ *
+ * A plain `<img src=download-url>` cannot work: the download route wants HTTP
+ * Basic or a query token, and while the token exists, putting it in an `<img>`
+ * that the browser may cache or a devtools panel may show is a worse trade
+ * than one fetch. So the bytes come through `client.downloadBlob` (Authorization
+ * header attached), become an object URL, and that URL is REVOKED when the
+ * card unmounts or the part changes — nothing stays addressable after the
+ * reader moves on. Offline, no fetch is attempted (canon §2.10: attachments are
+ * not cached) and the icon stands in; a failed fetch does the same, quietly —
+ * the download link under it still works and says so on hover.
+ */
+function AttachmentThumbnail({
+  part,
+  client,
+  accountId,
+}: {
+  readonly part: EmailBodyPart;
+  readonly client: JmapClient;
+  readonly accountId: string;
+}): React.JSX.Element {
+  const { isOnline } = useOffline();
+  const [url, setUrl] = useState<string | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
+  const blobId = part.blobId;
+  const name = part.name ?? "image";
+  const type = part.type;
+
+  useEffect(() => {
+    if (blobId === null || !isOnline) return undefined;
+    if (typeof URL.createObjectURL !== "function") return undefined;
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    void (async () => {
+      try {
+        const blob = await client.downloadBlob(accountId, blobId, name, type, controller.signal);
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      } catch {
+        if (!controller.signal.aborted) setFailed(true);
+      }
+    })();
+    return () => {
+      controller.abort();
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl);
+      setUrl(undefined);
+    };
+  }, [client, accountId, blobId, name, type, isOnline]);
+
+  if (url === undefined) {
+    // Loading, offline or failed: the file icon, with the image glyph so the
+    // card still says "this is a picture".
+    return (
+      <span className={styles.cardIcon} aria-hidden="true" data-thumbnail-state={failed ? "failed" : "pending"}>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" focusable="false">
+          <rect x="3" y="4" width="14" height="12" rx="1.5" />
+          <circle cx="7.5" cy="8.5" r="1.4" />
+          <path d="M3.5 14.5l4-4 3 3 2.5-2.5 3.5 3.5" />
+        </svg>
+      </span>
+    );
+  }
+
+  return (
+    <span className={styles.cardThumb}>
+      {/* The name is the caption's job; the picture itself is decorative. */}
+      <img className={styles.cardImage} src={url} alt="" />
+    </span>
   );
 }
 
