@@ -35,6 +35,39 @@ describe("the quick-settings dock (F-06)", () => {
   });
 });
 
+describe("the settings page rows (F-19, F-20, F-48)", () => {
+  const css = read("screens/settings/SettingsPage.module.css");
+
+  it("gives the row label the weight Gmail gives it", () => {
+    const rule = /\.rowLabel\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/font-weight:\s*var\(--weight-semibold\)/);
+  });
+
+  it("caps the rows container so they do not stretch across a wide monitor", () => {
+    const rule = /\.rows\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/max-width:\s*1150px/);
+    // Left-aligned, like Gmail: capped AND centred would float the rows away
+    // from the tab that selected them.
+    expect(rule).toMatch(/margin-right:\s*auto/);
+    expect(rule).not.toMatch(/margin-left:\s*auto/);
+  });
+
+  it("tightens the row's vertical padding so more than ten rows fit a screen", () => {
+    const rule = /\.row\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    // space-3, not space-4: the review counted 10 of our rows against Gmail's
+    // 19 at the same viewport, with ~450px of dead white below them.
+    expect(rule).toMatch(/padding:\s*var\(--space-3\)\s+0/);
+  });
+
+  it("holds the description to one line in the two-column layout", () => {
+    const rule = /\.rowDescription\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/white-space:\s*nowrap/);
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    // …and lets it wrap again once the row stacks, where it has the width.
+    expect(css).toMatch(/@container settings \(max-width: 48rem\)[\s\S]*?\.rowDescription/);
+  });
+});
+
 /**
  * F-08: one word per concept, in both locales.
  *

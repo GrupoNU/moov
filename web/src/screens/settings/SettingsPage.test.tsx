@@ -189,6 +189,50 @@ describe("the tab row", () => {
     ).toBeInTheDocument();
   });
 
+  /*
+   * F-47. The review saw "General" as the tab and "GENERAL" in small caps 40px
+   * below it — the same word twice, on six of the seven tabs. The heading is
+   * hidden rather than deleted, so these assert BOTH halves: it is out of sight
+   * where it duplicates the tab, and it is still in the accessibility tree
+   * naming its section.
+   */
+  it("hides the section heading on a tab that holds only one section", () => {
+    renderPage();
+
+    const heading = screen.getByRole("heading", { name: en["settings.section.general"] });
+    // Still named, still findable by a screen reader — and off the screen.
+    expect(heading).toHaveClass("visually-hidden");
+  });
+
+  it("shows both headings on the one tab that holds two sections", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openAt(user, en["settings.tab.filters"]);
+
+    // Here the small caps do real work: they are the only thing separating two
+    // lists of different objects.
+    expect(
+      screen.getByRole("heading", { name: en["settings.section.filters"] }),
+    ).not.toHaveClass("visually-hidden");
+    expect(
+      screen.getByRole("heading", { name: en["settings.section.blocked"] }),
+    ).not.toHaveClass("visually-hidden");
+  });
+
+  it("shows headings under a search, where the tabs no longer say where a hit lives", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(
+      screen.getByRole("searchbox", { name: en["settings.search.label"] }),
+      "language",
+    );
+
+    expect(
+      screen.getByRole("heading", { name: en["settings.section.general"] }),
+    ).not.toHaveClass("visually-hidden");
+  });
+
   it("is a real APG tablist: one tab stop, arrows move within it", async () => {
     const user = userEvent.setup();
     renderPage();

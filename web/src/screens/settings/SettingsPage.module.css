@@ -220,9 +220,21 @@
   color: var(--text-muted);
 }
 
+/*
+ * F-48: the rows stop at ~1150px and stay LEFT-ALIGNED.
+ *
+ * Without a cap the two-column row stretched to whatever the panel was — on a
+ * 2560px monitor that left ~1900px of empty space to the right of every
+ * control, and a select floating a metre from its own label. Gmail caps its
+ * settings body and pins it to the left rather than centring it, so the rows
+ * stay under the tab that selected them; `margin-right: auto` (and no
+ * `margin-left`) is that, expressed once.
+ */
 .rows {
   display: flex;
   flex-direction: column;
+  max-width: 1150px;
+  margin-right: auto;
 }
 
 /*
@@ -234,12 +246,21 @@
  * tall — centring would then float a select in the middle of a two-line label
  * and break the alignment the fixed column was introduced to create.
  */
+/*
+ * F-19: `--space-3` vertically, not `--space-4`.
+ *
+ * The review counted TEN of our rows against Gmail's nineteen at the same
+ * 1310px viewport, with ~450px of dead white below the last one. Two things
+ * made that gap and this is the first: a row taller than it needs to be, times
+ * ten, is the whole difference. The second is the description wrapping to three
+ * lines, which `.rowDescription` now handles.
+ */
 .row {
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr);
   align-items: start;
   gap: var(--space-5);
-  padding: var(--space-4) 0;
+  padding: var(--space-3) 0;
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -267,16 +288,42 @@
   min-width: 0;
 }
 
+/* F-20: semibold. `--weight-medium` did not separate the setting's NAME from
+ * its explanation at a glance, so a column of rows read as one grey block —
+ * Gmail's row label is visibly bolder than its description. */
 .rowLabel {
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   color: var(--text-strong);
 }
 
+/*
+ * F-19, second half: the description is allowed ONE line.
+ *
+ * The prose here is genuinely better than Gmail's (the review says so and asks
+ * for it to be protected), so it is not shortened — it is clipped, with the
+ * full sentence still available on hover and to a screen reader, which reads
+ * the text node rather than the rendered box. Three-line descriptions were
+ * costing more vertical space than the controls themselves.
+ */
 .rowDescription {
   font-size: var(--text-xs);
   color: var(--text-muted);
-  text-wrap: pretty;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * …except where the row is stacked, which is where the description has the
+ * whole panel width and clipping it would hide text that fits. Same container
+ * query as the row's own stacking rule, so the two cannot disagree.
+ */
+@container settings (max-width: 48rem) {
+  .rowDescription {
+    white-space: normal;
+    text-wrap: pretty;
+  }
 }
 
 /* `min-width: 0` rather than the old `flex: none`: this is a grid cell now, and

@@ -174,6 +174,20 @@ export const QUICK_PANEL_ROWS: ReadonlySet<string> = new Set(["theme", "density"
  * to tune something and then silently ignores them. If the pager ever becomes
  * configurable this constant is where the row goes, with a preference behind it.
  */
+/*
+ * F-22: there is no "Avanzadas" tab, and there should not be an empty one.
+ *
+ * Gmail's Advanced tab is where its opt-in experiments live (plantillas,
+ * auto-advance, multiple inboxes). Ours would be empty today — every setting
+ * this build has belongs on a tab that already exists — and an empty tab is the
+ * dead control principle P4 forbids, one level up.
+ *
+ * This comment is the marker, not a placeholder: when a deferred feature from
+ * plan §6 lands behind an opt-in (superstars, the GC-3 splits, the queue
+ * operators), THIS is where its section id goes, with "advanced" added to
+ * SETTINGS_TABS and SECTION_TAB in the same change.
+ */
+
 export const PAGE_SIZE_ROW_OMITTED =
   "Gmail's page-size preference has no reader in Moov: the pager is fixed at 50 " +
   "and the list beneath it is virtualized, so the setting would change nothing.";

@@ -398,7 +398,16 @@ export function SettingsPage({
           </div>
         ) : (
           visibleSections.map((sectionId) => (
-            <SettingsSection key={sectionId} titleKey={SECTION_TITLES[sectionId]}>
+            <SettingsSection
+              key={sectionId}
+              titleKey={SECTION_TITLES[sectionId]}
+              /*
+                F-47: the small-caps heading only where it separates two things.
+                Under a SEARCH it always shows, because the tabs are suspended
+                and the heading is then the only thing saying where a hit lives.
+              */
+              showTitle={search.isFiltering || visibleSections.length > 1}
+            >
               {sectionId === "general" && (
                 <GeneralSection prefs={prefs} showRow={showRow} />
               )}
@@ -1631,12 +1640,36 @@ function Skeleton({
   );
 }
 
-/** A titled group of settings rows. */
+/**
+ * A titled group of settings rows.
+ *
+ * # F-47: the heading is HIDDEN when the tab holds only one section
+ *
+ * Standing on "General" showed the word twice — once as the selected tab, and
+ * again 40px below in small caps as the section's own heading. Gmail does not,
+ * and it does not because the two are the same fact: with one section per tab,
+ * the tab IS the heading. The duplicate cost a line of vertical space at the
+ * top of six of the seven tabs and made the page look like it had a header
+ * nobody needed.
+ *
+ * It is hidden rather than DELETED, and that distinction is the whole care in
+ * this change: the `<section>` is named by this heading, so removing the
+ * element would leave an unnamed landmark and a screen-reader user with no way
+ * to tell one group from the next. `visually-hidden` keeps the name in the
+ * accessibility tree and takes it off the screen.
+ *
+ * On the one tab that genuinely holds two sections — Filtros, with FILTROS and
+ * BLOQUEADOS — the headings render, because there the small caps are doing real
+ * work: they are the only thing separating two lists of different objects.
+ */
 function SettingsSection({
   titleKey,
+  showTitle,
   children,
 }: {
   readonly titleKey: PlainStringKey;
+  /** False collapses the heading to its accessible name only (F-47). */
+  readonly showTitle: boolean;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
   const { t } = useTranslation();
@@ -1646,7 +1679,10 @@ function SettingsSection({
      * between groups instead of walking every row of a long sheet.
      */
     <section className={styles.section} aria-labelledby={`settings-${titleKey}`}>
-      <h3 className={styles.sectionTitle} id={`settings-${titleKey}`}>
+      <h3
+        className={showTitle ? styles.sectionTitle : "visually-hidden"}
+        id={`settings-${titleKey}`}
+      >
         {t(titleKey)}
       </h3>
       <div className={styles.rows}>{children}</div>
@@ -1687,7 +1723,15 @@ function SettingRow({
       <div className={styles.rowText}>
         <span className={styles.rowLabel}>{t(labelKey)}</span>
         {descriptionKey !== undefined && (
-          <span className={styles.rowDescription}>{t(descriptionKey)}</span>
+          /*
+            F-19: the description is clipped to one line by CSS, so the full
+            sentence rides along as a `title`. The text NODE is complete either
+            way — a screen reader reads the node, not the box — so this is for
+            the sighted reader whose row happens to have long prose.
+          */
+          <span className={styles.rowDescription} title={t(descriptionKey)}>
+            {t(descriptionKey)}
+          </span>
         )}
       </div>
       <div className={styles.rowControl}>{children}</div>
