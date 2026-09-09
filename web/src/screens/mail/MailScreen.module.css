@@ -314,6 +314,38 @@
   container-type: inline-size;
 }
 
+/*
+ * B-06: the chrome strip and the verb strip share ONE row.
+ *
+ * Gmail draws both sets of controls in the same place and swaps them the moment
+ * something is selected. Moov stacked them, so every list carried a second row
+ * of eleven greyed-out buttons — a toolbar where nothing is live reads as
+ * broken rather than as available.
+ *
+ * The stack is `relative` and the verbs are `absolute` inside it, which is what
+ * makes the swap cost nothing: the list below never moves, so a pointer already
+ * travelling toward a row does not have that row slide out from under it the
+ * instant a checkbox is ticked. There is no reserved space and none is needed —
+ * the space is the chrome's own row, which is always there.
+ */
+.toolbarStack {
+  position: relative;
+  flex: none;
+}
+
+.toolbarOverlay {
+  position: absolute;
+  inset: 0;
+  /* Opaque, because it COVERS the chrome rather than replacing it in the flow:
+   * a translucent overlay would show the pager through the verbs. Its own
+   * `.bar` paints `--surface-default`; this is the belt to that's braces, for
+   * the gap the bar's padding leaves at the edges. */
+  background: var(--surface-default);
+  /* Above the chrome it covers; below any popup a verb opens, which portals to
+   * the shell and carries its own stacking. */
+  z-index: 1;
+}
+
 .readerColumn {
   min-width: 0;
   min-height: 0;

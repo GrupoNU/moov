@@ -621,4 +621,62 @@ describe("MailScreen — the shell's canary", () => {
       expect(expandedMessageIds()).toEqual(["e2", "e2-newer"]);
     });
   });
+
+  /**
+   * B-06: the bulk verbs appear WITH a selection and not before.
+   *
+   * The shell is the only place this is decidable. `ActionBar` renders its
+   * verbs whenever it is mounted — that is its job — so the question "is a
+   * strip of eleven dead buttons sitting over an inbox nobody has selected
+   * anything in" is a question about who mounts it, which is here.
+   */
+  it("shows no bulk verbs until something is selected, then shows them (B-06)", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await waitFor(
+      () => {
+        expect(screen.getByText("The first message")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    /*
+     * The bar is probed by its ROLE, not by one of its buttons.
+     *
+     * Two probes were tried first and both were wrong, which is worth recording
+     * because both look obviously right. "Archive": the row's four hover
+     * actions include an archive button and they are deliberately in the DOM at
+     * all times (`MessageList` renders them and CSS reveals them, rather than
+     * re-mounting three buttons on every pointer move across a virtualized
+     * list), so a name query finds one per rendered row. "Move to": the reading
+     * pane has its own `MoveMenu`, so the name is not unique to this bar
+     * either.
+     *
+     * `role="toolbar"` is what the ActionBar actually IS, and asking for the
+     * thing itself is both unambiguous and the assertion that will still mean
+     * what it says after the verbs are next reshuffled.
+     */
+    const bulkBar = (): HTMLElement | null => screen.queryByRole("toolbar");
+    expect(bulkBar()).toBeNull();
+
+    // The chrome strip, by contrast, is there the whole time — this is a swap,
+    // not a toolbar that comes and goes.
+    const refresh = (): HTMLElement =>
+      screen.getByRole("button", { name: /actualizar|refresh/i });
+    expect(refresh()).toBeInTheDocument();
+
+    // Select one row through its own checkbox: the user's gesture, not a
+    // reducer call, so this also proves the selection reaches the shell.
+    const boxes = screen.getAllByRole("checkbox", {
+      name: /seleccionar esta conversación|select this conversation/i,
+    });
+    await user.click(boxes[0]!);
+
+    await waitFor(() => {
+      expect(bulkBar()).not.toBeNull();
+    });
+    // And the chrome is still mounted underneath, which is what makes the
+    // overlay a swap rather than a replacement.
+    expect(refresh()).toBeInTheDocument();
+  });
 });

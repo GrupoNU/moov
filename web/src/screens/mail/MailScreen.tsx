@@ -4410,17 +4410,34 @@ export function MailScreen(): React.JSX.Element {
             <SearchChips query={route.query} onChange={runSearch} />
           )}
           {/*
-            B4: the list's CHROME strip (canon 07 §3), above the verbs.
+            B-06: the two strips SHARE one row, and only one is on screen.
 
-            Two strips, because Gmail has two and they do different jobs: this
-            one acts on the LIST (select by scope, refresh, page), the ActionBar
-            below acts on the SELECTION. Merging them would produce one strip
-            where half the controls grey out and half do not.
+            Gmail has two sets of controls over its list and they do different
+            jobs — the chrome (select-all, refresh, pager) acts on the LIST, the
+            verbs (archive, delete, spam, labels, snooze) act on the SELECTION —
+            and it draws them in the SAME PLACE, swapping the moment something
+            is selected. Moov drew both, always, stacked: a second row of eleven
+            greyed-out buttons over every list nobody had selected anything in.
+            A strip where no control is live reads as broken rather than as
+            available.
 
-            Offline it renders WITHOUT a pager: the cached window is whatever
-            was stored, not a page of a server-side result, and a pager over it
-            would offer to fetch a page nothing can fetch.
+            The verbs now mount only with a selection, and this stack is what
+            keeps that from moving the list: the ActionBar is positioned OVER
+            the chrome row rather than pushed under it, so the swap costs no
+            reflow and a row does not slide out from under a pointer already
+            travelling toward it. Nothing is reserved and nothing needs to be —
+            the space is the chrome's own row, which is always there.
+
+            The components stay separate, which is the other half of why this is
+            not a merge: their props, their disabled-state rules and their
+            accessibility trees have nothing in common, and fusing them is what
+            produced a strip that greys out by halves.
+
+            Offline the chrome renders WITHOUT a pager: the cached window is
+            whatever was stored, not a page of a server-side result, and a pager
+            over it would offer to fetch a page nothing can fetch.
           */}
+          <div className={styles.toolbarStack}>
           <ListToolbar
             onSelectBy={runSelectBy}
             allSelected={isAllSelected(selection, orderedIds)}
@@ -4440,6 +4457,16 @@ export function MailScreen(): React.JSX.Element {
                   },
                 })}
           />
+          {/*
+            Mounted, not merely hidden: with no selection the verbs are gone
+            from the DOM, so there is nothing for Tab to reach and nothing for a
+            screen reader to offer as an available action that is not one. The
+            bar's own `disabled` rules survive for the states WITHIN a selection
+            where a verb genuinely does not apply (permanent delete outside
+            Trash, unsnooze outside Snoozed).
+          */}
+          {selection.selected.size > 0 && (
+          <div className={styles.toolbarOverlay}>
           <ActionBar
             selectedCount={selection.selected.size}
             onMarkRead={() => {
@@ -4499,6 +4526,9 @@ export function MailScreen(): React.JSX.Element {
                 }
               : {})}
           />
+          </div>
+          )}
+          </div>
           <MessageList
             labels={labelsApi.labels}
             onSelectLabel={goToLabel}
