@@ -738,6 +738,9 @@ export const en = {
       : `${count} remote images are hidden to protect your privacy.`,
   "reader.showImages": "Show images",
   // E1 / canon §2.1: Gmail's "Show trimmed content". The wording says CONTENT
+  // C-06: the open conversation's place in the list, beside ‹ ›.
+  "reader.positionOf": (index: number, total: number): string =>
+    `${index.toLocaleString("en")} of ${total.toLocaleString("en")}`,
   // rather than "quote", because what is hidden is often a forwarded header
   // block or an Outlook divider, not a quotation.
   "reader.showTrimmed": "Show trimmed content",
@@ -1904,6 +1907,8 @@ export const es: Strings = {
   "shortcuts.close": "Cerrar",
   "shortcuts.disabled":
     "Los atajos de teclado están desactivados en Configuración. Escape y / siguen andando, así podés cerrar esto y llegar a la búsqueda.",
+  "reader.positionOf": (index: number, total: number): string =>
+    `${index.toLocaleString("es")} de ${total.toLocaleString("es")}`,
   "shortcuts.open": "Abrir el mensaje",
   "shortcuts.next": "Conversación siguiente",
   "shortcuts.previous": "Conversación anterior",

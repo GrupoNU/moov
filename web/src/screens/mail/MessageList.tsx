@@ -276,6 +276,10 @@ export function MessageList({
       element.scrollTop,
       element.clientHeight,
       rowHeight,
+      // B-13: the length, so the one-row margin can be clamped against the real
+      // end of the list — otherwise `j` on the final row scrolls past the
+      // content and leaves a blank strip where the margin should be.
+      groups.length,
     );
     if (offset !== undefined) element.scrollTop = offset;
   }, [selectedId, groups, rowHeight]);

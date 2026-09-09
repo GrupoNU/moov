@@ -113,22 +113,65 @@ describe("computeWindow", () => {
 });
 
 describe("scrollOffsetToReveal", () => {
-  it("does not scroll when the row is already fully visible", () => {
+  it("does not scroll when the row and its margin are already visible", () => {
     // The property that makes j/k feel right: no movement unless needed.
     expect(scrollOffsetToReveal(3, 0, 720, 72)).toBeUndefined();
   });
 
-  it("scrolls up to the row's top when it is above the viewport", () => {
-    expect(scrollOffsetToReveal(2, 500, 720, 72)).toBe(144);
+  it("scrolls up far enough to show the row BEFORE the cursor (B-13)", () => {
+    // Row 2 spans 144-216. Without the margin this stopped at 144, putting the
+    // cursor flush against the top edge with nothing above it to move onto.
+    expect(scrollOffsetToReveal(2, 500, 720, 72)).toBe(72);
   });
 
-  it("scrolls down by the minimum needed when the row is below", () => {
-    // Row 20 spans 1440-1512; viewport is 0-720 → bottom-align at 792.
-    expect(scrollOffsetToReveal(20, 0, 720, 72)).toBe(792);
+  it("scrolls down far enough to show the row AFTER the cursor (B-13)", () => {
+    /*
+     * Row 20 spans 1440-1512; a 720px viewport bottom-aligned at 792 used to
+     * leave the cursor flush against the bottom with nothing under it — the
+     * artefact the side-by-side review caught. One row of margin puts it at
+     * 864, which is 792 + one 72px row.
+     */
+    expect(scrollOffsetToReveal(20, 0, 720, 72, 100)).toBe(864);
   });
 
-  it("never returns a negative offset", () => {
+  it("starts scrolling ONE ROW EARLIER than it used to", () => {
+    /*
+     * Row 10 spans 720-792 and the viewport is 0-720, so the row is entirely
+     * out of view by one pixel of its top edge — but the interesting case is
+     * row 9 (648-720), which is fully visible and yet sits ON the bottom edge.
+     * The margin is what makes that a scroll: it is the whole point.
+     */
+    expect(scrollOffsetToReveal(9, 0, 720, 72, 100)).toBe(72);
+  });
+
+  it("does not demand a margin the list does not have, at the END", () => {
+    /*
+     * The last row of a 10-row list: 648-720 against a 720px viewport whose
+     * maximum scroll is 10*72 - 720 = 0. Asking for a row of margin under the
+     * final row would scroll to 72 and leave a blank strip under the list, so
+     * the offset is clamped to the last scrollable position — which here means
+     * no scroll at all.
+     */
+    expect(scrollOffsetToReveal(9, 0, 720, 72, 10)).toBeUndefined();
+  });
+
+  it("clamps the bottom margin against the real end of a longer list", () => {
+    // 30 rows = 2160px of content in a 720px viewport → max offset 1440. Row 29
+    // (2088-2160) would want 2160 + 72 - 720 = 1512, which is past the end.
+    expect(scrollOffsetToReveal(29, 0, 720, 72, 30)).toBe(1440);
+  });
+
+  it("never returns a negative offset, and needs no margin at the TOP", () => {
+    // Row 0 has nothing above it, so the margin is clamped away rather than
+    // producing an offset the container cannot take.
     expect(scrollOffsetToReveal(0, 100, 50, 72)).toBe(0);
+    expect(scrollOffsetToReveal(0, 0, 720, 72, 100)).toBeUndefined();
+  });
+
+  it("leaves the bottom unclamped when the caller cannot say how long the list is", () => {
+    // The documented degradation: without `itemCount` the margin still applies,
+    // it simply is not clamped against an end this function was not told about.
+    expect(scrollOffsetToReveal(20, 0, 720, 72)).toBe(864);
   });
 });
 
