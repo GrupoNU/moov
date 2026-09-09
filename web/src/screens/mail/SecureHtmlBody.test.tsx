@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { COLLAPSED_MAX_PX, EXPANDED_MAX_PX } from "../../mail/html/frameHeight";
 import { MESSAGE_SANDBOX } from "../../mail/html/srcdoc";
+import type { EmailBodyPart } from "../../mail/types";
 import { SecureHtmlBody } from "./SecureHtmlBody";
 
 /**
@@ -207,5 +208,92 @@ describe("C-03: the frame sizes itself to its content, safely", () => {
     // The frame carries no attribute that would let content reach out.
     expect(frame?.hasAttribute("allow")).toBe(false);
     expect(frame?.getAttribute("referrerpolicy")).toBe("no-referrer");
+  });
+});
+
+/**
+ * C-11: inline (`cid:`) images, end to end through the real sanitizer, with
+ * the part bytes arriving through the injected loader — and the isolation
+ * properties exactly as they were, which is the point of resolving them in
+ * the parent as `data:`.
+ */
+describe("C-11: inline images", () => {
+  const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const logo: EmailBodyPart = {
+    partId: "3",
+    blobId: "b-3",
+    size: PNG.length,
+    name: "logo.png",
+    type: "image/png",
+    charset: null,
+    disposition: "inline",
+    cid: "<logo@x>",
+    language: null,
+    location: null,
+  };
+  const BODY = '<p>Saludos,</p><img src="cid:logo@x" width="120" height="40" alt="logo">';
+
+  function renderInline(parts: readonly EmailBodyPart[], loader: (part: EmailBodyPart) => Promise<Blob>) {
+    render(
+      <I18nProvider locale="es">
+        <SecureHtmlBody
+          html={BODY}
+          blockRemoteImages={true}
+          onShowRemoteImages={vi.fn()}
+          signImageUrls={vi.fn().mockResolvedValue(new Map())}
+          inlineParts={parts}
+          loadInlineImage={loader}
+        />
+      </I18nProvider>,
+    );
+  }
+
+  it("renders the referenced part as a data: image and drops the notice", async () => {
+    const loader = vi.fn().mockResolvedValue(new Blob([PNG], { type: "application/octet-stream" }));
+    renderInline([logo], loader);
+    // Before the bytes: the honest notice.
+    expect(screen.getByText(/1 imagen incrustada no se puede mostrar/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(srcDoc()).toContain("data:image/png;base64,");
+    });
+    expect(screen.queryByText(/imagen incrustada/i)).not.toBeInTheDocument();
+    // Fetched exactly the referenced part, once.
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledWith(expect.objectContaining({ blobId: "b-3" }));
+    // The declared type is the part's, not the blob's octet-stream.
+    expect(srcDoc()).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+  });
+
+  it("keeps the notice when no part matches the reference", async () => {
+    const loader = vi.fn();
+    renderInline([{ ...logo, cid: "<other@x>" }], loader);
+    await Promise.resolve();
+    expect(loader).not.toHaveBeenCalled();
+    expect(screen.getByText(/1 imagen incrustada no se puede mostrar/i)).toBeInTheDocument();
+  });
+
+  it("keeps the notice when the fetch fails — quietly, the card below still has the file", async () => {
+    const loader = vi.fn().mockRejectedValue(new Error("offline"));
+    renderInline([logo], loader);
+    await waitFor(() => {
+      expect(loader).toHaveBeenCalled();
+    });
+    expect(screen.getByText(/1 imagen incrustada no se puede mostrar/i)).toBeInTheDocument();
+    expect(srcDoc()).not.toContain("data:image");
+  });
+
+  it("changes nothing about the isolation: same sandbox, same CSP, no download path", async () => {
+    const loader = vi.fn().mockResolvedValue(new Blob([PNG]));
+    renderInline([logo], loader);
+    await waitFor(() => {
+      expect(srcDoc()).toContain("data:image/png;base64,");
+    });
+    const frame = document.querySelector("iframe");
+    expect(frame?.getAttribute("sandbox")).toBe(MESSAGE_SANDBOX);
+    const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(srcDoc())?.[1] ?? "";
+    expect(csp).toMatch(/^default-src 'none'; img-src data:(?: https?:\/\/[^\s;]+\/jmap\/imgproxy)?; /);
+    expect(csp).not.toContain("/jmap/download");
+    expect(srcDoc()).not.toContain("access_token");
   });
 });

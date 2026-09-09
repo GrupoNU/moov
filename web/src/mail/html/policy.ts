@@ -98,9 +98,10 @@ export type UrlClass =
   | "tel"
   /** A raster image inlined as data: — no network fetch, no tracking. */
   | "data-image"
-  /** A MIME content-id reference. Unresolvable today (body parts have no
-   * blobId on this server), so it is dropped — but named so the count can be
-   * surfaced honestly. */
+  /** A MIME content-id reference. Resolved by the PARENT (C-11): the part's
+   * bytes come through the authenticated blob path and re-enter the
+   * sanitizer as a raster `data:` URL — the only form the frame's CSP already
+   * allows. Unresolved ones are dropped and counted, honestly. */
   | "cid"
   /** Everything else: javascript:, vbscript:, data:text/html, file:, blob:,
    * relative, unparseable. */

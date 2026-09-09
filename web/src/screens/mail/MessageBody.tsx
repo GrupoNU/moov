@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
+import type { JmapClient } from "../../api/jmap";
 import type { Email, EmailBodyPart, EmailBodyValue } from "../../mail/types";
 import { SecureHtmlBody, type SignImageUrls } from "./SecureHtmlBody";
 import styles from "./MessageBody.module.css";
@@ -61,6 +62,13 @@ export interface MessageBodyProps {
    * able to override a security stance.
    */
   readonly autoLoadImages?: boolean;
+  /**
+   * C-11: needed to fetch the message's inline (`cid:`) image parts through
+   * the authenticated blob path. Absent (an old caller), inline images stay
+   * unresolved and the honest notice remains.
+   */
+  readonly client?: JmapClient | undefined;
+  readonly accountId?: string | undefined;
 }
 
 /** Picks the body value for a part, if the server sent one. */
@@ -77,9 +85,34 @@ export function MessageBody({
   signImageUrls,
   allowRemoteImages = true,
   autoLoadImages = false,
+  client,
+  accountId,
 }: MessageBodyProps): React.JSX.Element {
   const { t } = useTranslation();
   const [showImages, setShowImages] = useState(false);
+  /*
+   * C-11: the loader for inline images — the same authenticated path the
+   * attachment cards use. Stable across renders so the body's effect does not
+   * refetch on every keystroke elsewhere in the pane.
+   */
+  const loadInlineImage = useCallback(
+    (part: EmailBodyPart): Promise<Blob> => {
+      if (client === undefined || accountId === undefined || part.blobId === null) {
+        return Promise.reject(new Error("inline image not loadable"));
+      }
+      return client.downloadBlob(accountId, part.blobId, part.name ?? "image", part.type);
+    },
+    [client, accountId],
+  );
+  /*
+   * Memoized on the attachments array: the renderer's fetch effect keys on
+   * this reference, and a fresh `.filter()` per render would re-run it — and
+   * re-fetch every inline image — on every render of the pane.
+   */
+  const inlineParts = useMemo(
+    () => (email.attachments ?? []).filter((part) => part.cid !== null),
+    [email.attachments],
+  );
   /*
    * Belt AND braces: even if the opt-in state were somehow set (a stale value
    * surviving a re-key, a future caller flipping the prop), the images stay
@@ -159,6 +192,10 @@ export function MessageBody({
           }}
           signImageUrls={signImageUrls}
           fallback={textFallback}
+          /* C-11: the parts with a content-id; the renderer fetches only
+             the ones the body references. */
+          inlineParts={inlineParts}
+          loadInlineImage={client === undefined ? undefined : loadInlineImage}
         />
         {anyTruncated && (
           <p className={styles.truncated} role="note">

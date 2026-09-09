@@ -7,9 +7,16 @@ import {
   frameSizing,
 } from "../../mail/html/frameHeight";
 import {
+  inlineMimeType,
+  partsToInline,
+  readBlobBytes,
+  toDataUrl,
+} from "../../mail/html/inlineImages";
+import {
   sanitizeEmailHtml,
   type SanitizedEmailHtml,
 } from "../../mail/html/sanitize";
+import type { EmailBodyPart } from "../../mail/types";
 import { splitQuotedTail } from "../../mail/html/quotedTail";
 import { buildSrcDoc, MESSAGE_SANDBOX } from "../../mail/html/srcdoc";
 import styles from "./SecureHtmlBody.module.css";
@@ -99,6 +106,14 @@ export interface SecureHtmlBodyProps {
   /** Rendered when sanitization fails or yields nothing displayable —
    * typically the message's plain-text alternative. */
   readonly fallback?: React.ReactNode;
+  /**
+   * C-11: the message's parts that carry a content-id — candidates for the
+   * `<img src="cid:…">` references in the body. Only the ones the sanitized
+   * html actually references are fetched, through {@link loadInlineImage}.
+   */
+  readonly inlineParts?: readonly EmailBodyPart[] | undefined;
+  /** Fetches one part's bytes through the authenticated blob path. */
+  readonly loadInlineImage?: ((part: EmailBodyPart) => Promise<Blob>) | undefined;
 }
 
 type SignState = "idle" | "working" | "failed";
@@ -109,14 +124,14 @@ function trySanitize(
   html: string,
   allowRemoteImages: boolean,
   proxied?: ReadonlyMap<string, string>,
+  inline?: ReadonlyMap<string, string>,
 ): SanitizedEmailHtml | undefined {
   try {
-    return sanitizeEmailHtml(
-      html,
-      proxied === undefined
-        ? { allowRemoteImages }
-        : { allowRemoteImages, proxiedUrlFor: (url) => proxied.get(url) },
-    );
+    return sanitizeEmailHtml(html, {
+      allowRemoteImages,
+      ...(proxied === undefined ? {} : { proxiedUrlFor: (url: string) => proxied.get(url) }),
+      ...(inline === undefined ? {} : { inlineImageFor: (cid: string) => inline.get(cid) }),
+    });
   } catch {
     return undefined;
   }
@@ -129,6 +144,8 @@ export function SecureHtmlBody({
   signImageUrls,
   fallback,
   allowUnblock = true,
+  inlineParts,
+  loadInlineImage,
 }: SecureHtmlBodyProps): React.JSX.Element {
   const { t, format } = useTranslation();
 
@@ -174,14 +191,54 @@ export function SecureHtmlBody({
     };
   }, [wantsImages, remoteUrls, proxied, signState, signImageUrls]);
 
+  /*
+   * C-11: the inline (`cid:`) images, resolved here in the parent.
+   *
+   * The blocked pass reported which content-ids the body references; the
+   * matching parts (under the caps — see mail/html/inlineImages.ts) are
+   * fetched through the authenticated blob path and become `data:` URLs the
+   * frame's CSP already admits. They are the message's own bytes, so they
+   * load without an opt-in and regardless of the remote-image policy: there
+   * is no third party to leak anything to.
+   */
+  const [inline, setInline] = useState<ReadonlyMap<string, string> | undefined>(undefined);
+  const referencedCids = useMemo(
+    () => blockedPass?.inlineImageCids ?? [],
+    [blockedPass],
+  );
+  useEffect(() => {
+    if (referencedCids.length === 0 || loadInlineImage === undefined) return undefined;
+    const wanted = partsToInline(referencedCids, inlineParts ?? []);
+    if (wanted.length === 0) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const resolved = new Map<string, string>();
+      for (const { cid, part } of wanted) {
+        try {
+          const blob = await loadInlineImage(part);
+          if (cancelled) return;
+          const bytes = await readBlobBytes(blob);
+          if (cancelled) return;
+          resolved.set(cid, toDataUrl(inlineMimeType(part), bytes));
+        } catch {
+          // Unresolved stays unresolved: the notice below counts it.
+        }
+      }
+      if (!cancelled) setInline(resolved);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [referencedCids, inlineParts, loadInlineImage]);
+
   // The pass that actually renders: re-run from the ORIGINAL html with the
-  // proxy mapping once it exists; identical to blockedPass until then.
+  // proxy mapping and the inline mapping once either exists; identical to
+  // blockedPass until then.
   const rendered = useMemo(() => {
-    if (wantsImages && proxied !== undefined) {
-      return trySanitize(html, true, proxied);
-    }
-    return blockedPass;
-  }, [html, wantsImages, proxied, blockedPass]);
+    const withProxy = wantsImages && proxied !== undefined;
+    if (!withProxy && inline === undefined) return blockedPass;
+    return trySanitize(html, withProxy, withProxy ? proxied : undefined, inline);
+  }, [html, wantsImages, proxied, inline, blockedPass]);
 
   /*
    * E1: the quoted tail, split off the SANITIZED markup.

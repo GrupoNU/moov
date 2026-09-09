@@ -257,6 +257,8 @@ export function ConversationMessage({
               signImageUrls={signImageUrls}
               allowRemoteImages={allowRemoteImages}
               autoLoadImages={autoLoadImages}
+              client={client}
+              accountId={accountId}
             />
             {/* THIS message's attachments — in a thread, files belong to the
                 message that carried them, never to the conversation. */}

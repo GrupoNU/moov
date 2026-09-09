@@ -1026,6 +1026,8 @@ export function ReadingPane({
             signImageUrls={signImages}
             allowRemoteImages={remoteImagesAllowed}
             autoLoadImages={autoLoadImages}
+            client={client}
+            accountId={accountId}
           />
         )}
         {inJunk && (

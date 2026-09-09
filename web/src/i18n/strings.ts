@@ -797,8 +797,8 @@ export const en = {
     "The images could not be loaded through the privacy proxy, so they stay hidden. Try again later.",
   "reader.inlineImagesUnavailable": (count: number): string =>
     count === 1
-      ? "1 embedded image cannot be displayed yet."
-      : `${count} embedded images cannot be displayed yet.`,
+      ? "1 embedded image cannot be displayed."
+      : `${count} embedded images cannot be displayed.`,
   // The honest fallback: sanitization refused the whole document. Never
   // rendered silently — the user is told a formatted version exists.
   "reader.htmlSanitizeFailed": "The formatted version cannot be shown safely",
@@ -2003,8 +2003,8 @@ export const es: Strings = {
     "Las imágenes no se pudieron cargar a través del proxy de privacidad, así que siguen ocultas. Probá más tarde.",
   "reader.inlineImagesUnavailable": (count: number): string =>
     count === 1
-      ? "1 imagen incrustada todavía no se puede mostrar."
-      : `${count} imágenes incrustadas todavía no se pueden mostrar.`,
+      ? "1 imagen incrustada no se puede mostrar."
+      : `${count} imágenes incrustadas no se pueden mostrar.`,
   "reader.htmlSanitizeFailed": "La versión con formato no se puede mostrar de forma segura",
   "reader.htmlSanitizeFailedBody":
     "El formato de este mensaje no se pudo hacer seguro para mostrar, así que Moov no lo muestra. La versión de texto plano, cuando el remitente incluyó una, se muestra abajo; el mensaje original se puede descargar completo.",

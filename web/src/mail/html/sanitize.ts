@@ -27,10 +27,17 @@
  * bytes an <img> can name are `/jmap/imgproxy?...`, and the iframe's CSP
  * (srcdoc.ts) enforces the same statement a second time.
  *
- * `cid:` images (inline MIME parts) are counted and dropped: body parts have
- * no blobId on this server yet (README gap 5), so there is nothing to fetch
- * — and saying "N inline images unavailable" is honest where a broken image
- * icon would look like a bug.
+ * `cid:` images (inline MIME parts, C-11) are resolved by the PARENT, never
+ * by the frame: the first pass reports the content-ids it saw
+ * (`inlineImageCids`), the parent fetches those parts through the
+ * authenticated blob path and re-runs the sanitizer — again from the ORIGINAL
+ * html — with `inlineImageFor` mapping each cid to a `data:image/…;base64`
+ * URL. That is the ONE form the frame's CSP (`img-src data: …`) already
+ * admits, so no directive widens and no token ever enters the document. The
+ * hook accepts a mapping only if it classifies as a raster data: image —
+ * belt and braces against a resolver handing back anything else. What stays
+ * unresolved (no matching part, over the size cap, fetch failed) is dropped
+ * and counted, and "N inline images unavailable" is said out loud.
  *
  * # Re-entrancy
  *
@@ -58,6 +65,12 @@ export interface SanitizeEmailHtmlOptions {
    * (no mapping) stays blocked — the state it started in.
    */
   readonly proxiedUrlFor?: (canonicalUrl: string) => string | undefined;
+  /**
+   * Maps a normalized content-id (see {@link normalizeCid}) to the inline
+   * image's `data:image/…;base64,…` URL (C-11). A value that is not a raster
+   * data: URL is REFUSED and the image dropped, whatever the resolver meant.
+   */
+  readonly inlineImageFor?: (cid: string) => string | undefined;
 }
 
 export interface SanitizedEmailHtml {
@@ -72,6 +85,9 @@ export interface SanitizedEmailHtml {
   readonly blockedImageCount: number;
   /** How many cid: inline images were dropped as unavailable. */
   readonly droppedInlineImageCount: number;
+  /** The normalized content-ids referenced by `<img src="cid:…">`, in
+   * document order, deduplicated — what the parent should fetch (C-11). */
+  readonly inlineImageCids: readonly string[];
 }
 
 interface HookState {
@@ -79,6 +95,30 @@ interface HookState {
   remote: Set<string>;
   blocked: number;
   droppedInline: number;
+  inlineCids: Set<string>;
+}
+
+/**
+ * The comparable form of a content-id, from either side of the match.
+ *
+ * `<img src="cid:part1@x">` and a part's `cid` property ("part1@x", or the
+ * raw header's "<part1@x>") must meet in the middle: strip the scheme, the
+ * angle brackets and surrounding whitespace, and undo percent-encoding — an
+ * id with an `@` or a `/` is routinely encoded on one side only. Case is
+ * preserved (RFC 2392 ids are case-sensitive) but the LOOKUP the parent builds
+ * is case-insensitive as a fallback, because senders disagree with the RFC.
+ */
+export function normalizeCid(raw: string): string {
+  let id = raw.trim();
+  if (id.toLowerCase().startsWith("cid:")) id = id.slice(4);
+  try {
+    id = decodeURIComponent(id);
+  } catch {
+    // Not percent-encoded, or malformed: compare the bytes as given.
+  }
+  id = id.trim();
+  if (id.startsWith("<") && id.endsWith(">")) id = id.slice(1, -1);
+  return id.trim();
 }
 
 /**
@@ -193,6 +233,14 @@ function applyImagePolicy(node: Element, current: HookState): void {
   if (cls === "data-image") return; // inline bytes: no fetch, no tracking.
 
   if (cls === "cid") {
+    const cid = normalizeCid(src);
+    current.inlineCids.add(cid);
+    const inline = current.options.inlineImageFor?.(cid);
+    // Accepted ONLY as a raster data: URL — the resolver's word is not enough.
+    if (inline !== undefined && classifyUrl(inline) === "data-image") {
+      node.setAttribute("src", inline);
+      return;
+    }
     node.removeAttribute("src");
     current.droppedInline += 1;
     return;
@@ -237,6 +285,7 @@ export function sanitizeEmailHtml(
     remote: new Set<string>(),
     blocked: 0,
     droppedInline: 0,
+    inlineCids: new Set<string>(),
   };
   state = local;
   try {
@@ -246,6 +295,7 @@ export function sanitizeEmailHtml(
       remoteImageUrls: [...local.remote],
       blockedImageCount: local.blocked,
       droppedInlineImageCount: local.droppedInline,
+      inlineImageCids: [...local.inlineCids],
     };
   } finally {
     state = null;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ATTACK_CORPUS } from "./corpus";
-import { sanitizeEmailHtml } from "./sanitize";
+import { normalizeCid, sanitizeEmailHtml } from "./sanitize";
 
 const BLOCK = { allowRemoteImages: false } as const;
 
@@ -109,8 +109,52 @@ describe("the remote-image pipeline", () => {
       "https://cdn.example.com/a.png",
       "https://cdn.example.com/b.png",
     ]);
-    // The cid: image is counted as unavailable, not as blocked-remote.
+    // The cid: image is counted as unavailable, not as blocked-remote — and
+    // its id is reported so the parent can go and fetch the part (C-11).
     expect(out.droppedInlineImageCount).toBe(1);
+    expect(out.inlineImageCids).toEqual(["inline@x"]);
+  });
+
+  /*
+   * C-11: inline images resolve ONLY to raster data: URLs the parent built.
+   * The resolver's word is not trusted — a value of any other shape is
+   * refused and the image dropped, which is what keeps this path unable to
+   * widen the frame's image surface by a single scheme.
+   */
+  it("resolves a cid: image to the parent's data: URL", () => {
+    const out = sanitizeEmailHtml(withRemote, {
+      allowRemoteImages: false,
+      inlineImageFor: (cid) => (cid === "inline@x" ? "data:image/png;base64,iVBORw0KGgo=" : undefined),
+    });
+    expect(out.html).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+    expect(out.droppedInlineImageCount).toBe(0);
+    expect(out.inlineImageCids).toEqual(["inline@x"]);
+  });
+
+  it("refuses a resolver value that is not a raster data: image", () => {
+    for (const bad of [
+      "https://evil.example/x.png",
+      "/jmap/download/a/b/x.png?access_token=t",
+      "data:text/html;base64,PHNjcmlwdD4=",
+      "data:image/svg+xml;base64,PHN2Zz4=",
+      "javascript:alert(1)",
+    ]) {
+      const out = sanitizeEmailHtml(withRemote, {
+        allowRemoteImages: false,
+        inlineImageFor: () => bad,
+      });
+      expect(out.html, bad).not.toContain(bad);
+      expect(out.droppedInlineImageCount, bad).toBe(1);
+    }
+  });
+
+  it("normalizes content-ids from either side of the match", () => {
+    expect(normalizeCid("cid:part1@x")).toBe("part1@x");
+    expect(normalizeCid("CID:<part1@x>")).toBe("part1@x");
+    expect(normalizeCid(" <part1@x> ")).toBe("part1@x");
+    expect(normalizeCid("cid:image001.png%40ABC")).toBe("image001.png@ABC");
+    // Case preserved: the fallback fold is the parent's decision.
+    expect(normalizeCid("cid:Part1@X")).toBe("Part1@X");
   });
 
   it("rewrites to the proxy ONLY through the signed mapping", () => {
