@@ -107,7 +107,53 @@ export function DensityThumb({
  * would render as a light card in light mode and mean nothing. "Sistema" is
  * drawn as the two halves, which is the honest picture of "whichever your OS
  * says" — and the only one of the three that is not simply a colour.
+ *
+ * # F-11: every theme draws the SAME list skeleton
+ *
+ * The review caught "Oscuro" and "Sistema" reading as solid black blocks beside
+ * three thumbnails that all showed a list. They did draw bars, but the dark
+ * pair's ink was too close to its ground to survive a 48×32 render, so the eye
+ * saw a filled rectangle where every neighbour showed rows — and a picture that
+ * says "block" next to pictures that say "list" reads as a different KIND of
+ * setting, not as the same list in another colour.
+ *
+ * The fix is to make the skeleton literally shared: one {@link SkeletonRows}
+ * geometry, drawn with an INVERTED pair of ground and ink per theme, and
+ * "Sistema" as that same skeleton drawn twice — light on the left half, dark on
+ * the right, clipped down the middle. The bar tones were lifted so the dark
+ * variant carries real contrast against its ground (`#c9ccd1`/`#8a9098` on
+ * `#1f2124`) rather than the near-invisible `#7d8288` it had.
  */
+
+/** The ground/ink pair each theme paints with. */
+const THEME_PAINT = {
+  light: { ground: "#ffffff", ink: "#5f6368", inkSoft: "#9aa0a6" },
+  dark: { ground: "#1f2124", ink: "#c9ccd1", inkSoft: "#8a9098" },
+} as const;
+
+/**
+ * The shared list skeleton, in one theme's ink.
+ *
+ * The same three-bar geometry for both halves of "Sistema" and for the two
+ * solid themes, so the ONLY difference between the thumbnails is the palette —
+ * which is exactly the difference the setting makes.
+ */
+function SkeletonRows({
+  paint,
+  x,
+}: {
+  readonly paint: (typeof THEME_PAINT)[keyof typeof THEME_PAINT];
+  readonly x: number;
+}): React.JSX.Element {
+  return (
+    <>
+      <rect x={x} y="7" width="12" height="2.6" rx="1.3" fill={paint.ink} />
+      <rect x={x} y="13" width="9" height="2.6" rx="1.3" fill={paint.inkSoft} />
+      <rect x={x} y="19" width="14" height="2.6" rx="1.3" fill={paint.inkSoft} />
+    </>
+  );
+}
+
 export function ThemeThumb({
   theme,
 }: {
@@ -122,12 +168,18 @@ export function ThemeThumb({
     >
       {theme === "system" ? (
         <>
-          <path d="M3.6 0.6h20.4v30.8H3.6a3 3 0 0 1-3-3V3.6a3 3 0 0 1 3-3z" fill="#ffffff" />
-          <path d="M24 0.6h20.4a3 3 0 0 1 3 3v24.8a3 3 0 0 1-3 3H24z" fill="#1f2124" />
-          <rect x="7" y="7" width="12" height="2.6" rx="1.3" fill="#5f6368" />
-          <rect x="7" y="13" width="9" height="2.6" rx="1.3" fill="#9aa0a6" />
-          <rect x="29" y="7" width="12" height="2.6" rx="1.3" fill="#c9ccd1" />
-          <rect x="29" y="13" width="9" height="2.6" rx="1.3" fill="#7d8288" />
+          {/* Half and half — the honest picture of "whichever your OS says",
+              and each half is the same skeleton in its own palette. */}
+          <path
+            d="M3.6 0.6h20.4v30.8H3.6a3 3 0 0 1-3-3V3.6a3 3 0 0 1 3-3z"
+            fill={THEME_PAINT.light.ground}
+          />
+          <path
+            d="M24 0.6h20.4a3 3 0 0 1 3 3v24.8a3 3 0 0 1-3 3H24z"
+            fill={THEME_PAINT.dark.ground}
+          />
+          <SkeletonRows paint={THEME_PAINT.light} x={5} />
+          <SkeletonRows paint={THEME_PAINT.dark} x={28} />
         </>
       ) : (
         <>
@@ -137,32 +189,9 @@ export function ThemeThumb({
             width="46.8"
             height="30.8"
             rx="3"
-            fill={theme === "dark" ? "#1f2124" : "#ffffff"}
+            fill={THEME_PAINT[theme].ground}
           />
-          <rect
-            x="7"
-            y="7"
-            width="20"
-            height="2.6"
-            rx="1.3"
-            fill={theme === "dark" ? "#c9ccd1" : "#5f6368"}
-          />
-          <rect
-            x="7"
-            y="13"
-            width="14"
-            height="2.6"
-            rx="1.3"
-            fill={theme === "dark" ? "#7d8288" : "#9aa0a6"}
-          />
-          <rect
-            x="7"
-            y="19"
-            width="24"
-            height="2.6"
-            rx="1.3"
-            fill={theme === "dark" ? "#7d8288" : "#9aa0a6"}
-          />
+          <SkeletonRows paint={THEME_PAINT[theme]} x={7} />
         </>
       )}
       <rect
