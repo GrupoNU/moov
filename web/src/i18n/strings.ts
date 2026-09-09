@@ -1444,7 +1444,10 @@ export const es: Strings = {
 
   "settings.density.label": "Densidad",
   "settings.density.description": "Cuánto espacio ocupa cada fila.",
-  "settings.density.default": "Normal",
+  /* F-08: "Predeterminada", not "Normal". `settings.inboxType.default` right
+     below already says "Predeterminada" for the same idea, and two words for
+     one concept in one panel makes the user wonder what the difference is. */
+  "settings.density.default": "Predeterminada",
   "settings.density.comfortable": "Cómoda",
   "settings.density.compact": "Compacta",
 
