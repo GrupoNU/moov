@@ -56,9 +56,14 @@ import (
 // primary is black renders invisible; the square glyph a brand kit keeps for
 // dark backgrounds goes in `icon`.
 //
+// A dedicated icon is also plated at EVERY size, where a logo is plated only
+// on the maskable and Apple icons: a mark drawn for a dark plate is invisible
+// on the transparent canvas a desktop launcher and a browser tab put behind
+// it. See specForSource.
+//
 // The chosen source (PNG, JPEG or GIF; dimensions capped before decoding) is
 // rendered into every icon size on demand and cached by host, source digest,
-// accent color and name for the document cache's TTL. A source that cannot be
+// which source it was, accent color and name for the document cache's TTL. A source that cannot be
 // rendered — WebP, undecodable, oversized, missing — falls through to the next
 // link AND is declared: one log line per host per TTL naming the file that
 // failed and where the icons are coming from instead, and a line in `moovctl
@@ -107,6 +112,9 @@ type iconSpec struct {
 // brandingIconSpecs is the complete set of icons the server renders. The
 // manifest's icon entries and the shell's <link>s must name only these; a
 // test walks the embedded manifest and checks.
+//
+// The plate column below describes the LOGO as the source. A dedicated `icon`
+// is plated at every size instead — see specForSource.
 //
 //   - icon-*: the "any" purpose icons — the logo on a transparent square with
 //     a little breathing room, as a desktop or Android launcher shows them.
@@ -284,20 +292,21 @@ func (s *Server) handleBrandingIcon(w http.ResponseWriter, r *http.Request) {
 }
 
 // icon returns the PNG bytes and ETag of one icon for a host: rendered from
-// the host's logo when there is a usable one, Moov's embedded icon otherwise.
-// It never fails — the fallback IS the answer for every failure.
+// the winner of the icon -> logo -> Moov chain. It never fails — the fallback
+// IS the answer for every failure.
 func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 	if b == nil || b.dir == "" || host == "" {
 		return defaultIcon(spec)
 	}
 	e := b.resolveEntry(host)
-	// iconFile is already the winner of the icon -> logo -> Moov chain, and it
-	// is empty precisely when Moov's own icons are the answer.
+	// iconFile is already the winner of the chain, and it is empty precisely
+	// when Moov's own icons are the answer.
 	if e.iconFile == "" {
 		return defaultIcon(spec)
 	}
+	spec = specForSource(spec, e.iconSource)
 
-	key := iconCacheKey(host, e.iconSum, e.doc.Colors.Primary, spec.name)
+	key := iconCacheKey(host, e.iconSum, e.iconSource, e.doc.Colors.Primary, spec.name)
 	now := b.now()
 	b.mu.Lock()
 	if cached, ok := b.icons[key]; ok && now.Before(cached.expires) {
@@ -306,17 +315,17 @@ func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 	}
 	b.mu.Unlock()
 
-	logoBytes, _, err := b.openAsset(host, e.iconFile)
+	sourceBytes, _, err := b.openAsset(host, e.iconFile)
 	if err != nil {
 		return defaultIcon(spec)
 	}
-	logo, err := decodeBrandingLogo(logoBytes)
+	source, err := decodeBrandingLogo(sourceBytes)
 	if err != nil {
 		// The entry said it was usable a moment ago; the file changed
 		// underneath. The next TTL will re-check and declare it.
 		return defaultIcon(spec)
 	}
-	body, err := renderBrandingIcon(logo, spec, e.doc.Colors.Primary)
+	body, err := renderBrandingIcon(source, spec, e.doc.Colors.Primary)
 	if err != nil {
 		return defaultIcon(spec)
 	}
@@ -328,11 +337,53 @@ func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 	return body, etag
 }
 
-// iconCacheKey joins the inputs an icon depends on. NUL-separated: none of
-// the parts can contain one (host and name come from fixed alphabets, the
+// specForSource adjusts a spec for WHERE the mark came from.
+//
+// When the source is the dedicated square icon, EVERY size is painted on an
+// opaque plate of the primary color — not just the maskable and Apple ones.
+// An operator who supplies an `icon` supplies a mark drawn FOR that plate, and
+// found on the pilot with a real brand kit: a white glyph for dark backgrounds
+// rendered correctly on the maskable pair and then vanished on icon-192,
+// icon-512 and favicon-32, which were transparent, on a light desktop and a
+// light browser tab. The plate is what makes such a mark legible everywhere.
+//
+// When the source is the LOGO, nothing changes: a wordmark on a transparent
+// square is what a launcher and a tab have always been given, and quietly
+// painting plates behind every existing customer's logo would be a visible
+// change nobody asked for.
+//
+// favicon-32 needs one more thing than the plate. Its spec has NO padding, on
+// the reasoning that at 32 px every pixel counts — but a SQUARE mark then
+// covers the plate edge to edge, and Areacorp's white glyph is a white square
+// on a light tab all over again. So a plated source gets a small padding floor
+// there, which is what actually makes the plate visible around the mark. Only
+// favicon-32 is affected: every other spec already pads.
+func specForSource(spec iconSpec, source string) iconSpec {
+	if source != brandingSourceIcon {
+		return spec
+	}
+	spec.opaque = true
+	if spec.pad < minPlatedIconPad {
+		spec.pad = minPlatedIconPad
+	}
+	return spec
+}
+
+// minPlatedIconPad is the padding a plated icon gets at minimum. At 32 px it
+// is 3 px on each side: enough for the plate to read as a frame, small enough
+// that the mark keeps 26 of the 32 pixels.
+const minPlatedIconPad = 0.10
+
+// iconCacheKey joins the inputs an icon depends on. NUL-separated: none of the
+// parts can contain one (host, source and name come from fixed alphabets, the
 // digest is hex, the color is a validated hex literal).
-func iconCacheKey(host, logoSum, primary, name string) string {
-	return host + "\x00" + logoSum + "\x00" + primary + "\x00" + name
+//
+// sourceSum is the digest of whichever file the icons are rendered FROM, and
+// source says which of the two it was — the same bytes render DIFFERENTLY as
+// an icon (always plated) and as a logo (plated only where the purpose demands
+// it), so the digest alone would not separate them.
+func iconCacheKey(host, sourceSum, source, primary, name string) string {
+	return host + "\x00" + sourceSum + "\x00" + source + "\x00" + primary + "\x00" + name
 }
 
 // --- the embedded defaults ----------------------------------------------------

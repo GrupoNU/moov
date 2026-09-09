@@ -214,8 +214,8 @@ func TestBrandingIconCacheKeyFollowsTheIconDigest(t *testing.T) {
 	if afterSum == firstSum {
 		t.Fatal("the icon digest did not follow the file")
 	}
-	if iconCacheKey("digest.test", firstSum, "#ff0000", spec.name) ==
-		iconCacheKey("digest.test", afterSum, "#ff0000", spec.name) {
+	if iconCacheKey("digest.test", firstSum, brandingSourceIcon, "#ff0000", spec.name) ==
+		iconCacheKey("digest.test", afterSum, brandingSourceIcon, "#ff0000", spec.name) {
 		t.Error("the cache key did not change with the icon digest")
 	}
 	if bytes.Equal(after, first) || afterETag == firstETag {
@@ -300,5 +300,132 @@ func TestBrandingIconDoesNotLeakExistence(t *testing.T) {
 	da.Default, db.Default = false, false
 	if da != db {
 		t.Errorf("documents differ:\n%+v\n%+v", da, db)
+	}
+}
+
+// TestBrandingIconIsPlatedAtEverySize is the rule found on the pilot with a
+// real brand kit: Areacorp's primary is #000000 and its icon is a white glyph
+// drawn for that plate. The maskable pair rendered correctly, and then the
+// glyph VANISHED on icon-192, icon-512 and favicon-32 — transparent canvases,
+// white mark, light desktop and light browser tab.
+//
+// So when the source is the dedicated icon, every generated size is opaque on
+// the primary. When the source is the logo, nothing changed: a wordmark on a
+// transparent square is what a launcher and a tab have always been handed.
+func TestBrandingIconIsPlatedAtEverySize(t *testing.T) {
+	white := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	black := color.NRGBA{A: 255}
+
+	withIcon := t.TempDir()
+	writeBrand(t, withIcon, "plated.test", map[string]any{
+		"name": "Areacorp", "logo": "logo.png", "icon": "icon.png",
+		"colors": map[string]string{"primary": "#000000"},
+	}, map[string][]byte{
+		"logo.png": encodePNG(t, solidImage(200, 40, white)),
+		"icon.png": whiteIconPNG(t),
+	})
+	logoOnly := t.TempDir()
+	writeBrand(t, logoOnly, "plated.test", map[string]any{
+		"name": "Areacorp", "logo": "logo.png",
+		"colors": map[string]string{"primary": "#000000"},
+	}, map[string][]byte{"logo.png": encodePNG(t, solidImage(200, 40, white))})
+
+	iconSrv := brandingServer(t, withIcon)
+	logoSrv := brandingServer(t, logoOnly)
+
+	for _, spec := range brandingIconSpecs {
+		t.Run(spec.name, func(t *testing.T) {
+			// Source = icon: the corner is the primary, opaque, at EVERY size —
+			// including the two that used to be transparent and favicon-32,
+			// which has no padding at all and so is plate only where the glyph
+			// does not reach.
+			img := decodePNG(t, getIcon(t, iconSrv, "plated.test", spec.name))
+			if c := nrgbaAt(img, 0, 0); c != black {
+				t.Errorf("source=icon: corner of %s = %v, want the opaque primary %v",
+					spec.name, c, black)
+			}
+			// Opaque EVERYWHERE, not just in the corner: a hole is what a
+			// masking launcher and iOS both render badly.
+			for y := 0; y < spec.size; y += 7 {
+				for x := 0; x < spec.size; x += 7 {
+					if a := nrgbaAt(img, x, y).A; a != 255 {
+						t.Fatalf("source=icon: pixel (%d,%d) of %s has alpha %d",
+							x, y, spec.name, a)
+					}
+				}
+			}
+			// And the mark is still there, in the middle, legible against it.
+			if c := nrgbaAt(img, spec.size/2, spec.size/2); c != white {
+				t.Errorf("source=icon: center of %s = %v, want the white glyph", spec.name, c)
+			}
+
+			// Source = logo: today's behavior, untouched. Transparent where
+			// the spec says transparent, plated where it says plated.
+			logoImg := decodePNG(t, getIcon(t, logoSrv, "plated.test", spec.name))
+			corner := nrgbaAt(logoImg, 0, 0)
+			if spec.opaque {
+				if corner != black {
+					t.Errorf("source=logo: corner of %s = %v, want the plate", spec.name, corner)
+				}
+			} else if corner.A != 0 {
+				t.Errorf("source=logo: corner of %s = %v, want it still transparent", spec.name, corner)
+			}
+		})
+	}
+
+	// The two sizes the pilot caught are worth naming, so a future change that
+	// quietly un-plates them fails with the symptom rather than with a corner.
+	for _, name := range []string{"icon-192", "favicon-32"} {
+		img := decodePNG(t, getIcon(t, iconSrv, "plated.test", name))
+		if nrgbaAt(img, 0, 0).A != 255 {
+			t.Errorf("%s went back to a transparent canvas: a white glyph is invisible on it", name)
+		}
+	}
+
+	// favicon-32 needs the padding floor as well as the plate: its own spec has
+	// none, so a SQUARE mark would cover the plate edge to edge and a white
+	// glyph would be a white square on a light tab all over again.
+	fav := decodePNG(t, getIcon(t, iconSrv, "plated.test", "favicon-32"))
+	if c := nrgbaAt(fav, 0, 0); c != black {
+		t.Errorf("favicon-32 corner = %v, want the plate framing the glyph", c)
+	}
+	if c := nrgbaAt(fav, 16, 16); c != white {
+		t.Errorf("favicon-32 center = %v, want the glyph", c)
+	}
+	// And the logo's favicon-32 keeps its every-pixel-counts zero padding.
+	favLogo := decodePNG(t, getIcon(t, logoSrv, "plated.test", "favicon-32"))
+	if a := nrgbaAt(favLogo, 0, 0).A; a != 0 {
+		t.Errorf("source=logo: favicon-32 corner alpha = %d, want it transparent as before", a)
+	}
+}
+
+// TestSpecForSource pins the rule itself, away from any rendering.
+func TestSpecForSource(t *testing.T) {
+	for _, spec := range brandingIconSpecs {
+		got := specForSource(spec, brandingSourceIcon)
+		if !got.opaque {
+			t.Errorf("%s: a dedicated icon must be plated", spec.name)
+		}
+		// A plated icon never has less padding than the floor, and never MORE
+		// than its own spec asked for: the maskable 20% survives.
+		if got.pad < minPlatedIconPad {
+			t.Errorf("%s: plated padding = %v, want at least %v", spec.name, got.pad, minPlatedIconPad)
+		}
+		if spec.pad > minPlatedIconPad && got.pad != spec.pad {
+			t.Errorf("%s: padding moved from %v to %v", spec.name, spec.pad, got.pad)
+		}
+		// Nothing else about the spec moves.
+		if got.name != spec.name || got.size != spec.size {
+			t.Errorf("%s: specForSource changed more than the plate: %+v", spec.name, got)
+		}
+
+		// The logo's spec is returned untouched, in every field.
+		if got := specForSource(spec, brandingSourceLogo); got != spec {
+			t.Errorf("%s: the logo's spec changed: %+v", spec.name, got)
+		}
+		// So is an absent source (Moov's own icons never reach here anyway).
+		if got := specForSource(spec, ""); got != spec {
+			t.Errorf("%s: an empty source changed the spec: %+v", spec.name, got)
+		}
 	}
 }

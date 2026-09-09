@@ -710,14 +710,17 @@ func TestBrandingIconCacheFollowsLogoAndColour(t *testing.T) {
 
 	// The key separates every input.
 	keys := map[string]bool{
-		iconCacheKey("h", "aaa", "#000", "icon-192"):  true,
-		iconCacheKey("h", "aaa", "#000", "icon-512"):  true,
-		iconCacheKey("h", "aaa", "#fff", "icon-192"):  true,
-		iconCacheKey("h", "bbb", "#000", "icon-192"):  true,
-		iconCacheKey("h2", "aaa", "#000", "icon-192"): true,
+		iconCacheKey("h", "aaa", "logo", "#000", "icon-192"):  true,
+		iconCacheKey("h", "aaa", "logo", "#000", "icon-512"):  true,
+		iconCacheKey("h", "aaa", "logo", "#fff", "icon-192"):  true,
+		iconCacheKey("h", "bbb", "logo", "#000", "icon-192"):  true,
+		iconCacheKey("h2", "aaa", "logo", "#000", "icon-192"): true,
+		// The same bytes render differently as an icon (always plated) and as
+		// a logo, so the source is part of the key too.
+		iconCacheKey("h", "aaa", "icon", "#000", "icon-192"): true,
 	}
-	if len(keys) != 5 {
-		t.Errorf("icon cache keys collide: %d distinct of 5", len(keys))
+	if len(keys) != 6 {
+		t.Errorf("icon cache keys collide: %d distinct of 6", len(keys))
 	}
 }
 
