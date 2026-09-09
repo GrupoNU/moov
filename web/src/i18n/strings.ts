@@ -1250,6 +1250,7 @@ export const en = {
   "search.options.sizeUnit": "Unit",
   "search.options.dateWithin": "Date within",
   "search.options.dateOf": "of",
+  "search.options.dateAnchor": "Date to search around",
   "search.options.hasAttachment": "Has attachment",
   "search.options.scope": "Search",
   /* E-15: the DEFAULT scope, named for what it actually is. An empty `in:`
@@ -2414,6 +2415,7 @@ export const es: Strings = {
   "search.options.sizeUnit": "Unidad",
   "search.options.dateWithin": "Fecha dentro de",
   "search.options.dateOf": "de",
+  "search.options.dateAnchor": "Fecha alrededor de la cual buscar",
   "search.options.hasAttachment": "Tiene adjunto",
   "search.options.scope": "Buscar en",
   "search.options.scopeDefault": "Todo el correo (salvo Spam y Papelera)",

@@ -3,7 +3,12 @@ import { useId, useMemo, useState } from "react";
 import { useTranslation } from "../../i18n/I18nProvider";
 import { mailboxSegment } from "../../mail/mailboxes";
 import { SCOPE_ANYWHERE } from "../../mail/searchFilter";
-import { formatQuery, parseSearchQuery, type QueryGroup } from "../../mail/searchQuery";
+import {
+  formatQuery,
+  parseSearchQuery,
+  windowAround,
+  type QueryGroup,
+} from "../../mail/searchQuery";
 import {
   DROPPED_CRITERION_LABELS,
   searchToFilterDraft,
@@ -93,8 +98,18 @@ interface PanelState {
   sizeMode: "larger" | "smaller";
   sizeValue: string;
   sizeUnit: "K" | "M" | "G";
-  /** A `newer_than:` day count as a string, or "" for any time. */
+  /** A day count as a string, or "" for any time. */
   within: string;
+  /**
+   * E-21: the DATE the window is centred on, as `YYYY-MM-DD`, or "" for now.
+   *
+   * Gmail's field pair is "Date within [1 day] of [date]", and the second half
+   * is what this panel was missing. Without an anchor the window could only run
+   * backwards from NOW, which makes "find the mail from around the launch"
+   * — the single commonest reason anyone opens this panel — impossible from
+   * here. See {@link queryFromState} for the two shapes it emits.
+   */
+  anchor: string;
   hasAttachment: boolean;
   /** A mailbox id, `SCOPE_ANYWHERE`, or "" for the server's default scope. */
   scope: string;
@@ -138,6 +153,7 @@ function stateFromQuery(query: string, mailboxes: readonly Mailbox[]): PanelStat
     sizeValue: size !== undefined ? String(Math.round(size / (1024 * 1024))) : "",
     sizeUnit: "M",
     within: "",
+    anchor: "",
     hasAttachment: group?.hasAttachment === true,
     scope,
   };
@@ -158,15 +174,28 @@ function queryFromState(state: PanelState, mailboxes: readonly Mailbox[]): strin
   }
 
   /*
-   * "Date within" is Gmail's date ± window. The plan asks for an after+before
-   * PAIR, and that is what a window around a point means — but the panel has
-   * no anchor date field (Gmail's sits next to it and is a free-form date),
-   * so the anchor is NOW and the window is a `newer_than:`. That yields the
-   * `after` half; the `before` half of "within N of today" is the future,
-   * which no message has. Stated here rather than left as a silent
-   * simplification.
+   * E-21: "Date within N of D" — the anchor the panel used to lack.
+   *
+   * E3 shipped only the left half of Gmail's pair, and said so in a comment:
+   * with no anchor field the window could only run backwards from NOW, as a
+   * `newer_than:`. That made "find the mail from around the launch" — the
+   * commonest reason anyone opens this panel — impossible from here, which the
+   * review logged as a concrete functional gap rather than a cosmetic one.
+   *
+   * With an anchor the window is SYMMETRIC and becomes an `after:`/`before:`
+   * pair; without one the old behaviour is exactly right and is kept, because
+   * "within a week" with no date does mean "of today". Two shapes, one field
+   * deciding between them, and both expressible in the same grammar.
    */
-  if (state.within !== "") parts.push(`newer_than:${state.within}d`);
+  if (state.within !== "") {
+    const days = Number(state.within);
+    const around = state.anchor === "" ? undefined : windowAround(state.anchor, days);
+    if (around === undefined) {
+      parts.push(`newer_than:${state.within}d`);
+    } else {
+      parts.push(`after:${around.after}`, `before:${around.before}`);
+    }
+  }
 
   if (state.scope === SCOPE_ANYWHERE) {
     parts.push(`in:${SCOPE_ANYWHERE}`);
@@ -350,24 +379,55 @@ export function SearchOptions({
           </div>
         </div>
 
-        <label className={styles.row} htmlFor={field("within")}>
-          <span className={styles.label}>{t("search.options.dateWithin")}</span>
-          <select
-            id={field("within")}
-            className={styles.select}
-            value={state.within}
-            onChange={(event) => {
-              set("within", event.target.value);
-            }}
-          >
-            <option value="">{t("search.chip.anyTime")}</option>
-            {WITHIN_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.key)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/*
+          E-21: "Fecha: [1 día] de [fecha]" — Gmail's pair, both halves.
+
+          The anchor is a native `<input type="date">` rather than a text field
+          with a format hint: it brings the platform's own calendar, its own
+          locale-correct display, and a value this code can parse without
+          guessing whether the user meant day/month or month/day. That last
+          point is not a nicety — `03/04` is two different days depending on
+          where the person lives, and a search that silently picked the wrong
+          one would be undetectable.
+        */}
+        <div className={styles.row}>
+          <span className={styles.label} id={field("date-label")}>
+            {t("search.options.dateWithin")}
+          </span>
+          <div className={styles.inline} role="group" aria-labelledby={field("date-label")}>
+            <select
+              id={field("within")}
+              className={styles.select}
+              aria-label={t("search.options.dateWithin")}
+              value={state.within}
+              onChange={(event) => {
+                set("within", event.target.value);
+              }}
+            >
+              <option value="">{t("search.chip.anyTime")}</option>
+              {WITHIN_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.key)}
+                </option>
+              ))}
+            </select>
+            <span className={styles.inlineWord}>{t("search.options.dateOf")}</span>
+            <input
+              id={field("anchor")}
+              className={styles.date}
+              type="date"
+              value={state.anchor}
+              aria-label={t("search.options.dateAnchor")}
+              /* Disabled with no window chosen, because an anchor alone says
+                 nothing — "of the 12th" is not a date range. The select above
+                 is what turns it on, which is also the order the row reads in. */
+              disabled={state.within === ""}
+              onChange={(event) => {
+                set("anchor", event.target.value);
+              }}
+            />
+          </div>
+        </div>
 
         <label className={styles.row} htmlFor={field("scope")}>
           <span className={styles.label}>{t("search.options.scope")}</span>

@@ -10,6 +10,7 @@ import {
   isEmptyGroup,
   parseAgeValue,
   parseDateValue,
+  windowAround,
   parseSearchQuery,
   parseSizeValue,
   withGroupPatch,
@@ -462,5 +463,28 @@ describe("hasAnyTerm", () => {
   it("is TRUE for a query of only unsupported terms", () => {
     // The user asked for something. An idle inbox would be a lie.
     expect(hasAnyTerm(parseSearchQuery("filename:x", NOW))).toBe(true);
+  });
+});
+
+describe("windowAround — the arithmetic, without a form", () => {
+  it("includes the whole last day of the window", () => {
+    expect(windowAround("2026-03-12", 1)).toEqual({
+      after: "2026/03/11",
+      before: "2026/03/14",
+    });
+  });
+
+  it("crosses a month boundary without rolling wrong", () => {
+    expect(windowAround("2026-03-01", 3)).toEqual({
+      after: "2026/02/26",
+      before: "2026/03/05",
+    });
+  });
+
+  it("refuses an unparseable anchor rather than guessing a date", () => {
+    // The rule `parseDateValue` follows: a date that quietly means a different
+    // day is worse than one that is refused.
+    expect(windowAround("marzo", 1)).toBeUndefined();
+    expect(windowAround("", 1)).toBeUndefined();
   });
 });

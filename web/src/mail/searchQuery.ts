@@ -833,3 +833,40 @@ export function firstGroup(input: string, now: Date = new Date()): QueryGroup {
 export function hasAnyTerm(query: ParsedQuery): boolean {
   return query.groups.some((group) => !isEmptyGroup(group)) || query.unsupported.length > 0;
 }
+/**
+ * The two date bounds a "within N days of D" window produces (E-21).
+ *
+ * Exported and pure so the arithmetic is testable without a form. The window is
+ * SYMMETRIC — Gmail's "within" means either side of the date — which is why
+ * both bounds are emitted rather than only an `after:`.
+ *
+ * # The off-by-one that matters
+ *
+ * `after:` and `before:` both resolve to MIDNIGHT UTC of the day they name, so
+ * a naive `[D-n, D+n]` would exclude everything sent on day `D+n` itself —
+ * "within one day of the 12th" would silently drop the 13th, which is half of
+ * what the user asked for. The upper bound is therefore `D + n + 1`: the window
+ * runs from the start of the first day to the start of the day AFTER the last,
+ * which is the interval a person means.
+ *
+ * Returns undefined for an unparseable anchor rather than guessing a date, on
+ * the same rule `parseDateValue` follows: a date that quietly means a different
+ * day is worse than one that is refused.
+ */
+export function windowAround(
+  anchor: string,
+  days: number,
+): { readonly after: string; readonly before: string } | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(anchor.trim());
+  if (match === null) return undefined;
+  const at = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(at)) return undefined;
+  const day = 86_400_000;
+  const format = (ms: number): string => {
+    const date = new Date(ms);
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const dayOfMonth = String(date.getUTCDate()).padStart(2, "0");
+    return `${String(date.getUTCFullYear())}/${month}/${dayOfMonth}`;
+  };
+  return { after: format(at - days * day), before: format(at + (days + 1) * day) };
+}

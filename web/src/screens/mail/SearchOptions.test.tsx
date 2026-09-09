@@ -289,3 +289,60 @@ describe("E-15 — the scope the panel offers", () => {
     expect(onSubmit).toHaveBeenCalledWith("in:inbox factura");
   });
 });
+
+/**
+ * E-21 — "within N days OF a date", the half the panel was missing.
+ *
+ * E3 shipped only the left side of Gmail's pair and said so in a comment: with
+ * no anchor the window could only run backwards from NOW, as a `newer_than:`.
+ * That made "find the mail from around the launch" — the commonest reason
+ * anyone opens this panel — impossible from here. The review logged it as a
+ * concrete functional gap, not a cosmetic one.
+ */
+describe("E-21 — the date anchor", () => {
+  it("still emits newer_than: when no anchor is given", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderPanel();
+
+    await user.type(screen.getByLabelText(/contiene las palabras/i), "informe");
+    await user.selectOptions(screen.getByRole("combobox", { name: /fecha dentro de|date within/i }), "7");
+    await user.click(screen.getByRole("button", { name: /^buscar$/i }));
+
+    /*
+     * "Within a week" with no date does mean "of today", so the old behaviour
+     * is right and is kept rather than replaced.
+     *
+     * It arrives as a single `after:` and not as `newer_than:`, because the
+     * panel normalises through the parser on its way out and the parser
+     * resolves a relative age to an absolute instant — deliberately, so the
+     * server never sees a relative expression it would have to interpret. The
+     * assertion is on the SHAPE for that reason: the exact date moves daily.
+     */
+    const emitted = onSubmit.mock.calls[0]?.[0] as string;
+    expect(emitted).toMatch(/^after:\d{4}\/\d{2}\/\d{2} informe$/);
+    expect(emitted).not.toContain("before:");
+  });
+
+  it("emits a SYMMETRIC after/before pair around the anchor", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderPanel();
+
+    await user.type(screen.getByLabelText(/contiene las palabras/i), "informe");
+    await user.selectOptions(screen.getByRole("combobox", { name: /fecha dentro de|date within/i }), "1");
+    await user.type(screen.getByLabelText(/fecha alrededor/i), "2026-03-12");
+    await user.click(screen.getByRole("button", { name: /^buscar$/i }));
+
+    /*
+     * The 11th through the 13th. `before:` resolves to MIDNIGHT of the day it
+     * names, so the upper bound is the 14th — anything else would silently drop
+     * the 13th, which is half of what the user asked for.
+     */
+    expect(onSubmit).toHaveBeenCalledWith("after:2026/03/11 before:2026/03/14 informe");
+  });
+
+  it("keeps the anchor inert until a window is chosen", () => {
+    renderPanel();
+    // An anchor alone says nothing: "of the 12th" is not a date range.
+    expect(screen.getByLabelText(/fecha alrededor/i)).toBeDisabled();
+  });
+});
