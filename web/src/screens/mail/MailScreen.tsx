@@ -1346,6 +1346,33 @@ export function MailScreen(): React.JSX.Element {
   // server objects. `routeMessageId` answers that uniformly for every route.
   const openMessageId = routeMessageId(route);
 
+  /*
+   * C-05: WHICH message the route's id means.
+   *
+   * A thread row navigates to its representative message (`group.latest`) —
+   * in Sent that is the user's own reply, in a label view whichever member
+   * carries the label — and the conversation used to treat that id as a
+   * request to EXPAND it, on top of the newest and the unread. So a
+   * three-message thread opened from Sent showed two of three open.
+   *
+   * The URL cannot tell a row click from a permalink or a search hit, but the
+   * app can: every row-shaped navigation goes through `openFromRow`, which
+   * records the id it navigated to. While the route's id is that id, the
+   * conversation gets NO target (Gmail's rule: newest + unread, nothing else);
+   * any other id — typed, bookmarked, reloaded, a notification's, a search
+   * result's — is a message the user asked for by name and is expanded.
+   */
+  const [rowOpenedId, setRowOpenedId] = useState<string | undefined>(undefined);
+  const openFromRow = useCallback(
+    (messageId: string): void => {
+      setRowOpenedId(messageId);
+      navigate(withMessage(route, messageId));
+    },
+    [navigate, route],
+  );
+  const targetMessageId =
+    openMessageId !== undefined && openMessageId !== rowOpenedId ? openMessageId : undefined;
+
   useEffect(() => {
     if (client === undefined || accountId === "" || openMessageId === undefined) {
       setDetail({});
@@ -1872,13 +1899,13 @@ export function MailScreen(): React.JSX.Element {
           navigate(withMessage(route, undefined));
         } else {
           setSelectedId(next.id);
-          navigate(withMessage(route, next.latest.id));
+          openFromRow(next.latest.id);
         }
       }
 
       refresh();
     },
-    [actions, projected, refresh, t, format, openMessageId, navigate, route, prefs.autoAdvance],
+    [actions, projected, refresh, t, format, openMessageId, navigate, route, openFromRow, prefs.autoAdvance],
   );
 
   const runArchive = useCallback((): void => {
@@ -2689,9 +2716,9 @@ export function MailScreen(): React.JSX.Element {
 
   const openGroup = useCallback(
     (group: ThreadGroup): void => {
-      navigate(withMessage(route, group.latest.id));
+      openFromRow(group.latest.id);
     },
-    [navigate, route],
+    [openFromRow],
   );
 
   const closeMessage = useCallback((): void => {
@@ -2735,9 +2762,9 @@ export function MailScreen(): React.JSX.Element {
       const target = siblingGroup(direction);
       if (target === undefined) return;
       setSelectedId(target.id);
-      navigate(withMessage(route, target.latest.id));
+      openFromRow(target.latest.id);
     },
-    [siblingGroup, navigate, route],
+    [siblingGroup, openFromRow],
   );
 
   const goToMailbox = useCallback(
@@ -3582,9 +3609,9 @@ export function MailScreen(): React.JSX.Element {
       setSelectedId(target.id);
       // Only follow into the reader when the user was already reading; from
       // the list, `]` advances the cursor without opening anything.
-      if (wasReading) navigate(withMessage(route, target.latest.id));
+      if (wasReading) openFromRow(target.latest.id);
     },
-    [groups, selectedId, runArchive, openMessageId, navigate, route],
+    [groups, selectedId, runArchive, openMessageId, openFromRow],
   );
 
   /**
@@ -4816,6 +4843,8 @@ export function MailScreen(): React.JSX.Element {
                * ("toolbar archive/delete/label act on the conversation").
                */
               conversationView={prefs.conversationView}
+              /* C-05: only a message asked for BY NAME is force-expanded. */
+              targetMessageId={targetMessageId}
               onReplyToMessage={replyToMessage}
               onForwardMessage={forwardMessage}
               onMarkMessagesRead={markMessagesRead}

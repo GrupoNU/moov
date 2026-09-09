@@ -166,6 +166,14 @@ export interface ReadingPaneProps {
    */
   readonly conversationView: boolean;
   /**
+   * C-05: the message the user asked for BY NAME — a permalink, a search hit,
+   * a notification — which the conversation expands whatever its age. Absent
+   * when the route's id is merely a thread row's representative, so opening
+   * a thread from Sent shows Gmail's set (newest + unread) and not the user's
+   * own old reply on top of it.
+   */
+  readonly targetMessageId?: string | undefined;
+  /**
    * Per-message composition inside a conversation (canon §2.1).
    *
    * A reply replies to ONE message — the one whose text it quotes — while the
@@ -219,6 +227,7 @@ export function ReadingPane({
   onNextMessage,
   onPreviousMessage,
   conversationView,
+  targetMessageId,
   onReplyToMessage,
   onForwardMessage,
   onMarkMessagesRead,
@@ -872,6 +881,7 @@ export function ReadingPane({
                not, which is what preserves the expansion the user built. */
             key={thread?.id ?? email.id}
             openEmail={email}
+            targetMessageId={targetMessageId}
             thread={thread}
             client={client}
             accountId={accountId}

@@ -126,6 +126,31 @@ const EMAILS = [
  */
 let threadOneEmailIds: readonly string[] = ["e1"];
 
+/**
+ * C-05: what `Thread/get` claims thread `t2` contains, and the member it can
+ * grow. `e2-newer` is NEWER than the row's message and lives in Archive: the
+ * inbox window never lists it, `Email/get` serves it, and it is the message
+ * Gmail's rule opens — not the row's `e2`.
+ */
+let threadTwoEmailIds: readonly string[] = ["e2"];
+
+const E2_NEWER = {
+  id: "e2-newer",
+  threadId: "t2",
+  mailboxIds: { "mb-archive": true },
+  keywords: { $seen: true },
+  subject: "The second message",
+  preview: "Preview of the newer reply",
+  from: [{ name: "Beatriz", email: "bea@example.test" }],
+  to: [{ name: null, email: "moov-test@example.test" }],
+  receivedAt: "2026-08-30T11:00:00Z",
+  size: 512,
+  hasAttachment: false,
+};
+
+/** The ids the most recent `Email/get` served — what a `Thread/get` back-reference resolves to. */
+let lastGetIds: readonly string[] = [];
+
 /** Every `update` object the shell sent to `Email/set`, in order. */
 let emailSetCalls: Record<string, unknown>[] = [];
 
@@ -151,8 +176,10 @@ function respond(name: string, args: Record<string, unknown>): Record<string, un
       // the message the list opened, not to the whole mailbox.
       const requested = args.ids;
       const ids = Array.isArray(requested) ? (requested as string[]) : undefined;
+      const servable = [...EMAILS, E2_NEWER];
       const list =
-        ids === undefined ? EMAILS : EMAILS.filter((email) => ids.includes(email.id));
+        ids === undefined ? EMAILS : servable.filter((email) => ids.includes(email.id));
+      lastGetIds = list.map((email) => email.id);
       return {
         accountId: ACCOUNT,
         state: "e-1",
@@ -165,16 +192,33 @@ function respond(name: string, args: Record<string, unknown>): Record<string, un
         notFound: [],
       };
     }
-    case "Thread/get":
+    case "Thread/get": {
+      const threads = [
+        { id: "t1", emailIds: threadOneEmailIds },
+        { id: "t2", emailIds: threadTwoEmailIds },
+      ];
+      /*
+       * The reader asks with a back-reference to the `Email/get` before it
+       * (`#ids` → `/list/*\/threadId`) and reads `list[0]`. A fake that
+       * answered every thread regardless would hand the reader thread t1 for a
+       * message in t2 — so the back-reference is honoured from the ids the
+       * previous `Email/get` served.
+       */
+      const backRef = "#ids" in args;
+      const wanted = backRef
+        ? new Set(
+            [...EMAILS, E2_NEWER]
+              .filter((email) => lastGetIds.includes(email.id))
+              .map((email) => email.threadId),
+          )
+        : undefined;
       return {
         accountId: ACCOUNT,
         state: "th-1",
-        list: [
-          { id: "t1", emailIds: threadOneEmailIds },
-          { id: "t2", emailIds: ["e2"] },
-        ],
+        list: wanted === undefined ? threads : threads.filter((thread) => wanted.has(thread.id)),
         notFound: [],
       };
+    }
     case "Email/set": {
       /*
        * The real server answers §5.3 per record: an id it cannot resolve comes
@@ -309,6 +353,7 @@ describe("MailScreen — the shell's canary", () => {
     vi.stubGlobal("fetch", vi.fn(fakeFetch));
     vi.stubGlobal("EventSource", StubEventSource);
     threadOneEmailIds = ["e1"];
+    threadTwoEmailIds = ["e2"];
     emailSetCalls = [];
     emailQueryFilters = [];
     /*
@@ -522,4 +567,58 @@ describe("MailScreen — the shell's canary", () => {
      * clock is only the cost of running last.
      */
   }, 20000);
+  /**
+   * C-05: WHICH message a route's id means, wired through the real shell.
+   *
+   * ConversationView's own tests prove the two seeds; what only the shell can
+   * prove is the classification — that a row click yields NO target while a
+   * URL typed or reloaded yields one — because the URL is identical in both
+   * cases and the difference lives in `openFromRow`.
+   */
+  const expandedMessageIds = (): string[] =>
+    screen
+      .getAllByRole("button", { expanded: true })
+      .map((button) => button.closest("[data-message-id]")?.getAttribute("data-message-id"))
+      .filter((id): id is string => id !== undefined && id !== null);
+
+  it("opened from a thread row, the conversation shows Gmail's set — not the row's representative", async () => {
+    const user = userEvent.setup();
+    threadTwoEmailIds = ["e2", "e2-newer"];
+    renderShell();
+    await waitFor(
+      () => {
+        expect(screen.getByText("The second message")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    await user.click(screen.getByText("The second message"));
+
+    // Both members render; only the NEWER one is open. The row's own e2 —
+    // read, older — stays collapsed, which is the "2 of 3 open" defect fixed.
+    await waitFor(() => {
+      expect(screen.getAllByText("Beatriz").length).toBeGreaterThanOrEqual(2);
+    });
+    await waitFor(() => {
+      expect(expandedMessageIds()).toEqual(["e2-newer"]);
+    });
+  });
+
+  it("opened by its URL, the named message is expanded as well as the newest", async () => {
+    threadTwoEmailIds = ["e2", "e2-newer"];
+    // A permalink: the same URL a row click would produce, arrived at without
+    // a row click — a bookmark, a reload, a link from elsewhere.
+    window.history.replaceState(null, "", "/mail/inbox/e2");
+    renderShell();
+
+    await waitFor(
+      () => {
+        expect(screen.getAllByText("Beatriz").length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 5000 },
+    );
+    await waitFor(() => {
+      expect(expandedMessageIds()).toEqual(["e2", "e2-newer"]);
+    });
+  });
 });

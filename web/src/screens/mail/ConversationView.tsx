@@ -61,8 +61,19 @@ import styles from "./ConversationView.module.css";
  */
 
 export interface ConversationViewProps {
-  /** The message the route named — always expanded, whatever its age. */
+  /**
+   * The message the reader fetched — the one whose body arrived with the
+   * route. It seeds the members map; it is NOT, by itself, a reason to expand
+   * anything (C-05).
+   */
   readonly openEmail: Email;
+  /**
+   * C-05: the message asked for BY NAME (permalink, search hit,
+   * notification), expanded whatever its age. Undefined when the route's id
+   * is only a thread row's representative — then Gmail's rule alone decides:
+   * the newest and the unread.
+   */
+  readonly targetMessageId?: string | undefined;
   /** The thread, from the same `Email/get` + `Thread/get` batch. */
   readonly thread: Thread | undefined;
   readonly client: JmapClient;
@@ -100,6 +111,7 @@ const BODY_BATCH = 5;
 
 export function ConversationView({
   openEmail,
+  targetMessageId,
   thread,
   client,
   accountId,
@@ -222,11 +234,17 @@ export function ConversationView({
     if (members.size < memberIds.length) return;
     if (seededFor.current === key) return;
     seededFor.current = key;
+    /*
+     * C-05: the TARGET, not the open message, is what forces an expansion.
+     * `openEmail` is whichever member the route named — from a thread row
+     * that is the row's representative (in Sent, the user's own reply), and
+     * expanding it on top of the newest was the "2 of 3 open" defect.
+     */
     setState((current) => ({
       ...current,
-      expanded: initialExpanded([...members.values()], openEmail.id),
+      expanded: initialExpanded([...members.values()], targetMessageId),
     }));
-  }, [threadId, members, memberIds.length, openEmail.id]);
+  }, [threadId, members, memberIds.length, targetMessageId]);
 
   // --- stage 2: bodies for what is expanded --------------------------------
 
@@ -278,8 +296,19 @@ export function ConversationView({
 
   // --- the controls the keyboard drives ------------------------------------
 
-  /** The message `p`/`n` moves from: the last one the user expanded. */
-  const [currentId, setCurrentId] = useState<string | undefined>(openEmail.id);
+  /**
+   * The message `p`/`n` moves from: the last one the user expanded.
+   *
+   * C-05: it starts on the TARGET when there is one and otherwise on the
+   * newest — the message that is actually open — rather than on the route's
+   * representative, which may be collapsed.
+   */
+  const [currentId, setCurrentId] = useState<string | undefined>(targetMessageId);
+  useEffect(() => {
+    if (currentId !== undefined || ordered.length === 0) return;
+    if (members.size < memberIds.length) return;
+    setCurrentId(ordered[ordered.length - 1]?.id);
+  }, [currentId, ordered, members.size, memberIds.length]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 

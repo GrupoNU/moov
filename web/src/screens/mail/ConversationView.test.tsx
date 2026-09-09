@@ -90,6 +90,7 @@ function stubClient(rows: readonly Email[], bodies: Record<string, Email>) {
 function renderConversation(
   overrides: {
     readonly openEmail?: Email;
+    readonly targetMessageId?: string;
     readonly thread?: Thread;
     readonly rows?: readonly Email[];
     readonly bodies?: Record<string, Email>;
@@ -108,6 +109,9 @@ function renderConversation(
 
   const props = {
     openEmail,
+    ...(overrides.targetMessageId !== undefined
+      ? { targetMessageId: overrides.targetMessageId }
+      : {}),
     thread: overrides.thread ?? THREAD,
     client,
     accountId: ACCOUNT,
@@ -175,6 +179,42 @@ describe("the conversation reader", () => {
     const toggles = collapsedMessages();
     expect(toggles.length).toBeGreaterThanOrEqual(2);
     expect(expandedMessages()).toHaveLength(1);
+  });
+
+  /*
+   * C-05: the two ways a conversation opens, and what each expands.
+   *
+   * From a thread ROW the route carries the row's representative — in Sent,
+   * the user's own reply in the middle of the thread. That id is how the body
+   * was fetched, not a request to expand it: Gmail's set (newest + unread)
+   * alone decides. From a PERMALINK or a search hit the id IS the request,
+   * and the named message opens whatever its age.
+   */
+  it("opened from a thread row, expands only the newest — not the row's representative", async () => {
+    // The route named m2 (read, in the middle); no target was given.
+    renderConversation({ openEmail: withBody(M2, "the middle message") });
+    await waitFor(() => {
+      expect(screen.getByText("Sender m1")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(expandedMessages()).toHaveLength(1);
+    });
+    const open = expandedMessages()[0]?.closest("[data-message-id]");
+    expect(open).toHaveAttribute("data-message-id", "m3");
+  });
+
+  it("opened by permalink or search hit, expands the named message as well as the newest", async () => {
+    renderConversation({
+      openEmail: withBody(M2, "the middle message"),
+      targetMessageId: "m2",
+    });
+    await waitFor(() => {
+      expect(expandedMessages()).toHaveLength(2);
+    });
+    const openIds = expandedMessages().map((button) =>
+      button.closest("[data-message-id]")?.getAttribute("data-message-id"),
+    );
+    expect(openIds).toEqual(["m2", "m3"]);
   });
 
   it("expands an unread message wherever it sits in the thread", async () => {
