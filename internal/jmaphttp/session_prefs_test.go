@@ -66,6 +66,26 @@ func TestSessionAdvertisesThePrefsCapability(t *testing.T) {
 	assertAdvertisedDomain(t, perAccount, "inboxTypeValues", mail.InboxTypeChoices())
 	assertAdvertisedDomain(t, perAccount, "notificationsValues", mail.NotificationsChoices())
 	assertAdvertisedDomain(t, perAccount, "themeValues", mail.ThemeChoices())
+	// v3's folder rail. The two caps ride along, because a client that curates
+	// the rail must be able to stop the user AT the boundary rather than after
+	// a refused save — the same declared == applied rule, applied to numbers.
+	assertAdvertisedDomain(t, perAccount, "folderVisibilityValues", mail.FolderVisibilityChoices())
+	for key, want := range map[string]int{
+		"maxFolderVisibility": mail.MaxFolderVisibility(),
+		"maxFolderNameBytes":  mail.MaxFolderNameBytes(),
+	} {
+		if perAccount[key] != float64(want) {
+			t.Errorf("%s = %v, want the enforced %d", key, perAccount[key], want)
+		}
+	}
+	// No default is advertised, and that absence is deliberate: what to draw for
+	// a folder the user never named is the CLIENT's policy, so a server
+	// publishing a default here would be publishing a decision it does not make.
+	for _, key := range []string{"defaultFolderVisibility", "folderVisibilityDefault"} {
+		if _, present := perAccount[key]; present {
+			t.Errorf("the capability advertises %q: the rail's defaults belong to the client", key)
+		}
+	}
 
 	seconds, ok := perAccount["undoSendSeconds"].([]any)
 	if !ok {

@@ -77,6 +77,14 @@ func TestPrefsMappingCoversEveryField(t *testing.T) {
 			ForNew:   "work",
 			ForReply: "work",
 		},
+
+		// v3. Populated for the same reason the v2 maps are, and with a key
+		// carrying a slash because that is the shape a real Dovecot folder name
+		// takes and the shape a naive mapping would be tempted to split.
+		FolderVisibility: map[string]string{
+			"Archivo":               "hide",
+			"Sync issues/Conflicts": "showIfUnread",
+		},
 	}
 	got := storePrefs(prefsValue(in))
 	if !got.Equal(in) {
@@ -90,6 +98,9 @@ func TestPrefsMappingCoversEveryField(t *testing.T) {
 	if s := got.Signatures.Items["work"]; s.Name != "Work" || s.TextBody != "-- \nD" || s.HTMLBody != "<p>D</p>" {
 		t.Errorf("a signature lost a field in the mapping: %+v", s)
 	}
+	if got.FolderVisibility["Sync issues/Conflicts"] != "showIfUnread" {
+		t.Errorf("a folder name containing a slash did not survive the mapping: %v", got.FolderVisibility)
+	}
 }
 
 // TestPrefsMappingDoesNotAliasTheMaps pins that the two layers hold SEPARATE
@@ -98,19 +109,24 @@ func TestPrefsMappingCoversEveryField(t *testing.T) {
 // invisible until two requests raced.
 func TestPrefsMappingDoesNotAliasTheMaps(t *testing.T) {
 	src := store.Prefs{
-		Labels:     map[string]store.LabelPrefs{"a": {Color: "red", Visibility: "show"}},
-		Signatures: store.SignaturePrefs{Items: map[string]store.SignatureItem{"s": {Name: "S"}}},
+		Labels:           map[string]store.LabelPrefs{"a": {Color: "red", Visibility: "show"}},
+		Signatures:       store.SignaturePrefs{Items: map[string]store.SignatureItem{"s": {Name: "S"}}},
+		FolderVisibility: map[string]string{"Archivo": "hide"},
 	}
 
 	mapped := prefsValue(src)
 	mapped.Labels["a"] = LabelPrefsValue{Color: "blue", Visibility: "hide"}
 	mapped.Signatures.Items["s"] = SignatureItemValue{Name: "TAMPERED"}
+	mapped.FolderVisibility["Archivo"] = "show"
 
 	if src.Labels["a"].Color != "red" {
 		t.Error("prefsValue aliases the store's label map: mutating the JMAP value changed the store's")
 	}
 	if src.Signatures.Items["s"].Name != "S" {
 		t.Error("prefsValue aliases the store's signature map")
+	}
+	if src.FolderVisibility["Archivo"] != "hide" {
+		t.Error("prefsValue aliases the store's folder map")
 	}
 
 	back := storePrefs(mapped)
@@ -126,6 +142,48 @@ func TestPrefsMappingDoesNotAliasTheMaps(t *testing.T) {
 	}
 	if storePrefs(PrefsValue{}).Signatures.Items != nil {
 		t.Error("storePrefs turned a nil signature map into an empty one")
+	}
+	if prefsValue(store.Prefs{}).FolderVisibility != nil {
+		t.Error("prefsValue turned a nil folder map into an empty one")
+	}
+	if storePrefs(PrefsValue{}).FolderVisibility != nil {
+		t.Error("storePrefs turned a nil folder map into an empty one")
+	}
+}
+
+// TestFolderVisibilityShareTheLabelVocabulary pins the coincidence the two
+// domains are allowed to have and must not be assumed to keep: folder rail and
+// label list offer the SAME three visibilities today, because Gmail gives its
+// user one vocabulary for both and a user who learned it on one surface must
+// not meet a different one on the other.
+//
+// The domains are separate variables on purpose (a folder is a mailbox, a label
+// is an IMAP keyword — arbitrage A6), so this test is what turns a future
+// divergence into a deliberate edit here rather than a silent inconsistency a
+// user meets in the settings screen.
+func TestFolderVisibilityShareTheLabelVocabulary(t *testing.T) {
+	folder := FolderVisibilityChoices()
+	label := LabelVisibilityChoices()
+	if len(folder) != len(label) {
+		t.Fatalf("folder visibilities %v and label visibilities %v differ in size", folder, label)
+	}
+	for _, v := range label {
+		if !prefsAllowedString(v, folderVisibilityChoices) {
+			t.Errorf("the label list offers %q but the folder rail does not: "+
+				"one vocabulary, two surfaces", v)
+		}
+	}
+	for _, v := range folder {
+		if !prefsAllowedString(v, labelVisibilityChoices) {
+			t.Errorf("the folder rail offers %q but the label list does not", v)
+		}
+	}
+	// The accessor must return a COPY, like every other advertised domain: the
+	// session builder calls it per request, and a shared slice would let one
+	// caller change what the server enforces for every subsequent one.
+	folder[0] = "tampered"
+	if folderVisibilityChoices[0] == "tampered" {
+		t.Error("FolderVisibilityChoices exposes the package's own slice")
 	}
 }
 
@@ -285,6 +343,17 @@ func TestPrefsDefaultsAreInsideTheEnforcedDomains(t *testing.T) {
 	// Identity's own — which is the precedence rule's base case.
 	if d.Signatures.ForNew != "" || d.Signatures.ForReply != "" {
 		t.Errorf("the default signature selection is %+v, want none", d.Signatures)
+	}
+
+	// v3. The default is the ABSENCE of a choice, so there is nothing here for
+	// the domain to admit — but if a default ever appears, every one of its
+	// values must be inside the enforced set, or an account would work until the
+	// user touched an unrelated setting and had the whole object refused.
+	for name, v := range d.FolderVisibility {
+		if !prefsAllowedString(v, folderVisibilityChoices) {
+			t.Errorf("the default folderVisibility[%q] = %q is not in the enforced domain %v",
+				name, v, folderVisibilityChoices)
+		}
 	}
 }
 

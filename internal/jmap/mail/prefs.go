@@ -114,6 +114,19 @@ type PrefsValue struct {
 	// for any client that speaks only standard JMAP, and this is a
 	// presentation-layer preference our own composer consults first.
 	Signatures SignaturePrefsValue
+
+	// --- v3: the folder rail ---
+
+	// FolderVisibility is which mailboxes the client draws in its folder rail,
+	// keyed by the mailbox DISPLAY NAME as the client shows it, with values
+	// "show", "hide" or "showIfUnread".
+	//
+	// It stores only EXPLICIT choices. An absent key is not "hidden" and not
+	// "shown" — it is "the user has said nothing here", and what happens then
+	// is the CLIENT's policy, because a rail's defaults are a rendering
+	// decision that differs between a phone and a desktop. store.Prefs'
+	// FolderVisibility carries the full argument.
+	FolderVisibility map[string]string
 }
 
 // LabelPrefsValue is one label's presentation metadata.
@@ -291,6 +304,22 @@ var (
 	// reply-all sent by accident to a mailing list cannot be taken back, while
 	// a missing reply-all costs one click.
 	defaultReplyBehaviorChoices = []string{"reply", "replyAll"}
+
+	// --- v3 ---
+
+	// folderVisibilityChoices — the SAME three values labelVisibilityChoices
+	// carries, and deliberately the same three: Gmail gives its label list and
+	// its folder rail one vocabulary ("show", "hide", "show if unread"), and a
+	// user who has learned it on one surface must not meet a different one on
+	// the other.
+	//
+	// It is a SEPARATE variable rather than an alias of labelVisibilityChoices
+	// because the two domains are free to diverge — a folder is not a label
+	// (arbitrage A6 makes a label an IMAP keyword and a folder a real mailbox),
+	// and a future value that makes sense for one may not for the other. A test
+	// pins that they agree TODAY, so the coincidence is documented rather than
+	// assumed.
+	folderVisibilityChoices = []string{"show", "hide", "showIfUnread"}
 )
 
 // The caps on the v2 collections. Each is a limit with a REASON, not a round
@@ -352,6 +381,41 @@ const (
 	// do not contradict each other for the single-signature case that shares
 	// its constant with Identity.
 	maxSignaturesBytes = 128 * 1024
+
+	// maxFolderVisibility caps the folder-rail map at 200 entries.
+	//
+	// Unlike maxLabelPrefs this is NOT a protocol fact — there is no Maildir
+	// ceiling on mailboxes the way there is on durable keywords, and an account
+	// with 200 folders is unusual but entirely legal. It is a bound on what a
+	// user can plausibly have EXPRESSED AN OPINION about: the map holds explicit
+	// choices, one per folder the user deliberately hid or pinned, and a rail
+	// nobody could read is a rail nobody curates two hundred entries of.
+	//
+	// What the cap actually defends is the column. This map is keyed by a
+	// client-supplied string and every session read pulls the whole preference
+	// document, so an uncapped map is a write-anything store reachable over the
+	// API and paid for on every page load. 200 × 255 bytes is ~50 KiB of keys in
+	// the worst case, which is the right order for a document served that often.
+	//
+	// A user with more folders than this is not blocked from using them: the
+	// unnamed ones simply fall to the client's own rail policy, which is what an
+	// absent key already means.
+	maxFolderVisibility = 200
+
+	// maxFolderNameBytes caps a folder name used as a map key, at 255 bytes.
+	//
+	// 255 is not arbitrary: RFC 3501 §5.1 leaves mailbox-name length to the
+	// server, and Dovecot's Maildir++ layout puts the name in a filesystem path
+	// whose components most filesystems stop at 255 bytes. So a name longer than
+	// this cannot name a mailbox that exists, and accepting one would only let a
+	// key in this map hold content — which is the thing a JSONB key must never
+	// become.
+	//
+	// It is BYTES rather than runes, matching the filesystem's own unit: an
+	// accented Spanish folder name costs more bytes than characters, and the
+	// limit that binds in reality is the one measured the way the filesystem
+	// measures it.
+	maxFolderNameBytes = 255
 )
 
 // The exported accessors the session object builds its accountCapabilities
@@ -404,6 +468,17 @@ func AddressAutocompleteChoices() []string {
 func DefaultReplyBehaviorChoices() []string {
 	return append([]string(nil), defaultReplyBehaviorChoices...)
 }
+
+// FolderVisibilityChoices is the folder-rail visibility domain (v3).
+func FolderVisibilityChoices() []string {
+	return append([]string(nil), folderVisibilityChoices...)
+}
+
+// MaxFolderVisibility is the folder-rail map cap.
+func MaxFolderVisibility() int { return maxFolderVisibility }
+
+// MaxFolderNameBytes is the cap on a folder name used as a key in that map.
+func MaxFolderNameBytes() int { return maxFolderNameBytes }
 
 // The numeric limits the account capability advertises, so a settings screen
 // can stop a user at the boundary instead of after a refused save.
@@ -465,6 +540,8 @@ var prefsProperties = map[string]bool{
 	"sendAndArchive":       true,
 	"defaultReplyBehavior": true,
 	"signatures":           true,
+	// v3.
+	"folderVisibility": true,
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +659,11 @@ func prefsObject(p PrefsValue, properties *[]string) map[string]any {
 		"sendAndArchive":       p.SendAndArchive,
 		"defaultReplyBehavior": p.DefaultReplyBehavior,
 		"signatures":           prefsSignaturesValue(p.Signatures),
+
+		// v3. Rendered as an object for the same reason labels is: §5.3
+		// addresses a member with a JSON Pointer, and there is no pointer into
+		// a flattened scalar.
+		"folderVisibility": prefsFolderVisibilityValue(p.FolderVisibility),
 	}
 	if properties == nil {
 		return full
@@ -619,6 +701,24 @@ func prefsLabelsValue(labels map[string]LabelPrefsValue) map[string]any {
 			"color":      l.Color,
 			"visibility": l.Visibility,
 		}
+	}
+	return out
+}
+
+// prefsFolderVisibilityValue renders the folder-rail map.
+//
+// An empty or nil map renders as `{}` and NOT as null, for exactly the reason
+// prefsLabelsValue does: a client reading null would have to decide whether it
+// meant "no choices" or "unknown", and a client patching into it would have to
+// create the container first.
+//
+// `{}` is also the COMMON case here rather than a degenerate one — most
+// accounts will never touch the rail — so the shape a client meets by default
+// must be the shape it can patch into without a special case.
+func prefsFolderVisibilityValue(v map[string]string) map[string]any {
+	out := make(map[string]any, len(v))
+	for name, visibility := range v {
+		out[name] = visibility
 	}
 	return out
 }
@@ -915,6 +1015,8 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 	var signaturesWhole json.RawMessage
 	offlineEdits := map[string]json.RawMessage{}
 	var offlineWhole json.RawMessage
+	folderEdits := map[string]json.RawMessage{}
+	var folderWhole json.RawMessage
 
 	for key, val := range fields {
 		property, sub, hasSub, ok := splitPatchPointer(key)
@@ -936,6 +1038,17 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 				signatureEdits[sub] = val
 			case "offlineDepth":
 				offlineEdits[sub] = val
+			case "folderVisibility":
+				// `sub` is already RFC 6901-unescaped by splitPatchPointer, so a
+				// folder whose real name contains a slash — "Sync
+				// issues/Conflicts", which Dovecot produces on its own —
+				// arrives here spelled with the slash, from the wire pointer
+				// "folderVisibility/Sync issues~1Conflicts".
+				// Without the unescape that pointer would be three tokens deep
+				// and refused as invalidPatch, which is why the escape matters
+				// for this key more than for any other: label names are chosen by
+				// users, folder names are handed to them by the server.
+				folderEdits[sub] = val
 			default:
 				return nil, &setError{Type: setErrInvalidPatch,
 					Description: fmt.Sprintf("%q is not a patchable path on a Prefs object: "+
@@ -1021,7 +1134,7 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 		case "sendAndArchive":
 			prefsPatchBool(val, property, &next.SendAndArchive, fail)
 
-		case "labels", "signatures", "offlineDepth":
+		case "labels", "signatures", "offlineDepth", "folderVisibility":
 			// Whole-value replacement, applied after the loop so it can be
 			// composed with any per-entry edits in the same patch.
 			switch property {
@@ -1029,6 +1142,8 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 				labelsWhole = val
 			case "signatures":
 				signaturesWhole = val
+			case "folderVisibility":
+				folderWhole = val
 			default:
 				offlineWhole = val
 			}
@@ -1052,6 +1167,7 @@ func applyPrefsPatch(current PrefsValue, raw json.RawMessage) (*PrefsValue, *set
 	applyLabelsPatch(&next, labelsWhole, labelEdits, fail)
 	applySignaturesPatch(&next, signaturesWhole, signatureEdits, fail)
 	applyOfflineDepthPatch(&next, offlineWhole, offlineEdits, fail)
+	applyFolderVisibilityPatch(&next, folderWhole, folderEdits, fail)
 
 	if len(bad) > 0 {
 		sort.Strings(bad)
@@ -1085,7 +1201,159 @@ func clonePrefsValue(p PrefsValue) PrefsValue {
 			out.Signatures.Items[k] = v
 		}
 	}
+	if p.FolderVisibility != nil {
+		out.FolderVisibility = make(map[string]string, len(p.FolderVisibility))
+		for k, v := range p.FolderVisibility {
+			out.FolderVisibility[k] = v
+		}
+	}
 	return out
+}
+
+// applyFolderVisibilityPatch applies a whole-map replacement and/or per-folder
+// edits to the folder rail (v3).
+//
+// The four shapes a client can send, and what each means — the same vocabulary
+// applyLabelsPatch established, so the two maps cannot be learned separately:
+//
+//	{"folderVisibility": {...}}          replace the whole map.
+//	{"folderVisibility": null}           §5.3's "set to the default value if
+//	                                     specified" — the default is no
+//	                                     expressed choice, so this clears it and
+//	                                     hands every folder back to the client's
+//	                                     own rail policy.
+//	{"folderVisibility/Archivo": "hide"} set one folder's visibility.
+//	{"folderVisibility/Archivo": null}   §5.3's "otherwise remove the property"
+//	                                     — FORGET the choice for that folder,
+//	                                     which is NOT the same as hiding it: the
+//	                                     folder returns to the client's default,
+//	                                     wherever that puts it.
+//
+// The last distinction is the one worth stating twice. "hide" and "no entry"
+// are different answers, and a client that sent null meaning "hide" would watch
+// the folder come back. The map holds only what the user SAID.
+//
+// The cap is checked ONCE, on the result, for the reason applyLabelsPatch gives:
+// a patch that forgets fifty folders and names fifty others is legal, and a
+// per-key check would refuse it at the first addition.
+func applyFolderVisibilityPatch(next *PrefsValue, whole json.RawMessage, edits map[string]json.RawMessage, fail func(string, string)) {
+	if whole == nil && len(edits) == 0 {
+		return
+	}
+
+	if whole != nil {
+		if prefsIsNull(whole) {
+			next.FolderVisibility = nil
+		} else {
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(whole, &raw); err != nil {
+				fail("folderVisibility",
+					"folderVisibility must be an object keyed by mailbox name, or null")
+				return
+			}
+			replacement := make(map[string]string, len(raw))
+			for name, val := range raw {
+				v, why := parseFolderVisibility(name, val)
+				if why != "" {
+					fail("folderVisibility", why)
+					return
+				}
+				replacement[name] = v
+			}
+			next.FolderVisibility = replacement
+		}
+	}
+
+	for name, val := range edits {
+		if prefsIsNull(val) {
+			delete(next.FolderVisibility, name)
+			continue
+		}
+		v, why := parseFolderVisibility(name, val)
+		if why != "" {
+			// The pointer the CLIENT sent is what the error names, re-escaped
+			// per RFC 6901 so it matches the key the client can find in its own
+			// request. §5.3's invalidProperties list is what a settings screen
+			// highlights, and highlighting a name it never sent — or the bare
+			// "folderVisibility" when one folder of two hundred is wrong — tells
+			// the user nothing.
+			fail("folderVisibility/"+escapePointerToken(name), why)
+			continue
+		}
+		if next.FolderVisibility == nil {
+			next.FolderVisibility = map[string]string{}
+		}
+		next.FolderVisibility[name] = v
+	}
+
+	if len(next.FolderVisibility) > maxFolderVisibility {
+		fail("folderVisibility", fmt.Sprintf(
+			"at most %d folders can carry an explicit visibility (the map holds only what the user "+
+				"deliberately chose; every folder it does not name falls to the client's own rail "+
+				"policy); the patch would leave %d",
+			maxFolderVisibility, len(next.FolderVisibility)))
+	}
+	if len(next.FolderVisibility) == 0 {
+		// Normalize empty to nil, so the stored form has one spelling for "no
+		// expressed choice" and a round trip cannot change the value.
+		next.FolderVisibility = nil
+	}
+}
+
+// parseFolderVisibility validates one folder's visibility. Like
+// parseLabelPrefs it returns a REASON string rather than an error, because the
+// caller composes it into §5.3's per-property description.
+func parseFolderVisibility(name string, raw json.RawMessage) (string, string) {
+	if strings.TrimSpace(name) == "" {
+		return "", "a folder name cannot be empty"
+	}
+	if len(name) > maxFolderNameBytes {
+		return "", fmt.Sprintf(
+			"a folder name is at most %d bytes (the length a mailbox name can actually have: "+
+				"Dovecot's Maildir++ layout puts it in a filesystem path component); %q is %d",
+			maxFolderNameBytes, prefsTruncate(name), len(name))
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", fmt.Sprintf(
+			"the visibility of folder %q must be a string, one of %s",
+			name, prefsJoinStrings(folderVisibilityChoices))
+	}
+	if !prefsAllowedString(v, folderVisibilityChoices) {
+		return "", fmt.Sprintf(
+			"%q is not a folder visibility: one of %s (removing the entry with null is a fourth "+
+				"answer and means something else — the folder returns to the client's own rail policy)",
+			v, prefsJoinStrings(folderVisibilityChoices))
+	}
+	return v, ""
+}
+
+// prefsTruncate shortens a name for an error message, so an oversize key
+// cannot use the refusal it caused as a way to echo itself back at length.
+func prefsTruncate(s string) string {
+	const limit = 40
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "…"
+}
+
+// escapePointerToken is the inverse of set.go's unescapePointerToken: the two
+// RFC 6901 §3 escapes, applied in the order that makes the pair round-trip
+// ("~" first, so a "~" produced by escaping "/" is not escaped again).
+//
+// It exists so an error can name the pointer the CLIENT SENT rather than the
+// decoded key, which for this map is the difference between a settings screen
+// highlighting the right row and highlighting nothing: a Dovecot folder called
+// "Sync issues/Conflicts" reaches the server as
+// "folderVisibility/Sync issues~1Conflicts", and that is the
+// string the client can find in its own request.
+func escapePointerToken(s string) string {
+	if !strings.ContainsAny(s, "~/") {
+		return s
+	}
+	s = strings.ReplaceAll(s, "~", "~0")
+	return strings.ReplaceAll(s, "/", "~1")
 }
 
 // applyLabelsPatch applies a whole-map replacement and/or per-label edits.

@@ -148,6 +148,12 @@ func prefsValue(p store.Prefs) PrefsValue {
 			}
 		}
 	}
+	if p.FolderVisibility != nil {
+		out.FolderVisibility = make(map[string]string, len(p.FolderVisibility))
+		for name, v := range p.FolderVisibility {
+			out.FolderVisibility[name] = v
+		}
+	}
 	return out
 }
 
@@ -191,6 +197,12 @@ func storePrefs(p PrefsValue) store.Prefs {
 			out.Signatures.Items[id] = store.SignatureItem{
 				Name: s.Name, TextBody: s.TextBody, HTMLBody: s.HTMLBody,
 			}
+		}
+	}
+	if p.FolderVisibility != nil {
+		out.FolderVisibility = make(map[string]string, len(p.FolderVisibility))
+		for name, v := range p.FolderVisibility {
+			out.FolderVisibility[name] = v
 		}
 	}
 	return out

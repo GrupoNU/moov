@@ -199,8 +199,9 @@ func submissionAccountCapability() map[string]any {
 //     speaks. A newer server with new properties bumps it, and a client that
 //     stores preferences locally knows to re-read rather than assume.
 //
-//     It reads 2 as of the E5/E7/E8/E9b roaming keys (labels, offlineDepth,
-//     addressAutocomplete, sendAndArchive, defaultReplyBehavior, signatures).
+//     It reads 3 as of folderVisibility, on top of the v2 E5/E7/E8/E9b roaming
+//     keys (labels, offlineDepth, addressAutocomplete, sendAndArchive,
+//     defaultReplyBehavior, signatures).
 //     This is the FEATURE-DETECTION contract the bump was taken for on the
 //     wire side: a client that patches `signatures` against a server still
 //     reporting 1 gets its whole save refused with invalidProperties, so
@@ -274,6 +275,22 @@ func prefsAccountCapability() map[string]any {
 		"maxOfflineHeadersPerMailbox": headersMax,
 		"minOfflineBodies":            bodiesMin,
 		"maxOfflineBodies":            bodiesMax,
+
+		// --- schema v3 ---
+		//
+		// The folder rail. The value list is advertised for the same
+		// declared == enforced reason every other list here is, and the two
+		// caps because a client that curates the rail can stop the user at the
+		// boundary instead of after a refused save.
+		//
+		// What is NOT advertised is any default: an absent entry means the
+		// user has expressed no choice, and what to draw then is the CLIENT's
+		// policy (store.Prefs.FolderVisibility carries the argument). A server
+		// publishing a default here would be publishing a decision it does not
+		// make.
+		"folderVisibilityValues": mail.FolderVisibilityChoices(),
+		"maxFolderVisibility":    mail.MaxFolderVisibility(),
+		"maxFolderNameBytes":     mail.MaxFolderNameBytes(),
 	}
 }
 

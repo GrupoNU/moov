@@ -793,9 +793,9 @@ func TestConformancePrefsSingletonShape(t *testing.T) {
 // the number enforced: mail.PrefsSchemaVersion is store.PrefsSchemaVersion, and
 // it is what every stored document is stamped with.
 func TestConformancePrefsSchemaVersionIsAdvertised(t *testing.T) {
-	if mail.PrefsSchemaVersion != 2 {
-		t.Errorf("PrefsSchemaVersion = %d, want 2 (the E5/E7/E8/E9b roaming keys)",
-			mail.PrefsSchemaVersion)
+	if mail.PrefsSchemaVersion != 3 {
+		t.Errorf("PrefsSchemaVersion = %d, want 3 (folderVisibility, on top of the v2 "+
+			"E5/E7/E8/E9b roaming keys)", mail.PrefsSchemaVersion)
 	}
 }
 
@@ -839,9 +839,12 @@ func TestConformancePrefsV2PropertiesAreDiscoverable(t *testing.T) {
 	for _, want := range []string{
 		"labels", "offlineDepth", "addressAutocomplete",
 		"sendAndArchive", "defaultReplyBehavior", "signatures",
+		// v3.
+		"folderVisibility",
 	} {
 		if _, ok := obj[want]; !ok {
-			t.Errorf("the served object is missing the v2 property %q although schemaVersion says 2", want)
+			t.Errorf("the served object is missing the property %q although schemaVersion says %d",
+				want, mail.PrefsSchemaVersion)
 		}
 	}
 
@@ -924,6 +927,78 @@ func TestConformancePrefsV2NestedPatchPointers(t *testing.T) {
 	a, _ := labels["A"].(map[string]any)
 	if a["color"] != "lime" || a["visibility"] != "hide" {
 		t.Errorf("A = %v, want the pointer-patched metadata", a)
+	}
+}
+
+// TestConformancePrefsPointerEscapesAreDecoded pins RFC 6901 §3 on a key that
+// really contains a slash, which schema v3's folderVisibility made an ordinary
+// case rather than a curiosity.
+//
+// RFC 8620 §5.3 says a PatchObject's keys are "a path in JSON Pointer format
+// [RFC6901]", and RFC 6901 §3 requires "/" inside a token to be written "~1"
+// (and "~" as "~0"). A server that split the raw key on "/" without decoding
+// would see a three-token path and refuse a patch the client wrote correctly —
+// which matters here because Dovecot NAMES folders with slashes on its own
+// ("Sync issues/Conflicts"), so the escape is not something a
+// client opts into.
+//
+// The decode order is the other half: §4 requires "~1" to be resolved before
+// "~0", so "~01" is the literal "~1" and not "/". Both are exercised.
+func TestConformancePrefsPointerEscapesAreDecoded(t *testing.T) {
+	f, _ := newConformanceFixture(t)
+
+	registry := jmap.NewRegistry()
+	mail.RegisterPrefsMethods(registry, f.deps)
+	engine := jmap.NewEngine(registry, jmap.DefaultLimits(),
+		[]string{jmap.CapCore, jmap.CapPrefs}, nil)
+
+	patch, err := json.Marshal(map[string]string{
+		// A slash: "~1".
+		"folderVisibility/Sync issues~1Conflicts": "hide",
+		// A tilde: "~0".
+		"folderVisibility/Copia~0seguridad": "show",
+		// The order case: "~01" must decode to the literal "~1", never to "/".
+		"folderVisibility/Raro~01": "showIfUnread",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+		"methodCalls":[["Prefs/set",{"accountId":"` + f.accountID() +
+		`","update":{"singleton":` + string(patch) + `}},"c1"]]}`
+	resp, rerr := engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	args := decodeArgs(t, resp.MethodResponses[0].Args)
+	if args["notUpdated"] != nil {
+		t.Fatalf("escaped pointers were refused: %v", args["notUpdated"])
+	}
+
+	body = `{"using":["urn:ietf:params:jmap:core","` + jmap.CapPrefs + `"],
+		"methodCalls":[["Prefs/get",{"accountId":"` + f.accountID() + `","ids":null},"c1"]]}`
+	resp, rerr = engine.Process(f.callerCtx(), []byte(body), "session-1")
+	if rerr != nil {
+		t.Fatalf("request-level error: %v", rerr)
+	}
+	args = decodeArgs(t, resp.MethodResponses[0].Args)
+	list, _ := args["list"].([]any)
+	obj, _ := list[0].(map[string]any)
+	folders, ok := obj["folderVisibility"].(map[string]any)
+	if !ok {
+		t.Fatalf("folderVisibility is %T, want an object", obj["folderVisibility"])
+	}
+	for name, want := range map[string]string{
+		"Sync issues/Conflicts": "hide",
+		"Copia~seguridad":       "show",
+		"Raro~1":                "showIfUnread",
+	} {
+		if folders[name] != want {
+			t.Errorf("folderVisibility[%q] = %v, want %q (RFC 6901 §3/§4)", name, folders[name], want)
+		}
+	}
+	if len(folders) != 3 {
+		t.Errorf("folderVisibility = %v, want exactly the three decoded names", folders)
 	}
 }
 
