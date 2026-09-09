@@ -228,17 +228,31 @@
   color: var(--text-strong);
 }
 
+/*
+ * B-09 (canon 07 §3): the conversation's size, as Gmail draws it.
+ *
+ * A BARE NUMBER beside the sender — "Google 2" — not a pill. Gmail gives it no
+ * background, no border and no chip shape, and that restraint is the design:
+ * the row already carries three chip-shaped things (the label chips, the
+ * unread dot, the star) and a fourth would compete with them for the reading
+ * that matters, which is the sender's name. It is a modifier ON the name, so it
+ * is styled like one.
+ *
+ * `tabular-nums` so a column of counts does not shimmer as the digits change
+ * width, the same reason the date has it.
+ */
 .threadCount {
   flex: none;
-  padding: 0 var(--space-2);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  line-height: 16px;
+}
+
+/* On an unread row the count follows the sender into the strong colour — it is
+ * part of the same phrase and must not read as greyed-out beside bold text. */
+.unread .threadCount {
+  color: var(--text-strong);
 }
 
 .body {

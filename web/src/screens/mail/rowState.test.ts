@@ -84,6 +84,23 @@ describe("the message row's state layer", () => {
     expect(css).not.toMatch(/\.(selected|checked) \.hoverActions \{[^{}]*linear-gradient/);
   });
 
+  it("draws the conversation count as a bare number, not a chip (B-09)", () => {
+    /*
+     * Gmail writes "Google 2" with no background, no border and no pill shape.
+     * The restraint is the design: the row already carries three chip-shaped
+     * things (label chips, the unread dot, the star) and a fourth competes with
+     * them for the reading that matters, which is the sender's name. The count
+     * is a modifier ON that name, so it is styled like one.
+     */
+    const count = rule(".threadCount");
+    expect(count).not.toMatch(/background:/);
+    expect(count).not.toMatch(/border(?!-)/);
+    expect(count).not.toMatch(/border-radius:/);
+    // Tabular figures, so a column of counts does not shimmer as digits change
+    // width — the same reason `.date` has them.
+    expect(count).toMatch(/font-variant-numeric:\s*tabular-nums/);
+  });
+
   it("bounds the preview's measure rather than letting it fill the row (B-08)", () => {
     /*
      * `flex: 1` let the preview take every spare pixel, which on a 2560px

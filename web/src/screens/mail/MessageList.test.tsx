@@ -297,3 +297,73 @@ describe("the star", () => {
     expect(within(row).getAllByRole("button", { name: /destacado/i })).toHaveLength(1);
   });
 });
+
+/**
+ * B-09 (canon 07 §3): the conversation's size, beside the sender.
+ *
+ * Gmail writes "Google 2" and Moov's rows wrote "Google", losing the one signal
+ * that says a row is a conversation rather than a message. The mechanism was
+ * already here — `groupByThread` computes the size and distinguishes an exact
+ * count from a windowed one — so what this pins is that the number REACHES the
+ * row, in the right place, saying the right thing about where it came from.
+ */
+describe("the conversation's size in the row (B-09)", () => {
+  /** Two messages of one thread, which is the smallest conversation. */
+  const conversation = [
+    email("a", { threadId: "t-conv" }),
+    email("a2", { threadId: "t-conv", subject: "Subject a" }),
+  ];
+
+  it("shows the count beside the sender, after it", () => {
+    renderList({ groups: groupByThread(conversation), selectedId: "t-conv" });
+    const row = rowFor("Subject a");
+    expect(within(row).getByText("2")).toBeInTheDocument();
+  });
+
+  it("shows NO count on a single message — a 1 would be noise", () => {
+    renderList();
+    const row = rowFor("Subject a");
+    expect(within(row).queryByText("1")).toBeNull();
+  });
+
+  it("says the count is WINDOWED when it was grouped client-side", () => {
+    /*
+     * The honesty that makes the number trustworthy. With no `Thread` records
+     * the size counts only the messages in the fetched window, so a "3" may
+     * really mean "3 of maybe 24" — and the tooltip says so rather than
+     * claiming a total the client cannot know. A silent lie here would make the
+     * whole list untrustworthy for the sake of one digit.
+     */
+    renderList({ groups: groupByThread(conversation), selectedId: "t-conv" });
+    const row = rowFor("Subject a");
+    expect(within(row).getByText("2")).toHaveAttribute(
+      "title",
+      "2 mensajes de esta conversación en estos resultados",
+    );
+  });
+
+  it("states the count as FACT when the server supplied the thread", () => {
+    // With a `Thread` record the size is the thread's real total, so the
+    // wording drops the hedge.
+    const groups = groupByThread(conversation, [
+      { id: "t-conv", emailIds: ["a", "a2", "a3", "a4"] },
+    ]);
+    renderList({ groups, selectedId: "t-conv" });
+    const row = rowFor("Subject a");
+    expect(within(row).getByText("4")).toHaveAttribute(
+      "title",
+      "4 mensajes en esta conversación",
+    );
+  });
+
+  it("spells the count out for assistive technology as well as drawing it", () => {
+    // The visible number is a bare digit next to a name; a screen reader needs
+    // the sentence, which the row's visually-hidden state carries.
+    renderList({ groups: groupByThread(conversation), selectedId: "t-conv" });
+    const row = rowFor("Subject a");
+    // The windowed wording, because this group was assembled client-side — the
+    // hidden text carries the same hedge the tooltip does rather than a
+    // confident sentence beside a cautious one.
+    expect(row.textContent).toMatch(/2 mensajes de esta conversación en estos resultados/);
+  });
+});
