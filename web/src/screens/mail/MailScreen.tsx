@@ -2914,7 +2914,13 @@ export function MailScreen(): React.JSX.Element {
       return page.emails.map((email) => ({
         id: email.id,
         sender: email.from?.[0]?.name ?? email.from?.[0]?.email ?? "",
-        subject: email.subject === "" ? t("list.noSubject") : email.subject,
+        // `subject` is nullable on the wire (RFC 8621 §4.1.2), and a message
+        // with none is common enough — a bare forward, an automated notice —
+        // that a blank cell would look like a rendering failure.
+        subject:
+          email.subject === "" || email.subject == null
+            ? t("list.noSubject")
+            : email.subject,
         date: formatListDate(email.receivedAt, locale),
       }));
     },

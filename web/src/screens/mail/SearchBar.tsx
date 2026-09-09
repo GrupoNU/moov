@@ -9,7 +9,6 @@ import {
 } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
-import type { StringKey } from "../../i18n/strings";
 import {
   createDebouncer,
   isSearchable,
@@ -181,7 +180,7 @@ const PREVIEW_DEBOUNCE_MS = 300;
  * and a typed query are the same thing to everything downstream — which is the
  * invariant the whole search surface is built on.
  */
-const QUICK_CHIPS: readonly { readonly query: string; readonly labelKey: StringKey }[] = [
+const QUICK_CHIPS = [
   { query: "has:attachment", labelKey: "search.chip.hasAttachment" },
   { query: "newer_than:7d", labelKey: "search.chip.last7" },
   /*
@@ -195,7 +194,14 @@ const QUICK_CHIPS: readonly { readonly query: string; readonly labelKey: StringK
    * query.
    */
   { query: "in:sent", labelKey: "search.quick.sentByMe" },
-];
+  /*
+   * `as const` rather than a `StringKey` annotation, deliberately: `t` accepts
+   * only the keys whose values are PLAIN strings (a formatted one needs
+   * `format`), and that narrower type is not exported. Inferring the literal
+   * keys lets the compiler check each one against the real table, which is
+   * strictly stronger than annotating them as "some key".
+   */
+] as const;
 
 /** One row of the popup: a suggestion, a matching message, or the Enter row. */
 type PopupRow =

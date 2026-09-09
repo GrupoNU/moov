@@ -172,7 +172,7 @@ describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
 
   it("shows matching messages, without searching or navigating", async () => {
     const user = userEvent.setup();
-    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const onPreviewSearch = vi.fn((_q: string, _s: AbortSignal) => Promise.resolve(PREVIEWS));
     const { onSearch } = renderBar({ onPreviewSearch });
 
     await user.type(screen.getByRole("combobox"), "presupuesto");
@@ -187,7 +187,7 @@ describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
 
   it("collapses a burst of keystrokes into ONE request", async () => {
     const user = userEvent.setup();
-    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const onPreviewSearch = vi.fn((_q: string, _s: AbortSignal) => Promise.resolve(PREVIEWS));
     renderBar({ onPreviewSearch });
 
     await user.type(screen.getByRole("combobox"), "presupuesto");
@@ -195,12 +195,13 @@ describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
 
     // The reason the debouncer survived P0-3: many keystrokes, one request.
     expect(onPreviewSearch).toHaveBeenCalledTimes(1);
-    expect(onPreviewSearch.mock.calls[0]?.[0]).toBe("presupuesto");
+    // And with the WHOLE word, not a prefix that happened to escape the timer.
+    expect(onPreviewSearch).toHaveBeenCalledWith("presupuesto", expect.anything());
   });
 
   it("opens a previewed message and leaves the list alone", async () => {
     const user = userEvent.setup();
-    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const onPreviewSearch = vi.fn((_q: string, _s: AbortSignal) => Promise.resolve(PREVIEWS));
     const { onSearch, onOpenPreview } = renderBar({ onPreviewSearch });
 
     await user.type(screen.getByRole("combobox"), "presupuesto");
@@ -225,7 +226,7 @@ describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
 
   it("keeps the E-08 row and the Enter key doing the same thing", async () => {
     const user = userEvent.setup();
-    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const onPreviewSearch = vi.fn((_q: string, _s: AbortSignal) => Promise.resolve(PREVIEWS));
     const { onSearch } = renderBar({ onPreviewSearch });
 
     const input = screen.getByRole("combobox");
@@ -240,7 +241,7 @@ describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
 
   it("walks ONE cursor across suggestions, messages and the Enter row", async () => {
     const user = userEvent.setup();
-    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const onPreviewSearch = vi.fn((_q: string, _s: AbortSignal) => Promise.resolve(PREVIEWS));
     renderBar({ onPreviewSearch, recentSearches: ["presupuesto marzo"] });
 
     const input = screen.getByRole("combobox");
