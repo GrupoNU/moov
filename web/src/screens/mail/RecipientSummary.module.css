@@ -1,0 +1,79 @@
+/*
+ * "para mí ▾" (C-14): the phrase is quiet text with a caret; the details
+ * are a small description list that opens UNDER it, in the same column, so
+ * the sender line does not jump when they appear.
+ */
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 0 var(--space-1) 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.toggle:hover,
+.toggle:focus-visible {
+  color: var(--text-default);
+}
+
+.phrase {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.toggle[aria-expanded="true"] .caret {
+  transform: rotate(180deg);
+}
+
+.details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font-size: var(--text-xs);
+  max-width: 100%;
+}
+
+.row {
+  display: contents;
+}
+
+.label {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.value {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-default);
+  overflow-wrap: anywhere;
+}

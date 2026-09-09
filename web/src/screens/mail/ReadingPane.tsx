@@ -10,7 +10,6 @@ import {
   isFlagged,
   isSuspicious,
   type Email,
-  type EmailAddress,
   type Mailbox,
   type Thread,
 } from "../../mail/types";
@@ -26,6 +25,7 @@ import { labelsFor, type Label } from "../../mail/labelStore";
 import { mailboxLabel } from "./mailboxLabels";
 import { MoveMenu } from "./MoveMenu";
 import { PopupMenu } from "./PopupMenu";
+import { RecipientSummary } from "./RecipientSummary";
 import { SnoozeMenu } from "./SnoozeMenu";
 import styles from "./ReadingPane.module.css";
 
@@ -182,6 +182,11 @@ export interface ReadingPaneProps {
    */
   readonly targetMessageId?: string | undefined;
   /**
+   * C-14: the reader's own addresses (login name, primary identity), so the
+   * recipient line can say "para mí" the way Gmail does.
+   */
+  readonly ownAddresses?: readonly string[] | undefined;
+  /**
    * Per-message composition inside a conversation (canon §2.1).
    *
    * A reply replies to ONE message — the one whose text it quotes — while the
@@ -237,6 +242,7 @@ export function ReadingPane({
   listPosition,
   conversationView,
   targetMessageId,
+  ownAddresses,
   onReplyToMessage,
   onForwardMessage,
   onMarkMessagesRead,
@@ -937,16 +943,14 @@ export function ReadingPane({
             </div>
 
             {/*
-              Recipients as a description list: each label is programmatically
-              tied to its addresses, which is what lets a screen reader say
-              "To: Ana, Carlos" instead of reading five names with no idea
-              which field they belong to.
+              C-14: "para mí ▾" instead of the literal To/Cc/Bcc list — the
+              phrase answers the question a reader actually has, and the full
+              headers (as a description list, each label tied to its
+              addresses) are behind the caret.
             */}
-            <dl className={styles.recipients}>
-              <AddressRow label={t("reader.to")} addresses={email.to} />
-              <AddressRow label={t("reader.cc")} addresses={email.cc} />
-              <AddressRow label={t("reader.bcc")} addresses={email.bcc} />
-            </dl>
+            <div className={styles.recipients}>
+              <RecipientSummary email={email} ownAddresses={ownAddresses} />
+            </div>
           </>
         )}
       </header>
@@ -1016,6 +1020,7 @@ export function ReadingPane({
             onForward={onForwardMessage}
             onMarkRead={onMarkMessagesRead}
             onControls={publishControls}
+            ownAddresses={ownAddresses}
           />
         ) : (
           /* Keyed by message id so per-message state — the remote-images
@@ -1381,25 +1386,5 @@ function OriginalDialog({
         </div>
       </div>
     </dialog>
-  );
-}
-
-function AddressRow({
-  label,
-  addresses,
-}: {
-  readonly label: string;
-  readonly addresses: readonly EmailAddress[] | null | undefined;
-}): React.JSX.Element | null {
-  // Absent headers are `null` on this server, never `[]` — either way there is
-  // nothing to render, and an empty row would be noise.
-  if (addresses === null || addresses === undefined || addresses.length === 0) return null;
-  return (
-    <div className={styles.recipientRow}>
-      <dt className={styles.recipientLabel}>{label}</dt>
-      <dd className={styles.recipientValue}>
-        {addresses.map((address) => address.name ?? address.email).join(", ")}
-      </dd>
-    </div>
   );
 }

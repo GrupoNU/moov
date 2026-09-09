@@ -158,13 +158,11 @@
   font-size: var(--text-sm);
 }
 
-.recipientLine {
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 32rem;
+/* C-14: "para mí ▾" under the sender, on the name's left edge (the avatar is
+ * a gutter), between the header and the body. */
+.recipientRow {
+  padding: 0 var(--space-6) var(--space-2) calc(var(--space-6) + 2rem + var(--space-3));
+  margin-top: calc(-1 * var(--space-1));
 }
 
 .expandedDate {

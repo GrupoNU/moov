@@ -1393,6 +1393,12 @@ export function MailScreen(): React.JSX.Element {
             ...(result.thread !== undefined ? { thread: result.thread } : {}),
           });
           /*
+  /** C-14: the addresses that read as "mí" in a recipient line. */
+  const ownAddresses = useMemo(
+    () => [username, identity?.email].filter((address): address is string => address !== undefined && address !== ""),
+    [username, identity?.email],
+  );
+
            * E9: a body is cached because the user OPENED it, never
            * speculatively. Pre-fetching bodies would multiply every sync by the
            * average message size for mail nobody may ever read — a cost paid on
@@ -4987,6 +4993,8 @@ export function MailScreen(): React.JSX.Element {
           option in the panel is about.
         */}
         {quickSettingsOpen && (
+              /* C-14: login name and primary identity — what "mí" means. */
+              ownAddresses={ownAddresses}
           /*
            * The wrapper exists for ONE reason: the "below the list" layout
            * places its panes by named grid AREAS, and a grid area can only be

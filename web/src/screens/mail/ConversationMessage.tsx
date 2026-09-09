@@ -2,10 +2,11 @@ import { useTranslation } from "../../i18n/I18nProvider";
 import type { JmapClient } from "../../api/jmap";
 import { formatFullDate, formatListDate, initialsFor, machineDate } from "../../mail/format";
 import { senderLabel } from "../../mail/threading";
-import { isFlagged, type Email, type EmailAddress } from "../../mail/types";
+import { isFlagged, type Email } from "../../mail/types";
 import { AttachmentList } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
 import { PopupMenu } from "./PopupMenu";
+import { RecipientSummary } from "./RecipientSummary";
 import type { SignImageUrls } from "./SecureHtmlBody";
 import styles from "./ConversationMessage.module.css";
 
@@ -61,6 +62,8 @@ export interface ConversationMessageProps {
   readonly accountId: string;
   /** The `blob`-scoped token that makes each attachment a native download. */
   readonly blobToken?: string | undefined;
+  /** C-14: the reader's own addresses, so the recipient line can say "mí". */
+  readonly ownAddresses?: readonly string[] | undefined;
 }
 
 export function ConversationMessage({
@@ -77,6 +80,7 @@ export function ConversationMessage({
   client,
   accountId,
   blobToken,
+  ownAddresses,
 }: ConversationMessageProps): React.JSX.Element {
   const { t, locale } = useTranslation();
 
@@ -155,7 +159,6 @@ export function ConversationMessage({
                 <span className={styles.fromAddress}>{`<${email.from[0].email}>`}</span>
               )}
             </span>
-            <RecipientLine email={email} />
           </span>
           {isFlagged(email) && (
             <span className={styles.collapsedStar} aria-label={t("action.flag")}>
@@ -235,6 +238,16 @@ export function ConversationMessage({
         </div>
       </header>
 
+      {/*
+        C-14: "para mí ▾", as a SIBLING of the collapse button above — a
+        toggle inside a button would be invalid markup and would collapse the
+        message on every press. Indented to the name column, where Gmail
+        puts it.
+      */}
+      <div className={styles.recipientRow}>
+        <RecipientSummary email={email} ownAddresses={ownAddresses} />
+      </div>
+
       <div className={styles.messageBody}>
         {/*
           The body arrives lazily: a thread's list rows carry no `bodyValues`
@@ -295,25 +308,5 @@ function MessageMenuItem({
         {label}
       </button>
     </li>
-  );
-}
-
-/**
- * The "to Ana, Carlos" line under the sender.
- *
- * Gmail shows recipients on an expanded message because in a thread the
- * question "was this to me or to the list" is asked constantly. It is
- * truncated by CSS rather than by slicing the array, so the full list is still
- * selectable and readable by a screen reader.
- */
-function RecipientLine({ email }: { readonly email: Email }): React.JSX.Element | null {
-  const { t } = useTranslation();
-  const recipients: readonly EmailAddress[] = [...(email.to ?? []), ...(email.cc ?? [])];
-  if (recipients.length === 0) return null;
-  const names = recipients.map((address) => address.name ?? address.email).join(", ");
-  return (
-    <span className={styles.recipientLine}>
-      {`${t("reader.to")} ${names}`}
-    </span>
   );
 }

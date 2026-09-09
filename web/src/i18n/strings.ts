@@ -744,6 +744,14 @@ export const en = {
   "reader.bcc": "Bcc",
   "reader.replyTo": "Reply to",
   "reader.date": "Date",
+  // C-14: "to me ▾" — the recipient phrase and the caret behind it.
+  "reader.me": "me",
+  // The phrase's verb, lower-case as Gmail writes it ("to me"); `reader.to`
+  // stays the capitalised header label.
+  "reader.toPhrase": "to",
+  "reader.subject": "Subject",
+  "reader.showDetails": "Show details",
+  "reader.hideDetails": "Hide details",
   "reader.close": "Back to the list",
   "reader.loading": "Loading the message…",
   "reader.loadFailed": "Could not load this message",
@@ -1969,6 +1977,11 @@ export const es: Strings = {
   "reader.date": "Fecha",
   "reader.close": "Volver a la lista",
   "reader.loading": "Cargando el mensaje…",
+  "reader.me": "mí",
+  "reader.toPhrase": "para",
+  "reader.subject": "Asunto",
+  "reader.showDetails": "Mostrar detalles",
+  "reader.hideDetails": "Ocultar detalles",
   "reader.loadFailed": "No se pudo cargar este mensaje",
   "reader.attachments": (count: number): string =>
     `${count} adjunto${count === 1 ? "" : "s"}`,

@@ -97,6 +97,8 @@ export interface ConversationViewProps {
    * into MailScreen, which is exactly what this component exists to avoid.
    */
   readonly onControls?: (controls: ConversationControls | undefined) => void;
+  /** C-14: the reader's own addresses, for each message's "para mí". */
+  readonly ownAddresses?: readonly string[] | undefined;
 }
 
 /**
@@ -136,6 +138,7 @@ export function ConversationView({
   onForward,
   onMarkRead,
   onControls,
+  ownAddresses,
 }: ConversationViewProps): React.JSX.Element {
   const { t } = useTranslation();
   /*
@@ -465,6 +468,7 @@ export function ConversationView({
           client={client}
           accountId={accountId}
           blobToken={blobToken}
+          ownAddresses={ownAddresses}
         />
       ))}
 
