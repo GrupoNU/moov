@@ -203,6 +203,20 @@ describe("notificationContent", () => {
     expect(content.icon).toBe(NOTIFICATION_ICON);
   });
 
+  it("carries the brand-resolved icon, not the static one", () => {
+    /*
+     * Pinned as a LITERAL, because the assertion above compares the constant
+     * to itself and would survive any change to it.
+     *
+     * A toast is the app's most out-of-context surface: it appears over
+     * somebody else's window with no other chrome to identify it. The path has
+     * to be the one the server resolves per Host, or every customer's
+     * notification carries Moov's mark. It must NOT be cached by the service
+     * worker either, which `/branding` already guarantees by prefix.
+     */
+    expect(NOTIFICATION_ICON).toBe("/branding/icons/icon-192.png");
+  });
+
   it("falls back to the address when the display name is absent or blank", () => {
     expect(
       notificationContent(

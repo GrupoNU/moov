@@ -209,8 +209,17 @@ export interface NotificationContent {
   readonly icon: string;
 }
 
-/** The PWA icon, reused so the toast carries the app's identity. */
-export const NOTIFICATION_ICON = "/icons/icon-192.png";
+/**
+ * The icon a desktop toast carries.
+ *
+ * The BRAND-RESOLVED path, not the static `/icons/icon-192.png`: the server
+ * answers this per Host, so a customer's notification carries their mark and
+ * an unbranded installation gets Moov's own bytes indistinguishably. A toast
+ * is the app's most out-of-context surface — it appears over somebody else's
+ * window, with no other chrome to identify it — so it is the last place the
+ * wrong logo should show up.
+ */
+export const NOTIFICATION_ICON = "/branding/icons/icon-192.png";
 
 /** How much of the preview rides along under the subject. */
 const PREVIEW_LIMIT = 120;
