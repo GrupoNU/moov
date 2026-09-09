@@ -28,9 +28,11 @@ import { isBlockedAttachment } from "../../mail/blockedExtensions";
 import { loadBodyMode, saveBodyMode } from "../../mail/composePrefs";
 import { loadComposeFormatBar, saveComposeFormatBar } from "../../mail/viewChrome";
 import { useConfirm } from "../../components/useConfirm";
+import { insertPlainText } from "../../mail/richtext";
 import { AddressField } from "./AddressField";
 import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
 import { BodyEditor } from "./BodyEditor";
+import { EmojiPicker } from "./EmojiPicker";
 import type { ComposerDraft } from "./composerState";
 import { PopupMenu } from "../mail/PopupMenu";
 import { ScheduleMenu } from "./ScheduleMenu";
@@ -203,6 +205,8 @@ export function Composer({
   const { prefs } = usePrefs();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  /** D-03: the image button's own picker, filtered to images. */
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   /**
    * E12: the card's size state (canon 07 §7).
@@ -251,6 +255,8 @@ export function Composer({
    * re-seeds its uncontrolled surface. See the signature-seeding effect.
    */
   const [seedNonce, setSeedNonce] = useState(0);
+  /** D-03: bumped by the footer's link button; see `BodyEditor.linkRequest`. */
+  const [linkRequest, setLinkRequest] = useState(0);
   const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>(
     initialAttachments ?? [],
   );
@@ -1033,6 +1039,84 @@ export function Composer({
     [html, text, touched],
   );
 
+  /*
+   * D-03: inserting a character at the caret, for the emoji picker.
+   *
+   * Two surfaces, one entry point. In RICH mode this goes through the same
+   * `insertPlainText` the paste handler uses — the one path that knows about
+   * the contentEditable's selection — and then reads the surface back so the
+   * sanitizer round trip that always follows an edit still happens. In PLAIN
+   * mode the textarea's `selectionStart` is the caret, and splicing the string
+   * is the whole of it.
+   *
+   * Falling back to an append rather than refusing when there is no selection
+   * is deliberate: a user who clicks the emoji button without having put the
+   * caret anywhere means "put it in the message", and nothing is a worse answer
+   * than silence.
+   */
+  const bodyRef = useRef<HTMLElement | null>(null);
+  const insertAtCaret = useCallback(
+    (value: string): void => {
+      const element = bodyRef.current;
+      if (isRich) {
+        element?.focus();
+        insertPlainText(value);
+        if (element !== null) setHtml(element.innerHTML);
+        touched();
+        return;
+      }
+      const textarea = element as HTMLTextAreaElement | null;
+      setText((current) => {
+        if (textarea === null) return current + value;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        return current.slice(0, start) + value + current.slice(end);
+      });
+      touched();
+    },
+    [isRich, touched],
+  );
+
+  /**
+   * E7 v2 / D-03: the named signatures this account can insert by hand.
+   *
+   * Distinct from the SEEDED one (D-10), which is the default for a whole
+   * composition. This is the footer menu that swaps it — a user who wants the
+   * short signature on this one message, without changing the default for every
+   * message after it. The list is `prefs.signatures.items`; an account with none
+   * gets no menu, because a picker over an empty set is a dead control.
+   */
+  const namedSignatures = useMemo(
+    () => Object.entries(prefs.signatures.items),
+    [prefs.signatures.items],
+  );
+
+  /**
+   * Appends a chosen signature to the body (D-03).
+   *
+   * APPENDS rather than replaces, and the reason is that this component cannot
+   * safely find the one already there. `withSignature` marks the HTML copy with
+   * a class but the plain-text one only with RFC 3676's `-- ` delimiter, which
+   * also legitimately appears in quoted mail; a "replace the last signature"
+   * that guessed wrong would delete a line of someone's message. The idempotence
+   * check means picking the SAME signature twice is a no-op, which covers the
+   * common misfire, and deleting an unwanted one is two keystrokes in a text
+   * field the user is already in.
+   */
+  const applySignature = useCallback(
+    (item: { readonly textBody: string; readonly htmlBody: string }): void => {
+      if (isRich) {
+        const body = item.htmlBody === "" ? item.textBody : item.htmlBody;
+        setHtml((current) => withSignature(current, body, true));
+        setSeedNonce((nonce) => nonce + 1);
+      } else {
+        setText((current) => withSignature(current, item.textBody, false));
+      }
+      touched();
+    },
+    [isRich, touched],
+  );
+
   /** Closing flushes the autosave first — closing must never lose a draft. */
   const closeWithSave = useCallback((): void => {
     scheduler.flush();
@@ -1401,6 +1485,10 @@ export function Composer({
           /* D-10: the nonce is part of the seed identity, so a signature this
              component wrote reaches the uncontrolled rich surface. */
           seedKey={`${draft.seedKey}#${String(seedNonce)}`}
+          /* D-03: the caret, for the emoji picker, and the footer's link
+             button's request line. */
+          bodyRef={bodyRef}
+          linkRequest={linkRequest}
         />
 
         <AttachmentList attachments={attachments} onRemove={removeAttachment} />
@@ -1577,6 +1665,127 @@ export function Composer({
                 <path d="M14.5 9.2l-5 5a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 1 1 3 3l-6 6a1.1 1.1 0 0 1-1.5-1.5l5.3-5.3" />
               </svg>
             </button>
+
+            {/*
+              D-03: the link button, in the footer row where Gmail keeps it.
+
+              It ALSO lives in the formatting toolbar, and that is not a
+              duplicate in the sense D-04 forbids: the toolbar is hidden by
+              default, so without this the only way to insert a link would be to
+              first reveal a row of eight other controls. Gmail has both for the
+              same reason.
+
+              Rich only — a link in a plain-text message is just the URL typed
+              out, which the user can do without a button, and a control that
+              silently did nothing would be the dead affordance P4 forbids.
+            */}
+            {isRich && (
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label={t("compose.link")}
+                title={t("compose.link")}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => {
+                  setLinkRequest((n) => n + 1);
+                }}
+              >
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true" focusable="false">
+                  <path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.3-2.3a3 3 0 0 0-4.2-4.2l-1 1" />
+                  <path d="M11.5 8.5a3 3 0 0 0-4.2 0L5 10.8a3 3 0 0 0 4.2 4.2l1-1" />
+                </svg>
+              </button>
+            )}
+
+            {/* D-03: the emoji picker — see `EmojiPicker` on why it is a small
+                grid of common characters and not a Unicode database. */}
+            <EmojiPicker onPick={insertAtCaret} triggerClassName={styles.iconButton} />
+
+            {/*
+              D-03: "insert image", which on this send path means ATTACH an
+              image — and the tooltip says so.
+
+              Gmail's button embeds the picture in the message body. Ours cannot
+              yet, and the reason is one line of the send path: `draftObject`
+              writes `disposition: "attachment"` for every part, with no `cid`
+              and no `inline`, so an <img> pointing at a blob would render as a
+              broken image in every client that received it. Building the
+              multipart/related half of that is a change to `mail/write.ts` and
+              to the server's `email_create` contract, not to a button.
+
+              So the button attaches, and its tooltip states the difference
+              rather than letting the user discover it in the sent message. That
+              is the same honesty rule as the search panel's missing "No
+              incluye": name the limit where the control is.
+            */}
+            <input
+              ref={imageInputRef}
+              className={styles.fileInput}
+              type="file"
+              multiple
+              accept="image/*"
+              aria-label={t("compose.insertImage")}
+              onChange={(event) => {
+                attachFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => {
+                imageInputRef.current?.click();
+              }}
+              aria-label={t("compose.insertImage")}
+              title={t("compose.insertImageHint")}
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                <rect x="3" y="4.5" width="14" height="11" rx="1.6" />
+                <circle cx="7.4" cy="8.4" r="1.2" />
+                <path d="M3.6 13.6l3.6-3.4 3 2.8 2.6-2.2 3.6 3.2" />
+              </svg>
+            </button>
+
+            {/*
+              D-03: the signature menu.
+
+              Present only when the account HAS named signatures — a picker over
+              an empty set is a dead control, and the account's own signature is
+              already seeded (D-10), so there would be nothing to pick between.
+              It appends rather than replaces; `applySignature` says why.
+            */}
+            {namedSignatures.length > 0 && (
+              <PopupMenu
+                label={t("compose.signature")}
+                disabled={false}
+                triggerClassName={styles.iconButton}
+                triggerContent={
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                    <path d="M3 14.2c2.6.4 3.9-1.1 4.5-3.6.6-2.5.2-5.1-1-5.1-1.1 0-1.3 2.2-.5 4.4.8 2.2 2.2 4.3 3.6 4.3 1.2 0 1.6-1.1 2.3-1.1.8 0 .8 1.1 2 1.1h3" />
+                  </svg>
+                }
+              >
+                {(close) =>
+                  namedSignatures.map(([id, item]) => (
+                    <li key={id} role="none">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={styles.menuItem}
+                        onClick={() => {
+                          applySignature(item);
+                          close();
+                        }}
+                      >
+                        {item.name}
+                      </button>
+                    </li>
+                  ))
+                }
+              </PopupMenu>
+            )}
 
             {/*
               E7: the composer's ⋯ menu, holding the plain-text toggle

@@ -99,6 +99,18 @@ export interface BodyEditorProps {
   readonly toolbarHost?: HTMLElement | null;
   /** D-01: whether the `Aa` toggle currently has the row revealed. */
   readonly showToolbar?: boolean;
+  /**
+   * D-03: a counter the footer's link button bumps to open the link dialog.
+   *
+   * A NONCE rather than a callback ref or an imperative handle, because the
+   * dialog's correctness depends on capturing the selection BEFORE focus moves
+   * — and a nonce lets the request arrive as an ordinary render, at which point
+   * the surface still holds the selection the user made. The footer button
+   * suppresses its own mousedown for the same reason the toolbar's does.
+   *
+   * `0` (the default) never opens it; only a CHANGE does.
+   */
+  readonly linkRequest?: number;
 }
 
 export function BodyEditor({
@@ -111,6 +123,7 @@ export function BodyEditor({
   bodyRef,
   toolbarHost,
   showToolbar = false,
+  linkRequest = 0,
 }: BodyEditorProps): React.JSX.Element {
   const { t } = useTranslation();
   const editableRef = useRef<HTMLDivElement | null>(null);
@@ -250,6 +263,20 @@ export function BodyEditor({
         : undefined;
     setLinkOpen(true);
   }, []);
+
+  /*
+   * D-03: the footer's link button, arriving as a bumped nonce.
+   *
+   * Skips the first render (`0`), so a mounted composer does not open a dialog
+   * nobody asked for. Everything after that is the same `onInsertLink` the
+   * toolbar's own button calls — one path, one selection capture, one dialog.
+   */
+  const lastLinkRequest = useRef(linkRequest);
+  useEffect(() => {
+    if (linkRequest === lastLinkRequest.current) return;
+    lastLinkRequest.current = linkRequest;
+    onInsertLink();
+  }, [linkRequest, onInsertLink]);
 
   const onLinkSubmit = useCallback(
     (raw: string): void => {

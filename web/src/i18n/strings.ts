@@ -1030,6 +1030,13 @@ export const en = {
   "compose.bulletList": "Bulleted list",
   "compose.orderedList": "Numbered list",
   "compose.link": "Insert a link",
+  "compose.emoji": "Insert an emoji",
+  "compose.signature": "Insert a signature",
+  "compose.insertImage": "Insert an image",
+  /* D-03: the tooltip states the limit where the control is. Our send path
+     writes every part as `disposition: "attachment"`, with no `cid`, so an
+     inline <img> would arrive broken — the honest word is "attach". */
+  "compose.insertImageHint": "Insert an image (attached, not embedded in the body)",
   "compose.linkPrompt": "Address of the link",
   "compose.linkInvalid": "A link must be a web address (http, https) or an email address.",
   "compose.linkTitle": "Insert link",
@@ -2218,6 +2225,10 @@ export const es: Strings = {
   "compose.bulletList": "Lista con viñetas",
   "compose.orderedList": "Lista numerada",
   "compose.link": "Insertar un enlace",
+  "compose.emoji": "Insertar un emoji",
+  "compose.signature": "Insertar una firma",
+  "compose.insertImage": "Insertar una imagen",
+  "compose.insertImageHint": "Insertar una imagen (se adjunta, no queda incrustada en el cuerpo)",
   "compose.linkPrompt": "Dirección del enlace",
   "compose.linkInvalid":
     "Un enlace tiene que ser una dirección web (http, https) o una dirección de correo.",

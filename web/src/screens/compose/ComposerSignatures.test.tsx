@@ -244,6 +244,33 @@ describe("D-10 — a fresh composer opens with the signature in it", () => {
     });
   });
 
+  it("D-03: the footer menu appends a chosen signature, and twice is a no-op", async () => {
+    const user = userEvent.setup();
+    const { client } = harness();
+    renderComposer(client, { ...DEFAULT_PREFS, signatures: SIGNATURES }, {
+      ...newDraft(false),
+      focusField: "to",
+    });
+
+    const editor: HTMLTextAreaElement = await screen.findByRole("textbox", {
+      name: "Message",
+    });
+    await waitFor(() => {
+      expect(editor.value).toContain("Work signature");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Insert a signature" }));
+    await user.click(screen.getByRole("menuitem", { name: "Brief" }));
+    expect(editor.value).toContain("Brief signature");
+
+    // Picking the same one again is idempotent — `withSignature`'s substring
+    // check, which is what makes "append" safe when we cannot reliably find and
+    // replace the signature already in a plain-text body.
+    await user.click(screen.getByRole("button", { name: "Insert a signature" }));
+    await user.click(screen.getByRole("menuitem", { name: "Brief" }));
+    expect(editor.value.split("Brief signature").length - 1).toBe(1);
+  });
+
   it("does NOT prepend one above a reply's quoted text", async () => {
     const { client } = harness();
     renderComposer(client, { ...DEFAULT_PREFS, signatures: SIGNATURES }, {

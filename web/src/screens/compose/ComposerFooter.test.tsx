@@ -134,6 +134,52 @@ describe("D-01/D-04 — the formatting row lives in the footer, behind Aa", () =
   });
 });
 
+describe("D-03 — the footer row is complete and in Gmail's order", () => {
+  it("carries link, emoji, image, attach and the overflow", () => {
+    renderComposer();
+    // The review counted four controls where Gmail has nine. These are the
+    // ones that were missing and that this send path can honestly offer.
+    expect(screen.getByRole("button", { name: "Insert a link" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Insert an emoji" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Insert an image" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Attach a file" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "More options" })).not.toBeNull();
+  });
+
+  it("says out loud that an image is attached, not embedded", () => {
+    renderComposer();
+    // The send path writes disposition:"attachment" for every part, with no
+    // cid — an inline <img> would arrive broken. The limit is named where the
+    // control is, which is the same rule the search panel follows for NOT.
+    expect(screen.getByRole("button", { name: "Insert an image" }).getAttribute("title")).toBe(
+      "Insert an image (attached, not embedded in the body)",
+    );
+  });
+
+  it("hides the link button in plain text, where it could do nothing", () => {
+    renderComposer({ draft: { ...newDraft(false), to: [], subject: "", text: "hola" } });
+    expect(screen.queryByRole("button", { name: "Insert a link" })).toBeNull();
+  });
+
+  it("inserts a picked emoji at the caret", async () => {
+    const user = userEvent.setup();
+    renderComposer({ draft: { ...newDraft(false), to: [], subject: "", text: "hola" } });
+
+    await user.click(screen.getByRole("button", { name: "Insert an emoji" }));
+    await user.click(screen.getByRole("button", { name: "🙂" }));
+
+    const body: HTMLTextAreaElement = screen.getByRole("textbox", { name: "Message" });
+    expect(body.value).toContain("🙂");
+  });
+
+  it("offers no signature menu when the account has no named signatures", () => {
+    // A picker over an empty set is a dead control, and the account's own
+    // signature is already seeded (D-10) — there would be nothing to choose.
+    renderComposer();
+    expect(screen.queryByRole("button", { name: "Insert a signature" })).toBeNull();
+  });
+});
+
 describe("D-09 — schedule send is Send's caret, and it retires offline", () => {
   it("welds the caret to Send when the server advertises a horizon", () => {
     renderComposer({ maxDelayedSendSeconds: 30 * 24 * 3600 });

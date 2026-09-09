@@ -1,0 +1,38 @@
+/*
+ * The emoji grid (D-03).
+ *
+ * It lives inside one `<li>` of a `PopupMenu`, so the cell itself carries no
+ * padding of its own — the menu already supplies the card, and a second inset
+ * would make the grid float in the middle of it.
+ */
+.gridCell {
+  padding: var(--space-1);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(8, 2rem);
+  gap: 2px;
+}
+
+.emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  /* Not `font: inherit`: the menu's font is the UI stack, and an emoji drawn at
+     the UI size in a 2rem cell reads as a smudge. */
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emoji:hover,
+.emoji:focus-visible {
+  background: var(--color-accent-tint);
+}
