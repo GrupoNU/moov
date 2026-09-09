@@ -134,6 +134,18 @@ describe("D-01/D-04 — the formatting row lives in the footer, behind Aa", () =
   });
 });
 
+describe("D-07 — the subject says 'Asunto' once", () => {
+  it("keeps the label in the accessibility tree but hides it from sight", () => {
+    renderComposer();
+    const subject = screen.getByRole("textbox", { name: "Subject" });
+    // Still labelled — a placeholder is not a label, it vanishes on typing.
+    const label = document.querySelector('label[for="composer-subject"]');
+    expect(label?.className).toContain("visually-hidden");
+    // And the placeholder is the one visible copy of the word.
+    expect(subject.getAttribute("placeholder")).toBe("Subject");
+  });
+});
+
 describe("D-05 — Cc/Cco are quiet words, not accent links", () => {
   it("shows the field name and keeps the verb for assistive technology", () => {
     renderComposer();

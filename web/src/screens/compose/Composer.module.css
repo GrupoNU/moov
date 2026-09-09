@@ -244,22 +244,22 @@
   color: var(--color-accent);
 }
 
+/*
+ * D-07: one row, one field, no label column.
+ *
+ * The two-track grid existed to hold a visible "Asunto" beside a placeholder
+ * that also said "Asunto". With the label visually hidden there is no second
+ * track to reserve — and it must not merely collapse, because the row's `gap`
+ * would survive as a phantom indent on the field.
+ */
 .subjectRow {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.subjectLabel {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .subjectInput {
+  /* The field is the whole row now that the label track is gone (D-07). */
+  width: 100%;
   min-width: 0;
   padding: var(--space-1) 0;
   border: 0;

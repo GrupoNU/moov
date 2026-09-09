@@ -1221,7 +1221,18 @@ export function Composer({
         )}
 
         <div className={styles.subjectRow}>
-          <label className={styles.subjectLabel} htmlFor="composer-subject">
+          {/*
+            D-07: the label is VISUALLY hidden, and the placeholder is the one
+            visible "Asunto".
+
+            The row read "Asunto  Asunto" — a label and a placeholder saying the
+            same word, side by side, which is what a reviewer notices in the
+            first second. Gmail has one. The label survives in the accessibility
+            tree rather than being deleted, because a placeholder is not a label:
+            it vanishes the moment you type and is announced inconsistently, so
+            deleting the <label> would trade a cosmetic defect for a real one.
+          */}
+          <label className="visually-hidden" htmlFor="composer-subject">
             {t("compose.subject")}
           </label>
           <input
