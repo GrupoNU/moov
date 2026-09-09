@@ -4116,6 +4116,9 @@ export function MailScreen(): React.JSX.Element {
           recentSearches={recentSearches}
           labels={sidebarLabels}
           mailboxes={mailboxes}
+          /* E-15: the folder on screen, so the panel's "En esta carpeta" is a
+             real scope rather than a label on the account-wide default. */
+          currentMailbox={activeMailbox}
           onClearRecent={clearRecentSearches}
           /*
            * B7: "Crear filtro" (canon 07 §8). Passed only when the server

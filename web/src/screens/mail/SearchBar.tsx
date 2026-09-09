@@ -76,6 +76,8 @@ export interface SearchBarProps {
   readonly labels?: readonly Label[];
   /** E3: the folders the options panel offers as a scope. */
   readonly mailboxes?: readonly Mailbox[];
+  /** E-15: the folder on screen, for the panel's "En esta carpeta" row. */
+  readonly currentMailbox?: Mailbox | undefined;
   /** E3: clears the stored history. Absent hides the affordance. */
   readonly onClearRecent?: (() => void) | undefined;
   /**
@@ -110,6 +112,7 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     recentSearches = NO_RECENT,
     labels = NO_LABELS,
     mailboxes = NO_MAILBOXES,
+    currentMailbox,
     onClearRecent,
     onCreateFilter,
   },
@@ -429,6 +432,7 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
         <SearchOptions
           query={value}
           mailboxes={mailboxes}
+          currentMailbox={currentMailbox}
           onSubmit={(next) => {
             onChange(next);
             setPanelOpen(false);

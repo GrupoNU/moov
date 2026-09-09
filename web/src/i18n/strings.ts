@@ -1252,7 +1252,12 @@ export const en = {
   "search.options.dateOf": "of",
   "search.options.hasAttachment": "Has attachment",
   "search.options.scope": "Search",
-  "search.options.scopeAll": "All mail",
+  /* E-15: the DEFAULT scope, named for what it actually is. An empty `in:`
+     sends no scope condition and the server excludes Spam and Trash itself —
+     which is Gmail's "All mail". The option used to be labelled "In this
+     folder", which described a scoping that never happened. */
+  "search.options.scopeDefault": "All mail (except Spam and Bin)",
+  "search.options.scopeAll": "All mail, Spam and Bin included",
   "search.options.submit": "Search",
   "search.options.reset": "Clear",
   // E12/B7 (canon 07 §8): the second button of Gmail's advanced panel.
@@ -2398,7 +2403,8 @@ export const es: Strings = {
   "search.options.dateOf": "de",
   "search.options.hasAttachment": "Tiene adjunto",
   "search.options.scope": "Buscar en",
-  "search.options.scopeAll": "Todo el correo",
+  "search.options.scopeDefault": "Todo el correo (salvo Spam y Papelera)",
+  "search.options.scopeAll": "Todo el correo, con Spam y Papelera",
   "search.options.submit": "Buscar",
   "search.options.reset": "Limpiar",
   "search.options.createFilter": "Crear filtro",

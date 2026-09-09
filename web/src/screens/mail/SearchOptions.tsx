@@ -56,6 +56,15 @@ export interface SearchOptionsProps {
   /** The current query, so the panel opens showing what is already searched. */
   readonly query: string;
   readonly mailboxes: readonly Mailbox[];
+  /**
+   * E-15: the folder the list is currently showing, so "En esta carpeta" can be
+   * a real option rather than a label on the default.
+   *
+   * Absent — on a search route, a label view, the Outbox — removes that row.
+   * There is no "this folder" when the user is not in one, and offering it
+   * anyway would be a scope with nothing behind it.
+   */
+  readonly currentMailbox?: Mailbox | undefined;
   /** Runs the composed query. */
   readonly onSubmit: (query: string) => void;
   readonly onClose: () => void;
@@ -180,6 +189,7 @@ function queryFromState(state: PanelState, mailboxes: readonly Mailbox[]): strin
 export function SearchOptions({
   query,
   mailboxes,
+  currentMailbox,
   onSubmit,
   onClose,
   onCreateFilter,
@@ -370,19 +380,38 @@ export function SearchOptions({
             }}
           >
             {/*
-              The empty value is the server's DEFAULT scope (everything except
-              Spam and Trash), which is what a search with no `in:` gets. It is
-              listed first because it is what most searches want, and
-              "All mail" below it is the explicit `in:anywhere` that reaches
-              into Spam and Trash.
+              E-15 (owner's decision 2, 2026-09-09): the DEFAULT is the whole
+              account, and the first option now says so.
+
+              The wire never changed — an empty scope sends no `in:` at all and
+              the server applies Gmail's own exclusion of Spam and Trash
+              (`applyDefaultExclusion`), which is exactly "all mail" in Gmail's
+              sense. What was wrong was the LABEL: this option read "En esta
+              carpeta", so a user reading the panel believed every search was
+              folder-scoped when none of them were. A control that misdescribes
+              what it does is worse than a missing one, because the user acts on
+              the description.
+
+              "En esta carpeta" survives as a real option below, resolving to
+              the folder the user is actually looking at — which is the thing
+              the old label promised and never delivered.
             */}
-            <option value="">{t("search.inMailbox")}</option>
+            <option value="">{t("search.options.scopeDefault")}</option>
+            {currentMailbox !== undefined && (
+              <option value={currentMailbox.id}>{t("search.inMailbox")}</option>
+            )}
             <option value={SCOPE_ANYWHERE}>{t("search.options.scopeAll")}</option>
-            {mailboxes.map((mailbox) => (
-              <option key={mailbox.id} value={mailbox.id}>
-                {mailbox.name}
-              </option>
-            ))}
+            {/* The current folder is omitted here: it already has its own row
+                above, and two options carrying the same value would make the
+                select's rendered label depend on which one the browser matched
+                first. */}
+            {mailboxes
+              .filter((mailbox) => mailbox.id !== currentMailbox?.id)
+              .map((mailbox) => (
+                <option key={mailbox.id} value={mailbox.id}>
+                  {mailbox.name}
+                </option>
+              ))}
           </select>
         </label>
 

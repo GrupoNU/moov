@@ -47,7 +47,11 @@ const MAILBOXES: readonly Mailbox[] = [
   mailbox("mb5", "Proyectos"),
 ];
 
-function renderPanel(query = "", onCreateFilter?: (draft: unknown) => void) {
+function renderPanel(
+  query = "",
+  onCreateFilter?: (draft: unknown) => void,
+  currentMailbox?: Mailbox,
+) {
   const onSubmit = vi.fn();
   const onClose = vi.fn();
   render(
@@ -55,6 +59,7 @@ function renderPanel(query = "", onCreateFilter?: (draft: unknown) => void) {
       <SearchOptions
         query={query}
         mailboxes={MAILBOXES}
+        currentMailbox={currentMailbox}
         onSubmit={onSubmit}
         onClose={onClose}
         onCreateFilter={onCreateFilter as never}
@@ -223,5 +228,64 @@ describe("Crear filtro (E12/B7)", () => {
   it("says nothing when the filter matches exactly what the search did", () => {
     renderPanel("from:a@b.com has:attachment", vi.fn());
     expect(screen.queryByText(/no puede trasladar/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * E-15 — the default scope, named for what it actually is (owner's decision 2,
+ * 2026-09-09).
+ *
+ * The WIRE never scoped a search to a folder: an empty `in:` sends no scope
+ * condition and the server applies Gmail's own exclusion of Spam and Trash
+ * (`applyDefaultExclusion`). What was wrong was the LABEL — the default option
+ * read "En esta carpeta", so a user reading the panel believed every search was
+ * folder-scoped when none of them were. A control that misdescribes what it
+ * does is worse than a missing one, because the user acts on the description.
+ */
+describe("E-15 — the scope the panel offers", () => {
+  it("names the default as the whole account, not 'this folder'", () => {
+    renderPanel();
+    const scope = screen.getByLabelText(/buscar en/i);
+    // The empty value is the default, and it now says what it does.
+    expect(scope).toHaveValue("");
+    expect(
+      screen.getByRole("option", { name: /todo el correo \(salvo spam/i }),
+    ).not.toBeNull();
+  });
+
+  it("offers 'En esta carpeta' as a real option when there is a folder on screen", () => {
+    renderPanel("", undefined, MAILBOXES[0]);
+    expect(screen.getByRole("option", { name: "En esta carpeta" })).not.toBeNull();
+  });
+
+  it("has no 'En esta carpeta' when the user is not in a folder", () => {
+    // A search route, a label view, the Outbox: there is no "this folder", and
+    // offering the scope anyway would be a scope with nothing behind it.
+    renderPanel();
+    expect(screen.queryByRole("option", { name: "En esta carpeta" })).toBeNull();
+  });
+
+  it("SENDS no in: for the default — the account-wide wire shape", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderPanel("factura");
+    await user.click(screen.getByRole("button", { name: /^buscar$/i }));
+    // No `in:` at all. The server excludes Spam and Trash itself; a client
+    // that sent its own inMailboxOtherThan here would SUPPRESS that default
+    // and put Spam back into every search (searchFilter.ts, rule on scope).
+    expect(onSubmit).toHaveBeenCalledWith("factura");
+  });
+
+  it("SENDS in:<folder> when the user picks this folder — the scoped wire shape", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderPanel("factura", undefined, MAILBOXES[0]);
+    await user.selectOptions(screen.getByLabelText(/buscar en/i), "mb1");
+    await user.click(screen.getByRole("button", { name: /^buscar$/i }));
+    /*
+     * `in:inbox`, not `in:"bandeja de entrada"`. The segment is the ROLE where
+     * a folder has one, which is what keeps the query portable: `resolveScope`
+     * reads it back by role, so the same string works on a server whose Inbox
+     * is named in another language.
+     */
+    expect(onSubmit).toHaveBeenCalledWith("in:inbox factura");
   });
 });
