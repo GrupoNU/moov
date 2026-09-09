@@ -112,3 +112,35 @@ a.attachmentName:focus-visible {
   font-size: var(--text-sm);
   color: var(--color-danger);
 }
+
+/*
+ * P0-6 / C-04: the same download, as an item in the reader's overflow menu.
+ *
+ * Matches the other popup menus' `.menuItem` declarations exactly — the three
+ * menus in this app must read as one control, and CSS modules scope a class to
+ * its own file, so the alternative to restating them is importing another
+ * component's stylesheet to decide how this one looks.
+ */
+.downloadMenuItem {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.downloadMenuItem:hover:not(:disabled),
+.downloadMenuItem:focus-visible {
+  background: var(--color-accent-tint);
+}
+
+.downloadMenuItem:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

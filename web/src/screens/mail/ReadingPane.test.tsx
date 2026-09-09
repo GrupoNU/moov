@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { JmapClient } from "../../api/jmap";
@@ -219,13 +219,65 @@ describe("the Spam banner and its consequences (canon §4.1.9)", () => {
 });
 
 describe("the completed toolbar (E2 item 3)", () => {
-  it("offers star, move, mark-unread, print and view-original", () => {
+  /*
+   * P0-6 rebuilt this row as icons with the rest in a ⋮ (canon 07 §6), so
+   * where each verb LIVES is part of what these tests pin: the eight the canon
+   * names are one click away, and nothing was lost in the move.
+   */
+  it("puts the canonical verbs in the icon row", () => {
     renderPane();
-    expect(screen.getByRole("button", { name: /^destacar$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /mover a una carpeta/i })).toBeInTheDocument();
+    // "Back" is the header's ✕, not a second control in this row — see the
+    // comment where the canon's ← would have gone.
+    expect(screen.getByRole("button", { name: /^archivar$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /spam/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mover a la papelera|eliminar/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /marcar como no leído/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^imprimir$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /ver original/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mover a una carpeta/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /más acciones/i })).toBeInTheDocument();
+  });
+
+  it("keeps star, print and view-original — one click away, in the ⋮", async () => {
+    const user = userEvent.setup();
+    renderPane();
+    // Not in the row: an icon for "view original" is a glyph nobody
+    // recognises, which is what the menu is for.
+    expect(screen.queryByRole("button", { name: /ver original/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    expect(screen.getByRole("menuitem", { name: /^destacar$/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^imprimir$/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /ver original/i })).toBeInTheDocument();
+  });
+
+  it("keeps the reply verbs as WORDS — they are the reader's primary actions", () => {
+    renderPane();
+    expect(screen.getByRole("button", { name: /^responder$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /responder a todos/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^reenviar$/i })).toBeInTheDocument();
+  });
+
+  it("keeps the row SHORT — the whole point of the change", () => {
+    /*
+     * The defect was sixteen text buttons wrapping into two rows in a 520px
+     * reader. A count is a crude assertion, but it is the one that fails if
+     * someone adds "just one more" verb back into the row — which is exactly
+     * how the sixteen accumulated.
+     */
+    renderPane({ onSnooze: vi.fn(), onToggleMute: vi.fn(), onBlockSender: vi.fn() });
+    const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+    expect(within(bar).getAllByRole("button").length).toBeLessThanOrEqual(9);
+  });
+
+  it("does not repeat the download-original under each message (C-04)", () => {
+    /*
+     * It used to render under EVERY message's attachment list, so a
+     * six-message conversation put a diagnostic six times between the reader
+     * and the next message. It lives once now, in the ⋮.
+     */
+    renderPane();
+    expect(
+      screen.queryByRole("button", { name: /descargar el mensaje original/i }),
+    ).not.toBeInTheDocument();
   });
 
   /*
@@ -233,18 +285,21 @@ describe("the completed toolbar (E2 item 3)", () => {
    * reader whether the message is starred RIGHT NOW, where a label alone only
    * says what the next press would do.
    */
-  it("announces the star as a toggle in its current state", () => {
+  it("announces the star as a toggle in its current state", async () => {
+    const user = userEvent.setup();
     renderPane({ email: message({ keywords: { [KEYWORD_FLAGGED]: true } }) });
-    const star = screen.getByRole("button", { name: /quitar el destaque/i });
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    const star = screen.getByRole("menuitem", { name: /quitar el destaque/i });
     expect(star).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("calls window.print for the print button", async () => {
+  it("calls window.print for the print item", async () => {
     const user = userEvent.setup();
     const print = vi.fn();
     vi.stubGlobal("print", print);
     renderPane();
-    await user.click(screen.getByRole("button", { name: /^imprimir$/i }));
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^imprimir$/i }));
     expect(print).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
@@ -333,10 +388,14 @@ describe("E4: snooze and mute in the reader", () => {
     expect(screen.queryByRole("button", { name: /silenciar/i })).toBeNull();
   });
 
-  it("offers snooze and mute once the capability is wired", () => {
+  it("offers snooze and mute once the capability is wired", async () => {
+    const user = userEvent.setup();
     renderPane({ onSnooze: vi.fn(), onToggleMute: vi.fn() });
+    // P0-6: snooze keeps a slot in the icon row (canon 07 §6 lists it); mute
+    // moved to the ⋮, where the verbs without a recognisable glyph live.
     expect(screen.getByRole("button", { name: /posponer hasta/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^silenciar$/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    expect(screen.getByRole("menuitem", { name: /^silenciar$/i })).toBeInTheDocument();
   });
 
   it("badges a muted conversation in WORDS, with the consequence spelled out", () => {
@@ -347,13 +406,15 @@ describe("E4: snooze and mute in the reader", () => {
     expect(badge).toHaveAttribute("title", expect.stringMatching(/saltean la bandeja/i));
   });
 
-  it("keeps the badge and the button agreeing about the same fact", () => {
+  it("keeps the badge and the menu item agreeing about the same fact", async () => {
+    const user = userEvent.setup();
     renderPane({ onToggleMute: vi.fn(), isMuted: true });
     expect(screen.getByText(/^silenciada$/i)).toBeInTheDocument();
-    // The button says what the CLICK will do, which is the opposite of the
-    // state the badge reports.
-    expect(screen.getByRole("button", { name: /dejar de silenciar/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^silenciar$/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    // The item says what the CLICK will do, which is the opposite of the state
+    // the badge reports.
+    expect(screen.getByRole("menuitem", { name: /dejar de silenciar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /^silenciar$/i })).toBeNull();
   });
 
   it("shows no badge on an unmuted conversation", () => {
@@ -373,18 +434,23 @@ describe("E4: snooze and mute in the reader", () => {
     const user = userEvent.setup();
     const onToggleMute = vi.fn();
     renderPane({ onToggleMute });
-    await user.click(screen.getByRole("button", { name: /^silenciar$/i }));
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^silenciar$/i }));
     expect(onToggleMute).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("blocking the sender (E6, canon §2.2)", () => {
-  it("is absent when the server has no filter capability", () => {
-    // A block writes a Sieve rule, so without the capability the button has
-    // nothing to write — it is removed, not disabled.
+  it("is absent when the server has no filter capability", async () => {
+    // A block writes a Sieve rule, so without the capability the control has
+    // nothing to write — it is removed, not disabled. Checked INSIDE the open
+    // menu (P0-6 moved it there), because an absence in a closed menu would
+    // pass whatever the code did.
+    const user = userEvent.setup();
     renderPane();
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
     expect(
-      screen.queryByRole("button", { name: "Bloquear al remitente" }),
+      screen.queryByRole("menuitem", { name: "Bloquear al remitente" }),
     ).not.toBeInTheDocument();
   });
 
@@ -392,7 +458,9 @@ describe("blocking the sender (E6, canon §2.2)", () => {
     const user = userEvent.setup();
     const onBlockSender = vi.fn();
     renderPane({ onBlockSender });
-    await user.click(screen.getByRole("button", { name: "Bloquear al remitente" }));
+    // P0-6: the block moved into the ⋮ — a verb with no glyph anyone reads.
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Bloquear al remitente" }));
     expect(onBlockSender).toHaveBeenCalledWith("ana@example.com");
   });
 
@@ -406,7 +474,9 @@ describe("blocking the sender (E6, canon §2.2)", () => {
         sender: [{ name: "La lista", email: "bounces@list.example" }],
       }),
     });
-    await user.click(screen.getByRole("button", { name: "Bloquear al remitente" }));
+    // P0-6: the block moved into the ⋮ — a verb with no glyph anyone reads.
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Bloquear al remitente" }));
     // Lowercased, because a header's casing is not identity.
     expect(onBlockSender).toHaveBeenCalledWith("ana@example.com");
   });
@@ -418,15 +488,19 @@ describe("blocking the sender (E6, canon §2.2)", () => {
       onBlockSender,
       email: message({ from: null, sender: [{ name: null, email: "s@example.com" }] }),
     });
-    await user.click(screen.getByRole("button", { name: "Bloquear al remitente" }));
+    // P0-6: the block moved into the ⋮ — a verb with no glyph anyone reads.
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Bloquear al remitente" }));
     expect(onBlockSender).toHaveBeenCalledWith("s@example.com");
   });
 
-  it("renders nothing when neither header carries an address", () => {
+  it("renders nothing when neither header carries an address", async () => {
     // A block with nothing to block is not an action.
+    const user = userEvent.setup();
     renderPane({ onBlockSender: vi.fn(), email: message({ from: null, sender: null }) });
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
     expect(
-      screen.queryByRole("button", { name: "Bloquear al remitente" }),
+      screen.queryByRole("menuitem", { name: "Bloquear al remitente" }),
     ).not.toBeInTheDocument();
   });
 });

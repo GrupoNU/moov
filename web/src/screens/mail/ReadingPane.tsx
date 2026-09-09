@@ -24,6 +24,7 @@ import { LabelChips } from "./LabelChips";
 import { LabelMenu } from "./LabelMenu";
 import { labelsFor, type Label } from "../../mail/labelStore";
 import { MoveMenu } from "./MoveMenu";
+import { PopupMenu } from "./PopupMenu";
 import { SnoozeMenu } from "./SnoozeMenu";
 import styles from "./ReadingPane.module.css";
 
@@ -468,25 +469,259 @@ export function ReadingPane({
         )}
 
         {/*
-          The action row. Reply is the primary action of a mail client and is
-          styled as such; the rest are equal-weight secondary actions. Each is
-          a real <button> with a text label, not an icon alone — this pane has
-          the room, and an icon-only toolbar is a guessing game the first time
-          someone uses it.
-        */}
-        <div className={styles.actions} role="group" aria-label={t("action.more")}>
-          {/*
-            E5 `defaultReplyBehavior` (canon §2.3), Gmail's shape exactly: the
-            preference chooses which reply is PRIMARY, and the other stays on
-            screen as a secondary. Both verbs remain available and both keep
-            their own label — the setting moves the emphasis and the default,
-            it never removes a control (P4), which is why this is an order swap
-            rather than a conditional render.
+          P0-6: the toolbar, as ONE ROW OF ICONS (canon 07 §6).
 
-            The `r` key follows the same preference in `MailScreen`, so the
-            button the eye lands on and the key the hand reaches for always
-            agree.
+          What was here was sixteen text buttons wrapping into two rows. That
+          was a deliberate decision — "this pane has the room, and an icon-only
+          toolbar is a guessing game the first time someone uses it" — and its
+          premise died with P0-1: the reader is a 520px column beside the list,
+          not a full-width pane. Sixteen labels in 520px wrap, and the wrap
+          MOVES every button whenever a conditional one appears or disappears,
+          which is worse for muscle memory than any icon.
+
+          The guessing-game objection is answered rather than dismissed. Every
+          icon carries `aria-label` and `title` with the same string, so the
+          name is one hover away for a pointer and always present for a screen
+          reader — Gmail's own answer, and the one `ActionBar` already uses.
+
+          The order is the canon's: back · archivar · spam · eliminar · marcar
+          no leído · posponer · mover · etiquetas · ⋮. Reply, reply-all and
+          forward are NOT here: they are the reader's primary verbs and keep
+          their words below, where Gmail puts them too.
+        */}
+        <div className={styles.iconBar} role="toolbar" aria-label={t("action.more")}>
+          {/*
+            No back arrow HERE, even though canon 07 §6 lists one first.
+
+            Gmail's reader replaces the list, so its ← is the only way back.
+            This pane also runs BESIDE the list (the "right" split), where the
+            header already carries a close ✕ next to the prev/next arrows —
+            and a second control with the same accessible name, three
+            centimetres away, is not parity: it is two answers to "how do I get
+            out of here", one of which will be the one a user does not press.
+
+            So the canon's ← is the header's ✕, which was already there and
+            already keyboard-reachable. The divider below still opens the row,
+            because the verbs still start after the navigation cluster.
           */}
+          <IconAction label={t("action.archive")} onClick={onArchive}>
+            <rect x="2.6" y="3.6" width="14.8" height="3.6" rx="1" />
+            <path d="M4 7.2v8a1.4 1.4 0 0 0 1.4 1.4h9.2a1.4 1.4 0 0 0 1.4-1.4v-8M8 10.4h4" />
+          </IconAction>
+
+          {/* The label FLIPS inside Junk, so one control covers both directions
+              — Gmail's shape, and what `!` does. */}
+          <IconAction
+            label={inJunk ? t("action.notSpam") : t("action.spam")}
+            onClick={onToggleSpam}
+          >
+            <path d="M10 2.6l6.6 3.5v4c0 3.7-2.8 6.4-6.6 7.3-3.8-.9-6.6-3.6-6.6-7.3v-4z" />
+            {inJunk ? <path d="M7.2 9.9l2 2 3.6-3.8" /> : <path d="M10 7v4M10 13.6v.1" />}
+          </IconAction>
+
+          {/* The LABEL states which of the two semantics applies (W-A2): one
+              word for both promises would be a lie in one of the cases. */}
+          <IconAction
+            label={deleteIsPermanent ? t("action.deleteForever") : t("action.delete")}
+            onClick={onDelete}
+            danger={deleteIsPermanent}
+          >
+            <path d="M3.6 5.6h12.8M8 5.6V4.2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.4M5.4 5.6l.7 10a1.4 1.4 0 0 0 1.4 1.3h5a1.4 1.4 0 0 0 1.4-1.3l.7-10" />
+          </IconAction>
+
+          {/*
+            Mark-unread CLOSES the reader, and that is not a shortcut: leaving
+            the message open would have the reading pane immediately re-mark it
+            read, so the button would appear to do nothing. Gmail returns to
+            the list for exactly this reason.
+          */}
+          <IconAction label={t("action.markUnread")} onClick={onMarkUnread}>
+            <rect x="2.8" y="4.5" width="14.4" height="11" rx="1.6" />
+            <circle cx="15.4" cy="5.6" r="2.6" fill="currentColor" stroke="none" />
+          </IconAction>
+
+          {onSnooze !== undefined && (
+            <SnoozeMenu
+              disabled={false}
+              onSnooze={onSnooze}
+              triggerClassName={styles.iconAction}
+              triggerContent={
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                  <circle cx="10" cy="10.5" r="6.8" />
+                  <path d="M10 6.8v3.9l2.6 1.6" />
+                </svg>
+              }
+            />
+          )}
+
+          {/* Only in the Snoozed view, where it is the one thing a user does to
+              a row; everywhere else there is nothing to bring back. */}
+          {onUnsnooze !== undefined && (
+            <IconAction label={t("snooze.unsnooze")} onClick={onUnsnooze}>
+              <path d="M3.4 10.5a6.6 6.6 0 1 1 2 4.7" />
+              <path d="M3 6.4v4.1h4.1" />
+            </IconAction>
+          )}
+
+          <span className={styles.iconDivider} aria-hidden="true" />
+
+          <MoveMenu
+            mailboxes={mailboxes}
+            currentMailboxId={currentMailboxId}
+            disabled={false}
+            onMove={onMove}
+            triggerClassName={styles.iconAction}
+            triggerContent={
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                <path d="M2.8 5.4a1.4 1.4 0 0 1 1.4-1.4h3l1.6 2h6a1.4 1.4 0 0 1 1.4 1.4v7.2a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4z" />
+              </svg>
+            }
+          />
+
+          {/* "Label as" beside "Move to" — the pair a user chooses between, and
+              the reason canon §2.7 binds `v` and `l` to adjacent keys. */}
+          {onToggleLabel !== undefined && onManageLabels !== undefined && (
+            <LabelMenu
+              labels={labels ?? []}
+              selection={[email.keywords]}
+              disabled={false}
+              onToggle={onToggleLabel}
+              onManage={onManageLabels}
+              triggerClassName={styles.iconAction}
+              triggerContent={
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M3.4 8.6V4.4a1 1 0 0 1 1-1h4.2l7.6 7.6a1.2 1.2 0 0 1 0 1.7l-4.5 4.5a1.2 1.2 0 0 1-1.7 0L3.4 9.6z" />
+                  <circle cx="6.9" cy="6.9" r="1.1" fill="currentColor" stroke="none" />
+                </svg>
+              }
+            />
+          )}
+
+          {/*
+            The overflow. Everything below is a real verb with no icon a person
+            would recognise ("forward as attachment", "view original") or one
+            used rarely enough that a permanent slot costs more than it earns.
+            Text labels in a menu, which is where an unrecognisable glyph
+            belongs — the same trade `ActionBar` already makes.
+          */}
+          <PopupMenu
+            label={t("action.more")}
+            disabled={false}
+            triggerClassName={styles.iconAction}
+            triggerContent={
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" focusable="false">
+                <circle cx="10" cy="4.6" r="1.5" />
+                <circle cx="10" cy="10" r="1.5" />
+                <circle cx="10" cy="15.4" r="1.5" />
+              </svg>
+            }
+          >
+            {(close) => (
+              <>
+                {/*
+                  E2: the star. `aria-pressed` rather than a flipping label,
+                  because it IS a toggle and announcing it as one tells a
+                  screen-reader user the current state — a label that flips
+                  only says what the NEXT press will do.
+                */}
+                <MenuAction
+                  label={isFlagged(email) ? t("action.unflag") : t("action.flag")}
+                  pressed={isFlagged(email)}
+                  onClick={() => {
+                    onToggleFlag();
+                    close();
+                  }}
+                />
+
+                {onToggleMute !== undefined && (
+                  <MenuAction
+                    label={isMuted ? t("mute.unmute") : t("mute.action")}
+                    onClick={() => {
+                      onToggleMute();
+                      close();
+                    }}
+                  />
+                )}
+
+                {/*
+                  E6: block the sender (canon §2.2). Rendered only when the
+                  address resolves AND the server offers filters — a block
+                  writes a Sieve rule, so without the capability it is a
+                  control that cannot do its job.
+                */}
+                {onBlockSender !== undefined && senderAddress(email) !== undefined && (
+                  <MenuAction
+                    label={t("blocked.action")}
+                    onClick={() => {
+                      const address = senderAddress(email);
+                      if (address !== undefined) onBlockSender(address);
+                      close();
+                    }}
+                  />
+                )}
+
+                {onForwardAsAttachment !== undefined && (
+                  <MenuAction
+                    label={t("action.forwardAsAttachment")}
+                    onClick={() => {
+                      onForwardAsAttachment();
+                      close();
+                    }}
+                  />
+                )}
+
+                <MenuAction
+                  label={t("action.print")}
+                  onClick={() => {
+                    window.print();
+                    close();
+                  }}
+                />
+
+                <MenuAction
+                  label={t("action.viewOriginal")}
+                  onClick={() => {
+                    setOriginalOpen(true);
+                    close();
+                  }}
+                />
+
+                {/*
+                  C-04: the whole-message download, ONCE, beside "Ver original"
+                  — the same file seen a different way. It used to render under
+                  every message body, which put a diagnostic six times between
+                  the reader and the next message in a six-message thread.
+
+                  The component itself renders the item, because it owns a
+                  fetch state machine and a live region that a second
+                  implementation would get wrong.
+                */}
+                <DownloadOriginalButton
+                  email={email}
+                  client={client}
+                  accountId={accountId}
+                  variant="menu"
+                  onDone={close}
+                />
+              </>
+            )}
+          </PopupMenu>
+        </div>
+
+        {/*
+          The reply verbs keep their WORDS, below the icon row.
+
+          E5 `defaultReplyBehavior` (canon §2.3), Gmail's shape exactly: the
+          preference chooses which reply is PRIMARY and the other stays on
+          screen as a secondary. Both remain available and both keep their own
+          label — the setting moves the emphasis and the default, it never
+          removes a control (P4), which is why this is an order swap rather
+          than a conditional render.
+
+          The `r` key follows the same preference in `MailScreen`, so the
+          button the eye lands on and the key the hand reaches for agree.
+        */}
+        <div className={styles.actions} role="group" aria-label={t("action.reply")}>
           {prefs.defaultReplyBehavior === "replyAll" ? (
             <>
               <button type="button" className={styles.primaryAction} onClick={onReplyAll}>
@@ -508,171 +743,6 @@ export function ReadingPane({
           )}
           <button type="button" className={styles.secondaryAction} onClick={onForward}>
             {t("action.forward")}
-          </button>
-          <span className={styles.actionSpacer} />
-
-          {/*
-            E2: the star. `aria-pressed` rather than a changing label, because
-            it IS a toggle in one state and announcing it as a toggle is what
-            tells a screen-reader user whether the message is starred right
-            now — a label that flips only says what the next press will do.
-          */}
-          <button
-            type="button"
-            className={[styles.secondaryAction, isFlagged(email) ? styles.activeAction : ""]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={onToggleFlag}
-            aria-pressed={isFlagged(email)}
-          >
-            {isFlagged(email) ? t("action.unflag") : t("action.flag")}
-          </button>
-
-          <button type="button" className={styles.secondaryAction} onClick={onArchive}>
-            {t("action.archive")}
-          </button>
-          {/* The LABEL states which of the two semantics applies (W-A2). */}
-          <button
-            type="button"
-            className={[styles.secondaryAction, deleteIsPermanent ? styles.dangerAction : ""]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={onDelete}
-          >
-            {deleteIsPermanent ? t("action.deleteForever") : t("action.delete")}
-          </button>
-
-          <button type="button" className={styles.secondaryAction} onClick={onToggleSpam}>
-            {inJunk ? t("action.notSpam") : t("action.spam")}
-          </button>
-
-          {/*
-            E6: block the sender (canon §2.2), beside "report spam" because the
-            two are the same family of answer to the same question — this one is
-            permanent and sender-scoped, that one is a single verdict.
-
-            Rendered only when the address is resolvable AND the server offers
-            filters: a block writes a Sieve rule, so without the capability it
-            is a button that cannot do its job.
-          */}
-          {onBlockSender !== undefined && senderAddress(email) !== undefined && (
-            <button
-              type="button"
-              className={styles.secondaryAction}
-              onClick={() => {
-                const address = senderAddress(email);
-                if (address !== undefined) onBlockSender(address);
-              }}
-            >
-              {t("blocked.action")}
-            </button>
-          )}
-
-          {/*
-            E4: snooze and mute, in the reader's own text-label idiom rather
-            than the action bar's icons. Both act on the WHOLE conversation,
-            which is the same thing every other button in this row does —
-            `targetMessageIds()` expands the focused thread — and is what canon
-            §2.1 asks for.
-          */}
-          {onSnooze !== undefined && (
-            <SnoozeMenu
-              disabled={false}
-              onSnooze={onSnooze}
-              triggerClassName={styles.secondaryAction}
-              triggerContent={t("snooze.action")}
-            />
-          )}
-
-          {onUnsnooze !== undefined && (
-            <button type="button" className={styles.secondaryAction} onClick={onUnsnooze}>
-              {t("snooze.unsnooze")}
-            </button>
-          )}
-
-          {onToggleMute !== undefined && (
-            <button type="button" className={styles.secondaryAction} onClick={onToggleMute}>
-              {/* The word says what the click will DO — the badge above says
-                  what the state IS, and the two read from the same flag. */}
-              {isMuted ? t("mute.unmute") : t("mute.action")}
-            </button>
-          )}
-
-          <MoveMenu
-            mailboxes={mailboxes}
-            currentMailboxId={currentMailboxId}
-            disabled={false}
-            onMove={onMove}
-            triggerClassName={styles.secondaryAction}
-            triggerContent={t("action.move")}
-          />
-
-          {/*
-            E7: forward as attachment (canon §2.3).
-
-            A text button in this pane's own idiom rather than an overflow
-            menu: the reader has the room, and hiding a verb behind a ⋯ is
-            how a feature nobody discovers gets built. The action bar puts it
-            in a menu because five icons plus a sixth unlabelled glyph is a
-            different problem.
-          */}
-          {onForwardAsAttachment !== undefined && (
-            <button
-              type="button"
-              className={styles.secondaryAction}
-              onClick={onForwardAsAttachment}
-            >
-              {t("action.forwardAsAttachment")}
-            </button>
-          )}
-
-          {/*
-            E8: "Label as", beside "Move to" — the pair the reader offers for
-            the same reason the action bar does (canon §2.7 binds `v` and `l`
-            adjacently). Rendered only when the host wired the handlers, so an
-            embedding without label plumbing shows no dead control.
-          */}
-          {onToggleLabel !== undefined && onManageLabels !== undefined && (
-            <LabelMenu
-              labels={labels ?? []}
-              selection={[email.keywords]}
-              disabled={false}
-              onToggle={onToggleLabel}
-              onManage={onManageLabels}
-              triggerClassName={styles.secondaryAction}
-              triggerContent={t("label.labelAs")}
-            />
-          )}
-
-          {/*
-            Mark-unread CLOSES the reader, and that is not a shortcut: leaving
-            the message open would have the reading pane immediately re-mark it
-            read, so the button would appear to do nothing. Gmail returns to
-            the list for exactly this reason.
-          */}
-          <button type="button" className={styles.secondaryAction} onClick={onMarkUnread}>
-            {t("action.markUnread")}
-          </button>
-
-          <button
-            type="button"
-            className={styles.secondaryAction}
-            onClick={() => {
-              window.print();
-            }}
-          >
-            {t("action.print")}
-          </button>
-
-          <button
-            type="button"
-            className={styles.secondaryAction}
-            onClick={() => {
-              setOriginalOpen(true);
-            }}
-            aria-haspopup="dialog"
-          >
-            {t("action.viewOriginal")}
           </button>
         </div>
 
@@ -763,7 +833,6 @@ export function ReadingPane({
         <>
           <AttachmentList
             attachments={attachments}
-            email={email}
             client={client}
             accountId={accountId}
             blobToken={blobToken}
@@ -837,10 +906,6 @@ export function ReadingPane({
         )}
       </div>
 
-      <footer className={styles.footer}>
-        <DownloadOriginalButton email={email} client={client} accountId={accountId} />
-      </footer>
-
       <OriginalDialog
         isOpen={originalOpen}
         onClose={() => {
@@ -851,6 +916,97 @@ export function ReadingPane({
         accountId={accountId}
       />
     </article>
+  );
+}
+
+/**
+ * One icon button in the reader's toolbar (P0-6).
+ *
+ * The children are the SVG's paths, not a whole `<svg>`: every icon here
+ * shares one 20×20 grid, one stroke weight and `currentColor`, so writing the
+ * wrapper sixteen times would be sixteen chances for one icon to be a
+ * different weight than its neighbours — the kind of drift nobody reports and
+ * everybody sees.
+ *
+ * `aria-label` AND `title`, always the same string. That is what answers the
+ * objection the old text-labelled toolbar was built on: the name is one hover
+ * away for a pointer user and always present for a screen reader, so an
+ * icon-only row is not a guessing game.
+ */
+function IconAction({
+  label,
+  onClick,
+  danger = false,
+  pressed,
+  children,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+  readonly danger?: boolean;
+  /** Present makes the button a TOGGLE and announces its current state. */
+  readonly pressed?: boolean;
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={[
+        styles.iconAction,
+        danger ? styles.iconActionDanger : "",
+        pressed === true ? styles.iconActionActive : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      {...(pressed !== undefined ? { "aria-pressed": pressed } : {})}
+    >
+      <svg
+        viewBox="0 0 20 20"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        {children}
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * One text item in the reader's overflow menu (P0-6).
+ *
+ * `role="menuitem"` inside the `li role="none"` wrapper `PopupMenu` expects —
+ * the list itself carries `role="menu"`, and an `li` that kept its implicit
+ * `listitem` role between the two would make the menu announce a list of items
+ * that are not menu items.
+ */
+function MenuAction({
+  label,
+  onClick,
+  pressed,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+  readonly pressed?: boolean;
+}): React.JSX.Element {
+  return (
+    <li role="none">
+      <button
+        type="button"
+        role="menuitem"
+        className={styles.menuItem}
+        onClick={onClick}
+        {...(pressed !== undefined ? { "aria-pressed": pressed } : {})}
+      >
+        {label}
+      </button>
+    </li>
   );
 }
 

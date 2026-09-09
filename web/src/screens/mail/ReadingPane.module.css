@@ -284,10 +284,6 @@ a.attachmentName:focus-visible {
   flex-direction: column;
 }
 
-.footer {
-  flex: none;
-  padding: var(--space-4) var(--space-6) var(--space-6);
-}
 
 .downloadRow {
   display: flex;
@@ -345,10 +341,6 @@ a.attachmentName:focus-visible {
   margin-top: var(--space-3);
 }
 
-.actionSpacer {
-  flex: 1 1 auto;
-  min-width: var(--space-2);
-}
 
 .primaryAction {
   padding: var(--space-2) var(--space-4);
@@ -381,20 +373,6 @@ a.attachmentName:focus-visible {
 .secondaryAction:focus-visible {
   background: var(--surface-sunken);
   border-color: var(--border-default);
-}
-
-/* Only the IRREVERSIBLE delete is painted as destructive: colouring the
-   reversible move-to-Trash the same way would spend the alarm on the case
-   that does not need it. */
-.dangerAction {
-  color: var(--color-danger);
-  border-color: var(--color-danger-border);
-}
-
-.dangerAction:hover,
-.dangerAction:focus-visible {
-  background: var(--color-danger-tint);
-  border-color: var(--color-danger);
 }
 
 /* ==========================================================================
@@ -480,10 +458,6 @@ a.attachmentName:focus-visible {
 }
 
 /* A starred message's toggle reads as pressed, not just as a changed label. */
-.activeAction {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
 
 /*
  * Unsubscribe — a quiet link-weight control beside the sender, never a
@@ -658,4 +632,116 @@ a.attachmentName:focus-visible {
   padding: 0 var(--space-5) var(--space-3);
   font-size: var(--text-xs);
   color: var(--text-muted);
+}
+
+/*
+ * P0-6: the reader's toolbar, as icons (canon 07 §6).
+ *
+ * # What was here before, and why it stopped working
+ *
+ * Sixteen text buttons in two wrapped rows. The decision was deliberate and
+ * reasoned — "this pane has the room, and an icon-only toolbar is a guessing
+ * game the first time someone uses it" — and its premise died with P0-1: the
+ * reader is a 520px column beside the list, not a full-width pane. Sixteen
+ * labels in 520px is two rows of wrapped text where Gmail has one row of nine
+ * icons, and the wrap moves every button whenever a conditional one appears.
+ *
+ * The guessing-game objection is answered rather than ignored: each icon
+ * carries `aria-label` AND `title`, so the name is one hover away for a
+ * pointer, always present for a screen reader, and the tooltip is the same
+ * string in both. That is Gmail's own answer.
+ */
+.iconBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.iconAction {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.iconAction svg {
+  width: 18px;
+  height: 18px;
+}
+
+.iconAction:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  border-color: var(--border-subtle);
+}
+
+.iconAction:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* A pressed toggle (the star) states itself by colour AND by `aria-pressed`,
+ * so the state survives forced-colors mode where the tint does not. */
+.iconActionActive {
+  color: var(--color-accent);
+}
+
+.iconActionDanger:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+
+/* A hairline between the families of verb — leave-the-list, then relocate —
+ * the same grouping the action bar uses. */
+.iconDivider {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 var(--space-1);
+  background: var(--border-subtle);
+}
+
+.iconSpacer {
+  flex: 1 1 auto;
+}
+
+/*
+ * P0-6: an item in the reader's overflow menu.
+ *
+ * Written here rather than reused from `MoveMenu.module.css`, because CSS
+ * modules scope each class to its own file and importing another module's
+ * class would mean this component's appearance depended on a stylesheet whose
+ * subject is a different menu. Same declarations, deliberately — the three
+ * popup menus in this app must look like one control.
+ */
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--color-accent-tint);
 }

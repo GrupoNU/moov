@@ -33,17 +33,19 @@ import styles from "./MessageAttachments.module.css";
  *
  * When either half is missing — an old message row without part ids, or the
  * token not yet minted — the attachment is listed without a link, exactly as
- * before, and the whole-message download below still always works.
+ * before, and the reader toolbar's "download original" still always works.
+ *
+ * P0-6 / C-04 removed the `email` prop: it existed only to feed the
+ * whole-message download button that used to sit under this list, which now
+ * lives once in the reader's overflow menu instead of once per message.
  */
 export function AttachmentList({
   attachments,
-  email,
   client,
   accountId,
   blobToken,
 }: {
   readonly attachments: readonly EmailBodyPart[];
-  readonly email: Email;
   readonly client: JmapClient;
   readonly accountId: string;
   readonly blobToken?: string | undefined;
@@ -99,7 +101,19 @@ export function AttachmentList({
           );
         })}
       </ul>
-      <DownloadOriginalButton email={email} client={client} accountId={accountId} />
+      {/*
+        P0-6 / C-04: "Descargar el mensaje original" is GONE from here.
+
+        It rendered under EVERY message's attachment list, which in a
+        six-message conversation put a developer's affordance six times
+        between the reader and the next message. It is not a per-message
+        action a person reaches for — it is a diagnostic — and it now lives
+        once, in the reader toolbar's ⋮, beside "Ver original", which is the
+        same file seen a different way.
+
+        `DownloadOriginalButton` itself stays exported and unchanged: the
+        toolbar's menu item calls the same download path.
+      */}
     </section>
   );
 }
@@ -113,15 +127,38 @@ export function AttachmentList({
  * pop its own credential dialog at the user. So the bytes are fetched with the
  * header attached, handed to a temporary anchor as a blob: URL, and the URL is
  * revoked immediately afterwards so the message does not stay in memory.
+ *
+ * # Two shapes, one implementation (P0-6 / C-04)
+ *
+ * It used to render under every message's attachment list. It now renders
+ * ONCE, as an item in the reader toolbar's overflow menu — so the same
+ * component has to be able to be a menu item as well as a standalone row.
+ *
+ * `variant` does that rather than a copy, and the reason is the state machine:
+ * the fetch has idle / working / failed states and a `role="status"` live
+ * region that must be present BEFORE the failure text appears (an element
+ * inserted together with its own text is not announced). A second
+ * implementation for the menu would be a second place for that to be got
+ * wrong, in the branch nobody looks at.
+ *
+ * In the menu the live region rides along inside the item, which is why the
+ * item is a `<li role="none">` wrapping a `role="menuitem"` button plus the
+ * status span — the shape `PopupMenu` expects.
  */
 export function DownloadOriginalButton({
   email,
   client,
   accountId,
+  variant = "row",
+  onDone,
 }: {
   readonly email: Email;
   readonly client: JmapClient;
   readonly accountId: string;
+  /** "menu" renders it as an overflow-menu item instead of a standalone row. */
+  readonly variant?: "row" | "menu";
+  /** Called after a download STARTS, so a menu can close itself. */
+  readonly onDone?: (() => void) | undefined;
 }): React.JSX.Element | null {
   const { t } = useTranslation();
   const [state, setState] = useState<"idle" | "working" | "failed">("idle");
@@ -165,6 +202,31 @@ export function DownloadOriginalButton({
   }, [client, accountId, email.blobId, filename]);
 
   if (email.blobId === undefined) return null;
+
+  if (variant === "menu") {
+    return (
+      <li role="none">
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.downloadMenuItem}
+          onClick={() => {
+            void download().then(() => {
+              onDone?.();
+            });
+          }}
+          disabled={state === "working"}
+        >
+          {state === "working" ? t("reader.downloading") : t("reader.downloadMessage")}
+        </button>
+        {/* Always present, so its message is ANNOUNCED when it appears rather
+            than being inserted alongside its own text. */}
+        <span role="status" aria-live="polite" className={styles.downloadStatus}>
+          {state === "failed" ? t("reader.downloadFailed") : ""}
+        </span>
+      </li>
+    );
+  }
 
   return (
     <div className={styles.downloadRow}>

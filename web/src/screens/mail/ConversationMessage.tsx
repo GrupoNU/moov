@@ -215,7 +215,6 @@ export function ConversationMessage({
             {(email.attachments ?? []).length > 0 && (
               <AttachmentList
                 attachments={email.attachments ?? []}
-                email={email}
                 client={client}
                 accountId={accountId}
                 blobToken={blobToken}
