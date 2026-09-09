@@ -324,10 +324,19 @@
   gap: var(--space-2);
 }
 
+/*
+ * D-06: Send is a PILL, and so is Send & Archive beside it.
+ *
+ * Canon 07 §7 records Gmail's as a "blue pill" and ours rendered as a rounded
+ * rectangle (--radius-md). It reads as a small thing and it is not: the pill is
+ * the single most recognisable shape in the composer, the one a person aims at
+ * without reading, and a rectangle in its place is the kind of difference the
+ * eye registers as "this is not Gmail" before it can say why.
+ */
 .send {
   padding: var(--space-2) var(--space-5);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full, 999px);
   background: var(--color-accent);
   color: var(--color-on-accent);
   font: inherit;
@@ -357,7 +366,9 @@
 .sendAndArchive {
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  /* D-06: the same pill, outlined. A pill next to a rectangle would read as
+     two unrelated controls rather than as one action and its variant. */
+  border-radius: var(--radius-full, 999px);
   background: var(--surface-default);
   color: var(--text-default);
   font: inherit;
