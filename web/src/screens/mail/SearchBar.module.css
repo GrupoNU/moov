@@ -197,6 +197,121 @@
 }
 
 /*
+ * E-06: a matching MESSAGE, which is a different shape from a suggestion.
+ *
+ * Three columns — sender, subject, date — in the same order and with the same
+ * proportions as a row of the list itself, so the popup reads as a preview of
+ * the results rather than as a fourth kind of suggestion. The subject takes the
+ * slack and truncates; the sender and the date are fixed, because a date that
+ * moved with the subject's length would make the column a ragged edge.
+ */
+.previewRow {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  cursor: pointer;
+}
+
+.previewRow[aria-selected="true"],
+.previewRow:hover {
+  background: var(--color-accent-tint);
+}
+
+.previewSender {
+  font-weight: var(--weight-medium, 500);
+  color: var(--text-strong);
+}
+
+.previewSender,
+.previewSubject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewDate {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * E-08: the "all results" row, separated from what is above it.
+ *
+ * The rule is the whole styling: it says "the list above is a sample, this is
+ * the way out of it". Without the separation it would read as a sixth message.
+ */
+.allRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  cursor: pointer;
+}
+
+.allRow[aria-selected="true"],
+.allRow:hover {
+  background: var(--color-accent-tint);
+}
+
+.allKey {
+  flex: none;
+  padding: 1px var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * E-07: the quick chips, at the TOP of the popup.
+ *
+ * They were a band under the box, which put a row of controls over the list
+ * whether or not anyone was searching. Here they appear exactly when they are
+ * useful — focused and empty — and disappear the moment a character is typed,
+ * because from then on the suggestions answer the same question better.
+ */
+.quickChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.quickChip {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--surface-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.quickChip:hover,
+.quickChip:focus-visible {
+  border-color: var(--color-accent);
+  background: var(--color-accent-tint);
+}
+
+/*
  * The "clear recent searches" affordance lives INSIDE the popup, as its last
  * row, rather than being positioned under it.
  *

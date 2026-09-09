@@ -9,7 +9,13 @@ import {
 } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
-import { createDebouncer, SEARCH_DEBOUNCE_MS } from "../../mail/search";
+import type { StringKey } from "../../i18n/strings";
+import {
+  createDebouncer,
+  isSearchable,
+  normalizeQuery,
+  SEARCH_DEBOUNCE_MS,
+} from "../../mail/search";
 import { buildSuggestions, type Suggestion } from "../../mail/searchSuggestions";
 import type { IndexedAddress } from "../../mail/addressIndex";
 import type { Label } from "../../mail/labelStore";
@@ -100,6 +106,36 @@ export interface SearchBarProps {
    * has no Sieve capability.
    */
   readonly onCreateFilter?: ((draft: FilterDraftFromSearch) => void) | undefined;
+  /**
+   * E-06: fetches the first few MATCHING MESSAGES for a query, without
+   * navigating.
+   *
+   * This is the debouncer's proper job, and the reason it survived P0-3. The
+   * debounce was written for the server's `maxConcurrentRequests` of 8 and then
+   * misused to run the actual search on every keystroke, which navigated
+   * mid-word; removing that left a timer with nothing to collapse. A preview is
+   * exactly what it was built for: many keystrokes, one request, and no route
+   * change to be wrong about.
+   *
+   * Absent — offline, or on a screen with no client — removes the message rows
+   * entirely. The operator and recent suggestions are unaffected, because they
+   * are computed from memory and never need a request.
+   */
+  readonly onPreviewSearch?: (
+    query: string,
+    signal: AbortSignal,
+  ) => Promise<readonly SearchPreviewRow[]>;
+  /** E-06: opens one previewed message. Absent disables the rows. */
+  readonly onOpenPreview?: (row: SearchPreviewRow) => void;
+}
+
+/** One matching message in the dropdown (E-06). */
+export interface SearchPreviewRow {
+  readonly id: string;
+  readonly sender: string;
+  readonly subject: string;
+  /** Already formatted by the caller, whose locale formatter this is. */
+  readonly date: string;
 }
 
 /** The section heading each suggestion kind carries, as a lookup not a chain. */
@@ -115,6 +151,64 @@ const NO_LABELS: readonly Label[] = [];
 const NO_MAILBOXES: readonly Mailbox[] = [];
 const NO_RECENT: readonly string[] = [];
 const NO_ADDRESSES: readonly IndexedAddress[] = [];
+const NO_PREVIEWS: readonly SearchPreviewRow[] = [];
+
+/**
+ * How many matching messages the dropdown shows (E-06).
+ *
+ * Five, which is Gmail's own count and the right order of magnitude for a list
+ * a person scans on the way to Enter. More would make the popup the page; fewer
+ * would not answer "is the thing I am looking for already here".
+ */
+const MAX_PREVIEWS = 5;
+
+/**
+ * How long to wait before asking the server for the previews (E-06).
+ *
+ * 300 ms rather than the 180 ms `SEARCH_DEBOUNCE_MS` the removed as-you-type
+ * search used, and the difference is deliberate: this request is a
+ * CONVENIENCE, not the search, so it should cost the server less and it is
+ * allowed to arrive a beat after the user stops. 180 ms was chosen to fire
+ * DURING typing; this one is meant to fire after it.
+ */
+const PREVIEW_DEBOUNCE_MS = 300;
+
+/**
+ * E-07: the shortcuts offered when the box is focused and empty.
+ *
+ * Three, and each is a query a person actually wants and would otherwise have
+ * to know the operator language to write. They emit ordinary grammar, so a chip
+ * and a typed query are the same thing to everything downstream — which is the
+ * invariant the whole search surface is built on.
+ */
+const QUICK_CHIPS: readonly { readonly query: string; readonly labelKey: StringKey }[] = [
+  { query: "has:attachment", labelKey: "search.chip.hasAttachment" },
+  { query: "newer_than:7d", labelKey: "search.chip.last7" },
+  /*
+   * "Enviados por mí" is `in:sent`, not a `from:` on the user's own address.
+   *
+   * Gmail's chip means "mail I sent", and the Sent folder IS that set — every
+   * message the server put there went out under this account. A `from:me` would
+   * be worse in both directions: it over-matches (a mailing list that echoes
+   * your own post back into the inbox) and it under-matches (a message sent
+   * from a second identity). The folder is the truth, so the folder is the
+   * query.
+   */
+  { query: "in:sent", labelKey: "search.quick.sentByMe" },
+];
+
+/** One row of the popup: a suggestion, a matching message, or the Enter row. */
+type PopupRow =
+  | { readonly kind: "suggestion"; readonly suggestion: Suggestion }
+  | { readonly kind: "preview"; readonly preview: SearchPreviewRow }
+  | { readonly kind: "all" };
+
+/** A stable React key per row, unique across the three kinds. */
+function rowKey(row: PopupRow): string {
+  if (row.kind === "suggestion") return `s:${row.suggestion.id}`;
+  if (row.kind === "preview") return `p:${row.preview.id}`;
+  return "all";
+}
 
 export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function SearchBar(
   {
@@ -129,10 +223,12 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     addressSuggestions = NO_ADDRESSES,
     onClearRecent,
     onCreateFilter,
+    onPreviewSearch,
+    onOpenPreview,
   },
   ref,
 ) {
-  const { t } = useTranslation();
+  const { t, format } = useTranslation();
   const ids = useId();
   const listboxId = `${ids}-suggestions`;
 
@@ -177,6 +273,53 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
   );
 
   /*
+   * E-06: the matching messages, fetched on a debounce and never navigating.
+   *
+   * The whole point of the effect running on `value` rather than being called
+   * from `handleChange` is that it also covers the paths that set the text
+   * WITHOUT a keystroke — the URL restoring a query, a chip rewriting one — so
+   * the preview never shows the previous query's messages under the new text.
+   *
+   * `AbortController` per run, cancelled on the next keystroke, so an early
+   * slow response cannot land after a later fast one and repaint the popup with
+   * stale rows. That is a real hazard here and not a theoretical one: the
+   * debounce collapses a burst but does not serialise what escapes it.
+   */
+  const [previews, setPreviews] = useState<readonly SearchPreviewRow[]>(NO_PREVIEWS);
+  const previewFor = useRef("");
+  useEffect(() => {
+    const query = normalizeQuery(value);
+    if (onPreviewSearch === undefined || !isOpen || !isSearchable(query)) {
+      setPreviews(NO_PREVIEWS);
+      previewFor.current = "";
+      return undefined;
+    }
+    if (previewFor.current === query) return undefined;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const rows = await onPreviewSearch(query, controller.signal);
+          if (controller.signal.aborted) return;
+          previewFor.current = query;
+          setPreviews(rows.slice(0, MAX_PREVIEWS));
+        } catch {
+          // A failed preview is not an error the user has to see: the search
+          // itself has not been run, and Enter still works. Silence here is
+          // the honest degradation, not a swallowed failure.
+          if (!controller.signal.aborted) setPreviews(NO_PREVIEWS);
+        }
+      })();
+    }, PREVIEW_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [value, isOpen, onPreviewSearch]);
+
+  /*
    * The popup closes on an outside pointer down — the same dismissal
    * `PopupMenu` implements, and for the same reason: a popup that only closes
    * on Escape traps a mouse user.
@@ -193,6 +336,33 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
       document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [isOpen, panelOpen]);
+
+  /**
+   * Every option in the popup, in render order (E-06, E-08).
+   *
+   * ONE array, because the arrow keys walk ONE virtual cursor. Keeping the
+   * suggestions and the message rows as two lists would mean two cursors and a
+   * hand-written hand-off between them, which is precisely where a combobox
+   * stops matching the APG pattern the review credited it with.
+   *
+   * The "all results" row is last and is present only when there is something
+   * to search for. It is the row that makes the message previews safe: without
+   * it a user who wanted the whole result list would see five messages and have
+   * no visible way to ask for the rest, and would conclude five is all there
+   * are.
+   */
+  /** E-07: the chips show only for a focused, EMPTY box. */
+  const showQuickChips = isOpen && value.trim() === "";
+
+  const rows = useMemo((): readonly PopupRow[] => {
+    const list: PopupRow[] = suggestions.map((suggestion) => ({
+      kind: "suggestion" as const,
+      suggestion,
+    }));
+    for (const preview of previews) list.push({ kind: "preview" as const, preview });
+    if (isSearchable(normalizeQuery(value))) list.push({ kind: "all" as const });
+    return list;
+  }, [suggestions, previews, value]);
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -245,10 +415,48 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     [onChange, debouncer],
   );
 
+  /**
+   * Runs the search the box currently holds (E-08's "all results" row).
+   *
+   * The same thing Enter does, extracted because the row and the key must not
+   * be able to diverge: a row labelled "Enter" that did something Enter does
+   * not would be worse than no row.
+   */
+  const runAll = useCallback((): void => {
+    setOpen(false);
+    setActiveIndex(-1);
+    debouncer.cancel();
+    onSearchRef.current(value);
+  }, [debouncer, value]);
+
+  /** Activates whichever kind of row the cursor is on (E-06, E-08). */
+  const activate = useCallback(
+    (row: PopupRow): void => {
+      if (row.kind === "suggestion") {
+        accept(row.suggestion);
+        return;
+      }
+      if (row.kind === "preview") {
+        /*
+         * Opening a previewed message does NOT run the search, and does not
+         * touch the list behind: the user found the one message they were
+         * after, and replacing their inbox with a result list they never asked
+         * for would be the screen doing something they did not.
+         */
+        setOpen(false);
+        setActiveIndex(-1);
+        onOpenPreview?.(row.preview);
+        return;
+      }
+      runAll();
+    },
+    [accept, onOpenPreview, runAll],
+  );
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>): void => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        if (suggestions.length === 0) return;
+        if (rows.length === 0) return;
         event.preventDefault();
         setOpen(true);
         setActiveIndex((current) => {
@@ -256,8 +464,8 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
           const next = current + step;
           // Wraps at both ends, which APG lists as the expected behaviour and
           // which saves a long list from a dead end at the bottom.
-          if (next < 0) return suggestions.length - 1;
-          if (next >= suggestions.length) return -1;
+          if (next < 0) return rows.length - 1;
+          if (next >= rows.length) return -1;
           return next;
         });
         return;
@@ -265,9 +473,9 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
 
       if (event.key === "Enter") {
         event.preventDefault();
-        const active = activeIndex >= 0 ? suggestions[activeIndex] : undefined;
+        const active = activeIndex >= 0 ? rows[activeIndex] : undefined;
         if (active !== undefined) {
-          accept(active);
+          activate(active);
           return;
         }
         /*
@@ -318,7 +526,7 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
         event.currentTarget.blur();
       }
     },
-    [suggestions, activeIndex, accept, debouncer, isOpen, value],
+    [rows, activeIndex, activate, debouncer, isOpen, value],
   );
 
   const activeId = activeIndex >= 0 ? `${listboxId}-${String(activeIndex)}` : undefined;
@@ -417,20 +625,61 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
         reference is an accessibility bug screen readers report as a broken
         widget.
       */}
-      <div className={styles.popup} hidden={!isOpen || suggestions.length === 0}>
+      <div className={styles.popup} hidden={!isOpen || (rows.length === 0 && !showQuickChips)}>
+      {/*
+        E-07: the quick chips, INSIDE the popup and above the rows.
+
+        They were a separate band under the box, which is not where Gmail puts
+        them and — more to the point — meant a band of controls sitting over the
+        list whether or not anyone was searching. Here they appear exactly when
+        they are useful: the box has focus and is EMPTY, which is the one moment
+        a person has no query and might take a suggested one.
+
+        They are `<button>`s and not options of the listbox, deliberately: they
+        do not complete what is being typed (nothing is), they start a search
+        outright. Putting them in the listbox would make the arrow keys walk
+        through three shortcuts before reaching the recent searches.
+      */}
+      {showQuickChips && (
+        <div className={styles.quickChips} role="group" aria-label={t("search.quick.label")}>
+          {QUICK_CHIPS.map((chip) => (
+            <button
+              key={chip.query}
+              type="button"
+              className={styles.quickChip}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onChange(chip.query);
+                setOpen(false);
+                debouncer.cancel();
+                onSearchRef.current(chip.query);
+              }}
+            >
+              {t(chip.labelKey)}
+            </button>
+          ))}
+        </div>
+      )}
+
       <ul
         id={listboxId}
         role="listbox"
         aria-label={t("search.suggestions.label")}
         className={styles.suggestions}
       >
-        {suggestions.map((suggestion, index) => (
+        {rows.map((row, index) => (
           <li
-            key={suggestion.id}
+            key={rowKey(row)}
             id={`${listboxId}-${String(index)}`}
             role="option"
             aria-selected={index === activeIndex}
-            className={`${styles.suggestion} ${index === activeIndex ? styles.suggestionActive : ""}`}
+            className={[
+              row.kind === "preview" ? styles.previewRow : styles.suggestion,
+              row.kind === "all" ? styles.allRow : "",
+              index === activeIndex ? styles.suggestionActive : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             /*
              * `onMouseDown` with preventDefault, NOT onClick: a click fires
              * after blur, and the blur would have closed the popup and
@@ -440,11 +689,39 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
              */
             onMouseDown={(event) => {
               event.preventDefault();
-              accept(suggestion);
+              activate(row);
             }}
           >
-            <span className={styles.suggestionKind}>{t(KIND_LABELS[suggestion.kind])}</span>
-            <span className={styles.suggestionText}>{suggestion.label}</span>
+            {row.kind === "suggestion" ? (
+              <>
+                <span className={styles.suggestionKind}>
+                  {t(KIND_LABELS[row.suggestion.kind])}
+                </span>
+                <span className={styles.suggestionText}>{row.suggestion.label}</span>
+              </>
+            ) : row.kind === "preview" ? (
+              <>
+                <span className={styles.previewSender}>{row.preview.sender}</span>
+                <span className={styles.previewSubject}>{row.preview.subject}</span>
+                <span className={styles.previewDate}>{row.preview.date}</span>
+              </>
+            ) : (
+              /*
+               * E-08: the row that makes the message previews safe.
+               *
+               * Without it a user who wanted the whole result list would see
+               * five messages and have no visible way to ask for the rest —
+               * and would reasonably conclude five is all there are. It names
+               * the key as well as being clickable, because the key is what a
+               * returning user will reach for.
+               */
+              <>
+                <span className={styles.suggestionText}>
+                  {format("search.allResults", normalizeQuery(value))}
+                </span>
+                <kbd className={styles.allKey}>{t("search.allResultsKey")}</kbd>
+              </>
+            )}
           </li>
         ))}
       </ul>

@@ -1293,6 +1293,12 @@ export const en = {
   "search.suggestions.labels": "Labels",
   "search.suggestions.operators": "Search operators",
   "search.suggestions.values": "Values",
+  "search.suggestions.messages": "Messages",
+  /* E-08: the row that keeps the five previews from reading as "all there is". */
+  "search.allResults": (query: string): string => `All results for “${query}”`,
+  "search.allResultsKey": "Enter",
+  "search.quick.label": "Quick searches",
+  "search.quick.sentByMe": "Sent by me",
   "search.suggestions.clearRecent": "Clear recent searches",
 
   // Refusals, each naming the term at fault.
@@ -2438,6 +2444,11 @@ export const es: Strings = {
   "search.suggestions.labels": "Etiquetas",
   "search.suggestions.operators": "Operadores de búsqueda",
   "search.suggestions.values": "Valores",
+  "search.suggestions.messages": "Mensajes",
+  "search.allResults": (query: string): string => `Todos los resultados para «${query}»`,
+  "search.allResultsKey": "Enter",
+  "search.quick.label": "Búsquedas rápidas",
+  "search.quick.sentByMe": "Enviados por mí",
   "search.suggestions.clearRecent": "Borrar búsquedas recientes",
 
   "search.refused.title": "Una parte de esa búsqueda no se pudo usar",

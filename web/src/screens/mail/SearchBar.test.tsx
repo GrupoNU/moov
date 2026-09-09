@@ -131,3 +131,161 @@ describe("E-11 — the options trigger and the recents on focus", () => {
     expect(trigger.querySelectorAll("circle").length).toBe(2);
   });
 });
+
+/**
+ * E-06, E-07, E-08 — what the popup holds besides suggestions.
+ *
+ * Gmail's dropdown answers three questions at once: what could I type (the
+ * suggestions), is my message already here (five matching conversations), and
+ * where is everything (the Enter row). Ours answered only the first, which is
+ * why the review called the combobox well built and badly fed.
+ */
+describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
+  const PREVIEWS = [
+    { id: "e1", sender: "Ana Gómez", subject: "Presupuesto marzo", date: "12 mar" },
+    { id: "e2", sender: "Bruno", subject: "Re: presupuesto", date: "9 mar" },
+  ];
+
+  function renderBar(
+    props: Partial<React.ComponentProps<typeof SearchBar>> = {},
+  ): { onSearch: ReturnType<typeof vi.fn>; onOpenPreview: ReturnType<typeof vi.fn> } {
+    const onSearch = vi.fn();
+    const onOpenPreview = vi.fn();
+    function Host(): React.JSX.Element {
+      const [value, setValue] = useState("");
+      return (
+        <I18nProvider locale="es">
+          <SearchBar
+            value={value}
+            onChange={setValue}
+            onSearch={onSearch}
+            isSearching={false}
+            onOpenPreview={onOpenPreview}
+            {...props}
+          />
+        </I18nProvider>
+      );
+    }
+    render(<Host />);
+    return { onSearch, onOpenPreview };
+  }
+
+  it("shows matching messages, without searching or navigating", async () => {
+    const user = userEvent.setup();
+    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const { onSearch } = renderBar({ onPreviewSearch });
+
+    await user.type(screen.getByRole("combobox"), "presupuesto");
+
+    expect(await screen.findByText("Presupuesto marzo")).toBeInTheDocument();
+    expect(screen.getByText("Ana Gómez")).toBeInTheDocument();
+    expect(screen.getByText("12 mar")).toBeInTheDocument();
+    // The inbox behind is untouched: this is the debouncer's proper job now,
+    // and it never calls the thing that changes the route.
+    expect(onSearch).not.toHaveBeenCalled();
+  });
+
+  it("collapses a burst of keystrokes into ONE request", async () => {
+    const user = userEvent.setup();
+    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    renderBar({ onPreviewSearch });
+
+    await user.type(screen.getByRole("combobox"), "presupuesto");
+    await screen.findByText("Presupuesto marzo");
+
+    // The reason the debouncer survived P0-3: many keystrokes, one request.
+    expect(onPreviewSearch).toHaveBeenCalledTimes(1);
+    expect(onPreviewSearch.mock.calls[0]?.[0]).toBe("presupuesto");
+  });
+
+  it("opens a previewed message and leaves the list alone", async () => {
+    const user = userEvent.setup();
+    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const { onSearch, onOpenPreview } = renderBar({ onPreviewSearch });
+
+    await user.type(screen.getByRole("combobox"), "presupuesto");
+    await user.click(await screen.findByText("Presupuesto marzo"));
+
+    expect(onOpenPreview).toHaveBeenCalledWith(expect.objectContaining({ id: "e1" }));
+    // Not a search: the user found the message they wanted, and replacing
+    // their inbox with a result list they never asked for would be the screen
+    // doing something they did not.
+    expect(onSearch).not.toHaveBeenCalled();
+  });
+
+  it("offers the E-08 row, which runs the whole search", async () => {
+    const user = userEvent.setup();
+    const { onSearch } = renderBar();
+
+    await user.type(screen.getByRole("combobox"), "presupuesto");
+    await user.click(screen.getByText(/todos los resultados para/i));
+
+    expect(onSearch).toHaveBeenCalledWith("presupuesto");
+  });
+
+  it("keeps the E-08 row and the Enter key doing the same thing", async () => {
+    const user = userEvent.setup();
+    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    const { onSearch } = renderBar({ onPreviewSearch });
+
+    const input = screen.getByRole("combobox");
+    await user.type(input, "presupuesto");
+    await screen.findByText("Presupuesto marzo");
+    await user.keyboard("{Enter}");
+
+    // A row labelled "Enter" that did something Enter does not would be worse
+    // than no row at all.
+    expect(onSearch).toHaveBeenCalledWith("presupuesto");
+  });
+
+  it("walks ONE cursor across suggestions, messages and the Enter row", async () => {
+    const user = userEvent.setup();
+    const onPreviewSearch = vi.fn(() => Promise.resolve(PREVIEWS));
+    renderBar({ onPreviewSearch, recentSearches: ["presupuesto marzo"] });
+
+    const input = screen.getByRole("combobox");
+    await user.type(input, "presupuesto");
+    await screen.findByText("Presupuesto marzo");
+
+    const options = screen.getAllByRole("option");
+    // Recent + two messages + the Enter row: one listbox, one virtual cursor.
+    // Two lists would mean two cursors and a hand-written hand-off, which is
+    // where a combobox stops matching the APG pattern.
+    expect(options.length).toBe(4);
+    await user.keyboard("{ArrowDown}");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("shows the quick chips only while the box is focused and EMPTY (E-07)", async () => {
+    const user = userEvent.setup();
+    renderBar();
+
+    const input = screen.getByRole("combobox");
+    await user.click(input);
+    expect(screen.getByRole("group", { name: /búsquedas rápidas/i })).toBeInTheDocument();
+
+    await user.type(input, "x");
+    // From here on the suggestions answer the same question better.
+    expect(screen.queryByRole("group", { name: /búsquedas rápidas/i })).toBeNull();
+  });
+
+  it("emits ordinary grammar from a chip", async () => {
+    const user = userEvent.setup();
+    const { onSearch } = renderBar();
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("button", { name: /con adjunto/i }));
+
+    // A chip and a typed query are the same thing to everything downstream.
+    expect(onSearch).toHaveBeenCalledWith("has:attachment");
+  });
+
+  it("shows no message rows at all without a preview source", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    await user.type(screen.getByRole("combobox"), "presupuesto");
+    // Offline, or a screen with no client: the operator and recent suggestions
+    // still work, because they never need a request.
+    expect(screen.queryByText("Presupuesto marzo")).toBeNull();
+  });
+});

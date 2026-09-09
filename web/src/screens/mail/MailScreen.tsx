@@ -172,7 +172,7 @@ import { ListToolbar } from "./ListToolbar";
 import { MessageList } from "./MessageList";
 import { PaneDivider } from "./PaneDivider";
 import { ReadingPane } from "./ReadingPane";
-import { SearchBar } from "./SearchBar";
+import { SearchBar, type SearchPreviewRow } from "./SearchBar";
 import { TopBar } from "./TopBar";
 import { QuickSettingsPanel } from "../settings/QuickSettingsPanel";
 import { SettingsPage } from "../settings/SettingsPage";
@@ -185,7 +185,7 @@ import type { QuotaRowProps } from "../settings/QuotaRow";
 import type { MigrateResult } from "../../mail/migrateKeyword";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useMessageActions } from "./useMessageActions";
-import { formatFullDate } from "../../mail/format";
+import { formatFullDate, formatListDate } from "../../mail/format";
 import styles from "./MailScreen.module.css";
 
 /**
@@ -2877,6 +2877,64 @@ export function MailScreen(): React.JSX.Element {
     [replace],
   );
 
+  /**
+   * E-06: the first few matching messages, for the search dropdown.
+   *
+   * # Why this does not go through the list's own machinery
+   *
+   * It deliberately does NOT set `emails`, does not touch `position`, and does
+   * not navigate. The whole value of a preview is that the inbox behind the
+   * popup is still the inbox: a user who types three letters and then changes
+   * their mind has lost nothing. Routing it through the list state would make
+   * every keystroke a navigation again, which is the P0-3 the last round fixed.
+   *
+   * It reuses `planFilter`, so the preview and the real search answer the same
+   * grammar — a popup that found messages a subsequent Enter could not would be
+   * worse than no popup. A query the plan refuses returns nothing rather than
+   * falling back to a text search, for the same reason the list does.
+   *
+   * `collapseThreads` is deliberately off: these are MESSAGES to open, not
+   * conversations to browse, and collapsing would make a five-row sample of a
+   * busy thread show one row.
+   */
+  const previewSearch = useCallback(
+    async (query: string, signal: AbortSignal): Promise<readonly SearchPreviewRow[]> => {
+      if (client === undefined || accountId === "") return [];
+      const plan = planFilter(parseSearchQuery(query), mailboxes);
+      if (plan.filter === undefined) return [];
+      const page = await queryEmails(
+        client,
+        accountId,
+        { kind: "query", filter: plan.filter },
+        // Five, matching what the popup renders. Asking for the server's whole
+        // 200-row window to show five rows would be work nobody sees.
+        { limit: 5, signal },
+      );
+      return page.emails.map((email) => ({
+        id: email.id,
+        sender: email.from?.[0]?.name ?? email.from?.[0]?.email ?? "",
+        subject: email.subject === "" ? t("list.noSubject") : email.subject,
+        date: formatListDate(email.receivedAt, locale),
+      }));
+    },
+    [client, accountId, mailboxes, t, locale],
+  );
+
+  /**
+   * E-06: opens a previewed message without running the search.
+   *
+   * The user found the one message they were after. Replacing their inbox with
+   * a result list they never asked for would be the screen doing something they
+   * did not — so this navigates to the message on the CURRENT route, exactly as
+   * clicking a row does.
+   */
+  const openPreview = useCallback(
+    (row: SearchPreviewRow): void => {
+      openFromRow(row.id);
+    },
+    [openFromRow],
+  );
+
   /** E3: forgets the stored searches, from the dropdown's own affordance. */
   const clearRecentSearches = useCallback((): void => {
     setRecentSearches([]);
@@ -4122,6 +4180,14 @@ export function MailScreen(): React.JSX.Element {
           /* E-04/E-05: the same E7 index the composer completes recipients
              from, so `from:` in the box offers the people you write to. */
           addressSuggestions={addressIndex.suggestions}
+          /*
+           * E-06: the matching messages, offered only ONLINE. Offline the
+           * cached list is what there is, and a popup promising server-side
+           * matches nothing can fetch would be a worse answer than none.
+           */
+          {...(client !== undefined && !isOfflineMode
+            ? { onPreviewSearch: previewSearch, onOpenPreview: openPreview }
+            : {})}
           onClearRecent={clearRecentSearches}
           /*
            * B7: "Crear filtro" (canon 07 §8). Passed only when the server
