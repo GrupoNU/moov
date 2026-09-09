@@ -13,13 +13,19 @@ import {
   type Theme,
 } from "../../mail/prefs";
 import { applyTheme, saveThemePreference } from "../../theme/theme";
-import type { PlainStringKey } from "./registry";
 import {
   DensityThumb,
   InboxTypeThumb,
   ReadingPaneThumb,
   ThemeThumb,
 } from "./QuickThumbnails";
+import { OptionGroup } from "./OptionGroup";
+import {
+  DENSITY_LABELS,
+  INBOX_TYPE_LABELS,
+  READING_PANE_LABELS,
+  THEME_LABELS,
+} from "./optionLabels";
 import styles from "./QuickSettingsPanel.module.css";
 
 /**
@@ -63,42 +69,6 @@ import styles from "./QuickSettingsPanel.module.css";
  * of the settings: changing density here and opening the page shows the new
  * value, because there is nothing to keep in step.
  */
-
-/**
- * The option labels, written out per value rather than built by templating the
- * key.
- *
- * `` `settings.density.${option}` `` would need an `as PlainStringKey` to
- * compile, and that cast is exactly the thing this table exists to avoid: it
- * would let a renamed or deleted string key pass the type checker and reach a
- * user as a raw key on screen. Written as literals, each one is checked against
- * `Strings` — which is derived from the English table, so a missing SPANISH
- * translation is a compile error too. That guarantee is the whole point of the
- * i18n module's design and a template literal quietly opts out of it.
- */
-const DENSITY_LABELS: Readonly<Record<Density, PlainStringKey>> = {
-  default: "settings.density.default",
-  comfortable: "settings.density.comfortable",
-  compact: "settings.density.compact",
-};
-
-const THEME_LABELS: Readonly<Record<Theme, PlainStringKey>> = {
-  light: "theme.light",
-  dark: "theme.dark",
-  system: "theme.system",
-};
-
-const INBOX_TYPE_LABELS: Readonly<Record<InboxType, PlainStringKey>> = {
-  default: "settings.inboxType.default",
-  unread_first: "settings.inboxType.unread_first",
-  starred_first: "settings.inboxType.starred_first",
-};
-
-const READING_PANE_LABELS: Readonly<Record<ReadingPane, PlainStringKey>> = {
-  none: "settings.readingPane.none",
-  right: "settings.readingPane.right",
-  bottom: "settings.readingPane.bottom",
-};
 
 export interface QuickSettingsPanelProps {
   readonly isOpen: boolean;
@@ -242,7 +212,7 @@ export function QuickSettingsPanel({
       </button>
 
       <div className={styles.sections}>
-        <ThumbGroup<Density>
+        <OptionGroup<Density>
           legendKey="settings.density.label"
           value={prefs.density}
           options={DENSITIES}
@@ -253,7 +223,7 @@ export function QuickSettingsPanel({
           renderThumb={(option) => <DensityThumb density={option} />}
         />
 
-        <ThumbGroup<Theme>
+        <OptionGroup<Theme>
           legendKey="theme.label"
           value={prefs.theme}
           options={THEMES}
@@ -264,7 +234,7 @@ export function QuickSettingsPanel({
           renderThumb={(option) => <ThemeThumb theme={option} />}
         />
 
-        <ThumbGroup<InboxType>
+        <OptionGroup<InboxType>
           legendKey="settings.inboxType.label"
           value={prefs.inboxType}
           options={INBOX_TYPES}
@@ -275,7 +245,7 @@ export function QuickSettingsPanel({
           renderThumb={(option) => <InboxTypeThumb inboxType={option} />}
         />
 
-        <ThumbGroup<ReadingPane>
+        <OptionGroup<ReadingPane>
           legendKey="settings.readingPane.label"
           value={prefs.readingPane}
           options={READING_PANES}
@@ -287,62 +257,5 @@ export function QuickSettingsPanel({
         />
       </div>
     </aside>
-  );
-}
-
-/**
- * One labelled group of radio-plus-thumbnail options.
- *
- * # Why real radios and a real fieldset
- *
- * The keyboard behaviour of a radio group — arrow keys move between options,
- * the whole group is ONE tab stop, the checked option is where focus enters —
- * comes from the browser for free and is subtly wrong in every hand-rolled
- * version. The fieldset's legend is what names the group when a screen reader
- * announces "Density, Compact, radio button, 3 of 3"; without it each option is
- * announced with no idea what it is an option OF.
- *
- * The thumbnail is inside the `<label>` so clicking the picture selects the
- * option — which is what a picture of the result invites, and what makes the
- * whole panel feel like Gmail's rather than like a form with illustrations.
- */
-function ThumbGroup<T extends string>({
-  legendKey,
-  value,
-  options,
-  labelKey,
-  onChange,
-  renderThumb,
-}: {
-  readonly legendKey: PlainStringKey;
-  readonly value: T;
-  readonly options: readonly T[];
-  readonly labelKey: (option: T) => PlainStringKey;
-  readonly onChange: (next: T) => void;
-  readonly renderThumb: (option: T) => React.ReactNode;
-}): React.JSX.Element {
-  const { t } = useTranslation();
-  const groupName = useId();
-
-  return (
-    <fieldset className={styles.group}>
-      <legend className={styles.legend}>{t(legendKey)}</legend>
-      {options.map((option) => (
-        <label key={option} className={styles.option}>
-          <input
-            type="radio"
-            className={styles.radio}
-            name={groupName}
-            value={option}
-            checked={value === option}
-            onChange={() => {
-              onChange(option);
-            }}
-          />
-          <span className={styles.optionLabel}>{t(labelKey(option))}</span>
-          {renderThumb(option)}
-        </label>
-      ))}
-    </fieldset>
   );
 }

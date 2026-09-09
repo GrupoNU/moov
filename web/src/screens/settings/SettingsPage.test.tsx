@@ -165,8 +165,11 @@ describe("the tab row", () => {
     renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
+    // F-34/F-35: a radio GROUP with previews, not a select. The fieldset's
+    // legend is what names it — visually hidden, because the row's own left
+    // column already prints the setting's name.
     expect(
-      screen.getByRole("combobox", { name: en["settings.inboxType.label"] }),
+      screen.getByRole("group", { name: en["settings.inboxType.label"] }),
     ).toBeInTheDocument();
     // The previous tab's controls are gone, not merely scrolled past.
     expect(
@@ -318,7 +321,7 @@ describe("the quick-panel pointer (P0-7)", () => {
     ).not.toBeInTheDocument();
     // The live rows of the tab are untouched — this removed two rows, not four.
     expect(
-      screen.getByRole("combobox", { name: en["settings.readingPane.label"] }),
+      screen.getByRole("group", { name: en["settings.readingPane.label"] }),
     ).toBeInTheDocument();
   });
 
@@ -378,7 +381,7 @@ describe("settings search (D-5)", () => {
     );
 
     expect(
-      screen.getByRole("combobox", { name: en["settings.readingPane.label"] }),
+      screen.getByRole("group", { name: en["settings.readingPane.label"] }),
     ).toBeInTheDocument();
   });
 
@@ -414,7 +417,7 @@ describe("settings search (D-5)", () => {
     );
 
     expect(
-      screen.getByRole("combobox", { name: en["settings.images.label"] }),
+      screen.getByRole("group", { name: en["settings.images.label"] }),
     ).toBeInTheDocument();
   });
 
@@ -522,8 +525,10 @@ describe("the preference controls", () => {
     renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
-    const select = screen.getByRole("combobox", { name: en["settings.readingPane.label"] });
-    const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+    const group = screen.getByRole("group", { name: en["settings.readingPane.label"] });
+    const values = within(group)
+      .getAllByRole("radio")
+      .map((radio) => (radio as HTMLInputElement).value);
     expect(values).toEqual(["none", "right", "bottom"]);
   });
 
@@ -532,8 +537,10 @@ describe("the preference controls", () => {
     renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
-    const select = screen.getByRole("combobox", { name: en["settings.inboxType.label"] });
-    const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+    const group = screen.getByRole("group", { name: en["settings.inboxType.label"] });
+    const values = within(group)
+      .getAllByRole("radio")
+      .map((radio) => (radio as HTMLInputElement).value);
     // No "Important first" and no "Priority Inbox": both need the importance
     // classifier, which is AI-phase (GC-2's rule applied to inbox types).
     expect(values).toEqual(["default", "unread_first", "starred_first"]);
@@ -709,15 +716,31 @@ describe("the v2 rows exist and write their key", () => {
     expect(control).not.toBeChecked();
   });
 
-  it("offers the reply-default select with both verbs", async () => {
+  /*
+   * F-26: two options, so radios with Gmail's inline explanation — not a
+   * select whose collapsed state shows one of the two.
+   */
+  it("offers the reply default as radios with both verbs, each explained", async () => {
     const user = userEvent.setup();
     renderPage();
     await openAt(user, en["settings.section.general"]);
 
-    const control = screen.getByRole("combobox", { name: en["settings.replyBehavior.label"] });
-    expect(control).toHaveValue("reply");
-    await user.selectOptions(control, "replyAll");
-    expect(control).toHaveValue("replyAll");
+    const group = screen.getByRole("group", { name: en["settings.replyBehavior.label"] });
+    expect(
+      within(group).getByRole("radio", { name: en["settings.replyBehavior.reply"] }),
+    ).toBeChecked();
+    // The explanation is what makes the radios worth more than the select.
+    expect(within(group).getByText(en["settings.replyBehavior.replyNote"])).toBeInTheDocument();
+    expect(
+      within(group).getByText(en["settings.replyBehavior.replyAllNote"]),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(group).getByRole("radio", { name: en["settings.replyBehavior.replyAll"] }),
+    );
+    expect(
+      within(group).getByRole("radio", { name: en["settings.replyBehavior.replyAll"] }),
+    ).toBeChecked();
   });
 
   it("gives the offline section two real depth controls instead of a promise", async () => {

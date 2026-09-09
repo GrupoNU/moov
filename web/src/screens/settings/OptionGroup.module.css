@@ -1,0 +1,131 @@
+/*
+ * The shared radio group (F-26, F-34, F-35).
+ *
+ * Two variants over one markup: `thumb` is the quick panel's (label left,
+ * preview pushed to the right edge so the pictures line up in a scannable
+ * column) and `inline` is the settings page's for options with no picture
+ * (radio, label, and a grey sentence beside it).
+ *
+ * The thumbnails themselves keep their sizing in `QuickSettingsPanel.module.css`
+ * — `QuickThumbnails` renders `styles.thumb` from there, and duplicating the
+ * 48×32 box here would be a second definition of one number.
+ */
+
+/* The fieldset's default border and padding would draw a box around every
+ * group; the legend alone is enough separation at this size. */
+.group,
+.groupInline {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.groupInline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.legend {
+  padding: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+/*
+ * One option row. The thumbnail is pushed to the right edge (`margin-left:auto`
+ * on the SVG, in QuickSettingsPanel.module.css) so every preview lines up in
+ * one column regardless of how long its label is — which is what lets the eye
+ * compare the pictures instead of hunting for them.
+ * The `<label>` inside it (`.optionMain`) wraps the radio and
+ * its NAME only — see the component on why the explanation is a sibling rather
+ * than a child, and therefore not part of the accessible name.
+ */
+.option,
+.optionInline {
+  display: flex;
+  min-width: 0;
+  border-radius: var(--radius-md);
+}
+
+.option {
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+}
+
+/* The inline variant stacks the name over its explanation, so a sentence long
+ * enough to wrap does not push the radio away from the word it labels. */
+.optionInline {
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1) 0;
+}
+
+.option:hover,
+.optionInline:hover {
+  background: var(--surface-sunken);
+}
+
+/*
+ * The clickable half. `flex: 1` in the thumb variant so `margin-left: auto` on
+ * the preview still pushes it to the row's right edge.
+ */
+.optionMain {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* The native radio, kept. Its focus ring, its arrow-key behaviour and its
+ * forced-colors rendering all come free and are all things a styled span would
+ * have had to reimplement. */
+.radio {
+  flex: none;
+  accent-color: var(--color-accent);
+}
+
+.optionLabel {
+  font-size: var(--text-sm);
+  color: var(--text-default);
+}
+
+/*
+ * F-26: Gmail's inline explanation. Grey and smaller than the label, on the
+ * same line where it fits — the sentence answers "what does this one do" at the
+ * moment of comparison, which is the entire reason radios beat a select here.
+ */
+.optionNote {
+  /* Indented to the label's x, so the sentence reads as belonging to the
+   * option above it rather than to the group. The radio is ~13px plus the
+   * row's gap. */
+  padding-left: calc(13px + var(--space-3));
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+/*
+ * The chosen option's preview is the one the eye should land on. A ring rather
+ * than a fill, so the picture inside it is unchanged — tinting the thumbnail
+ * would make the selected density look like a different density.
+ *
+ * A `box-shadow` ring, NOT `outline`. The a11y gate (`styles/a11y.test.ts`)
+ * reserves `outline` for the focus token and it is right to: a SELECTION ring
+ * drawn with the same property as the FOCUS ring makes the two
+ * indistinguishable the moment they coincide, which is exactly when a keyboard
+ * user needs to tell "this is where I am" from "this is what is chosen".
+ * `box-shadow` leaves the focus outline free to draw on top.
+ */
+.optionMain:has(.radio:checked) svg {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+.optionMain:has(.radio:checked) .optionLabel {
+  font-weight: var(--weight-medium);
+  color: var(--text-strong);
+}

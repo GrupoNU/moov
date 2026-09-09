@@ -95,54 +95,13 @@
   margin-top: var(--space-5);
 }
 
-/* The fieldset's default border and padding would draw a box around every
- * group; the legend alone is enough separation at this size. */
-.group {
-  margin: 0;
-  padding: 0;
-  border: none;
-}
-
-.legend {
-  padding: 0 0 var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  color: var(--text-strong);
-}
-
 /*
- * One option: radio, label, thumbnail. The thumbnail is pushed to the right
- * edge with `margin-left:auto` so every preview in the panel lines up in one
- * column regardless of how long its label is — which is what lets the eye
- * compare the three pictures instead of hunting for them.
+ * The thumbnail box. The group, its radios, its labels and the selection ring
+ * live in `OptionGroup.module.css` now — one implementation shared with the
+ * settings page (F-34/F-35). What stays here is the PICTURE's own geometry,
+ * because `QuickThumbnails` renders this class and the settings page renders
+ * the same component.
  */
-.option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-
-.option:hover {
-  background: var(--surface-sunken);
-}
-
-/* The native radio, kept. Its focus ring, its arrow-key behaviour and its
- * forced-colors rendering all come free and are all things a styled span would
- * have had to reimplement. */
-.radio {
-  flex: none;
-  accent-color: var(--color-accent);
-}
-
-.optionLabel {
-  min-width: 0;
-  font-size: var(--text-sm);
-  color: var(--text-default);
-}
-
 .thumb {
   flex: none;
   width: 48px;
@@ -150,25 +109,4 @@
   margin-left: auto;
   color: var(--text-muted);
   border-radius: var(--radius-sm);
-}
-
-/*
- * The chosen option's preview is the one the eye should land on. A ring rather
- * than a fill, so the picture inside it is unchanged — tinting the thumbnail
- * would make the selected density look like a different density.
- *
- * A `box-shadow` ring, NOT `outline`. The a11y gate (`styles/a11y.test.ts`)
- * reserves `outline` for the focus token and it is right to: a SELECTION ring
- * drawn with the same property as the FOCUS ring makes the two
- * indistinguishable the moment they coincide, which is exactly when a keyboard
- * user needs to tell "this is where I am" from "this is what is chosen".
- * `box-shadow` leaves the focus outline free to draw on top.
- */
-.option:has(.radio:checked) .thumb {
-  box-shadow: 0 0 0 2px var(--color-accent);
-}
-
-.option:has(.radio:checked) .optionLabel {
-  font-weight: var(--weight-medium);
-  color: var(--text-strong);
 }

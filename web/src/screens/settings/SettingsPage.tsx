@@ -23,6 +23,23 @@ import { BlockedSection, type BlockedSectionProps } from "./BlockedSection";
 import { FiltersSection, type FiltersSectionProps } from "./FiltersSection";
 import { ForwardingSection, type ForwardingSectionProps } from "./ForwardingSection";
 import { LabelsSection, type LabelsSectionProps } from "./LabelsSection";
+import { OptionGroup } from "./OptionGroup";
+/*
+ * F-34/F-35: the page renders the PANEL's thumbnails and the same label tables
+ * the panel reads. One implementation behind both surfaces is what keeps them
+ * from drifting into different words for the same option.
+ */
+import {
+  AUTO_ADVANCE_LABELS,
+  AUTO_ADVANCE_NOTES,
+  IMAGES_LABELS,
+  IMAGES_NOTES,
+  INBOX_TYPE_LABELS,
+  READING_PANE_LABELS,
+  REPLY_BEHAVIOR_LABELS,
+  REPLY_BEHAVIOR_NOTES,
+} from "./optionLabels";
+import { InboxTypeThumb, ReadingPaneThumb } from "./QuickThumbnails";
 import { QuotaRow, type QuotaRowProps } from "./QuotaRow";
 import { VacationSection, type VacationSectionProps } from "./VacationSection";
 import { SETTINGS_TABS, type SettingsTab } from "../../router/routes";
@@ -557,16 +574,23 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
 
       {showRow("images") && (
         <SettingRow labelKey="settings.images.label" descriptionKey="settings.images.description">
-          <Select
-            label={t("settings.images.label")}
+          {/*
+            F-26: two options, so radios with an inline explanation — Gmail's
+            own shape. A collapsed select shows ONE of them, which is the wrong
+            picture for a choice whose difficulty is telling two similar options
+            apart.
+          */}
+          <OptionGroup<Prefs["imagesPolicy"]>
+            legendKey="settings.images.label"
+            showLegend={false}
+            variant="inline"
             value={prefs.prefs.imagesPolicy}
-            onChange={(value) => {
-              void set("imagesPolicy", value as Prefs["imagesPolicy"]);
+            options={IMAGES_POLICIES}
+            labelKey={(policy) => IMAGES_LABELS[policy]}
+            describeKey={(policy) => IMAGES_NOTES[policy]}
+            onChange={(policy) => {
+              void set("imagesPolicy", policy);
             }}
-            options={IMAGES_POLICIES.map((policy) => ({
-              value: policy,
-              label: policy === "always" ? t("settings.images.always") : t("settings.images.ask"),
-            }))}
           />
         </SettingRow>
       )}
@@ -603,21 +627,17 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.autoAdvance.label"
           descriptionKey="settings.autoAdvance.description"
         >
-          <Select
-            label={t("settings.autoAdvance.label")}
+          <OptionGroup<Prefs["autoAdvance"]>
+            legendKey="settings.autoAdvance.label"
+            showLegend={false}
+            variant="inline"
             value={prefs.prefs.autoAdvance}
-            onChange={(value) => {
-              void set("autoAdvance", value as Prefs["autoAdvance"]);
+            options={AUTO_ADVANCE}
+            labelKey={(mode) => AUTO_ADVANCE_LABELS[mode]}
+            describeKey={(mode) => AUTO_ADVANCE_NOTES[mode]}
+            onChange={(mode) => {
+              void set("autoAdvance", mode);
             }}
-            options={AUTO_ADVANCE.map((mode) => ({
-              value: mode,
-              label:
-                mode === "list"
-                  ? t("settings.autoAdvance.list")
-                  : mode === "newer"
-                    ? t("settings.autoAdvance.newer")
-                    : t("settings.autoAdvance.older"),
-            }))}
           />
         </SettingRow>
       )}
@@ -678,19 +698,17 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.replyBehavior.label"
           descriptionKey="settings.replyBehavior.description"
         >
-          <Select
-            label={t("settings.replyBehavior.label")}
+          <OptionGroup<Prefs["defaultReplyBehavior"]>
+            legendKey="settings.replyBehavior.label"
+            showLegend={false}
+            variant="inline"
             value={prefs.prefs.defaultReplyBehavior}
-            onChange={(value) => {
-              void set("defaultReplyBehavior", value as Prefs["defaultReplyBehavior"]);
+            options={REPLY_BEHAVIORS}
+            labelKey={(behavior) => REPLY_BEHAVIOR_LABELS[behavior]}
+            describeKey={(behavior) => REPLY_BEHAVIOR_NOTES[behavior]}
+            onChange={(behavior) => {
+              void set("defaultReplyBehavior", behavior);
             }}
-            options={REPLY_BEHAVIORS.map((behavior) => ({
-              value: behavior,
-              label:
-                behavior === "reply"
-                  ? t("settings.replyBehavior.reply")
-                  : t("settings.replyBehavior.replyAll"),
-            }))}
           />
         </SettingRow>
       )}
@@ -725,31 +743,37 @@ function InboxSection({
   readonly isSearchHit: (id: string) => boolean;
   readonly onOpenQuickSettings?: (() => void) | undefined;
 }): React.JSX.Element {
-  const { t } = useTranslation();
   const set = prefs.setPref;
 
   return (
     <>
+      {/*
+        F-34/F-35: the two rows Gmail illustrates, illustrated.
+
+        Both were one-line `<select>`s on a tab that had NO previews at all,
+        while the quick panel showed the same two settings as radios with
+        pictures. The picture is not decoration here: "A la derecha de la
+        lista" versus "Debajo" is understood in a glance that a sentence is
+        not, and a collapsed select shows one of the three.
+
+        Same component, same thumbnails, same label tables as the panel — see
+        `OptionGroup` on why the reuse is the point rather than a saving.
+      */}
       {showRow("inboxType") && (
         <SettingRow
           labelKey="settings.inboxType.label"
           descriptionKey="settings.inboxType.description"
         >
-          <Select
-            label={t("settings.inboxType.label")}
+          <OptionGroup<Prefs["inboxType"]>
+            legendKey="settings.inboxType.label"
+            showLegend={false}
             value={prefs.prefs.inboxType}
-            onChange={(value) => {
-              void set("inboxType", value as Prefs["inboxType"]);
+            options={INBOX_TYPES}
+            labelKey={(type) => INBOX_TYPE_LABELS[type]}
+            onChange={(type) => {
+              void set("inboxType", type);
             }}
-            options={INBOX_TYPES.map((type) => ({
-              value: type,
-              label:
-                type === "default"
-                  ? t("settings.inboxType.default")
-                  : type === "unread_first"
-                    ? t("settings.inboxType.unread_first")
-                    : t("settings.inboxType.starred_first"),
-            }))}
+            renderThumb={(type) => <InboxTypeThumb inboxType={type} />}
           />
         </SettingRow>
       )}
@@ -759,21 +783,16 @@ function InboxSection({
           labelKey="settings.readingPane.label"
           descriptionKey="settings.readingPane.description"
         >
-          <Select
-            label={t("settings.readingPane.label")}
+          <OptionGroup<Prefs["readingPane"]>
+            legendKey="settings.readingPane.label"
+            showLegend={false}
             value={prefs.prefs.readingPane}
-            onChange={(value) => {
-              void set("readingPane", value as Prefs["readingPane"]);
+            options={READING_PANES}
+            labelKey={(pane) => READING_PANE_LABELS[pane]}
+            onChange={(pane) => {
+              void set("readingPane", pane);
             }}
-            options={READING_PANES.map((pane) => ({
-              value: pane,
-              label:
-                pane === "none"
-                  ? t("settings.readingPane.none")
-                  : pane === "right"
-                    ? t("settings.readingPane.right")
-                    : t("settings.readingPane.bottom"),
-            }))}
+            renderThumb={(pane) => <ReadingPaneThumb pane={pane} />}
           />
         </SettingRow>
       )}
