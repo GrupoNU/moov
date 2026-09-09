@@ -393,8 +393,21 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
           setOpen(false);
         }}
       >
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
-          <path d="M4 6h12M6.5 10h7M9 14h2" />
+        {/*
+          E-11: SLIDERS, not a funnel and not a caret.
+
+          The old path was a three-line taper, which reads as a filter funnel —
+          the icon for "narrow these results", a thing this button does not do.
+          Gmail's is a pair of horizontal rails with a knob on each, and the
+          knobs are the whole difference: they say the control OPENS SETTINGS
+          you adjust, which is exactly what the advanced panel is. A caret would
+          have said "there is more of this list below", which is what the
+          suggestions popup does and this button does not.
+        */}
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true" focusable="false">
+          <path d="M3 7h4M11 7h6M3 13h8M15 13h2" />
+          <circle cx="9" cy="7" r="1.9" />
+          <circle cx="13" cy="13" r="1.9" />
         </svg>
       </button>
 

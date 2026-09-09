@@ -86,3 +86,48 @@ describe("the search field", () => {
     expect(onSearch).toHaveBeenCalledWith("");
   });
 });
+
+/**
+ * E-11 — the panel trigger, and where recent searches come from.
+ *
+ * Two halves of one finding. The trigger drew a three-line taper, which reads
+ * as a FILTER FUNNEL — the icon for "narrow these results", a thing this button
+ * does not do — and the review asked for Gmail's sliders. And it asked that
+ * recent searches appear on FOCUS rather than behind that button, because
+ * "what did I search for last time" is the first question a person has when
+ * they click into an empty box, not something to go looking for.
+ */
+describe("E-11 — the options trigger and the recents on focus", () => {
+  function withRecents(recent: readonly string[]) {
+    const onSearch = vi.fn();
+    render(
+      <I18nProvider locale="es">
+        <SearchBar
+          value=""
+          onChange={vi.fn()}
+          onSearch={onSearch}
+          isSearching={false}
+          recentSearches={recent}
+        />
+      </I18nProvider>,
+    );
+    return { onSearch };
+  }
+
+  it("shows recent searches on focus, with no click on the trigger", async () => {
+    const user = userEvent.setup();
+    withRecents(["factura marzo", "from:ana"]);
+
+    await user.click(screen.getByRole("combobox"));
+
+    expect(screen.getByRole("option", { name: /factura marzo/ })).toBeInTheDocument();
+  });
+
+  it("draws sliders, not a caret — the button opens settings, not a list", () => {
+    withRecents([]);
+    const trigger = screen.getByRole("button", { name: /opciones de búsqueda/i });
+    // The knobs are the whole difference: a rail with a knob says "adjust
+    // this", a chevron says "there is more of this list below".
+    expect(trigger.querySelectorAll("circle").length).toBe(2);
+  });
+});
