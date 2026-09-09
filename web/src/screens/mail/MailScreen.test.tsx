@@ -826,4 +826,64 @@ describe("MailScreen — the shell's canary", () => {
       expect(emailQueryPositions).toContain(undefined);
     });
   });
+
+/**
+ * E-14 — the context strip over a results list.
+ *
+ * A results list looked exactly like a folder: same rows, same toolbar, no
+ * title. The only thing distinguishing them was the text still sitting in the
+ * box at the top of the screen, which is not where the eye is once it has moved
+ * down to the results — and the only way back to the inbox was to find that box
+ * again.
+ */
+describe("E-14 — a results list says what it is", () => {
+  /*
+   * Found by its own class, not by its text.
+   *
+   * The E-08 row in the search DROPDOWN also says "All results for …" — it is
+   * the same sentence answering a different question — so a text query matches
+   * both. The strip is the one over the LIST, and its class is what says so.
+   */
+  const strip = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[class*="searchContextText"]');
+
+  it("names the query and the scope over the results", async () => {
+    window.history.replaceState(null, "", "/search?q=arquitectura");
+    renderShell();
+
+    await waitFor(
+      () => {
+        expect(strip()).not.toBeNull();
+      },
+      { timeout: 5000 },
+    );
+
+    expect(strip()?.textContent).toContain("arquitectura");
+    // E-15 changed what the default scope MEANS, so the strip states it: "all
+    // mail" is the answer to a question the user never asked out loud, and
+    // saying it is what keeps a result from being read as folder-scoped.
+    expect(strip()?.textContent).toContain(en["search.options.scopeDefault"]);
+  });
+
+  it("offers a way out that does not require finding the search box again", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/search?q=arquitectura");
+    renderShell();
+
+    await waitFor(
+      () => {
+        expect(strip()).not.toBeNull();
+      },
+      { timeout: 5000 },
+    );
+
+    const clear = document.querySelector<HTMLElement>('[class*="searchContextClear"]');
+    expect(clear).not.toBeNull();
+    await user.click(clear!);
+
+    await waitFor(() => {
+      expect(strip()).toBeNull();
+    });
+  });
+});
 });

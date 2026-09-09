@@ -1296,6 +1296,12 @@ export const en = {
   "search.suggestions.messages": "Messages",
   /* E-08: the row that keeps the five previews from reading as "all there is". */
   "search.allResults": (query: string): string => `All results for “${query}”`,
+  /* E-14: the strip over a results list — what, where, how much. */
+  "search.context": (query: string, scope: string): string =>
+    `Results for “${query}” in ${scope}`,
+  "search.contextCount": (total: number): string => `· ${total.toLocaleString("en")}`,
+  "search.contextCountAtLeast": (atLeast: number): string =>
+    `· more than ${atLeast.toLocaleString("en")}`,
   "search.allResultsKey": "Enter",
   "search.quick.label": "Quick searches",
   "search.quick.sentByMe": "Sent by me",
@@ -2446,6 +2452,11 @@ export const es: Strings = {
   "search.suggestions.values": "Valores",
   "search.suggestions.messages": "Mensajes",
   "search.allResults": (query: string): string => `Todos los resultados para «${query}»`,
+  "search.context": (query: string, scope: string): string =>
+    `Resultados de «${query}» en ${scope}`,
+  "search.contextCount": (total: number): string => `· ${total.toLocaleString("es")}`,
+  "search.contextCountAtLeast": (atLeast: number): string =>
+    `· más de ${atLeast.toLocaleString("es")}`,
   "search.allResultsKey": "Enter",
   "search.quick.label": "Búsquedas rápidas",
   "search.quick.sentByMe": "Enviados por mí",

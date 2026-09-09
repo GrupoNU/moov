@@ -34,6 +34,7 @@ import {
 import {
   nextPosition,
   PAGE_SIZE,
+  pageBound,
   previousPosition,
   type PageState,
 } from "../../mail/paging";
@@ -4547,6 +4548,69 @@ export function MailScreen(): React.JSX.Element {
             or the quick dock opens — chips that stayed full-width while the
             results under them halved would float over the reader.
           */}
+          {/*
+            E-14: the context strip — what was searched, where, and how much.
+
+            A results list looked exactly like a folder: same rows, same
+            toolbar, no title. The only thing distinguishing them was the text
+            still sitting in the box at the top of the screen, which is not
+            where the eye is once it has moved down to the results. Gmail names
+            the search over its list, and that name is also where the way OUT
+            lives — the × that returns to the inbox, which was previously only
+            reachable by finding the box again.
+
+            It states the SCOPE by name because E-15 changed what the default
+            scope means: "Todo el correo" is the answer to a question the user
+            never asked out loud, and stating it is what keeps a result from
+            being read as folder-scoped.
+          */}
+          {route.kind === "search" && (
+            <div className={styles.searchContext} role="status">
+              <span className={styles.searchContextText}>
+                {format(
+                  "search.context",
+                  route.query,
+                  searchPlan?.includesEverything === true
+                    ? t("search.options.scopeAll")
+                    : searchPlan?.scopedMailboxId !== undefined
+                      ? (mailboxes.find(
+                          (box) => box.id === searchPlan.scopedMailboxId,
+                        )?.name ?? t("search.options.scopeDefault"))
+                      : t("search.options.scopeDefault"),
+                )}
+              </span>
+              {/*
+                The count uses the SAME `pageBound` the pager does (E-13), so
+                the strip and the "1–50 de más de 50" under it can never
+                disagree about how much was found. `none` means the result was
+                exhausted inside one page, where the range already says
+                everything a count would.
+              */}
+              {pageBound(pageState).kind !== "none" && (
+                <span className={styles.searchContextCount}>
+                  {pageBound(pageState).kind === "exact"
+                    ? format("search.contextCount", resultTotal ?? 0)
+                    : format(
+                        "search.contextCountAtLeast",
+                        position + groups.length,
+                      )}
+                </span>
+              )}
+              <button
+                type="button"
+                className={styles.searchContextClear}
+                onClick={() => {
+                  runSearch("");
+                }}
+                aria-label={t("search.clear")}
+                title={t("search.clear")}
+              >
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+                  <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+                </svg>
+              </button>
+            </div>
+          )}
           {route.kind === "search" && !isOfflineMode && (
             <SearchChips query={route.query} onChange={runSearch} />
           )}

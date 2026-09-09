@@ -575,3 +575,71 @@
 .toastUndo:focus-visible {
   opacity: 0.85;
 }
+
+/*
+ * E-14: the context strip over a results list.
+ *
+ * A results list looked exactly like a folder — same rows, same toolbar, no
+ * title — and the only thing distinguishing them was the text still sitting in
+ * the box at the top of the screen, which is not where the eye is once it has
+ * moved down to the results.
+ *
+ * Slim on purpose: it is a label, not a header. It must not cost the list a row
+ * of height that a folder view does not pay.
+ */
+.searchContext {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.searchContextText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-default);
+}
+
+.searchContextCount {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The way OUT, which previously existed only by finding the search box again.
+ * `margin-left: auto` pins it right, away from the text it would otherwise
+ * read as part of.
+ */
+.searchContextClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-left: auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.searchContextClear svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.searchContextClear:hover,
+.searchContextClear:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface-default);
+}
