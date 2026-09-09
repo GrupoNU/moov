@@ -16,6 +16,15 @@ import styles from "./BrandMark.module.css";
  *
  * The mark itself: a rounded square with an "M" cut through it as a continuous
  * stroke, suggesting a path/route (the product is "Moov"). It reads at 24px.
+ *
+ * # Why a customer's logo is sized by HEIGHT alone
+ *
+ * The drawn fallback is square; an uploaded logo is usually not. Sizing a
+ * customer's image to a square box distorts every wordmark that goes through
+ * it, which is the single most visible way a white-label product can look
+ * broken. So the logo is given a fixed height, a free width, `object-fit:
+ * contain`, and a per-size `max-width` ceiling — the brand may be any shape it
+ * likes, within a width the layout has already budgeted for.
  */
 
 export interface BrandMarkProps {
@@ -32,6 +41,19 @@ export interface BrandMarkProps {
    */
   readonly onDark?: boolean;
 }
+
+/**
+ * The rendered height of the logo at each size, mirroring BrandMark.module.css.
+ *
+ * Duplicated in TS because the `height` ATTRIBUTE is what reserves the box
+ * before any stylesheet or image has loaded, and an attribute cannot read a
+ * class. A test pins these against the stylesheet so the two cannot drift.
+ */
+const SIZE_HEIGHTS: Record<NonNullable<BrandMarkProps["size"]>, number> = {
+  sm: 28,
+  md: 32,
+  lg: 44,
+};
 
 export function BrandMark({
   branding,
@@ -56,9 +78,25 @@ export function BrandMark({
            * it, the image becomes decorative and alt="" avoids a stutter.
            */
           alt={iconOnly ? branding.name : ""}
-          /* Reserve the box so a slow logo cannot shift the layout (CLS). */
-          width={32}
-          height={32}
+          /*
+           * HEIGHT only, and it is deliberate.
+           *
+           * A logo is not square. Customers upload wordmarks — "ACME MAIL" at
+           * 4:1 is the common case — and a `width` attribute alongside the
+           * height is an aspect ratio the browser will honour, so it squashed
+           * every one of them into a 32x32 box. The CSS gives the element a
+           * fixed height, `width: auto` and `object-fit: contain`, so the
+           * intrinsic ratio is what decides the width.
+           *
+           * The attribute stays for the CLS reserve it was added for: with a
+           * height attribute and `width: auto` the browser still reserves a
+           * line box of the right HEIGHT before the bytes arrive, and the CSS
+           * `min-width` reserves a square's worth of horizontal space so a
+           * slow logo grows sideways into room already held rather than
+           * shoving what follows it. The value is per-size in CSS; this
+           * attribute only has to be non-absurd for the pre-load reserve.
+           */
+          height={SIZE_HEIGHTS[size]}
           decoding="async"
         />
       ) : (

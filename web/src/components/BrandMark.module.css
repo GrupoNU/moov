@@ -23,6 +23,36 @@
   object-fit: contain;
 }
 
+/*
+ * THE LOGO IS SIZED BY HEIGHT, NOT BY A BOX.
+ *
+ * The drawn fallback is square by construction. A customer's logo is usually
+ * NOT: the common upload is a wordmark at 3:1 or 4:1. Giving it a square box
+ * squashed every one of them, which `object-fit: contain` alone could not fix
+ * — contain letterboxes inside whatever box it is given, so a wide wordmark
+ * became a thin strip floating in a 32px square rather than a legible mark.
+ *
+ * So: the height is fixed per size (below), the width is whatever the image's
+ * own aspect ratio makes it, and a `max-width` ceiling stops a pathological
+ * upload — a 20:1 banner, or an image whose intrinsic size is a mistake —
+ * from taking the layout with it.
+ *
+ * `min-width` equal to the height is the CLS reserve. Before the bytes arrive
+ * the browser knows the height (from the attribute) but not the width, so
+ * without a floor the element is zero-wide and everything after it jumps
+ * sideways the moment the logo decodes. Reserving one square's worth means the
+ * common case (a squarish mark) never shifts at all, and a wide one grows into
+ * space the flex row can absorb.
+ */
+.logo {
+  width: auto;
+  /* Overrides the per-size square below for the image only; the glyph keeps
+     its square because it is drawn to be one. */
+  height: var(--brandmark-height);
+  min-width: var(--brandmark-height);
+  max-width: var(--brandmark-max-width);
+}
+
 .glyphPlate {
   fill: color-mix(in srgb, currentColor 14%, transparent);
   stroke: color-mix(in srgb, currentColor 28%, transparent);
@@ -50,9 +80,27 @@
   color: var(--brand-on-primary);
 }
 
-/* --- sizes --- */
+/*
+ * --- sizes ---
+ *
+ * Each size sets the logo's height and its width CEILING. The ceilings are not
+ * arbitrary: `sm` is the top bar, whose brand track is a FIXED 244px grid
+ * column (TopBar.module.css, canon 07 §1) rather than an `auto` one. That fixed
+ * track is what guarantees a wide logo cannot push the centred search pill —
+ * the position the entire muscle-memory layout is pinned to — but only as long
+ * as the logo fits INSIDE the track: 120px of logo plus the gap plus a
+ * truncating name does. `md` and `lg` live in roomier places (the login brand
+ * panel is half the screen), so they are allowed more.
+ *
+ * The heights are mirrored in BrandMark.tsx as SIZE_HEIGHTS, for the `height`
+ * attribute that reserves the box pre-load. A test pins the two together.
+ */
 
-.sm .logo,
+.sm {
+  --brandmark-height: 28px;
+  --brandmark-max-width: 120px;
+}
+
 .sm .glyph {
   width: 28px;
   height: 28px;
@@ -62,7 +110,11 @@
   font-size: var(--text-lg);
 }
 
-.md .logo,
+.md {
+  --brandmark-height: 32px;
+  --brandmark-max-width: 160px;
+}
+
 .md .glyph {
   width: 32px;
   height: 32px;
@@ -72,7 +124,11 @@
   font-size: var(--text-xl);
 }
 
-.lg .logo,
+.lg {
+  --brandmark-height: 44px;
+  --brandmark-max-width: 200px;
+}
+
 .lg .glyph {
   width: 44px;
   height: 44px;
