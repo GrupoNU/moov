@@ -170,6 +170,7 @@ per-host directories:
 ├── mail.acme.example/
 │   ├── branding.json
 │   ├── logo.png
+│   ├── logo-dark.png
 │   ├── icon.png
 │   └── splash.jpg
 └── correo.otracosa.example/
@@ -202,6 +203,7 @@ them:
   "tagline": "Correo corporativo de Acme S.A.",
   "supportUrl": "mailto:soporte@acme.example",
   "logo": "logo.png",
+  "logoDark": "logo-dark.png",
   "icon": "icon.png",
   "splash": "splash.jpg",
   "colors": {
@@ -226,12 +228,19 @@ stays "Acme Mail"; "Correo Corporativo Acme" becomes "Correo").
 characters); empty renders nothing. `supportUrl` is where "contact your
 administrator" points and accepts **only** `https://`, `http://` or `mailto:` —
 so it can never become a `javascript:` URL on the page where passwords are
-typed. `logo`, `icon` and `splash` name **files sitting beside `branding.json`**,
-never URLs: a customer-supplied external URL would be a tracking pixel on our
-login page and a mixed-content risk.
+typed. `logo`, `logoDark`, `icon` and `splash` name **files sitting beside
+`branding.json`**, never URLs: a customer-supplied external URL would be a
+tracking pixel on our login page and a mixed-content risk.
 
 `logo` is what the top bar and the login panel show — usually a wordmark, often
-wide. `icon` is the **optional square mark the installed app's icons and the
+wide. `logoDark` is **the wordmark for dark backgrounds: used on the login panel
+and in the dark theme; without it the app draws the light logo on a small light
+plate** — legible, but a plate the customer did not design. It is the mirror of
+the problem `icon` solves, and it was found on the same live gate: Areacorp's
+wordmark is black, so on the dark login panel it was a black mark on a dark
+ground. `logoDark` takes **no part in generating the PWA icons** — that chain is
+`icon`, then `logo`, then Moov's own, and a second wordmark would only give the
+home screen a way to disagree with the top bar. `icon` is the **optional square mark the installed app's icons and the
 favicon are rendered from**, and it exists because those are not the same
 picture: the maskable and Apple icons sit on an **opaque plate of `primary`**,
 so a brand whose primary is `#000000` and whose logo is a black wordmark ships
@@ -379,6 +388,7 @@ docker run --rm --user root \
     -tagline 'Correo corporativo de Acme S.A.' \
     -support-url 'mailto:soporte@acme.example' \
     -logo /brand/acme/logo.png \
+    -logo-dark /brand/acme/logo-on-dark.png \
     -icon /brand/acme/glyph-on-dark.png \
     -splash /brand/acme/office.jpg \
     -color-primary '#0f766e' \
@@ -395,11 +405,12 @@ mount above uses the same path on both sides and no `-dir` is needed.
 adjusting one colour does not re-upload the logo, and — the reason it works
 this way — adjusting one colour cannot silently delete the customer's logo.
 Passing a flag with an *empty* value clears that field (`-logo ''` stops
-advertising the logo, `-icon ''` returns the app icons to being rendered from
-the logo; the file itself is left on disk, because deleting an operator's file
-as a side effect of a config change would be a surprise). The stored filename
-is always ours (`logo.png`, `icon.png`, `splash.jpg`, from the sniffed type),
-never the source filename.
+advertising the logo, `-logo-dark ''` returns the dark panel and theme to the
+light logo on its plate, `-icon ''` returns the app icons to being rendered
+from the logo; the file itself is left on disk, because deleting an operator's
+file as a side effect of a config change would be a surprise). The stored
+filename is always ours (`logo.png`, `logo-dark.png`, `icon.png`, `splash.jpg`,
+from the sniffed type), never the source filename.
 
 ```bash
 # Read-only, so the branding mount can be :ro. RUN=... is the prefix from above.
