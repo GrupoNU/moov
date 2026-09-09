@@ -35,6 +35,8 @@ Contadores del riel como píldoras rellenas (A-09) · Redactar subdimensionado (
 
 ## 4. Decisiones de criterio para el dueño (🔍)
 
+> **Resueltas 2026-09-09 — Diego: "sí a tus recomendaciones".** (1) Programar envío: adoptar la forma Gmail — caret `▾` adosado a Enviar, que se retira sin conexión (la razón del reloj suelto se conserva como comentario). (2) Alcance de búsqueda por defecto: **toda la cuenta**, como Gmail; "En esta carpeta" pasa a ser opción del panel. (3) Avatar de iniciales se queda; el punto azul de no-leído se retira (redundante con la negrita). (4) **Se mantiene el iframe** con sandbox (postura de 3 capas intacta); la altura se resuelve con auto-ajuste seguro — tanda con Fable. (5) "Importantes" y categorías siguen en fase IA.
+
 1. **Programar envío** como reloj suelto vs `▾` adosado a Enviar (D-09): divergencia razonada en código (Enviar inequívoco; desaparece offline). Aceptar y documentar en canon §7, o adosar.
 2. **Alcance de búsqueda por defecto "En esta carpeta"** (E-15): Gmail busca en todo el correo. ¿Cambiamos el default a toda la cuenta?
 3. **Avatar de iniciales + punto azul en la fila** (B-09): adiciones sobre Gmail; el punto es redundante con la negrita. ¿Se quedan?
