@@ -193,7 +193,16 @@ self.addEventListener("fetch", (event) => {
 async function handleNavigation(request) {
   const cache = await caches.open(CACHE_NAME);
   try {
-    const response = await fetch(request);
+    // `cache: "no-cache"` forces revalidation against the origin instead of
+    // letting the browser's HTTP cache answer. Without it, a shell served
+    // without Cache-Control is considered heuristically fresh (10% of its
+    // age since Last-Modified), so a deploy could keep serving the OLD
+    // index.html — naming OLD hashed assets, which this worker then serves
+    // cache-first — for hours. Seen live on 2026-09-09: the network had the
+    // new build, the tab kept running the previous one. The origin also
+    // sends Cache-Control: no-cache now (deploy/Caddyfile.public); this is
+    // the belt to that suspender, so a misconfigured front cannot reopen it.
+    const response = await fetch(request, { cache: "no-cache" });
     if (response.ok) {
       // Store a CLONE: the original is consumed by the browser rendering it.
       cache.put(SHELL_URL, response.clone()).catch(() => {

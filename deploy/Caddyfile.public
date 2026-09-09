@@ -161,6 +161,22 @@ https://moov.atmosfera.cloud:443, https://mail.gruponu.com:443, https://mail.are
 	handle {
 		root * /srv/moov-pwa
 		try_files {path} /index.html
+
+		# Cache policy — found live on 2026-09-09: with no Cache-Control the
+		# browser applied heuristic freshness to index.html and kept a tab on
+		# the previous build for hours after a deploy (the service worker then
+		# served the old hashed assets cache-first, faithfully). Two classes:
+		#
+		#   /assets/*  Vite content-hashed: the URL IS the version, so a year
+		#              of `immutable` is exactly right and never stale.
+		#   the rest   the SPA shell, sw.js, manifest, offline page: revalidate
+		#              on every load (`no-cache` is not "don't cache" — it is
+		#              "ask the origin first", which an ETag makes a 304).
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		@shell not path /assets/*
+		header @shell Cache-Control "no-cache"
+
 		file_server
 	}
 
