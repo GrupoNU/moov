@@ -299,12 +299,22 @@ What the icon generator does, on demand and cached. Its source is `icon` when
 there is a usable one, `logo` otherwise, and Moov's own mark when neither can
 be rendered:
 
-| Icon | Size | Padding each side | Plate |
-|---|---|---|---|
-| `icon-192`, `icon-512` | 192, 512 | 10% | transparent |
-| `icon-maskable-192`, `icon-maskable-512` | 192, 512 | 20% | opaque, the primary colour |
-| `apple-touch-icon` | 180 | 10% | opaque, the primary colour |
-| `favicon-32` | 32 | none | transparent |
+| Icon | Size | Padding each side | Plate, from `logo` | Plate, from `icon` |
+|---|---|---|---|---|
+| `icon-192`, `icon-512` | 192, 512 | 10% | transparent | **opaque, the primary** |
+| `icon-maskable-192`, `icon-maskable-512` | 192, 512 | 20% | opaque, the primary | opaque, the primary |
+| `apple-touch-icon` | 180 | 10% | opaque, the primary | opaque, the primary |
+| `favicon-32` | 32 | none (10% when plated) | transparent | **opaque, the primary** |
+
+**When the source is a dedicated `icon`, every size is plated.** An operator
+who supplies one supplies a mark drawn *for* that plate — and the alternative
+was found live on the pilot: Areacorp's white glyph rendered correctly on the
+maskable pair and then **vanished** on `icon-192`, `icon-512` and `favicon-32`,
+which were transparent, on a light desktop launcher and a light browser tab.
+`favicon-32` also picks up a 10% padding floor when plated, because its own
+spec has none and a square mark would otherwise cover the plate edge to edge —
+the same white-square-on-a-light-tab failure. **When the source is the `logo`,
+nothing changed:** the transparent column is exactly what it always was.
 
 The source image is contained inside the padded square with its aspect ratio
 preserved and centred — which is why a square `icon` fills it and a wide `logo`
@@ -317,33 +327,69 @@ disappears into them.
 
 ### The `moovctl` workflow
 
-`moovctl` writes to the **host** filesystem, and `moovd`'s image is distroless
-— so run it either from a checkout on the host, or through the container the
-way the `account` commands above are run. Note that the container sees the
-branding mount **read-only**, so a write must run on the host (or set `-dir` to
-a writable path):
+`moovctl` writes to the **host** filesystem, and `moovd`'s image is distroless.
+Two things that look like they should work do not, and both were verified on
+the pilot: there is **no Go on the host**, so "run it from a checkout" is not
+an option, and `docker compose run -v …` **cannot** override the service's
+read-only branding bind — it fails with `read-only file system`.
+
+Run a **fresh container from the same image** instead:
 
 ```bash
-# On the host (a checkout, or the moovctl binary copied out of the image):
-export MOOV_BRANDING_DIR=/etc/moov/branding
+IMG=$(docker inspect moovd --format '{{.Config.Image}}')
+docker run --rm --user root \
+  -v /etc/moov/branding:/etc/moov/branding \
+  -v /root/brand:/brand:ro \
+  --entrypoint /usr/local/bin/moovctl "$IMG" \
+  branding set -host mail.acme.example -name 'Acme Mail' \
+    -logo /brand/acme/logo.png -icon /brand/acme/icon.png \
+    -color-primary '#0f766e'
+```
 
-moovctl branding set \
-  -host mail.acme.example \
-  -name 'Acme Mail' \
-  -short-name 'Acme' \
-  -tagline 'Correo corporativo de Acme S.A.' \
-  -support-url 'mailto:soporte@acme.example' \
-  -logo /root/brand/acme-logo.png \
-  -icon /root/brand/acme-glyph-on-dark.png \
-  -splash /root/brand/acme-office.jpg \
-  -color-primary '#0f766e' \
-  -color-on-primary '#ffffff' \
-  -color-splash-from '#042f2e' \
-  -color-splash-to '#115e59'
+Each piece earns its place:
+
+- **`IMG` from the running container** — the brand is written by exactly the
+  binary that will serve it, whatever tag is deployed, with no second source of
+  truth to drift.
+- **`--user root`** — the branding directory is root-owned on the host, and the
+  image runs non-root. Without it the write fails on permissions.
+- **`-v /etc/moov/branding:/etc/moov/branding`** — writable, unlike the
+  service's own bind, and at the same path both sides so `MOOV_BRANDING_DIR`
+  and the default agree without a `-dir`.
+- **`-v /root/brand:/brand:ro`** — the source images, read-only: this container
+  has no business writing to wherever the brand kit lives.
+- **`--entrypoint /usr/local/bin/moovctl`** — the image's entrypoint is the
+  daemon; this replaces it for one command.
+
+`show` and `list` run the same way and can take the branding mount `:ro` too,
+since they only read.
+
+A full brand in one call — every flag `set` accepts, with the source images
+under the read-only `/brand` mount:
+
+```bash
+docker run --rm --user root \
+  -v /etc/moov/branding:/etc/moov/branding \
+  -v /root/brand:/brand:ro \
+  --entrypoint /usr/local/bin/moovctl "$IMG" \
+  branding set \
+    -host mail.acme.example \
+    -name 'Acme Mail' \
+    -short-name 'Acme' \
+    -tagline 'Correo corporativo de Acme S.A.' \
+    -support-url 'mailto:soporte@acme.example' \
+    -logo /brand/acme/logo.png \
+    -icon /brand/acme/glyph-on-dark.png \
+    -splash /brand/acme/office.jpg \
+    -color-primary '#0f766e' \
+    -color-on-primary '#ffffff' \
+    -color-splash-from '#042f2e' \
+    -color-splash-to '#115e59'
 ```
 
 Every subcommand takes a `-dir` flag that overrides the root; without it the
-CLI takes `MOOV_BRANDING_DIR`, then `/etc/moov/branding`.
+CLI takes `MOOV_BRANDING_DIR`, then `/etc/moov/branding` — which is why the
+mount above uses the same path on both sides and no `-dir` is needed.
 
 **`set` is incremental: a flag you do not pass keeps its current value.** So
 adjusting one colour does not re-upload the logo, and — the reason it works
@@ -356,9 +402,17 @@ is always ours (`logo.png`, `icon.png`, `splash.jpg`, from the sniffed type),
 never the source filename.
 
 ```bash
-moovctl branding show -host mail.acme.example   # every field, plus where the PWA icons come from
-moovctl branding list                            # every configured host
-moovctl branding unset -host mail.acme.example   # back to Moov's defaults
+# Read-only, so the branding mount can be :ro. RUN=... is the prefix from above.
+RUN="docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding:ro \
+  --entrypoint /usr/local/bin/moovctl $IMG"
+
+$RUN branding show -host mail.acme.example   # every field, plus where the PWA icons come from
+$RUN branding list                           # every configured host
+
+# unset WRITES, so it needs the mount writable (drop the :ro):
+docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding \
+  --entrypoint /usr/local/bin/moovctl "$IMG" \
+  branding unset -host mail.acme.example     # back to Moov's defaults
 ```
 
 `unset` removes `branding.json` and the image files it wrote (only those, by
