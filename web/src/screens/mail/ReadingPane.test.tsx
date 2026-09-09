@@ -726,3 +726,38 @@ describe("C-06: the thread header", () => {
     expect(screen.queryByText(/8 de/)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * C-07: the chips beside the subject — the folder, then the labels.
+ */
+describe("C-07: chips beside the subject", () => {
+  it("shows the folder chip with Gmail's × that archives", async () => {
+    const user = userEvent.setup();
+    const props = renderPane();
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(within(heading).getByText("Bandeja de entrada")).toBeInTheDocument();
+    await user.click(
+      within(heading).getByRole("button", { name: /quitar de bandeja de entrada/i }),
+    );
+    expect(props.onArchive).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a non-inbox folder its chip without the ×", () => {
+    renderPane({ email: message({ mailboxIds: { archive: true } }) });
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(within(heading).getByText("Archivo")).toBeInTheDocument();
+    expect(within(heading).queryByRole("button", { name: /quitar de/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the open message's labels as chips, after the folder", () => {
+    renderPane({
+      email: message({ keywords: { "$label:work": true } }),
+      labels: [{ keyword: "$label:work", name: "Trabajo", colorId: "blue", visibility: "show" }],
+      onSelectLabel: vi.fn(),
+    });
+    const heading = screen.getByRole("heading", { level: 1 });
+    const folder = within(heading).getByText("Bandeja de entrada");
+    const label = within(heading).getByRole("button", { name: /trabajo/i });
+    expect(folder.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

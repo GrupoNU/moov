@@ -68,6 +68,65 @@
 }
 
 /*
+ * C-07: the chips beside the subject — folder first, then labels (Gmail's
+ * "Recibidos ×" then the label chips). Inline with the subject's baseline so
+ * a wrapping subject carries them along instead of stranding them.
+ */
+.chipRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  vertical-align: middle;
+  /* Not the subject's size: chips are metadata, not title. */
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular, 400);
+  line-height: 1.4;
+}
+
+.folderChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0.0625rem var(--space-1) 0.0625rem var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.folderChipName {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The × that removes from Inbox (archives): a real button, sized to hit. */
+.folderChipRemove {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.folderChipRemove svg {
+  width: 10px;
+  height: 10px;
+}
+
+.folderChipRemove:hover,
+.folderChipRemove:focus-visible {
+  background: var(--border-default);
+  color: var(--text-strong);
+}
+
+/*
  * E4: the muted badge beside the subject.
  *
  * A quiet, neutral pill rather than a coloured one: it marks a conversation the

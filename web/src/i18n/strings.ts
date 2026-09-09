@@ -749,6 +749,9 @@ export const en = {
     "The rest of this conversation could not be loaded. The message you opened is shown below.",
   "reader.emptyBody": "This message has no text content.",
   "reader.bodyTruncated":
+  // C-07: the × on the folder chip beside the subject — Gmail's "Recibidos ×",
+  // which removes the conversation from Inbox (archives it).
+  "reader.removeFromFolder": (name: string): string => `Remove from ${name}`,
     "This message is long and has been shortened. Download the original to read all of it.",
   // --- the secure HTML renderer (W-A4) ---
   // The iframe's accessible name: what the region IS, for a screen-reader
@@ -1960,6 +1963,7 @@ export const es: Strings = {
   "reader.emptyBody": "Este mensaje no tiene contenido de texto.",
   "reader.bodyTruncated":
     "Este mensaje es largo y se acortó. Descargá el original para leerlo completo.",
+  "reader.removeFromFolder": (name: string): string => `Quitar de ${name}`,
   "reader.htmlFrameTitle": "Contenido del mensaje",
   "reader.imagesBlocked": (count: number): string =>
     count === 1

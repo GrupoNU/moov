@@ -23,6 +23,7 @@ import { MessageBody } from "./MessageBody";
 import { LabelChips } from "./LabelChips";
 import { LabelMenu } from "./LabelMenu";
 import { labelsFor, type Label } from "../../mail/labelStore";
+import { mailboxLabel } from "./mailboxLabels";
 import { MoveMenu } from "./MoveMenu";
 import { PopupMenu } from "./PopupMenu";
 import { SnoozeMenu } from "./SnoozeMenu";
@@ -363,6 +364,20 @@ export function ReadingPane({
   const threadSize = thread?.emailIds.length ?? 1;
   const isoDate = machineDate(email.receivedAt);
   const unsubscribe = unsubscribeInfo(email);
+  /*
+   * C-07: the folder chip(s). One mailbox per message on this server, but the
+   * shape is a set (RFC 8621 §4.1.1) and the loop costs nothing. Unknown ids
+   * (a mailbox the list has not loaded) simply render no chip rather than a
+   * chip with no name.
+   */
+  const folderChips = Object.keys(email.mailboxIds ?? {})
+    .map((id) => mailboxes.find((mailbox) => mailbox.id === id))
+    .filter((mailbox): mailbox is Mailbox => mailbox !== undefined)
+    .map((mailbox) => ({
+      id: mailbox.id,
+      name: mailboxLabel(mailbox, t),
+      isInbox: mailbox.role === "inbox",
+    }));
 
   return (
     <article
@@ -382,15 +397,44 @@ export function ReadingPane({
           <h1 className={styles.subject}>
             {subject}
             {/*
-              E8: the open message's labels, in full — the reader has the room
-              the list row does not, and an open conversation is exactly where
-              the complete set belongs (`max: Infinity`, no "+N").
+              C-07 / canon 07 §6: the chips beside the subject, Gmail's own
+              order — the FOLDER first ("Recibidos ×"), then the labels.
+
+              The folder chip is the one the list row cannot show (the row is
+              already in that folder); here it answers "where is this" for a
+              conversation reached by search or permalink, and its × on the
+              inbox chip is Gmail's exact affordance: remove from Inbox =
+              archive, the same verb the toolbar's icon fires.
+
+              The labels are the open message's keywords — the same set the
+              list row shows for its representative, in full here
+              (`max: Infinity`, no "+N") because the reader has the room.
             */}
-            <LabelChips
-              labels={labelsFor(email.keywords, labels ?? [])}
-              max={Number.POSITIVE_INFINITY}
-              onSelect={onSelectLabel}
-            />
+            <span className={styles.chipRow}>
+              {folderChips.map((chip) => (
+                <span key={chip.id} className={styles.folderChip}>
+                  <span className={styles.folderChipName}>{chip.name}</span>
+                  {chip.isInbox && (
+                    <button
+                      type="button"
+                      className={styles.folderChipRemove}
+                      onClick={onArchive}
+                      aria-label={format("reader.removeFromFolder", chip.name)}
+                      title={format("reader.removeFromFolder", chip.name)}
+                    >
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true" focusable="false">
+                        <path d="M6 6l8 8M14 6l-8 8" />
+                      </svg>
+                    </button>
+                  )}
+                </span>
+              ))}
+              <LabelChips
+                labels={labelsFor(email.keywords, labels ?? [])}
+                max={Number.POSITIVE_INFINITY}
+                onSelect={onSelectLabel}
+              />
+            </span>
             {/*
               E4: the muted badge, in WORDS here rather than as the list row's
               icon (canon §2.2).
