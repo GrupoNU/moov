@@ -81,18 +81,71 @@ export interface PageState {
 }
 
 /**
+ * What the pager can honestly assert about how much mail is behind it.
+ *
+ * The three cases are not a value plus two fallbacks — they are three
+ * different true statements, and which one applies is decidable from data the
+ * client already has.
+ */
+export type PageBound =
+  /** The server counted: `de 15.224`. */
+  | { readonly kind: "exact"; readonly count: number }
+  /**
+   * The server declined to count AND there is another page, so the folder holds
+   * strictly more than what has been served: `de más de 50`.
+   */
+  | { readonly kind: "atLeast"; readonly count: number }
+  /**
+   * The server declined to count and this is the LAST page, which makes the
+   * count exact anyway — the result is exhausted, so `position + shown` is not
+   * a floor, it is the answer. See {@link pageBound}.
+   */
+  | { readonly kind: "none" };
+
+/**
+ * The bound, from what the client knows (B-01).
+ *
+ * # Why this is not a protocol change
+ *
+ * The server keeps omitting the exact count, and deliberately: `query.go`'s
+ * `queryTotal` measured an exact count at 452 ms p95 over the reference corpus,
+ * past the product's own bar, and chose "omit the property" over "report a
+ * wrong number". Nothing here asks it to reconsider. What this adds is the
+ * sentence Gmail writes when it is in the same position — "de más de 1.000" —
+ * assembled from two facts the client already holds: how many rows it has been
+ * served, and whether {@link hasNextPage} says there are more.
+ *
+ * # The case that surprises people
+ *
+ * When the server gave no total and there is NO next page, the count is exact.
+ * `hasNextPage` returns false for a short page, which means the result was
+ * exhausted inside the window we asked for — so `position + shown` is the
+ * whole result, not a floor. Saying "more than 31" over a folder holding
+ * exactly 31 would be the same kind of small lie the omission exists to avoid,
+ * in the opposite direction. It returns `none` rather than `exact` so the
+ * caller renders the plain range: on a single short page "1–31" already says
+ * everything "1–31 de 31" would, and Gmail writes it the short way too.
+ */
+export function pageBound(state: PageState): PageBound {
+  if (state.total !== undefined) return { kind: "exact", count: state.total };
+  if (!hasNextPage(state)) return { kind: "none" };
+  return { kind: "atLeast", count: state.position + state.shown };
+}
+
+/**
  * The human-readable range, as Gmail writes it.
  *
- * Two shapes, and the second is a different true sentence rather than a
- * degraded first:
+ * Three shapes, and none is a degraded version of another — see
+ * {@link pageBound} for which fact each one states:
  *
- *   - with a total: `1–50 de 15.224`
- *   - without one:  `1–50`
+ *   - counted:        `1–50 de 15.224`
+ *   - bounded below:  `1–50 de más de 50`
+ *   - exhausted:      `1–31`
  *
- * Both halves are formatted by the CALLER's locale formatter, which is why this
- * takes one rather than reaching for `toLocaleString` — the thousands separator
- * is "." in es-419 and "," in en, and a pager that gets that wrong looks like a
- * different product in one of the two locales.
+ * Every number is formatted by the CALLER's locale formatter, which is why this
+ * takes them rather than reaching for `toLocaleString` — the thousands
+ * separator is "." in es-419 and "," in en, and a pager that gets that wrong
+ * looks like a different product in one of the two locales.
  *
  * An EMPTY page returns undefined rather than "0–0 de 0": there is nothing to
  * page through, and the list already renders its own empty state, which says
@@ -102,13 +155,22 @@ export function pageLabel(
   state: PageState,
   format: (first: number, last: number, total: number) => string,
   formatWithoutTotal: (first: number, last: number) => string,
+  /**
+   * `1–50 de más de 50`. Optional so a caller with no such string still gets
+   * the old two shapes rather than a crash — the pager renders in more than one
+   * place and a missing translation must degrade to a true sentence.
+   */
+  formatAtLeast?: (first: number, last: number, atLeast: number) => string,
 ): string | undefined {
   if (state.shown <= 0) return undefined;
   const first = state.position + 1;
   const last = state.position + state.shown;
-  return state.total === undefined
-    ? formatWithoutTotal(first, last)
-    : format(first, last, state.total);
+  const bound = pageBound(state);
+  if (bound.kind === "exact") return format(first, last, bound.count);
+  if (bound.kind === "atLeast" && formatAtLeast !== undefined) {
+    return formatAtLeast(first, last, bound.count);
+  }
+  return formatWithoutTotal(first, last);
 }
 
 /**

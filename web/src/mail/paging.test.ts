@@ -6,6 +6,7 @@ import {
   MAX_REACH,
   nextPosition,
   PAGE_SIZE,
+  pageBound,
   pageLabel,
   previousPosition,
   type PageState,
@@ -30,6 +31,9 @@ const withTotal = (first: number, last: number, total: number): string =>
   `${String(first)}–${String(last)} of ${String(total)}`;
 const withoutTotal = (first: number, last: number): string =>
   `${String(first)}–${String(last)}`;
+/* B-01: the third shape — a floor, worded as one. */
+const atLeast = (first: number, last: number, count: number): string =>
+  `${String(first)}–${String(last)} of more than ${String(count)}`;
 
 describe("pageLabel", () => {
   it("writes Gmail's range with the total when the server gave one", () => {
@@ -38,14 +42,47 @@ describe("pageLabel", () => {
     );
   });
 
-  it("writes the range ALONE when the server declined to count", () => {
+  it("writes the range ALONE when the server declined to count and none is asked for", () => {
     /*
      * Not a degraded version of the first sentence — a different true one. The
      * server omits `total` when the result filled its window ("report a wrong
      * number versus omit the property, this omits it"), so any number here
      * would be a floor dressed as a total.
+     *
+     * A caller that supplies no `formatAtLeast` still gets this, which is what
+     * makes the fourth argument safe to omit: it degrades to a true sentence
+     * rather than to a crash or to a guess.
      */
     expect(pageLabel(page(), withTotal, withoutTotal)).toBe("1–50");
+  });
+
+  it("states the FLOOR when the server declined to count and there is more (B-01)", () => {
+    // The client knows two things the server did not say: 50 rows arrived, and
+    // `hasNextPage` is true. "More than 50" is the strongest sentence those two
+    // support, and it is the one Gmail writes.
+    expect(pageLabel(page(), withTotal, withoutTotal, atLeast)).toBe("1–50 of more than 50");
+  });
+
+  it("carries the floor forward with the offset", () => {
+    expect(pageLabel(page({ position: 100 }), withTotal, withoutTotal, atLeast)).toBe(
+      "101–150 of more than 150",
+    );
+  });
+
+  it("does NOT claim 'more than' on a short page — that page IS the end", () => {
+    /*
+     * The opposite lie to the one the server's omission avoids. A short page
+     * means the result was exhausted inside the window, so "more than 31" over
+     * a folder of exactly 31 would be false. The plain range is written
+     * instead: on a single short page "1–31" already says everything.
+     */
+    expect(pageLabel(page({ shown: 31 }), withTotal, withoutTotal, atLeast)).toBe("1–31");
+  });
+
+  it("prefers the server's exact count over any floor the client could compute", () => {
+    expect(pageLabel(page({ total: 15224 }), withTotal, withoutTotal, atLeast)).toBe(
+      "1–50 of 15224",
+    );
   });
 
   it("counts from ONE, because a user is not an array index", () => {
@@ -65,6 +102,32 @@ describe("pageLabel", () => {
     // "0–0 of 0" is noise: the list renders its own empty state, which says
     // something more useful than a range over nothing.
     expect(pageLabel(page({ shown: 0, total: 0 }), withTotal, withoutTotal)).toBeUndefined();
+  });
+});
+
+describe("pageBound — what the client may assert (B-01)", () => {
+  it("passes the server's count through when there is one", () => {
+    expect(pageBound(page({ total: 15224 }))).toEqual({ kind: "exact", count: 15224 });
+  });
+
+  it("floors at what has been served when the server declined and there is more", () => {
+    expect(pageBound(page({ position: 50 }))).toEqual({ kind: "atLeast", count: 100 });
+  });
+
+  it("asserts NOTHING on an exhausted result rather than a floor equal to the truth", () => {
+    /*
+     * The subtle one. A short page with no total means the count IS
+     * `position + shown` — but "more than 31" over exactly 31 is false, and
+     * "31 of 31" is noise the range already carries. So: no bound.
+     */
+    expect(pageBound(page({ shown: 31 }))).toEqual({ kind: "none" });
+  });
+
+  it("asserts nothing at the reach ceiling either", () => {
+    // `hasNextPage` is false there, so there is no evidence of more mail — only
+    // evidence that the server will not look further, which is a different
+    // thing and not a claim about how much exists.
+    expect(pageBound(page({ position: MAX_REACH - PAGE_SIZE }))).toEqual({ kind: "none" });
   });
 });
 

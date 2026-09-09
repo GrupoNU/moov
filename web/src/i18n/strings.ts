@@ -133,6 +133,15 @@ export const en = {
     `${first.toLocaleString("en")}–${last.toLocaleString("en")} of ${total.toLocaleString("en")}`,
   "list.page.rangeUnknown": (first: number, last: number): string =>
     `${first.toLocaleString("en")}–${last.toLocaleString("en")}`,
+  /*
+   * B-01: the honest bound, for when the server declined to count.
+   *
+   * "of more than 50" rather than "of 50": the number is a FLOOR, and the
+   * wording has to say so or it reads as a total the pager does not have. Gmail
+   * writes the same sentence in the same situation.
+   */
+  "list.page.rangeAtLeast": (first: number, last: number, atLeast: number): string =>
+    `${first.toLocaleString("en")}–${last.toLocaleString("en")} of more than ${atLeast.toLocaleString("en")}`,
   "list.page.newer": "Newer",
   "list.page.older": "Older",
   // The row's star, which toggles the same `$flagged` keyword `s` does.
@@ -205,6 +214,13 @@ export const en = {
     "Images always load through Moov's proxy, so the sender never learns you opened the message. Spam is always excluded.",
   "settings.images.always": "Always show",
   "settings.images.ask": "Ask before showing",
+  /*
+   * F-26: Gmail puts a one-line explanation beside each radio, and it is what
+   * makes the radios worth more than the select they replace — the sentence
+   * answers "what does this one do" AT the moment of comparison.
+   */
+  "settings.images.alwaysNote": "Every message renders its images through the proxy.",
+  "settings.images.askNote": "A message with images shows a bar you can accept.",
 
   "settings.conversation.label": "Conversation view",
   // E1 landed the behavior this once promised for "this release": the list
@@ -219,6 +235,9 @@ export const en = {
   "settings.autoAdvance.list": "Back to the list",
   "settings.autoAdvance.newer": "Newer message",
   "settings.autoAdvance.older": "Older message",
+  "settings.autoAdvance.listNote": "The reader closes and the list keeps the cursor.",
+  "settings.autoAdvance.newerNote": "Opens the message above the one you just cleared.",
+  "settings.autoAdvance.olderNote": "Opens the message below — the way an inbox drains.",
 
   "settings.keyboard.label": "Keyboard shortcuts",
   "settings.keyboard.description":
@@ -569,6 +588,8 @@ export const en = {
     "Which reply the button and the “r” key open. “Reply all” stays available either way, and Shift+A is always reply all.",
   "settings.replyBehavior.reply": "Reply",
   "settings.replyBehavior.replyAll": "Reply all",
+  "settings.replyBehavior.replyNote": "Answers the sender only.",
+  "settings.replyBehavior.replyAllNote": "Answers everyone the message was addressed to.",
 
   "settings.signatures.label": "Signatures",
   "settings.signatures.description":
@@ -721,6 +742,10 @@ export const en = {
   // block or an Outlook divider, not a quotation.
   "reader.showTrimmed": "Show trimmed content",
   "reader.hideTrimmed": "Hide trimmed content",
+  // C-03: a very long message is clipped at a cap and offered whole — the
+  // control that raises the sandboxed frame's estimated height.
+  "reader.showWholeMessage": "Show the whole message",
+  "reader.showLess": "Show less",
   "reader.imagesLoading": "Loading images through the privacy proxy…",
   "reader.imagesFailed":
     "The images could not be loaded through the privacy proxy, so they stay hidden. Try again later.",
@@ -742,10 +767,6 @@ export const en = {
   "shortcuts.close": "Close",
   "shortcuts.disabled":
     "Keyboard shortcuts are off in Settings. Escape and / still work, so you can close this and reach search.",
-  // C-03: a very long message is clipped at a cap and offered whole — the
-  // control that raises the sandboxed frame's estimated height.
-  "reader.showWholeMessage": "Show the whole message",
-  "reader.showLess": "Show less",
   "shortcuts.open": "Open the message",
   // E1: j/k and n/p are two different axes and the help has to say so, or the
   // second pair looks like a duplicate of the first.
@@ -1368,6 +1389,9 @@ export const es: Strings = {
     `${first.toLocaleString("es")}–${last.toLocaleString("es")} de ${total.toLocaleString("es")}`,
   "list.page.rangeUnknown": (first: number, last: number): string =>
     `${first.toLocaleString("es")}–${last.toLocaleString("es")}`,
+  /* B-01: la cota honesta — "de más de N" es un PISO, y el texto lo dice. */
+  "list.page.rangeAtLeast": (first: number, last: number, atLeast: number): string =>
+    `${first.toLocaleString("es")}–${last.toLocaleString("es")} de más de ${atLeast.toLocaleString("es")}`,
   "list.page.newer": "Más recientes",
   "list.page.older": "Más antiguos",
   "list.star": "Destacar",
@@ -1426,6 +1450,8 @@ export const es: Strings = {
     "Las imágenes siempre pasan por el proxy de Moov, así el remitente nunca se entera de que abriste el mensaje. En Spam nunca se cargan.",
   "settings.images.always": "Mostrar siempre",
   "settings.images.ask": "Preguntar antes de mostrar",
+  "settings.images.alwaysNote": "Cada mensaje muestra sus imágenes a través del proxy.",
+  "settings.images.askNote": "Un mensaje con imágenes muestra una barra que podés aceptar.",
 
   "settings.conversation.label": "Vista de conversación",
   "settings.conversation.description":
@@ -1438,6 +1464,9 @@ export const es: Strings = {
   "settings.autoAdvance.list": "Volver a la lista",
   "settings.autoAdvance.newer": "Mensaje más nuevo",
   "settings.autoAdvance.older": "Mensaje más viejo",
+  "settings.autoAdvance.listNote": "El lector se cierra y la lista conserva el cursor.",
+  "settings.autoAdvance.newerNote": "Abre el mensaje de arriba del que acabás de sacar.",
+  "settings.autoAdvance.olderNote": "Abre el de abajo — como se vacía una bandeja.",
 
   "settings.keyboard.label": "Atajos de teclado",
   "settings.keyboard.description":
@@ -1741,6 +1770,8 @@ export const es: Strings = {
     "Qué respuesta abren el botón y la tecla «r». «Responder a todos» sigue disponible igual, y Shift+A siempre responde a todos.",
   "settings.replyBehavior.reply": "Responder",
   "settings.replyBehavior.replyAll": "Responder a todos",
+  "settings.replyBehavior.replyNote": "Le contesta solo al remitente.",
+  "settings.replyBehavior.replyAllNote": "Le contesta a todos los destinatarios del mensaje.",
 
   "settings.signatures.label": "Firmas",
   "settings.signatures.description":
@@ -1853,6 +1884,8 @@ export const es: Strings = {
   "reader.showImages": "Mostrar imágenes",
   "reader.showTrimmed": "Mostrar el contenido recortado",
   "reader.hideTrimmed": "Ocultar el contenido recortado",
+  "reader.showWholeMessage": "Mostrar el mensaje completo",
+  "reader.showLess": "Mostrar menos",
   "reader.imagesLoading": "Cargando imágenes a través del proxy de privacidad…",
   "reader.imagesFailed":
     "Las imágenes no se pudieron cargar a través del proxy de privacidad, así que siguen ocultas. Probá más tarde.",
@@ -1884,8 +1917,6 @@ export const es: Strings = {
   "shortcuts.delete": "Eliminar",
   "shortcuts.flag": "Destacar",
   "shortcuts.selectRow": "Seleccionar esta conversación",
-  "reader.showWholeMessage": "Mostrar el mensaje completo",
-  "reader.showLess": "Mostrar menos",
   "shortcuts.compose": "Escribir un mensaje nuevo",
   "shortcuts.reply": "Responder",
   "shortcuts.replyAll": "Responder a todos",

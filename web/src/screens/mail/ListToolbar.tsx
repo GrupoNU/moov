@@ -116,6 +116,13 @@ export function ListToolbar({
           page,
           (first, last, total) => format("list.page.range", first, last, total),
           (first, last) => format("list.page.rangeUnknown", first, last),
+          /*
+           * B-01: the bound the client can assert when the server declined to
+           * count — "1–50 de más de 50". `pageBound` decides WHICH of the three
+           * sentences is true; this only supplies the wording for one of them.
+           */
+          (first, last, atLeast) =>
+            format("list.page.rangeAtLeast", first, last, atLeast),
         );
 
   return (

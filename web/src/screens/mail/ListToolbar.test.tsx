@@ -188,14 +188,25 @@ describe("the pager", () => {
     expect(screen.getByRole("button", { name: en["list.page.older"] })).toBeDisabled();
   });
 
-  it("writes the range ALONE when the server declined to count", () => {
+  it("states the honest FLOOR when the server declined to count (B-01)", () => {
     /*
-     * Not a degraded sentence — a different true one. The server omits `total`
-     * when the result filled its window, so a number here would be a floor
-     * dressed as a total.
+     * The server omits `total` when the result filled its window, so a number
+     * presented as a total would be a floor in disguise. What the toolbar shows
+     * instead is the floor SAID to be one — "de más de 50" — which is the
+     * sentence Gmail writes in the same situation, and the gap the side-by-side
+     * review found between our inbox and its.
      */
     renderToolbar({ page: { position: 0, shown: PAGE_SIZE, total: undefined } });
-    expect(screen.getByText("1–50")).toBeInTheDocument();
+    expect(
+      screen.getByText(en["list.page.rangeAtLeast"](1, 50, 50)),
+    ).toBeInTheDocument();
+  });
+
+  it("writes the range ALONE on a short uncounted page — that page is the end", () => {
+    // No next page means the result was exhausted, so there is no "more" to
+    // claim; the plain range is the whole truth.
+    renderToolbar({ page: { position: 0, shown: 31, total: undefined } });
+    expect(screen.getByText(en["list.page.rangeUnknown"](1, 31))).toBeInTheDocument();
   });
 
   it("draws NO pager at all when the view does not page", () => {
