@@ -232,6 +232,21 @@ export function SettingsPage({
   );
 
   /*
+   * P0-7: the rows that exist ONLY as search results.
+   *
+   * Theme and density have no control on this page — theirs lives in the quick
+   * panel, where the change is visible as you make it. They are still
+   * registered so the settings search (D-5) can find them, and this is what
+   * separates "found by searching" from "browsing the tab": a search hit
+   * renders a row that OPENS the panel, and browsing renders nothing at all
+   * rather than a row that settles nothing.
+   */
+  const isSearchHit = useCallback(
+    (id: string): boolean => search.isFiltering && search.rowIds.has(id),
+    [search],
+  );
+
+  /*
    * E6: the quota is re-read when the Account section comes into view.
    *
    * Usage moves with every delivery and `Quota/changes` answers
@@ -391,6 +406,7 @@ export function SettingsPage({
                 <InboxSection
                   prefs={prefs}
                   showRow={showRow}
+                  isSearchHit={isSearchHit}
                   onOpenQuickSettings={onOpenQuickSettings}
                 />
               )}
@@ -686,8 +702,18 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
 function InboxSection({
   prefs,
   showRow,
+  isSearchHit,
   onOpenQuickSettings,
 }: SectionProps & {
+  /**
+   * P0-7: true only when a SEARCH surfaced this row.
+   *
+   * Distinct from `showRow`, which is true both while browsing the tab and
+   * while filtering. The quick-panel rows must appear in one case and not the
+   * other, and folding that into `showRow` would have made every other row's
+   * predicate carry a condition that is about two of them.
+   */
+  readonly isSearchHit: (id: string) => boolean;
   readonly onOpenQuickSettings?: (() => void) | undefined;
 }): React.JSX.Element {
   const { t } = useTranslation();
@@ -746,17 +772,28 @@ function InboxSection({
       {showRow("notifications") && <NotificationsRow prefs={prefs} />}
 
       {/*
-        The two rows whose control lives in the quick panel. They are still
-        REGISTERED — so someone typing "densidad" into the settings search finds
-        something rather than nothing, which is the whole point of D-5 — and
-        what they find is directions, not a second copy of the control.
+        P0-7: theme and density are NOT rows on this tab.
+
+        They were, as pointers reading "Abrir los ajustes rápidos" — two rows
+        that looked like settings and did nothing but tell you where the real
+        control was. The reasoning was sound (one live control per preference,
+        and the quick panel is where the change is visible AS YOU MAKE IT) and
+        the conclusion was not: Gmail never puts a row on a settings page that
+        does not settle anything, and a user reading Recibidos top to bottom
+        meets two dead ends before finding the four live controls.
+
+        The registry entries STAY, and that is the point of the distinction:
+        someone typing "densidad" into the settings search must find something.
+        What they find now is a row that OPENS THE PANEL rather than an empty
+        anchor — `isSearchHit` is true only while a search is filtering, so the
+        pointer exists exactly where it is useful and nowhere else.
       */}
-      {showRow("theme") && (
+      {isSearchHit("theme") && (
         <SettingRow labelKey="theme.label" descriptionKey="settings.theme.description">
           <QuickPanelPointer onOpen={onOpenQuickSettings} />
         </SettingRow>
       )}
-      {showRow("density") && (
+      {isSearchHit("density") && (
         <SettingRow
           labelKey="settings.density.label"
           descriptionKey="settings.density.description"
@@ -781,13 +818,19 @@ function InboxSection({
  * changed it and it changed back" report that comes from changing one, going to
  * the other, and seeing a stale render.
  *
- * # Why the row exists at all
+ * # Why the row exists at all — and only under a SEARCH (P0-7)
  *
- * Deleting it would make the settings search — which the registry still lists
- * these rows in — find a row that renders nothing. A search result that leads
- * to an empty space is worse than no result: it looks like a bug in the search.
+ * It used to render whenever the Recibidos tab did, so a user reading the tab
+ * top to bottom met two rows that looked like settings and settled nothing.
+ * Gmail never does that, and the review called them dead rows.
  *
- * The button degrades to plain text when no opener was wired, rather than
+ * Deleting them outright would have been the other mistake: the registry still
+ * lists both so the settings search (D-5) can find "densidad" and "tema", and
+ * a search result leading to an empty anchor looks like a bug in the search.
+ *
+ * So they render exactly when a search surfaced them (`isSearchHit`), and what
+ * they render is a way IN to the panel — not a note about where to look. The
+ * button degrades to plain text when no opener was wired, rather than
  * rendering a control that leads nowhere.
  */
 function QuickPanelPointer({

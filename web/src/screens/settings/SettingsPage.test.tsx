@@ -252,47 +252,71 @@ describe("leaving the page", () => {
   });
 });
 
-describe("the quick-panel pointer", () => {
+describe("the quick-panel pointer (P0-7)", () => {
   /*
-   * Theme and density have no CONTROL on this page — their control lives in the
-   * quick panel, where the change is visible as you make it. The rows survive
-   * so the settings search still finds them, and what they render is directions.
+   * Theme and density have no CONTROL on this page — theirs lives in the quick
+   * panel, where the change is visible as you make it. They used to render on
+   * the Recibidos tab anyway, as rows that looked like settings and settled
+   * nothing: the review called them dead rows, and Gmail has none.
+   *
+   * They now render ONLY as search results, which is the distinction that
+   * matters: the registry keeps them so "densidad" finds something (D-5), and
+   * what it finds is a way INTO the panel rather than an empty anchor.
    */
-  it("points at the panel instead of duplicating the control", async () => {
+  it("puts no dead rows on the tab a user is reading", async () => {
+    const user = userEvent.setup();
+    renderPage({ onOpenQuickSettings: vi.fn() });
+    await openAt(user, en["settings.section.inbox"]);
+
+    expect(screen.queryByText(en["settings.inQuickPanel"])).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: en["settings.openQuickPanel"] }),
+    ).not.toBeInTheDocument();
+    // The live rows of the tab are untouched — this removed two rows, not four.
+    expect(
+      screen.getByRole("combobox", { name: en["settings.readingPane.label"] }),
+    ).toBeInTheDocument();
+  });
+
+  it("never duplicates the control the panel owns", async () => {
     const user = userEvent.setup();
     renderPage();
     await openAt(user, en["settings.section.inbox"]);
 
-    expect(screen.getAllByText(en["settings.inQuickPanel"]).length).toBe(2);
-    // The thing that must NOT be here: a second live control over one
-    // preference. The theme radios belong to the panel now.
+    // Two live controls over one preference is the drift this codebase avoids
+    // everywhere else; the theme radios belong to the panel.
     expect(screen.queryByRole("radio", { name: en["theme.dark"] })).not.toBeInTheDocument();
   });
 
-  it("opens the panel when an opener is wired", async () => {
+  it("appears for a SEARCH, and opens the panel from there", async () => {
     const user = userEvent.setup();
     const onOpenQuickSettings = vi.fn();
     renderPage({ onOpenQuickSettings });
-    await openAt(user, en["settings.section.inbox"]);
 
-    await user.click(
-      screen.getAllByRole("button", { name: en["settings.openQuickPanel"] })[0]!,
+    await user.type(
+      screen.getByRole("searchbox", { name: en["settings.search.label"] }),
+      "density",
     );
 
+    await user.click(screen.getByRole("button", { name: en["settings.openQuickPanel"] }));
     expect(onOpenQuickSettings).toHaveBeenCalledTimes(1);
   });
 
   it("degrades to plain text when no opener was wired", async () => {
     const user = userEvent.setup();
     renderPage();
-    await openAt(user, en["settings.section.inbox"]);
+
+    await user.type(
+      screen.getByRole("searchbox", { name: en["settings.search.label"] }),
+      "density",
+    );
 
     // A button that leads nowhere is the dead control P4 forbids; the sentence
     // still tells the user where to look.
     expect(
       screen.queryByRole("button", { name: en["settings.openQuickPanel"] }),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByText(en["settings.inQuickPanel"]).length).toBe(2);
+    expect(screen.getByText(en["settings.inQuickPanel"])).toBeInTheDocument();
   });
 });
 

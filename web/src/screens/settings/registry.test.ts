@@ -350,4 +350,24 @@ describe("the section → tab mapping (E12)", () => {
       expect(ids.has(id), `"${id}" lost its registry row when its control moved`).toBe(true);
     }
   });
+
+  it("renders the quick-panel rows only under a SEARCH (P0-7)", () => {
+    /*
+     * The other half of the rule above, and the one that went wrong: keeping
+     * the registry entry is right, rendering a row on the tab is not. A row
+     * that looks like a setting and settles nothing is a dead end a user meets
+     * while reading Recibidos top to bottom.
+     *
+     * Read from the source, the same crude-but-safe-direction scan the drift
+     * checks above use: it can only fail when the wiring is genuinely gone.
+     */
+    const page = readFileSync(
+      resolve(process.cwd(), "src/screens/settings/SettingsPage.tsx"),
+      "utf8",
+    );
+    for (const id of QUICK_PANEL_ROWS) {
+      expect(page).toContain(`isSearchHit("${id}")`);
+      expect(page).not.toContain(`showRow("${id}")`);
+    }
+  });
 });

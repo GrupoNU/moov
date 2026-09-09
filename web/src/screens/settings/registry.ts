@@ -144,11 +144,18 @@ export const TAB_TITLES: Readonly<Record<SettingsTab, PlainStringKey>> = {
  * (E12/B2, canon 07 §4).
  *
  * They keep their registry entries — so the settings search still finds
- * "densidad" and "tema", which is the whole point of D-5 — but the page renders
- * a POINTER at the panel where the control would be, rather than a second copy
- * of it. Two live controls over one preference is the drift this codebase
- * avoids everywhere else, and the quick panel is where Gmail puts these two
- * because it is the only surface where the change is visible as you make it.
+ * "densidad" and "tema", which is the whole point of D-5 — and NOTHING ELSE.
+ * Two live controls over one preference is the drift this codebase avoids
+ * everywhere else, and the quick panel is where Gmail puts these two because
+ * it is the only surface where the change is visible as you make it.
+ *
+ * P0-7 corrected what the page does with them. They used to render on the
+ * Recibidos tab as pointer rows ("Abrir los ajustes rápidos") — rows that look
+ * like settings and settle nothing, which Gmail never has and which the review
+ * called dead rows. The page now renders them ONLY when a search surfaced
+ * them, and what it renders is a way into the panel rather than an empty
+ * anchor. `SettingsPage`'s `isSearchHit` is the predicate; a test pins both
+ * halves (absent while browsing, present and clickable under a search).
  */
 export const QUICK_PANEL_ROWS: ReadonlySet<string> = new Set(["theme", "density"]);
 
