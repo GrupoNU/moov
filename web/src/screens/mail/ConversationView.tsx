@@ -17,6 +17,7 @@ import {
   withMarked,
   type ConversationState,
 } from "../../mail/conversation";
+import { usePrefs } from "../../mail/PrefsProvider";
 import { isSuspicious, type Email, type Thread } from "../../mail/types";
 import { ConversationMessage } from "./ConversationMessage";
 import type { SignImageUrls } from "./SecureHtmlBody";
@@ -137,6 +138,12 @@ export function ConversationView({
   onControls,
 }: ConversationViewProps): React.JSX.Element {
   const { t } = useTranslation();
+  /*
+   * C-09: which reply the bottom pills put FIRST. Read from the provider for
+   * the same reason ReadingPane reads it there: one enum reaching one row.
+   * Outside a provider it falls back to Gmail's default (plain reply).
+   */
+  const { prefs } = usePrefs();
 
   /*
    * The thread's messages, keyed by id.
@@ -232,6 +239,8 @@ export function ConversationView({
     () => conversationOrder([...members.values()]),
     [members],
   );
+  /** The newest message — what the bottom reply pills act on (C-09). */
+  const newest = ordered[ordered.length - 1];
 
   // The initial expansion, computed once the rows are in. It runs when the set
   // of member ids changes, which is exactly when "what is unread in this
@@ -316,11 +325,14 @@ export function ConversationView({
    * representative, which may be collapsed.
    */
   const [currentId, setCurrentId] = useState<string | undefined>(targetMessageId);
-  useEffect(() => {
-    if (currentId !== undefined || ordered.length === 0) return;
-    if (members.size < memberIds.length) return;
-    setCurrentId(ordered[ordered.length - 1]?.id);
-  }, [currentId, ordered, members.size, memberIds.length]);
+  /*
+   * Derived rather than set by an effect: an effect would leave one render in
+   * which the membership is complete but the cursor still undefined, and a
+   * `p` pressed in that window would start from the oldest message instead
+   * of the newest — the kind of race a test catches one run in five.
+   */
+  const effectiveCurrentId =
+    currentId ?? (members.size >= memberIds.length ? newest?.id : undefined);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -359,7 +371,7 @@ export function ConversationView({
 
   const goToMessage = useCallback(
     (direction: "next" | "previous"): void => {
-      const target = adjacentMessage(ordered, currentId, direction);
+      const target = adjacentMessage(ordered, effectiveCurrentId, direction);
       // At the ends `adjacentMessage` returns nothing rather than wrapping, so
       // `n` on the newest message simply does nothing — which is what the
       // state machine's own test pins.
@@ -375,7 +387,7 @@ export function ConversationView({
       );
       scrollTo(target.id);
     },
-    [ordered, currentId, scrollTo],
+    [ordered, effectiveCurrentId, scrollTo],
   );
 
   const allExpanded = isAllExpanded(state, ordered);
@@ -426,7 +438,7 @@ export function ConversationView({
           key={message.id}
           email={message}
           isExpanded={state.expanded.has(message.id)}
-          isCurrent={ordered.length > 1 && message.id === currentId}
+          isCurrent={ordered.length > 1 && message.id === effectiveCurrentId}
           onToggle={() => {
             setCurrentId(message.id);
             setState((current) => toggleExpanded(current, message.id));
@@ -455,6 +467,82 @@ export function ConversationView({
           blobToken={blobToken}
         />
       ))}
+
+      {/*
+        C-09: the reply pills at the END of the conversation, Gmail's shape —
+        outlined, with the verb's glyph, after the last message, where the
+        eye is when it finishes reading. They act on the NEWEST message,
+        which is what "reply to this conversation" means (and what Gmail's
+        bottom pills do); a reply to an older message is its own arrow in its
+        own sender line (C-08). They render once the membership is known, so
+        they cannot momentarily reply to the wrong message while rows load.
+
+        Reply-all is offered only when the newest message HAD more than one
+        party besides the reader — a pill that would produce the same draft as
+        "Reply" is a choice with no difference, and Gmail omits it too. The
+        E5 `defaultReplyBehavior` preference orders the two, exactly as the
+        single-message reader's row does, so the key and the pill agree.
+      */}
+      {newest !== undefined && members.size >= memberIds.length && (
+        <div className={styles.replyRow} role="group" aria-label={t("action.reply")}>
+          {(prefs.defaultReplyBehavior === "replyAll" && hasSeveralRecipients(newest)
+            ? (["replyAll", "reply"] as const)
+            : hasSeveralRecipients(newest)
+              ? (["reply", "replyAll"] as const)
+              : (["reply"] as const)
+          ).map((verb) => (
+            <button
+              key={verb}
+              type="button"
+              className={styles.replyPill}
+              onClick={() => {
+                onReply(newest, verb === "replyAll");
+              }}
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                {verb === "replyAll" ? (
+                  <>
+                    <path d="M7 5.5L2.5 9.5 7 13.5" />
+                    <path d="M11 5.5L6.5 9.5 11 13.5" />
+                    <path d="M6.8 9.5h5.2a5.3 5.3 0 0 1 5.3 5.3v.7" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M8 5.5L3.5 9.5 8 13.5" />
+                    <path d="M3.8 9.5h6.4a5.3 5.3 0 0 1 5.3 5.3v.7" />
+                  </>
+                )}
+              </svg>
+              {verb === "replyAll" ? t("action.replyAll") : t("action.reply")}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={styles.replyPill}
+            onClick={() => {
+              onForward(newest);
+            }}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M12 5.5l4.5 4-4.5 4" />
+              <path d="M16.2 9.5H9.8a5.3 5.3 0 0 0-5.3 5.3v.7" />
+            </svg>
+            {t("action.forward")}
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * True when replying to everyone would reach someone a plain reply would
+ * not: any Cc, or more than one To. The reader's own address is not
+ * subtracted here — the composer's reply-all already drops it — so the
+ * question is only "is there a second party at all".
+ */
+function hasSeveralRecipients(message: Email): boolean {
+  const to = message.to?.length ?? 0;
+  const cc = message.cc?.length ?? 0;
+  return to + cc > 1;
 }

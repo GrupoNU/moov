@@ -796,6 +796,14 @@ export function ReadingPane({
           The `r` key follows the same preference in `MailScreen`, so the
           button the eye lands on and the key the hand reaches for agree.
         */}
+        {/*
+          C-09: in conversation view the reply verbs live at the END of the
+          thread, as Gmail's pills (ConversationView), and NOT here as well —
+          two rows saying "Responder" in one pane are two answers to one
+          question. The single-message reader keeps this row: it has no
+          bottom, its body is the whole pane.
+        */}
+        {!conversationView && (
         <div className={styles.actions} role="group" aria-label={t("action.reply")}>
           {prefs.defaultReplyBehavior === "replyAll" ? (
             <>
@@ -820,6 +828,7 @@ export function ReadingPane({
             {t("action.forward")}
           </button>
         </div>
+        )}
 
         {/*
           E1: the sender block belongs to ONE message, and in conversation view

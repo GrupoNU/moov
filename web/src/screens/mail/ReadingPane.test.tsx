@@ -687,6 +687,23 @@ describe("C-06: the thread header", () => {
     expect(collapse).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("keeps no reply row at the TOP in conversation view — the pills are at the end (C-09)", async () => {
+    renderPane({
+      conversationView: true,
+      email: newest,
+      thread: { id: "t1", emailIds: ["m0", "m1"] },
+      client: threadClient([older, newest]),
+    });
+    await screen.findByRole("button", { name: /^expandir todo$/i });
+    const groups = screen.getAllByRole("group", { name: /^responder$/i });
+    // Exactly one reply group, and it comes AFTER the toolbar, not before
+    // the messages: the conversation's own pills.
+    expect(groups).toHaveLength(1);
+    const toolbar = screen.getByRole("toolbar", { name: /más acciones/i });
+    expect(toolbar.compareDocumentPosition(groups[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(groups[0]!).getByRole("button", { name: /^reenviar$/i })).toBeInTheDocument();
+  });
+
   it("grows no chevron for a single message", async () => {
     renderPane({
       conversationView: true,

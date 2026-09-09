@@ -459,7 +459,7 @@ describe("per-message actions", () => {
     await waitFor(() => {
       expect(expandedMessages()).toHaveLength(1);
     });
-    const message = screen.getByText("Sender m3").closest("[data-message-id]")!;
+    const message = screen.getByText("Sender m3").closest<HTMLElement>("[data-message-id]")!;
 
     // The arrow, named for a screen reader and a hover alike.
     const reply = within(message).getByRole("button", { name: /^responder$/i });
@@ -487,7 +487,7 @@ describe("per-message actions", () => {
     await waitFor(() => {
       expect(expandedMessages()).toHaveLength(1);
     });
-    const message = screen.getByText("Sender m3").closest("[data-message-id]")!;
+    const message = screen.getByText("Sender m3").closest<HTMLElement>("[data-message-id]")!;
     within(message).getByRole("button", { name: /^responder$/i }).focus();
     await user.keyboard("{Enter}");
     expect(props.onReply).toHaveBeenCalledWith(expect.objectContaining({ id: "m3" }), false);
@@ -514,6 +514,55 @@ describe("per-message actions", () => {
       expect.objectContaining({ id: "m1" }),
       false,
     );
+  });
+});
+
+describe("the reply pills at the end of the conversation (C-09)", () => {
+  it("offers Reply and Forward after the last message, acting on the newest", async () => {
+    const user = userEvent.setup();
+    const { props } = renderConversation();
+    await waitFor(() => {
+      expect(screen.getByText("Sender m1")).toBeInTheDocument();
+    });
+    const row = screen.getByRole("group", { name: /^responder$/i });
+    // Rendered AFTER the messages: the pills are the last thing in the column.
+    const lastMessage = screen.getByText("Sender m3").closest<HTMLElement>("[data-message-id]")!;
+    expect(lastMessage.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(within(row).getByRole("button", { name: /^responder$/i }));
+    expect(props.onReply).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }), false);
+
+    await user.click(within(row).getByRole("button", { name: /^reenviar$/i }));
+    expect(props.onForward).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }));
+  });
+
+  it("omits Reply all when the newest message had one party — it would build the same draft", async () => {
+    renderConversation();
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: /^responder$/i })).toBeInTheDocument();
+    });
+    expect(
+      within(screen.getByRole("group", { name: /^responder$/i })).queryByRole("button", {
+        name: /responder a todos/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers Reply all when the newest message had several parties, replying to all of them", async () => {
+    const user = userEvent.setup();
+    const wide = withBody(
+      email("m3", "2026-08-03T10:00:00Z", {
+        to: [
+          { name: "Ana", email: "ana@example.com" },
+          { name: "Carlos", email: "carlos@example.com" },
+        ],
+      }),
+      "the newest message",
+    );
+    const { props } = renderConversation({ openEmail: wide, rows: [M1, M2, wide] });
+    const row = await screen.findByRole("group", { name: /^responder$/i });
+    await user.click(await within(row).findByRole("button", { name: /responder a todos/i }));
+    expect(props.onReply).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }), true);
   });
 });
 
