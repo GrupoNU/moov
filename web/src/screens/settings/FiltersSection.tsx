@@ -207,34 +207,55 @@ export function FiltersSection({
             </div>
 
             <div className={styles.rowActions}>
-              <button
-                type="button"
-                className={styles.iconButton}
-                disabled={index === 0 || isBusy}
-                aria-label={`${t("filters.moveUp")}: ${rule.name}`}
-                title={t("filters.moveUp")}
-                onClick={() => {
-                  onMove(rule.id, "up");
-                }}
-              >
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                  <path d="M10 15V5M5.5 9.5L10 5l4.5 4.5" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className={styles.iconButton}
-                disabled={index === visible.length - 1 || isBusy}
-                aria-label={`${t("filters.moveDown")}: ${rule.name}`}
-                title={t("filters.moveDown")}
-                onClick={() => {
-                  onMove(rule.id, "down");
-                }}
-              >
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                  <path d="M10 5v10M5.5 10.5L10 15l4.5-4.5" />
-                </svg>
-              </button>
+              {/*
+                F-41: the reorder pair appears only with something to reorder.
+
+                The review read the section as promising "EN ORDEN" with no
+                control of order, and with one rule that is what it looks like:
+                both buttons render permanently disabled, which is the dead
+                control P4 forbids and is indistinguishable from a broken one.
+                A single rule HAS no order — its position is the only position
+                — so below two rules there is nothing to offer and nothing is
+                offered.
+
+                The buttons are ordinary buttons, so Tab reaches them and Enter
+                and Space activate them: the keyboard path is the browser's,
+                not a re-implementation. `aria-label` carries the rule's name
+                because "move up" repeated down a list of five says nothing
+                about WHICH rule moves.
+              */}
+              {visible.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    className={styles.iconButton}
+                    disabled={index === 0 || isBusy}
+                    aria-label={`${t("filters.moveUp")}: ${rule.name}`}
+                    title={t("filters.moveUp")}
+                    onClick={() => {
+                      onMove(rule.id, "up");
+                    }}
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                      <path d="M10 15V5M5.5 9.5L10 5l4.5 4.5" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.iconButton}
+                    disabled={index === visible.length - 1 || isBusy}
+                    aria-label={`${t("filters.moveDown")}: ${rule.name}`}
+                    title={t("filters.moveDown")}
+                    onClick={() => {
+                      onMove(rule.id, "down");
+                    }}
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                      <path d="M10 5v10M5.5 10.5L10 15l4.5-4.5" />
+                    </svg>
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className={styles.secondary}

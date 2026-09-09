@@ -6,6 +6,8 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import {
   EMPTY_RULE,
   exportFilters,
+  persistRuleOrder,
+  reorderRules,
   parseFilterRule,
   type FilterRule,
   type FilterRuleDraft,
@@ -13,7 +15,22 @@ import {
 } from "../../mail/filters";
 import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
+import { JmapClient } from "../../api/jmap";
 import { FiltersSection } from "./FiltersSection";
+
+/** A JMAP client whose calls are recorded, for the persist-order contract. */
+function stubClient(responses: Record<string, unknown>) {
+  const sent: [string, Record<string, unknown>, string][] = [];
+  const client = new JmapClient({ username: "u", password: "p" });
+  vi.spyOn(client, "call").mockImplementation((invocations) => {
+    const calls = invocations as [string, Record<string, unknown>, string][];
+    sent.push(...calls);
+    return Promise.resolve({
+      methodResponses: calls.map(([name, , id]) => [name, responses[id] ?? {}, id]),
+    } as never);
+  });
+  return { client, sent };
+}
 
 /**
  * The filter manager (E6, GC-4).
@@ -475,5 +492,126 @@ describe("importing and exporting (F-42)", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/El XML de Gmail no está soportado/i);
     expect(onImport).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The order controls (F-41).
+ *
+ * The section states each rule's position ("1 de 3") and says in prose that
+ * order matters, because on this server it does: Sieve runs top to bottom and
+ * `stop` ends the script for that message, so a rule's position changes what
+ * the mail server DOES. The review read that as a promise with no control
+ * behind it — which is what one rule looks like, since both buttons then render
+ * permanently disabled.
+ */
+describe("reordering rules (F-41)", () => {
+  const two = [
+    rule({ id: "r1", name: "facturas" }),
+    rule({ id: "r2", name: "boletines" }),
+  ];
+
+  it("offers no reorder pair when there is nothing to reorder", () => {
+    renderSection({ rules: [rule({ id: "r1", name: "facturas" })] });
+
+    // A single rule HAS no order. Two permanently disabled buttons are the
+    // dead control P4 forbids and are indistinguishable from a broken one.
+    expect(screen.queryByRole("button", { name: /subir/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /bajar/i })).not.toBeInTheDocument();
+  });
+
+  it("offers the pair on every row once there are two, bounded at the ends", () => {
+    renderSection({ rules: two });
+
+    expect(screen.getByRole("button", { name: /subir: facturas/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /bajar: facturas/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /subir: boletines/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /bajar: boletines/i })).toBeDisabled();
+  });
+
+  it("states each rule's position, so the number is not read off the pixels", () => {
+    renderSection({ rules: two });
+
+    // A user reasoning about why their "stop" rule swallowed a later one needs
+    // the number, and inferring it from the visual order is exactly what an
+    // accessible list must not require.
+    expect(screen.getByText("Regla 1 de 2")).toBeInTheDocument();
+    expect(screen.getByText("Regla 2 de 2")).toBeInTheDocument();
+  });
+
+  it("moves through the caller with the rule's id and a direction", async () => {
+    const user = userEvent.setup();
+    const props = renderSection({ rules: two });
+
+    await user.click(screen.getByRole("button", { name: /bajar: facturas/i }));
+
+    expect(props.onMove).toHaveBeenCalledWith("r1", "down");
+  });
+
+  it("is operable from the keyboard, because the buttons are buttons", async () => {
+    const user = userEvent.setup();
+    const props = renderSection({ rules: two });
+
+    // Tab reaches it and Enter activates it with no handler of our own: the
+    // keyboard path is the browser's rather than a re-implementation.
+    screen.getByRole("button", { name: /subir: boletines/i }).focus();
+    await user.keyboard("{Enter}");
+
+    expect(props.onMove).toHaveBeenCalledWith("r2", "up");
+  });
+});
+
+/**
+ * T-E6's contract, restated as a test (F-41).
+ *
+ * The wire has NO position field: `FilterRule/get` returns the rules in the
+ * script's evaluation order, and `FilterRule/set` appends creates to the end
+ * with no argument that says "put this one third". So a reorder is expressed by
+ * rewriting the two swapped rules' FIELDS in place — which means **the ids
+ * follow the position, not the rule**.
+ *
+ * That is a real consequence with a real cost, and it is pinned here rather
+ * than only documented: after moving "facturas" up, the id that used to name
+ * "facturas" names whatever was above it. Nothing in the UI holds a rule id
+ * across a reorder (the list re-reads after every write), and the alternative —
+ * destroy-and-recreate — would mint new ids for every rule below the moved one
+ * AND lose them entirely if the create half failed.
+ */
+describe("the reorder wire contract", () => {
+  const a = rule({ id: "r1", name: "facturas" });
+  const b = rule({ id: "r2", name: "boletines" });
+  const c = rule({ id: "r3", name: "avisos" });
+
+  it("swaps CONTENT between positions and leaves the id set untouched", () => {
+    const after = reorderRules([a, b, c], "r2", "up");
+
+    expect(after.map((r) => r.name)).toEqual(["boletines", "facturas", "avisos"]);
+    // The ids move WITH the content in the pure function; it is the persist
+    // step below that pins them to the position instead.
+    expect(after.map((r) => r.id)).toEqual(["r2", "r1", "r3"]);
+  });
+
+  it("returns the SAME array at either end, so no request is issued", () => {
+    const rules = [a, b, c];
+    // Identity, deliberately: the caller compares by reference to decide
+    // whether there is anything to send at all.
+    expect(reorderRules(rules, "r1", "up")).toBe(rules);
+    expect(reorderRules(rules, "r3", "down")).toBe(rules);
+    expect(reorderRules(rules, "missing", "up")).toBe(rules);
+  });
+
+  it("persists a swap as updates to the POSITIONS, not to the rules", async () => {
+    const { client, sent } = stubClient({ s: { updated: {} } });
+    const before = [a, b, c];
+    await persistRuleOrder(client, "acct", before, reorderRules(before, "r2", "up"));
+
+    const update = sent[0]?.[1].update as Record<string, { name: string }>;
+    // r1 (position 1) now carries "boletines" and r2 (position 2) carries
+    // "facturas": the ids follow the position. r3 did not move, so it is not
+    // in the patch at all — one /set, the smallest one that expresses the swap.
+    expect(Object.keys(update)).toEqual(["r1", "r2"]);
+    expect(update.r1?.name).toBe("boletines");
+    expect(update.r2?.name).toBe("facturas");
+    expect(update).not.toHaveProperty("r3");
   });
 });
