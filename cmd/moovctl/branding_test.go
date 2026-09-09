@@ -575,11 +575,11 @@ func TestBrandingDeclaresIconFallback(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("set exited %d: %s", code, stderr)
 	}
-	if strings.Contains(stdout, "PWA icons will stay") {
+	if strings.Contains(stdout, "PWA icons will not be rendered") {
 		t.Errorf("set warned about a renderable PNG logo:\n%s", stdout)
 	}
 	_, stdout, _ = runCLI(t, "", "branding", "show", "-dir", root, "-host", "png.test")
-	if !strings.Contains(stdout, "generated from logo.png") {
+	if !strings.Contains(stdout, "generated from the logo logo.png") {
 		t.Errorf("show does not name the PNG as the icon source:\n%s", stdout)
 	}
 
@@ -589,8 +589,8 @@ func TestBrandingDeclaresIconFallback(t *testing.T) {
 		t.Fatalf("set exited %d: %s", code, stderr)
 	}
 	_, stdout, _ = runCLI(t, "", "branding", "show", "-dir", root, "-host", "bare.test")
-	if !strings.Contains(stdout, "no logo configured") {
-		t.Errorf("show does not say there is no logo:\n%s", stdout)
+	if !strings.Contains(stdout, "no icon and no logo configured") {
+		t.Errorf("show does not say there is no mark at all:\n%s", stdout)
 	}
 }
 

@@ -1,17 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
+
+	// The decoders the CLI needs to measure an icon's aspect ratio. They
+	// mirror the server's set, WebP excluded for the same reason: its decoder
+	// is not vendored, and a WebP icon is refused as an icon source anyway.
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 
 	"github.com/GrupoNU/moov/internal/jmaphttp"
 )
@@ -32,6 +42,7 @@ import (
 //
 //	<dir>/<host>/branding.json     the document (name, colors, asset names)
 //	<dir>/<host>/logo.png          the assets, copied and validated
+//	<dir>/<host>/icon.png
 //	<dir>/<host>/splash.jpg
 //
 // The server re-validates everything it reads, so this CLI's validation is
@@ -82,6 +93,8 @@ func brandingSet(e *env, args []string) error {
 	tagline := fs.String("tagline", "", "an optional line under the product name on the login panel")
 	supportURL := fs.String("support-url", "", "where \"contact your administrator\" points (https:// or mailto:)")
 	logo := fs.String("logo", "", "path to the logo image (png, jpg, webp or gif)")
+	icon := fs.String("icon", "", "path to the SQUARE icon the installed app's icons and the "+
+		"favicon are rendered from (png, jpg or gif); defaults to the logo")
 	splash := fs.String("splash", "", "path to the login panel image (png, jpg, webp or gif)")
 	colorPrimary := fs.String("color-primary", "", "accent color as CSS hex, e.g. #5b5bd6")
 	colorOnPrimary := fs.String("color-on-primary", "", "text color drawn on the accent, e.g. #ffffff")
@@ -92,6 +105,11 @@ func brandingSet(e *env, args []string) error {
 		out(e.stderr, "Usage: moovctl branding set -host <hostname> [flags]\n\n"+
 			"Writes <dir>/<host>/branding.json and copies the given assets beside it.\n"+
 			"Flags that are not passed keep their current value.\n\n"+
+			"-logo is what the top bar and the login panel show. -icon is the SQUARE\n"+
+			"mark the installed app's icons and the favicon are rendered from, and it\n"+
+			"falls back to the logo. Give one when your primary color is dark: the\n"+
+			"maskable and Apple icons sit on a plate of that color, so a dark logo\n"+
+			"disappears into it.\n\n"+
 			"SVG is deliberately not accepted: it is an XML document that can carry\n"+
 			"scripts, and the login page is where passwords are typed. Export to PNG.\n\n")
 		fs.PrintDefaults()
@@ -196,6 +214,7 @@ func brandingSet(e *env, args []string) error {
 		field *string
 	}{
 		{"logo", logo, "logo", &doc.Logo},
+		{"icon", icon, "icon", &doc.Icon},
 		{"splash", splash, "splash", &doc.Splash},
 	}
 	for _, a := range assets {
@@ -218,20 +237,31 @@ func brandingSet(e *env, args []string) error {
 		*a.field = stored
 		changed = true
 		outf(e.stdout, "Stored %s as %s.\n", a.flag, filepath.Join(hostDir, stored))
-		// The logo is also the source of the installed app's icons, and not
-		// every image the login page can show can be rendered into one (WebP
-		// in particular). Say so NOW, at the terminal, rather than letting the
-		// operator find Moov's mark on a customer's home screen.
-		if a.flag == "logo" {
+		// The icon, or the logo when there is no icon, is the source of
+		// the installed app's icons, and not every image the login page can
+		// show can be rendered into one (WebP in particular). Say so NOW, at
+		// the terminal, rather than letting the operator find the wrong mark
+		// on a customer's home screen.
+		if a.flag == "logo" || a.flag == "icon" {
 			if err := jmaphttp.ValidateBrandingIconSource(body); err != nil {
-				outf(e.stdout, "  Note: the PWA icons will stay Moov's — %s.\n", err)
+				outf(e.stdout, "  Note: the PWA icons will not be rendered from this %s — %s.\n", a.flag, err)
+			} else if a.flag == "icon" {
+				// A launcher shows a SQUARE. A wide image is contained inside
+				// it with its aspect kept, so it ends up small with bands of
+				// plate above and below — legible, but not what an operator
+				// supplying an "icon" expects to see on a home screen.
+				if w, h, ok := imageDimensionsForCLI(body); ok && !isRoughlySquare(w, h) {
+					outf(e.stdout, "  Warning: the icon is %dx%d, which is not square; "+
+						"launchers show a square, so it will be contained inside one "+
+						"with bands of the primary color around it.\n", w, h)
+				}
 			}
 		}
 	}
 
 	if !changed {
 		return usageErrorf("branding set needs at least one field to change " +
-			"(-name, -logo, -splash, -color-primary, ...)")
+			"(-name, -logo, -icon, -splash, -color-primary, ...)")
 	}
 
 	if err := writeBrandingFile(hostDir, doc); err != nil {
@@ -293,8 +323,9 @@ func brandingShow(e *env, args []string) error {
 	outf(w, "TAGLINE\t%s\n", orDash(doc.Tagline))
 	outf(w, "SUPPORT URL\t%s\n", orDash(doc.SupportURL))
 	outf(w, "LOGO\t%s\n", orDash(doc.Logo))
+	outf(w, "ICON\t%s\n", orDash(doc.Icon))
 	outf(w, "SPLASH\t%s\n", orDash(doc.Splash))
-	outf(w, "PWA ICONS\t%s\n", pwaIconsStatus(hostDir, doc.Logo))
+	outf(w, "PWA ICONS\t%s\n", pwaIconsStatus(hostDir, doc.Icon, doc.Logo))
 	outf(w, "PRIMARY\t%s\n", orDash(doc.Colors.Primary))
 	outf(w, "ON PRIMARY\t%s\n", orDash(doc.Colors.OnPrimary))
 	outf(w, "SPLASH FROM\t%s\n", orDash(doc.Colors.SplashFrom))
@@ -302,23 +333,56 @@ func brandingShow(e *env, args []string) error {
 	return w.Flush()
 }
 
-// pwaIconsStatus says where the installed app's icons will come from, with
-// the reason whenever the answer is "Moov's": the server logs the same
-// verdict, but an operator running `show` should not have to read the daemon
-// log to learn why a customer's phone shows the wrong mark.
-func pwaIconsStatus(hostDir, logo string) string {
-	name := sanitizeAssetName(logo)
+// pwaIconsStatus says where the installed app's icons will come from, with the
+// reason whenever it is not the operator's first choice: the server logs the
+// same verdict, but an operator running `show` should not have to read the
+// daemon log to learn why a customer's phone shows the wrong mark.
+//
+// It walks the SAME chain the server does — the square icon, then the logo,
+// then Moov's own — and it reads the FILES rather than the wire, because this
+// is the tool for a host whose server may not even be running yet.
+func pwaIconsStatus(hostDir, icon, logo string) string {
+	iconOK, iconWhy := iconSourceVerdict(hostDir, icon)
+	logoOK, logoWhy := iconSourceVerdict(hostDir, logo)
+
+	switch {
+	case iconOK:
+		return "generated from the icon " + sanitizeAssetName(icon)
+	case logoOK && iconWhy != "":
+		return fmt.Sprintf("generated from the logo %s (the icon is not usable: %s)",
+			sanitizeAssetName(logo), iconWhy)
+	case logoOK:
+		return "generated from the logo " + sanitizeAssetName(logo)
+	case iconWhy == "" && logoWhy == "":
+		return "Moov's (no icon and no logo configured)"
+	case iconWhy == "":
+		return fmt.Sprintf("Moov's (no icon configured, and the logo is not usable: %s)", logoWhy)
+	case logoWhy == "":
+		return fmt.Sprintf("Moov's (the icon is not usable: %s, and no logo is configured)", iconWhy)
+	default:
+		return fmt.Sprintf("Moov's (the icon is not usable: %s; the logo is not usable: %s)", iconWhy, logoWhy)
+	}
+}
+
+// iconSourceVerdict judges one configured asset as a source for the rendered
+// icons. An empty reason with ok=false means "not configured", which is not a
+// problem to report.
+func iconSourceVerdict(hostDir, configured string) (ok bool, why string) {
+	name := sanitizeAssetName(configured)
 	if name == "" {
-		return "Moov's (no logo configured)"
+		if strings.TrimSpace(configured) == "" {
+			return false, ""
+		}
+		return false, fmt.Sprintf("%q is not a usable filename", configured)
 	}
 	body, err := os.ReadFile(filepath.Join(hostDir, name)) // #nosec G304 -- a validated single component under the host directory.
 	if err != nil {
-		return fmt.Sprintf("Moov's (the logo cannot be read: %v)", err)
+		return false, fmt.Sprintf("%s cannot be read: %v", name, err)
 	}
 	if err := jmaphttp.ValidateBrandingIconSource(body); err != nil {
-		return fmt.Sprintf("Moov's (%s)", err)
+		return false, err.Error()
 	}
-	return "generated from " + name
+	return true, ""
 }
 
 // maxShortNameRunes mirrors the server's cap on shortName; the CLI refuses
@@ -368,15 +432,16 @@ func brandingList(e *env, args []string) error {
 	sort.Strings(hosts)
 
 	w := tabwriter.NewWriter(e.stdout, 0, 0, 2, ' ', 0)
-	outln(w, "HOST\tNAME\tLOGO\tSPLASH\tPRIMARY")
+	outln(w, "HOST\tNAME\tLOGO\tICON\tSPLASH\tPRIMARY")
 	for _, h := range hosts {
 		doc, err := readBrandingFile(filepath.Join(root, h))
 		if err != nil {
-			outf(w, "%s\t(unreadable)\t-\t-\t-\n", h)
+			outf(w, "%s\t(unreadable)\t-\t-\t-\t-\n", h)
 			continue
 		}
-		outf(w, "%s\t%s\t%s\t%s\t%s\n",
-			h, orDash(doc.Name), orDash(doc.Logo), orDash(doc.Splash), orDash(doc.Colors.Primary))
+		outf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			h, orDash(doc.Name), orDash(doc.Logo), orDash(doc.Icon),
+			orDash(doc.Splash), orDash(doc.Colors.Primary))
 	}
 	return w.Flush()
 }
@@ -432,7 +497,7 @@ func brandingUnset(e *env, args []string) error {
 		// Only the files this CLI wrote, by their recorded names — never a
 		// blanket wipe of the directory, which might hold something an
 		// operator put there.
-		for _, asset := range []string{doc.Logo, doc.Splash} {
+		for _, asset := range []string{doc.Logo, doc.Icon, doc.Splash} {
 			if name := sanitizeAssetName(asset); name != "" {
 				_ = os.Remove(filepath.Join(hostDir, name))
 			}
@@ -461,6 +526,7 @@ type brandingDocument struct {
 	Tagline    string           `json:"tagline,omitempty"`
 	SupportURL string           `json:"supportUrl,omitempty"`
 	Logo       string           `json:"logo,omitempty"`
+	Icon       string           `json:"icon,omitempty"`
 	Splash     string           `json:"splash,omitempty"`
 	Colors     brandingDocColor `json:"colors,omitempty"`
 }
@@ -635,6 +701,34 @@ func imageExtensionForCLI(b []byte) (string, bool) {
 		return ".gif", true
 	}
 	return "", false
+}
+
+// imageDimensionsForCLI reads an image's pixel dimensions from its header,
+// for the squareness warning. It reads only the header (image.DecodeConfig),
+// never the pixels; false means the format has no decoder registered here
+// (WebP), in which case the operator already got the harder warning that the
+// icons cannot be rendered from it at all.
+func imageDimensionsForCLI(b []byte) (width, height int, ok bool) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(b))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
+}
+
+// maxIconAspectDrift is how far from 1:1 an icon may be before the operator is
+// warned. Ten per cent is enough to cover the odd off-by-a-pixel export and
+// tight enough to catch a wordmark handed to -icon by mistake.
+const maxIconAspectDrift = 0.10
+
+// isRoughlySquare reports whether an image is close enough to 1:1 to fill a
+// launcher's square without visible bands.
+func isRoughlySquare(width, height int) bool {
+	if width <= 0 || height <= 0 {
+		return false
+	}
+	ratio := float64(width) / float64(height)
+	return math.Abs(ratio-1) <= maxIconAspectDrift
 }
 
 // requireBrandingHost validates the -host flag.
