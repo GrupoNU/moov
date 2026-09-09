@@ -6,11 +6,21 @@
  * Gmail's panel deliberately does not.
  */
 
+/*
+ * E-19: the panel is exactly as wide as the box it hangs from.
+ *
+ * `left: 0; right: 0` on the search wrapper is what does it, and it was already
+ * here — what the review measured at ~420px was the wrapper itself before T1
+ * widened it. The `min-width` is the belt: the wrapper collapses on a narrow
+ * viewport and a form of eight rows squeezed into 300px is unreadable, so below
+ * that the panel stops following and overflows to the right instead.
+ */
 .panel {
   position: absolute;
   top: calc(100% + var(--space-1));
   left: 0;
   right: 0;
+  min-width: min(34rem, calc(100vw - 2 * var(--space-4)));
   z-index: 30;
   padding: var(--space-4);
   border: 1px solid var(--border-default);
@@ -39,7 +49,44 @@
   color: var(--text-muted);
 }
 
-.input,
+/*
+ * E-19: the text fields are UNDERLINED, not boxed (canon 07 §8).
+ *
+ * Gmail's advanced panel draws its four text inputs as a rule under the writing
+ * line and nothing else. That is not decoration: eight boxed inputs stacked in
+ * a 560px card produce eight competing rectangles, and the eye has to work out
+ * which of them is a field and which is a row. One rule per line reads as a
+ * form; eight boxes read as a table.
+ *
+ * The `<select>`s KEEP their box, deliberately — they are not writing lines,
+ * they are choices, and a select with no border is a select nobody can see is
+ * clickable.
+ */
+.input {
+  width: 100%;
+  padding: var(--space-2) 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.input:hover {
+  border-bottom-color: var(--text-muted);
+}
+
+.input:focus {
+  /* Two pixels of accent, which is the whole focus affordance a rule can carry
+     — and it must be a real one, because the outline below is suppressed to
+     keep the underline reading as an underline. */
+  border-bottom: 2px solid var(--color-accent);
+  padding-bottom: calc(var(--space-2) - 1px);
+  outline: none;
+}
+
 .select,
 .number {
   width: 100%;
@@ -52,7 +99,6 @@
   font-size: var(--text-sm);
 }
 
-.input:focus-visible,
 .select:focus-visible,
 .number:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
