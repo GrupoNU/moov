@@ -9,14 +9,29 @@
  *
  * # The three layers
  *
- *   1. SEED tokens (--brand-*). Four colours plus assets, written onto
- *      :root by applyBranding() at boot from GET /branding. They are the ONLY
- *      values a customer controls, and the only ones JavaScript ever writes.
+ *   1. SEED tokens (--brand-*). The customer's four colours, plus the
+ *      per-theme accent family derived from them (--brand-accent-light,
+ *      --brand-accent-dark, ...), written onto :root by applyBranding() at
+ *      boot from GET /branding. They are the ONLY values JavaScript ever
+ *      writes.
  *   2. SEMANTIC tokens (--color-*, --surface-*, --text-*). What components
  *      actually consume: "the page background", "the text on a raised
- *      surface". They are DERIVED from the seeds in plain CSS, which is what
- *      lets four customer values restyle a whole app without JavaScript
- *      computing a palette.
+ *      surface". They are DERIVED from the seeds in plain CSS.
+ *
+ *      Why the accent family is computed in JavaScript and not, as it once
+ *      was, by color-mix here: color-mix cannot check contrast. A customer's
+ *      pale mint produced mint links at 1.3:1 on white and nothing noticed.
+ *      derivePalette() (src/branding/palette.ts) moves the primary's
+ *      lightness in OKLCH until every accent reads at WCAG AA on both
+ *      surfaces of each theme, and a test sweeps hundreds of inputs to prove
+ *      it. The defaults below ARE its output for Moov's own primary, pinned
+ *      by branding.test.ts.
+ *
+ *      Why one seed PER THEME rather than one --color-accent written from
+ *      script: an inline value on :root beats both theme blocks, so a
+ *      --color-accent written by JavaScript would freeze the accent in one
+ *      theme and break the toggle. The seeds are theme-neutral names; each
+ *      theme block picks its own.
  *   3. SCALE tokens (--space-*, --radius-*, --text-*, --shadow-*). Not
  *      brandable — they are the product's own craft, identical for every
  *      customer, and a customer changing them would only make the app worse.
@@ -42,8 +57,8 @@
    *
    * The values here are Moov's own, and they are REAL defaults, not
    * placeholders: most installations never configure a brand, so this is the
-   * palette most people will see. applyBranding() overwrites these four
-   * properties (and only these four) when a customer has a brand.
+   * palette most people will see. applyBranding() overwrites these
+   * properties (and only these) when a customer has a brand.
    *
    * They are duplicated from the Go DefaultBranding() so that a first paint
    * before /branding resolves is already correct rather than unstyled; a test
@@ -53,6 +68,23 @@
   --brand-on-primary: #ffffff;
   --brand-splash-from: #1e1b4b;
   --brand-splash-to: #4c1d95;
+
+  /* The accent family, per theme — derivePalette("#5b5bd6", "#ffffff").
+   * Do not hand-edit: change the primary above and let the test tell you
+   * the new values. The dark accent is the primary LIFTED toward white:
+   * #5b5bd6 reads at 3.3:1 on #151824, below AA for text. */
+  --brand-accent-light: #5b5bd6;
+  --brand-accent-hover-light: #4945be;
+  --brand-accent-active-light: #392ea7;
+  --brand-on-accent-light: #ffffff;
+  --brand-accent-tint-light: rgba(91, 91, 214, 0.1);
+  --brand-accent-tint-strong-light: rgba(91, 91, 214, 0.18);
+  --brand-accent-dark: #6f73f0;
+  --brand-accent-hover-dark: #848cff;
+  --brand-accent-active-dark: #9da7ff;
+  --brand-on-accent-dark: #0d0f17;
+  --brand-accent-tint-dark: rgba(111, 115, 240, 0.22);
+  --brand-accent-tint-strong-dark: rgba(111, 115, 240, 0.32);
 
   /* ---------------------------------------------------------------------
    * Layer 3 — the product's scales. Not brandable.
@@ -161,19 +193,16 @@
   --border-default: #cdd2e0;
   --border-strong: #a8afc4;
 
-  /* The accent, taken straight from the seed. Everything accent-coloured in
+  /* The accent, from the light-theme seeds. Everything accent-coloured in
    * the app resolves through here, which is the single hop that makes the
    * whole product change colour when a customer configures one value. */
-  --color-accent: var(--brand-primary);
-  --color-on-accent: var(--brand-on-primary);
-  /* Hover/active are derived by compositing the accent with black, so they
-   * follow ANY accent without JavaScript computing a shade. color-mix is
-   * supported by every browser this app targets. */
-  --color-accent-hover: color-mix(in srgb, var(--brand-primary) 88%, #000);
-  --color-accent-active: color-mix(in srgb, var(--brand-primary) 78%, #000);
+  --color-accent: var(--brand-accent-light);
+  --color-on-accent: var(--brand-on-accent-light);
+  --color-accent-hover: var(--brand-accent-hover-light);
+  --color-accent-active: var(--brand-accent-active-light);
   /* A tint for selected rows and subtle accent backgrounds. */
-  --color-accent-tint: color-mix(in srgb, var(--brand-primary) 10%, transparent);
-  --color-accent-tint-strong: color-mix(in srgb, var(--brand-primary) 18%, transparent);
+  --color-accent-tint: var(--brand-accent-tint-light);
+  --color-accent-tint-strong: var(--brand-accent-tint-strong-light);
 
   /* Status colours. Deliberately NOT brandable: a customer whose brand colour
    * is red must still get a red error and a green success, because those
@@ -209,8 +238,8 @@
  *
  * The accent is LIFTED toward white in dark mode rather than used raw. A mid
  * indigo that reads well on white drops to about 3:1 on a near-black surface,
- * below AA for text; mixing in white restores the contrast while keeping the
- * hue recognisably the customer's.
+ * below AA for text. The lift is computed by derivePalette() — lightness up in
+ * OKLCH until AA holds, hue kept — and arrives here as the `-dark` seeds.
  */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -229,12 +258,12 @@
     --border-default: #333a4e;
     --border-strong: #4b5468;
 
-    --color-accent: color-mix(in srgb, var(--brand-primary) 72%, #ffffff);
-    --color-on-accent: #0d0f17;
-    --color-accent-hover: color-mix(in srgb, var(--brand-primary) 60%, #ffffff);
-    --color-accent-active: color-mix(in srgb, var(--brand-primary) 52%, #ffffff);
-    --color-accent-tint: color-mix(in srgb, var(--brand-primary) 22%, transparent);
-    --color-accent-tint-strong: color-mix(in srgb, var(--brand-primary) 32%, transparent);
+    --color-accent: var(--brand-accent-dark);
+    --color-on-accent: var(--brand-on-accent-dark);
+    --color-accent-hover: var(--brand-accent-hover-dark);
+    --color-accent-active: var(--brand-accent-active-dark);
+    --color-accent-tint: var(--brand-accent-tint-dark);
+    --color-accent-tint-strong: var(--brand-accent-tint-strong-dark);
 
     --color-danger: #ff8a95;
     --color-danger-tint: #2a1418;
@@ -289,12 +318,12 @@
   --border-default: #333a4e;
   --border-strong: #4b5468;
 
-  --color-accent: color-mix(in srgb, var(--brand-primary) 72%, #ffffff);
-  --color-on-accent: #0d0f17;
-  --color-accent-hover: color-mix(in srgb, var(--brand-primary) 60%, #ffffff);
-  --color-accent-active: color-mix(in srgb, var(--brand-primary) 52%, #ffffff);
-  --color-accent-tint: color-mix(in srgb, var(--brand-primary) 22%, transparent);
-  --color-accent-tint-strong: color-mix(in srgb, var(--brand-primary) 32%, transparent);
+  --color-accent: var(--brand-accent-dark);
+  --color-on-accent: var(--brand-on-accent-dark);
+  --color-accent-hover: var(--brand-accent-hover-dark);
+  --color-accent-active: var(--brand-accent-active-dark);
+  --color-accent-tint: var(--brand-accent-tint-dark);
+  --color-accent-tint-strong: var(--brand-accent-tint-strong-dark);
 
   --color-danger: #ff8a95;
   --color-danger-tint: #2a1418;

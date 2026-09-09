@@ -16,6 +16,8 @@
  * defaults silently (and says so in the console, once).
  */
 
+import { derivePalette, type BrandPalette } from "./palette";
+
 /** The colour seeds a customer controls. Mirrors Go's `BrandingColors`. */
 export interface BrandingColors {
   readonly primary: string;
@@ -34,6 +36,13 @@ export interface BrandingColors {
  */
 export interface Branding {
   readonly name: string;
+  /**
+   * A short form of the name for tight spots (the collapsed rail, the PWA
+   * install prompt, a tab title next to an unread count). Optional on the
+   * TYPE because callers outside this module build Branding literals; the
+   * merge always fills it, and {@link brandShortName} is the total accessor.
+   */
+  readonly shortName?: string;
   readonly logoUrl: string;
   readonly splashUrl: string;
   readonly colors: BrandingColors;
@@ -55,6 +64,7 @@ export interface Branding {
  */
 export const MOOV_DEFAULT_BRANDING: Branding = {
   name: "Moov Mail",
+  shortName: "Moov Mail",
   logoUrl: "",
   splashUrl: "",
   colors: {
@@ -117,6 +127,28 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
 }
 
+/** The longest a short name may be, in user-perceived characters. */
+export const SHORT_NAME_MAX_RUNES = 12;
+
+/**
+ * Derives a short name from a full one, the way the server does when the
+ * customer did not configure one: the name itself when it fits, else its
+ * first word cut to {@link SHORT_NAME_MAX_RUNES}. Counted in code points, not
+ * UTF-16 units, so a name with an emoji or an accented letter is not cut in
+ * the middle of a character.
+ */
+export function deriveShortName(name: string): string {
+  const trimmed = name.trim();
+  if (Array.from(trimmed).length <= SHORT_NAME_MAX_RUNES) return trimmed;
+  const firstWord = trimmed.split(/\s+/)[0] ?? trimmed;
+  return Array.from(firstWord).slice(0, SHORT_NAME_MAX_RUNES).join("");
+}
+
+/** The brand's short name, always defined. */
+export function brandShortName(brand: Branding): string {
+  return brand.shortName ?? deriveShortName(brand.name);
+}
+
 /**
  * Merges an unknown server response onto the defaults, field by field.
  *
@@ -141,8 +173,16 @@ export function mergeBranding(raw: unknown): Branding {
 
   const defaults = MOOV_DEFAULT_BRANDING;
 
+  const name = isNonEmptyString(doc.name) ? doc.name.trim() : defaults.name;
+
   return {
-    name: isNonEmptyString(doc.name) ? doc.name.trim() : defaults.name,
+    name,
+    // A configured short name is taken as sent (trimmed, and cut to the same
+    // ceiling the derivation respects, so no caller has to defend against a
+    // long one); otherwise it is derived from whichever name won above.
+    shortName: isNonEmptyString(doc.shortName)
+      ? Array.from(doc.shortName.trim()).slice(0, SHORT_NAME_MAX_RUNES).join("")
+      : deriveShortName(name),
     logoUrl: isSafeAssetUrl(doc.logoUrl) ? doc.logoUrl : defaults.logoUrl,
     splashUrl: isSafeAssetUrl(doc.splashUrl) ? doc.splashUrl : defaults.splashUrl,
     colors: {
@@ -169,18 +209,63 @@ export function mergeBranding(raw: unknown): Branding {
 }
 
 /**
+ * The custom properties the brand controls, with their values.
+ *
+ * The four customer seeds plus the per-theme accent family. tokens.css picks
+ * `-light` in its light block and `-dark` in both dark blocks; JavaScript
+ * NEVER writes `--color-accent` itself, because an inline value on :root wins
+ * over every theme block and would freeze the accent in one theme.
+ *
+ * Exposed as data so the test that pins tokens.css's defaults iterates the
+ * same names this function writes.
+ */
+export function brandSeeds(
+  brand: Branding,
+  palette: BrandPalette,
+): Readonly<Record<string, string>> {
+  return {
+    "--brand-primary": brand.colors.primary,
+    "--brand-on-primary": brand.colors.onPrimary,
+    "--brand-splash-from": brand.colors.splashFrom,
+    "--brand-splash-to": brand.colors.splashTo,
+
+    "--brand-accent-light": palette.light.accent,
+    "--brand-accent-hover-light": palette.light.accentHover,
+    "--brand-accent-active-light": palette.light.accentActive,
+    "--brand-on-accent-light": palette.light.onAccent,
+    "--brand-accent-tint-light": palette.light.accentTint,
+    "--brand-accent-tint-strong-light": palette.light.accentTintStrong,
+
+    "--brand-accent-dark": palette.dark.accent,
+    "--brand-accent-hover-dark": palette.dark.accentHover,
+    "--brand-accent-active-dark": palette.dark.accentActive,
+    "--brand-on-accent-dark": palette.dark.onAccent,
+    "--brand-accent-tint-dark": palette.dark.accentTint,
+    "--brand-accent-tint-strong-dark": palette.dark.accentTintStrong,
+  };
+}
+
+/**
  * Writes the brand seeds onto the document root.
  *
- * ONLY the four seed properties are written. Everything else in the app is
- * derived from them in CSS (tokens.css layer 2), which is what keeps this
- * function to four lines and keeps JavaScript out of the palette business.
+ * ONLY seed properties are written — the customer's four plus the accent
+ * family {@link derivePalette} guarantees at WCAG AA. Everything else in the
+ * app is derived from them in CSS (tokens.css layer 2), which keeps
+ * JavaScript out of the semantic-token business and keeps theme switching in
+ * the stylesheet where it belongs.
+ *
+ * The palette is a parameter so the provider can compute it once per brand;
+ * it defaults to deriving from the brand for callers with no reason to cache.
  */
-export function applyBranding(brand: Branding, root: HTMLElement): void {
+export function applyBranding(
+  brand: Branding,
+  root: HTMLElement,
+  palette: BrandPalette = derivePalette(brand.colors.primary, brand.colors.onPrimary),
+): void {
   const style = root.style;
-  style.setProperty("--brand-primary", brand.colors.primary);
-  style.setProperty("--brand-on-primary", brand.colors.onPrimary);
-  style.setProperty("--brand-splash-from", brand.colors.splashFrom);
-  style.setProperty("--brand-splash-to", brand.colors.splashTo);
+  for (const [name, value] of Object.entries(brandSeeds(brand, palette))) {
+    style.setProperty(name, value);
+  }
 }
 
 /**

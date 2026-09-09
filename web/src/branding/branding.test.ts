@@ -3,11 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyBranding,
   applyBrandingToDocument,
+  brandSeeds,
+  brandShortName,
+  deriveShortName,
   fetchBranding,
   mergeBranding,
   MOOV_DEFAULT_BRANDING,
+  SHORT_NAME_MAX_RUNES,
   type Branding,
 } from "./branding";
+import { derivePalette } from "./palette";
 
 /**
  * Tests for the branding client.
@@ -121,6 +126,25 @@ describe("mergeBranding", () => {
     }
   });
 
+  it("takes a configured shortName as sent, trimmed and capped", () => {
+    expect(mergeBranding({ ...validDocument, shortName: "  Acme  " }).shortName).toBe("Acme");
+    // A long one is cut to the ceiling so no caller has to defend against it.
+    const long = mergeBranding({ ...validDocument, shortName: "Supercalifragilistic" });
+    expect(Array.from(long.shortName ?? "")).toHaveLength(SHORT_NAME_MAX_RUNES);
+    expect(long.shortName).toBe("Supercalifra");
+  });
+
+  it("derives shortName from the name when the server sends none", () => {
+    // Short enough: the name itself.
+    expect(mergeBranding({ name: "Acme Mail" }).shortName).toBe("Acme Mail");
+    // Too long: the first word, cut to twelve.
+    expect(mergeBranding({ name: "Correo Corporativo de Acme" }).shortName).toBe("Correo");
+    expect(mergeBranding({ name: "Supercalifragilistic Mail" }).shortName).toBe("Supercalifra");
+    // Garbage falls back to deriving from the (defaulted) name.
+    expect(mergeBranding({ name: "Acme Mail", shortName: 42 }).shortName).toBe("Acme Mail");
+    expect(mergeBranding({ shortName: "   " }).shortName).toBe(MOOV_DEFAULT_BRANDING.shortName);
+  });
+
   it("treats a missing default flag as a configured brand", () => {
     // Only an explicit `true` means "this is Moov's own brand"; anything else
     // is read as a customer brand, which is the conservative direction (it
@@ -132,21 +156,75 @@ describe("mergeBranding", () => {
 });
 
 describe("applyBranding", () => {
-  it("writes exactly the four seed properties and nothing else", () => {
+  it("writes every seed — the customer's four and the per-theme accent family — and nothing else", () => {
     const root = document.createElement("div");
-    applyBranding(mergeBranding(validDocument), root);
+    const brand = mergeBranding(validDocument);
+    const palette = derivePalette(brand.colors.primary, brand.colors.onPrimary);
+    applyBranding(brand, root, palette);
 
     expect(root.style.getPropertyValue("--brand-primary")).toBe("#c0ffee");
     expect(root.style.getPropertyValue("--brand-on-primary")).toBe("#000000");
     expect(root.style.getPropertyValue("--brand-splash-from")).toBe("#102030");
     expect(root.style.getPropertyValue("--brand-splash-to")).toBe("#405060");
 
-    // The contract of W-A2: JavaScript writes SEEDS, CSS derives the rest.
-    // A semantic token written from here would mean the palette had leaked
-    // back into script.
-    expect(root.style.length).toBe(4);
+    // The accent family is what derivePalette says, per theme. #c0ffee is
+    // unreadable on white, so the light accent is NOT the primary — that is
+    // the whole reason the family exists.
+    const seeds = brandSeeds(brand, palette);
+    expect(Object.keys(seeds)).toHaveLength(16);
+    for (const [name, value] of Object.entries(seeds)) {
+      expect(root.style.getPropertyValue(name), name).toBe(value);
+    }
+    expect(root.style.getPropertyValue("--brand-accent-light")).toBe(palette.light.accent);
+    expect(palette.light.accent).not.toBe("#c0ffee");
+    expect(root.style.getPropertyValue("--brand-accent-dark")).toBe("#c0ffee");
+    expect(root.style.getPropertyValue("--brand-accent-tint-light")).toMatch(/^rgba\(/);
+
+    // The contract of W-A2, sharpened: JavaScript writes SEEDS, CSS derives
+    // the rest. A semantic token written from here would win over BOTH theme
+    // blocks (an inline value on :root beats every stylesheet rule) and
+    // freeze the accent in one theme.
+    expect(root.style.length).toBe(16);
     expect(root.style.getPropertyValue("--color-accent")).toBe("");
+    expect(root.style.getPropertyValue("--color-on-accent")).toBe("");
     expect(root.style.getPropertyValue("--surface-canvas")).toBe("");
+    for (let i = 0; i < root.style.length; i++) {
+      expect(root.style.item(i)).toMatch(/^--brand-/);
+    }
+  });
+
+  it("derives the palette itself when the caller does not pass one", () => {
+    const root = document.createElement("div");
+    applyBranding(MOOV_DEFAULT_BRANDING, root);
+    expect(root.style.getPropertyValue("--brand-accent-light")).toBe("#5b5bd6");
+    expect(root.style.getPropertyValue("--brand-on-accent-light")).toBe("#ffffff");
+    expect(root.style.length).toBe(16);
+  });
+});
+
+describe("shortName", () => {
+  it("keeps a name that fits, cuts a long one to its first word", () => {
+    expect(deriveShortName("Moov Mail")).toBe("Moov Mail");
+    expect(deriveShortName("  Moov Mail  ")).toBe("Moov Mail");
+    expect(deriveShortName("Correo Corporativo de Acme")).toBe("Correo");
+    expect(deriveShortName("Supercalifragilistic")).toBe("Supercalifra");
+  });
+
+  it("counts characters, not UTF-16 units", () => {
+    // Twelve emoji are twelve runes and 24 code units; they must survive
+    // whole rather than be cut through a surrogate pair.
+    const twelve = "\u{1F642}".repeat(12);
+    expect(deriveShortName(twelve)).toBe(twelve);
+    expect(deriveShortName(`${"\u{1F642}".repeat(13)} x`)).toBe(twelve);
+    expect(deriveShortName("\u00d1and\u00faes Mail Corporativo")).toBe("\u00d1and\u00faes");
+  });
+
+  it("is total over the Branding type", () => {
+    const withOut: Branding = { ...MOOV_DEFAULT_BRANDING, name: "A Very Long Product Name" };
+    // Strip the optional field to model a literal built elsewhere.
+    const { shortName: _omit, ...rest } = withOut;
+    expect(brandShortName(rest)).toBe("A");
+    expect(brandShortName(MOOV_DEFAULT_BRANDING)).toBe("Moov Mail");
   });
 });
 
@@ -258,6 +336,65 @@ describe("the default brand", () => {
     expect(seed("on-primary")).toBe(MOOV_DEFAULT_BRANDING.colors.onPrimary);
     expect(seed("splash-from")).toBe(MOOV_DEFAULT_BRANDING.colors.splashFrom);
     expect(seed("splash-to")).toBe(MOOV_DEFAULT_BRANDING.colors.splashTo);
+  });
+
+  /**
+   * The accent family in tokens.css is derivePalette()'s OUTPUT for the Moov
+   * primary, copied by hand so the first paint is right before any script
+   * runs. This is the pin that makes the copy safe: every one of the twelve
+   * per-theme seeds must equal what the function computes today.
+   */
+  it("has the per-theme accent seeds equal to derivePalette() of the defaults", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const css = await readFile(join(process.cwd(), "src/styles/tokens.css"), "utf8");
+    // Only the seed block (bare :root, before layer 3) may define --brand-*.
+    const seedBlock = css.slice(0, css.indexOf("Layer 3"));
+
+    const { primary, onPrimary } = MOOV_DEFAULT_BRANDING.colors;
+    const seeds = brandSeeds(MOOV_DEFAULT_BRANDING, derivePalette(primary, onPrimary));
+    for (const [name, value] of Object.entries(seeds)) {
+      const declared = new RegExp(`${name}:\\s*([^;]+);`).exec(seedBlock)?.[1]?.trim();
+      expect(declared, name).toBe(value);
+    }
+    // And no seed is declared twice — a second declaration further down would
+    // silently win.
+    for (const name of Object.keys(seeds)) {
+      expect(css.match(new RegExp(`${name}:`, "g")), name).toHaveLength(1);
+    }
+  });
+
+  it("routes every theme block's accent through its own seed, never through the primary", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const css = await readFile(join(process.cwd(), "src/styles/tokens.css"), "utf8");
+    const lightBlock = css.slice(
+      css.indexOf("Layer 2"),
+      css.indexOf("@media (prefers-color-scheme: dark)"),
+    );
+    const mediaDark = css.slice(
+      css.indexOf("@media (prefers-color-scheme: dark)"),
+      css.indexOf(':root[data-theme="dark"]'),
+    );
+    const attrDark = css.slice(css.indexOf(':root[data-theme="dark"]'));
+
+    const tokens = [
+      ["--color-accent", "--brand-accent"],
+      ["--color-on-accent", "--brand-on-accent"],
+      ["--color-accent-hover", "--brand-accent-hover"],
+      ["--color-accent-active", "--brand-accent-active"],
+      ["--color-accent-tint", "--brand-accent-tint"],
+      ["--color-accent-tint-strong", "--brand-accent-tint-strong"],
+    ] as const;
+    for (const [semantic, seed] of tokens) {
+      expect(lightBlock).toMatch(new RegExp(`${semantic}:\\s*var\\(${seed}-light\\);`));
+      expect(mediaDark).toMatch(new RegExp(`${semantic}:\\s*var\\(${seed}-dark\\);`));
+      expect(attrDark).toMatch(new RegExp(`${semantic}:\\s*var\\(${seed}-dark\\);`));
+    }
+    // The old derivation — color-mix over the raw primary — is gone from the
+    // accent tokens: it could not check contrast.
+    expect(css).not.toMatch(/--color-accent[a-z-]*:\s*color-mix/);
+    expect(css).not.toMatch(/--color-accent[a-z-]*:\s*var\(--brand-primary\)/);
   });
 
   it("is a real brand rather than a placeholder", () => {
