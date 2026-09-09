@@ -79,10 +79,53 @@
     background var(--duration-fast) var(--ease-out),
     box-shadow var(--duration-fast) var(--ease-out);
   contain: layout paint;
+
+  /*
+   * B-07: the RESTING row is tinted and the UNREAD row is white.
+   *
+   * That is Gmail's arrangement and it reads backwards until you see the list:
+   * the sunken tint is the *background* of the inbox, and every message you
+   * have not read punches through it in white with bold text. Moov had it the
+   * other way round — every row white, read and unread alike, with only the
+   * weight of the sender to tell them apart — which is why the reviewed
+   * screenshot's inbox is a flat wall where Gmail's is a set of highlights.
+   *
+   * `--surface-sunken` was already the hover colour, so the two states
+   * collided: hovering a read row changed nothing. B-03's hover therefore has
+   * to be a DIFFERENT surface (see `.row:hover`), which is also what makes the
+   * lift legible on both kinds of row.
+   */
+  background: var(--surface-sunken);
 }
 
+/*
+ * B-07 (canon §3): unread punches through the tint, in white.
+ *
+ * Paired with the existing `.unread .senderText`/`.unread .subject` weight
+ * rules further down, so unread is carried by TWO signals — surface and
+ * weight — rather than by weight alone. Neither is colour-only.
+ */
+.unread {
+  background: var(--surface-default);
+}
+
+/*
+ * B-03: the hover LIFT (canon §3, "Gmail's lift").
+ *
+ * A shadow plus a raised surface plus a stacking context, all three needed:
+ * the surface is what distinguishes a hovered read row from its resting tint
+ * (B-07 took `--surface-sunken` for that), the shadow is the elevation Gmail
+ * draws, and the `z-index` is what lets the shadow fall ON the rows above and
+ * below instead of being clipped by them — every row is absolutely positioned,
+ * so without it the neighbours paint over the blur.
+ *
+ * The transition for both was already declared above and had nothing to
+ * animate; this is what it was waiting for.
+ */
 .row:hover {
-  background: var(--surface-sunken);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm);
+  z-index: 2;
 }
 
 .selected {
@@ -451,16 +494,33 @@
 .hoverActions {
   position: absolute;
   top: 0;
-  right: var(--space-4);
+  /*
+   * B-04: the strip's right edge is the ROW's padding, not a fixed `--space-4`.
+   *
+   * The old inset was a constant unrelated to the row's own geometry, so at any
+   * density whose `--row-padding-x` is smaller than `--space-4` — compact is
+   * 12px against 16px — the four icons started one column too far in and the
+   * last one ran past the row's content box. That is the clipped fourth icon in
+   * the reviewed screenshot. Anchoring to the same variable the row pads itself
+   * with makes the strip end exactly where the date ends, at every density.
+   */
+  right: var(--row-padding-x, var(--row-padding-x-fallback));
   bottom: 0;
   z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--space-1);
   padding-left: var(--space-4);
-  /* Fade to the row's background so a long date underneath does not show
-     through the gap between the buttons. */
-  background: linear-gradient(to right, transparent, var(--surface-default) 1.5rem);
+  /*
+   * B-04: NO gradient mask.
+   *
+   * The strip used to fade to the row's background to hide the date sliding out
+   * from under it — which is why the reviewed screenshot shows a stray "t"
+   * beside the icons: a mask that is 1.5rem wide cannot cover a date that is
+   * wider, and the fix is not a wider mask. Gmail does not mask the date, it
+   * REMOVES it (see `.row:hover .date`), and once the date is gone the strip
+   * needs no background at all and can sit on whatever the row is tinted with.
+   */
 
   /*
    * Hidden by DEFAULT and revealed on hover/focus — with `visibility`, not
@@ -512,10 +572,22 @@
   height: 1.05rem;
 }
 
-/* The row is selected/checked: keep the gradient matching its background. */
-.selected .hoverActions,
-.checked .hoverActions {
-  background: linear-gradient(to right, transparent, var(--color-accent-tint) 1.5rem);
+/*
+ * B-04: the date GETS OUT OF THE WAY — the strip replaces it, as in Gmail.
+ *
+ * `visibility`, not `display: none`: the `<time>` keeps its box, so the meta
+ * column keeps its width and the row does not reflow under the pointer (the
+ * `min-width: 4.5rem` on `.date` exists for exactly that reason). It also stays
+ * in the accessibility tree, which matters because the date is the row's only
+ * timestamp and a screen-reader user is not hovering anything.
+ *
+ * Only on POINTER hover, deliberately not on `:focus-within`. A keyboard user
+ * tabbing into the strip still sees the buttons (they are revealed by the focus
+ * rules above) AND keeps the date, because nothing is covering it: the strip is
+ * transparent now.
+ */
+.row:hover .date {
+  visibility: hidden;
 }
 
 /*
