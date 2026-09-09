@@ -51,6 +51,7 @@ import {
   sectionsOfTab,
   type PlainStringKey,
 } from "./registry";
+import { useSaveFeedback } from "./useSaveFeedback";
 import styles from "./SettingsPage.module.css";
 
 /**
@@ -525,73 +526,85 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
     <>
       {showRow("language") && (
         <SettingRow labelKey="settings.language.label" descriptionKey="settings.language.description">
-          {/*
-            The locale switcher the canon flagged as missing (§6.10: "no locale
-            switcher (browser-detect only)"). `null` is "follow the browser",
-            which is what the wire carries and what I18nProvider's optional
-            `locale` prop was reserved for — its own comment says "used by tests
-            and by a future user preference".
-          */}
-          <Select
-            label={t("settings.language.label")}
-            value={prefs.prefs.language ?? "auto"}
-            onChange={(value) => {
-              void set("language", value === "auto" ? null : (value as "es" | "en"));
-            }}
-            options={[
-              { value: "auto", label: t("settings.language.auto") },
-              ...LANGUAGES.map((code) => ({
-                value: code,
-                label: code === "es" ? t("settings.language.es") : t("settings.language.en"),
-              })),
-            ]}
-          />
+          {(save) => (
+            <>
+              {/*
+                The locale switcher the canon flagged as missing (§6.10: "no locale
+                switcher (browser-detect only)"). `null` is "follow the browser",
+                which is what the wire carries and what I18nProvider's optional
+                `locale` prop was reserved for — its own comment says "used by tests
+                and by a future user preference".
+              */}
+              <Select
+                label={t("settings.language.label")}
+                value={prefs.prefs.language ?? "auto"}
+                onChange={(value) => {
+                  save(set("language", value === "auto" ? null : (value as "es" | "en")));
+                }}
+                options={[
+                  { value: "auto", label: t("settings.language.auto") },
+                  ...LANGUAGES.map((code) => ({
+                    value: code,
+                    label: code === "es" ? t("settings.language.es") : t("settings.language.en"),
+                  })),
+                ]}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
       {showRow("undoSend") && (
         <SettingRow labelKey="settings.undoSend.label" descriptionKey="settings.undoSend.description">
-          {/*
-            Gmail's exact four values (canon §2.3). The SERVER consumes this —
-            it is what sets `sendAt` on a submission — so the composer's
-            countdown keeps reflecting the server's own deadline rather than
-            re-deriving it from this number, which is why there is nothing to
-            wire on the client beyond the save.
-          */}
-          <Select
-            label={t("settings.undoSend.label")}
-            value={String(prefs.prefs.undoSendSeconds)}
-            onChange={(value) => {
-              void set("undoSendSeconds", Number(value) as Prefs["undoSendSeconds"]);
-            }}
-            options={UNDO_SEND_SECONDS.map((seconds) => ({
-              value: String(seconds),
-              label: format("settings.undoSend.seconds", seconds),
-            }))}
-          />
+          {(save) => (
+            <>
+              {/*
+                Gmail's exact four values (canon §2.3). The SERVER consumes this —
+                it is what sets `sendAt` on a submission — so the composer's
+                countdown keeps reflecting the server's own deadline rather than
+                re-deriving it from this number, which is why there is nothing to
+                wire on the client beyond the save.
+              */}
+              <Select
+                label={t("settings.undoSend.label")}
+                value={String(prefs.prefs.undoSendSeconds)}
+                onChange={(value) => {
+                  save(set("undoSendSeconds", Number(value) as Prefs["undoSendSeconds"]));
+                }}
+                options={UNDO_SEND_SECONDS.map((seconds) => ({
+                  value: String(seconds),
+                  label: format("settings.undoSend.seconds", seconds),
+                }))}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
       {showRow("images") && (
         <SettingRow labelKey="settings.images.label" descriptionKey="settings.images.description">
-          {/*
-            F-26: two options, so radios with an inline explanation — Gmail's
-            own shape. A collapsed select shows ONE of them, which is the wrong
-            picture for a choice whose difficulty is telling two similar options
-            apart.
-          */}
-          <OptionGroup<Prefs["imagesPolicy"]>
-            legendKey="settings.images.label"
-            showLegend={false}
-            variant="inline"
-            value={prefs.prefs.imagesPolicy}
-            options={IMAGES_POLICIES}
-            labelKey={(policy) => IMAGES_LABELS[policy]}
-            describeKey={(policy) => IMAGES_NOTES[policy]}
-            onChange={(policy) => {
-              void set("imagesPolicy", policy);
-            }}
-          />
+          {(save) => (
+            <>
+              {/*
+                F-26: two options, so radios with an inline explanation — Gmail's
+                own shape. A collapsed select shows ONE of them, which is the wrong
+                picture for a choice whose difficulty is telling two similar options
+                apart.
+              */}
+              <OptionGroup<Prefs["imagesPolicy"]>
+                legendKey="settings.images.label"
+                showLegend={false}
+                variant="inline"
+                value={prefs.prefs.imagesPolicy}
+                options={IMAGES_POLICIES}
+                labelKey={(policy) => IMAGES_LABELS[policy]}
+                describeKey={(policy) => IMAGES_NOTES[policy]}
+                onChange={(policy) => {
+                  save(set("imagesPolicy", policy));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -600,25 +613,33 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.conversation.label"
           descriptionKey="settings.conversation.description"
         >
-          <Switch
-            label={t("settings.conversation.label")}
-            checked={prefs.prefs.conversationView}
-            onChange={(checked) => {
-              void set("conversationView", checked);
-            }}
-          />
+          {(save) => (
+            <>
+              <Switch
+                label={t("settings.conversation.label")}
+                checked={prefs.prefs.conversationView}
+                onChange={(checked) => {
+                  save(set("conversationView", checked));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
       {showRow("hoverActions") && (
         <SettingRow labelKey="settings.hover.label" descriptionKey="settings.hover.description">
-          <Switch
-            label={t("settings.hover.label")}
-            checked={prefs.prefs.hoverActions}
-            onChange={(checked) => {
-              void set("hoverActions", checked);
-            }}
-          />
+          {(save) => (
+            <>
+              <Switch
+                label={t("settings.hover.label")}
+                checked={prefs.prefs.hoverActions}
+                onChange={(checked) => {
+                  save(set("hoverActions", checked));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -627,42 +648,54 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.autoAdvance.label"
           descriptionKey="settings.autoAdvance.description"
         >
-          <OptionGroup<Prefs["autoAdvance"]>
-            legendKey="settings.autoAdvance.label"
-            showLegend={false}
-            variant="inline"
-            value={prefs.prefs.autoAdvance}
-            options={AUTO_ADVANCE}
-            labelKey={(mode) => AUTO_ADVANCE_LABELS[mode]}
-            describeKey={(mode) => AUTO_ADVANCE_NOTES[mode]}
-            onChange={(mode) => {
-              void set("autoAdvance", mode);
-            }}
-          />
+          {(save) => (
+            <>
+              <OptionGroup<Prefs["autoAdvance"]>
+                legendKey="settings.autoAdvance.label"
+                showLegend={false}
+                variant="inline"
+                value={prefs.prefs.autoAdvance}
+                options={AUTO_ADVANCE}
+                labelKey={(mode) => AUTO_ADVANCE_LABELS[mode]}
+                describeKey={(mode) => AUTO_ADVANCE_NOTES[mode]}
+                onChange={(mode) => {
+                  save(set("autoAdvance", mode));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
       {showRow("keyboardShortcuts") && (
         <SettingRow labelKey="settings.keyboard.label" descriptionKey="settings.keyboard.description">
-          <Switch
-            label={t("settings.keyboard.label")}
-            checked={prefs.prefs.keyboardShortcuts}
-            onChange={(checked) => {
-              void set("keyboardShortcuts", checked);
-            }}
-          />
+          {(save) => (
+            <>
+              <Switch
+                label={t("settings.keyboard.label")}
+                checked={prefs.prefs.keyboardShortcuts}
+                onChange={(checked) => {
+                  save(set("keyboardShortcuts", checked));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
       {showRow("showSnippets") && (
         <SettingRow labelKey="settings.snippets.label" descriptionKey="settings.snippets.description">
-          <Switch
-            label={t("settings.snippets.label")}
-            checked={prefs.prefs.showSnippets}
-            onChange={(checked) => {
-              void set("showSnippets", checked);
-            }}
-          />
+          {(save) => (
+            <>
+              <Switch
+                label={t("settings.snippets.label")}
+                checked={prefs.prefs.showSnippets}
+                onChange={(checked) => {
+                  save(set("showSnippets", checked));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -678,13 +711,17 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.sendAndArchive.label"
           descriptionKey="settings.sendAndArchive.description"
         >
-          <Switch
-            label={t("settings.sendAndArchive.label")}
-            checked={prefs.prefs.sendAndArchive}
-            onChange={(checked) => {
-              void set("sendAndArchive", checked);
-            }}
-          />
+          {(save) => (
+            <>
+              <Switch
+                label={t("settings.sendAndArchive.label")}
+                checked={prefs.prefs.sendAndArchive}
+                onChange={(checked) => {
+                  save(set("sendAndArchive", checked));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -698,18 +735,22 @@ function GeneralSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.replyBehavior.label"
           descriptionKey="settings.replyBehavior.description"
         >
-          <OptionGroup<Prefs["defaultReplyBehavior"]>
-            legendKey="settings.replyBehavior.label"
-            showLegend={false}
-            variant="inline"
-            value={prefs.prefs.defaultReplyBehavior}
-            options={REPLY_BEHAVIORS}
-            labelKey={(behavior) => REPLY_BEHAVIOR_LABELS[behavior]}
-            describeKey={(behavior) => REPLY_BEHAVIOR_NOTES[behavior]}
-            onChange={(behavior) => {
-              void set("defaultReplyBehavior", behavior);
-            }}
-          />
+          {(save) => (
+            <>
+              <OptionGroup<Prefs["defaultReplyBehavior"]>
+                legendKey="settings.replyBehavior.label"
+                showLegend={false}
+                variant="inline"
+                value={prefs.prefs.defaultReplyBehavior}
+                options={REPLY_BEHAVIORS}
+                labelKey={(behavior) => REPLY_BEHAVIOR_LABELS[behavior]}
+                describeKey={(behavior) => REPLY_BEHAVIOR_NOTES[behavior]}
+                onChange={(behavior) => {
+                  save(set("defaultReplyBehavior", behavior));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
     </>
@@ -764,17 +805,21 @@ function InboxSection({
           labelKey="settings.inboxType.label"
           descriptionKey="settings.inboxType.description"
         >
-          <OptionGroup<Prefs["inboxType"]>
-            legendKey="settings.inboxType.label"
-            showLegend={false}
-            value={prefs.prefs.inboxType}
-            options={INBOX_TYPES}
-            labelKey={(type) => INBOX_TYPE_LABELS[type]}
-            onChange={(type) => {
-              void set("inboxType", type);
-            }}
-            renderThumb={(type) => <InboxTypeThumb inboxType={type} />}
-          />
+          {(save) => (
+            <>
+              <OptionGroup<Prefs["inboxType"]>
+                legendKey="settings.inboxType.label"
+                showLegend={false}
+                value={prefs.prefs.inboxType}
+                options={INBOX_TYPES}
+                labelKey={(type) => INBOX_TYPE_LABELS[type]}
+                onChange={(type) => {
+                  save(set("inboxType", type));
+                }}
+                renderThumb={(type) => <InboxTypeThumb inboxType={type} />}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -783,17 +828,21 @@ function InboxSection({
           labelKey="settings.readingPane.label"
           descriptionKey="settings.readingPane.description"
         >
-          <OptionGroup<Prefs["readingPane"]>
-            legendKey="settings.readingPane.label"
-            showLegend={false}
-            value={prefs.prefs.readingPane}
-            options={READING_PANES}
-            labelKey={(pane) => READING_PANE_LABELS[pane]}
-            onChange={(pane) => {
-              void set("readingPane", pane);
-            }}
-            renderThumb={(pane) => <ReadingPaneThumb pane={pane} />}
-          />
+          {(save) => (
+            <>
+              <OptionGroup<Prefs["readingPane"]>
+                legendKey="settings.readingPane.label"
+                showLegend={false}
+                value={prefs.prefs.readingPane}
+                options={READING_PANES}
+                labelKey={(pane) => READING_PANE_LABELS[pane]}
+                onChange={(pane) => {
+                  save(set("readingPane", pane));
+                }}
+                renderThumb={(pane) => <ReadingPaneThumb pane={pane} />}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -1430,14 +1479,18 @@ function OfflineSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.offlineHeaders.label"
           descriptionKey="settings.offlineHeaders.description"
         >
-          <NumberField
-            label={t("settings.offlineHeaders.label")}
-            value={depth.headersPerMailbox}
-            bounds={OFFLINE_DEPTH_BOUNDS.headersPerMailbox}
-            onCommit={(next) => {
-              void set("offlineDepth", { ...depth, headersPerMailbox: next });
-            }}
-          />
+          {(save) => (
+            <>
+              <NumberField
+                label={t("settings.offlineHeaders.label")}
+                value={depth.headersPerMailbox}
+                bounds={OFFLINE_DEPTH_BOUNDS.headersPerMailbox}
+                onCommit={(next) => {
+                  save(set("offlineDepth", { ...depth, headersPerMailbox: next }));
+                }}
+              />
+            </>
+          )}
         </SettingRow>
       )}
 
@@ -1446,25 +1499,29 @@ function OfflineSection({ prefs, showRow }: SectionProps): React.JSX.Element {
           labelKey="settings.offlineBodies.label"
           descriptionKey="settings.offlineBodies.description"
         >
-          <div className={styles.signatureField}>
-            <NumberField
-              label={t("settings.offlineBodies.label")}
-              value={depth.bodies}
-              bounds={OFFLINE_DEPTH_BOUNDS.bodies}
-              onCommit={(next) => {
-                void set("offlineDepth", { ...depth, bodies: next });
-              }}
-            />
-            {/*
-              The limitation Gmail declares too, said NEXT TO THE NUMBER rather
-              than in a doc: without it a high depth reads as "everything is
-              available offline", and the first missing attachment on a train
-              reads as a bug.
-            */}
-            <span className={styles.signatureNote}>
-              {t("settings.offlineDepth.attachments")}
-            </span>
-          </div>
+          {(save) => (
+            <>
+              <div className={styles.signatureField}>
+                <NumberField
+                  label={t("settings.offlineBodies.label")}
+                  value={depth.bodies}
+                  bounds={OFFLINE_DEPTH_BOUNDS.bodies}
+                  onCommit={(next) => {
+                    save(set("offlineDepth", { ...depth, bodies: next }));
+                  }}
+                />
+                {/*
+                  The limitation Gmail declares too, said NEXT TO THE NUMBER rather
+                  than in a doc: without it a high depth reads as "everything is
+                  available offline", and the first missing attachment on a train
+                  reads as a bug.
+                */}
+                <span className={styles.signatureNote}>
+                  {t("settings.offlineDepth.attachments")}
+                </span>
+              </div>
+            </>
+          )}
         </SettingRow>
       )}
     </>
@@ -1734,9 +1791,21 @@ function SettingRow({
 }: {
   readonly labelKey: PlainStringKey;
   readonly descriptionKey?: PlainStringKey;
-  readonly children: React.ReactNode;
+  /**
+   * The control, or a function receiving this row's {@link SaveReporter}.
+   *
+   * A render prop rather than a context, and rather than a prop on every
+   * control: the tick belongs to THE ROW, and only the row knows where to draw
+   * it. A context would have made every control reach for an ambient value
+   * that is meaningless outside a row; a prop threaded through `Select`,
+   * `Switch`, `NumberField` and `OptionGroup` would have put settings-page
+   * concerns inside four generic controls. Rows that write nothing (the
+   * identity display) pass a plain node and cost nothing.
+   */
+  readonly children: React.ReactNode | ((save: SaveReporter) => React.ReactNode);
 }): React.JSX.Element {
   const { t } = useTranslation();
+  const { isSaved, report } = useSaveFeedback();
   return (
     <div className={styles.row}>
       <div className={styles.rowText}>
@@ -1753,7 +1822,27 @@ function SettingRow({
           </span>
         )}
       </div>
-      <div className={styles.rowControl}>{children}</div>
+      <div className={styles.rowControl}>
+        {typeof children === "function" ? children(report) : children}
+        {/*
+          F-38: the receipt autosave was missing.
+
+          `role="status"` rather than `alert`: this is a confirmation of
+          something the user just did and is looking straight at, so it should
+          be announced politely at the end of what the screen reader is saying
+          — not interrupt it. It is rendered only while true, so the live region
+          announces on APPEARANCE rather than sitting empty and announcing a
+          removal two seconds later.
+        */}
+        {isSaved && (
+          <span className={styles.saved} role="status">
+            {t("settings.saved")}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
+
+/** What a row hands its control so a successful write can be confirmed (F-38). */
+export type SaveReporter = (save: Promise<boolean>) => void;

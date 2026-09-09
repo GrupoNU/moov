@@ -9,6 +9,8 @@ import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS, type Prefs } from "../../mail/prefs";
 import type { Identity } from "../../mail/write";
 import { DEFAULT_SETTINGS_TAB, type SettingsTab } from "../../router/routes";
+import { CAP_PREFS } from "../../mail/prefs";
+import { JmapClient, type JmapSession } from "../../api/jmap";
 import { applyTheme } from "../../theme/theme";
 import { SettingsPage } from "./SettingsPage";
 
@@ -848,5 +850,113 @@ describe("the v2 rows exist and write their key", () => {
      */
     expect(en).not.toHaveProperty("offline.depthPending");
     expect(es).not.toHaveProperty("offline.depthPending");
+  });
+});
+
+/**
+ * The per-row save receipt (F-38).
+ *
+ * Every control here saves on the gesture and there is no Save button — which
+ * is right, a switch has two states and flipping one IS the decision. The
+ * review named what that lacked: nothing on screen said the save HAPPENED. The
+ * control moved, and the control would have moved either way; a failed write
+ * and a successful one looked identical until the page reloaded.
+ */
+describe("save feedback (F-38)", () => {
+  /*
+   * These need a SERVER, unlike every other test in this file.
+   *
+   * `PrefsProvider.setPref` resolves false when there is nowhere to save to —
+   * honestly, and the page already says the preferences are not being
+   * persisted — so a tick that appeared in the default harness would be
+   * confirming a save that did not happen. The stub answers `Prefs/set` +
+   * `Prefs/get` the way the server does.
+   */
+  function renderSaving(): void {
+    const client = new JmapClient({ username: "u", password: "p" });
+    vi.spyOn(client, "call").mockImplementation((invocations) => {
+      const calls = invocations as [string, Record<string, unknown>, string][];
+      return Promise.resolve({
+        methodResponses: calls.map(([name, , id]) => [
+          name,
+          { list: [{ id: "singleton", ...DEFAULT_PREFS }], state: "s1" },
+          id,
+        ]),
+      } as never);
+    });
+    const session: JmapSession = {
+      capabilities: { [CAP_PREFS]: {} },
+      accounts: {
+        a: { name: "u", isPersonal: true, isReadOnly: false, accountCapabilities: {} },
+      },
+      primaryAccounts: {},
+      username: "u",
+      apiUrl: "/jmap/api",
+      downloadUrl: "",
+      uploadUrl: "",
+      eventSourceUrl: "",
+      state: "s",
+    };
+    localStorage.clear();
+    applyTheme("light", document.documentElement);
+    render(
+      <I18nProvider locale="en">
+        <PrefsProvider
+          client={client}
+          session={session}
+          accountId="a"
+          initialPrefs={DEFAULT_PREFS}
+        >
+          <SettingsPage
+            tab={DEFAULT_SETTINGS_TAB}
+            onSelectTab={() => undefined}
+            onClose={() => undefined}
+          />
+        </PrefsProvider>
+      </I18nProvider>,
+    );
+  }
+
+  it("confirms a successful write beside the row that made it", async () => {
+    const user = userEvent.setup();
+    renderSaving();
+
+    await user.click(screen.getByRole("switch", { name: en["settings.snippets.label"] }));
+
+    // Beside the row, not as a toast: a toast for a setting the user is
+    // looking straight at appears somewhere else on the screen to say so.
+    const row = screen
+      .getByRole("switch", { name: en["settings.snippets.label"] })
+      .closest("div[class*='row']");
+    expect(await within(row as HTMLElement).findByText(en["settings.saved"])).toBeInTheDocument();
+  });
+
+  it("announces it politely, so it does not interrupt what is being read", async () => {
+    const user = userEvent.setup();
+    renderSaving();
+
+    await user.click(screen.getByRole("switch", { name: en["settings.hover.label"] }));
+
+    const saved = await screen.findByText(en["settings.saved"]);
+    // `status`, not `alert`: a confirmation of a thing the user just did is
+    // read at the end of what the screen reader is saying.
+    expect(saved).toHaveAttribute("role", "status");
+  });
+
+  it("confirms each row in its OWN place, never moving one tick around", async () => {
+    const user = userEvent.setup();
+    renderSaving();
+
+    await user.click(screen.getByRole("switch", { name: en["settings.snippets.label"] }));
+    await user.click(screen.getByRole("switch", { name: en["settings.hover.label"] }));
+
+    // One shared flag would move a single tick from row to row, which reads as
+    // the previous confirmation being retracted.
+    expect(await screen.findAllByText(en["settings.saved"])).toHaveLength(2);
+  });
+
+  it("shows nothing on a row nobody touched", () => {
+    renderSaving();
+    expect(screen.queryByText(en["settings.saved"])).not.toBeInTheDocument();
   });
 });

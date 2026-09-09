@@ -326,10 +326,20 @@
   }
 }
 
-/* `min-width: 0` rather than the old `flex: none`: this is a grid cell now, and
+/*
+ * `min-width: 0` rather than the old `flex: none`: this is a grid cell now, and
  * a grid item's default `min-width: auto` refuses to shrink below its content —
- * which is how a long select pushed the whole row wider than the panel. */
+ * which is how a long select pushed the whole row wider than the panel.
+ *
+ * F-38 made it a flex LINE as well, so the save receipt sits beside the control
+ * rather than under it: a row whose height changed every time you flipped a
+ * switch would make the whole page twitch.
+ */
 .rowControl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -614,4 +624,12 @@
   .identity {
     text-align: left;
   }
+}
+
+/* F-38: the per-row save receipt. */
+.saved {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-success, #15803d);
+  white-space: nowrap;
 }

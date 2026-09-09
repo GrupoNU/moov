@@ -172,6 +172,10 @@ export const en = {
   "settings.saving": "Saving…",
   "settings.unavailable":
     "This server does not store preferences. Your choices apply to this session only.",
+  /* F-38: the receipt the autosave was missing — beside the row that saved,
+     for two seconds. Not a toast: a toast for a setting the user is looking
+     straight at appears somewhere else on the screen to say so. */
+  "settings.saved": "Saved ✓",
   "settings.saveFailed": "The preference could not be saved",
 
   "settings.section.general": "General",
@@ -1486,6 +1490,7 @@ export const es: Strings = {
   "settings.saving": "Guardando…",
   "settings.unavailable":
     "Este servidor no guarda preferencias. Tus elecciones valen solo para esta sesión.",
+  "settings.saved": "Guardado ✓",
   "settings.saveFailed": "La preferencia no se pudo guardar",
 
   "settings.section.general": "General",
