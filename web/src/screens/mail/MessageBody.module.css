@@ -34,14 +34,23 @@
   font-family: var(--font-sans);
 }
 
-/* The HTML rendering path (W-A4): a flex column that fills the body region
- * so the sandboxed iframe inside SecureHtmlBody can take the pane's height.
- * NOT capped at a reading measure like .body — the iframe is a document with
- * its own margins, and mail layouts are designed at their own widths. */
+/* The HTML rendering path (W-A4): a flex column holding the sandboxed iframe
+ * (whose height is content-derived since C-03 — it no longer fills the pane).
+ *
+ * C-12: capped at a reading measure. Not the 68ch of plain text — a designed
+ * mail wants more room than prose — but a limit all the same, because an
+ * unconstrained frame on a wide monitor renders a paragraph as one 1200px
+ * line, and no reader follows that. ~90ch of the app's font is wide enough
+ * for every 600–700px newsletter table and narrow enough to read; wider
+ * content still scrolls inside the frame, never the app. The frame's width
+ * also feeds the height estimate (ResizeObserver on the container), so the
+ * cap and the estimate agree by construction. */
 .htmlBody {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: none;
+  width: 100%;
+  max-width: 90ch;
   min-height: 0;
   gap: var(--space-3);
 }
