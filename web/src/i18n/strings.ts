@@ -803,6 +803,8 @@ export const en = {
   "reader.imagesLoading": "Loading images through the privacy proxy…",
   "reader.imagesFailed":
     "The images could not be loaded through the privacy proxy, so they stay hidden. Try again later.",
+  // C-11: inline images ARE displayed now; this counts the ones that could
+  // not be — no matching part, too large to inline, or the fetch failed.
   "reader.inlineImagesUnavailable": (count: number): string =>
     count === 1
       ? "1 embedded image cannot be displayed."
@@ -1975,13 +1977,13 @@ export const es: Strings = {
   "reader.bcc": "Cco",
   "reader.replyTo": "Responder a",
   "reader.date": "Fecha",
-  "reader.close": "Volver a la lista",
-  "reader.loading": "Cargando el mensaje…",
   "reader.me": "mí",
   "reader.toPhrase": "para",
   "reader.subject": "Asunto",
   "reader.showDetails": "Mostrar detalles",
   "reader.hideDetails": "Ocultar detalles",
+  "reader.close": "Volver a la lista",
+  "reader.loading": "Cargando el mensaje…",
   "reader.loadFailed": "No se pudo cargar este mensaje",
   "reader.attachments": (count: number): string =>
     `${count} adjunto${count === 1 ? "" : "s"}`,
