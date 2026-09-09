@@ -197,3 +197,156 @@ describe("buildSuggestions", () => {
     expect(new Set(out.map((s) => s.id)).size).toBe(out.length);
   });
 });
+
+/**
+ * E-04 — a COMPLETE operator opens its values.
+ *
+ * The review found this dropdown empty for the one input that most needs it:
+ * typing `from:` produced nothing. Three filters compounded — an account with
+ * no labels contributed no rows, the operator list refused an exact match
+ * (`from:` === `from:`), and the recent-search filter is a substring test
+ * `from:` rarely passes — so the combobox was correctly built and starved.
+ *
+ * None of those filters is relaxed here. A complete operator is a DIFFERENT
+ * question: the user has finished saying which field and is asking what to put
+ * in it, and the answer is the account's own data or, for `is:`/`has:`, the
+ * closed vocabulary the parser accepts.
+ */
+describe("E-04 — values for a complete operator", () => {
+  const ADDRESSES = [
+    {
+      email: "ana@example.test",
+      displayName: "Ana Gómez",
+      lastSeenAt: 3,
+      timesSeen: 9,
+      source: "sent" as const,
+    },
+    {
+      email: "bruno@otra.test",
+      displayName: undefined,
+      lastSeenAt: 2,
+      timesSeen: 1,
+      source: "browsed" as const,
+    },
+  ];
+
+  const MAILBOXES = [
+    {
+      id: "mb1",
+      name: "Bandeja de entrada",
+      parentId: null,
+      role: "inbox" as const,
+      sortOrder: 0,
+      totalEmails: 0,
+      unreadEmails: 0,
+      totalThreads: 0,
+      unreadThreads: 0,
+      isSubscribed: true,
+      myRights: {
+        mayReadItems: true,
+        mayAddItems: true,
+        mayRemoveItems: true,
+        maySetSeen: true,
+        maySetKeywords: true,
+        mayCreateChild: true,
+        mayRename: true,
+        mayDelete: true,
+        maySubmit: true,
+      },
+    },
+  ];
+
+  it("offers the account's addresses for a bare from:", () => {
+    const result = buildSuggestions({
+      input: "from:",
+      recent: [],
+      labels: [],
+      addresses: ADDRESSES,
+    });
+    // This is the exact input the review typed and got nothing for.
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.every((s) => s.kind === "value")).toBe(true);
+    expect(result[0]?.value).toBe("from:ana@example.test");
+    expect(result[0]?.label).toContain("Ana Gómez");
+  });
+
+  it("narrows the addresses by what has been typed after the colon", () => {
+    const result = buildSuggestions({
+      input: "from:bru",
+      recent: [],
+      labels: [],
+      addresses: ADDRESSES,
+    });
+    expect(result.map((s) => s.value)).toEqual(["from:bruno@otra.test"]);
+  });
+
+  it("offers the closed vocabulary for is: and has:", () => {
+    expect(
+      buildSuggestions({ input: "is:", recent: [], labels: [] }).map((s) => s.value),
+    ).toEqual(["is:unread", "is:read", "is:starred", "is:muted"]);
+    expect(
+      buildSuggestions({ input: "has:", recent: [], labels: [] }).map((s) => s.value),
+    ).toEqual(["has:attachment"]);
+  });
+
+  it("offers folders for in: — by SEGMENT, so the query stays portable", () => {
+    const result = buildSuggestions({
+      input: "in:",
+      recent: [],
+      labels: [],
+      mailboxes: MAILBOXES,
+    });
+    // The row READS as the folder's name and the query CARRIES its role, which
+    // is what `resolveScope` reads back on a server in another language.
+    expect(result[0]?.label).toBe("Bandeja de entrada");
+    expect(result[0]?.value).toBe("in:inbox");
+  });
+
+  it("offers labels for label:", () => {
+    const result = buildSuggestions({ input: "label:fact", recent: [], labels: LABELS });
+    expect(result.map((s) => s.value)).toEqual(["label:Facturas"]);
+  });
+
+  it("quotes a value that would not survive re-tokenizing", () => {
+    const result = buildSuggestions({ input: "label:proy", recent: [], labels: LABELS });
+    expect(result[0]?.value).toBe('label:"Proyectos internos"');
+  });
+
+  it("replaces only the ACTIVE token, leaving earlier terms alone", () => {
+    const result = buildSuggestions({
+      input: "informe from:an",
+      recent: [],
+      labels: [],
+      addresses: ADDRESSES,
+    });
+    expect(result[0]?.value).toBe("informe from:ana@example.test");
+  });
+
+  it("shows values ALONE — recent searches do not crowd them out", () => {
+    const result = buildSuggestions({
+      input: "is:",
+      recent: ["is:unread factura", "informe"],
+      labels: LABELS,
+    });
+    // Rows that ignore the operator above rows that answer it is how a dropdown
+    // teaches people to stop looking at it.
+    expect(result.every((s) => s.kind === "value")).toBe(true);
+  });
+
+  it("still hints OPERATORS for a prefix, which is a different question", () => {
+    const result = buildSuggestions({ input: "fr", recent: [], labels: [] });
+    expect(result.some((s) => s.kind === "operator" && s.label === "from:")).toBe(true);
+  });
+
+  it("treats a colon that is not an operator as ordinary text", () => {
+    // A URL or a time. `parseSearchQuery` makes the same distinction, for the
+    // same reason: a scary dropdown over "https://x" is worse than none.
+    const result = buildSuggestions({ input: "https://x", recent: [], labels: LABELS });
+    expect(result.every((s) => s.kind !== "value")).toBe(true);
+  });
+
+  it("returns nothing rather than an empty section when a source is absent", () => {
+    // No index, no address rows — the same rule AddressField follows.
+    expect(buildSuggestions({ input: "from:", recent: [], labels: [] })).toEqual([]);
+  });
+});

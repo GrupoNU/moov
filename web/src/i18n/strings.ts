@@ -1292,6 +1292,7 @@ export const en = {
   "search.suggestions.recent": "Recent searches",
   "search.suggestions.labels": "Labels",
   "search.suggestions.operators": "Search operators",
+  "search.suggestions.values": "Values",
   "search.suggestions.clearRecent": "Clear recent searches",
 
   // Refusals, each naming the term at fault.
@@ -2436,6 +2437,7 @@ export const es: Strings = {
   "search.suggestions.recent": "Búsquedas recientes",
   "search.suggestions.labels": "Etiquetas",
   "search.suggestions.operators": "Operadores de búsqueda",
+  "search.suggestions.values": "Valores",
   "search.suggestions.clearRecent": "Borrar búsquedas recientes",
 
   "search.refused.title": "Una parte de esa búsqueda no se pudo usar",

@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "../../i18n/I18nProvider";
 import { createDebouncer, SEARCH_DEBOUNCE_MS } from "../../mail/search";
 import { buildSuggestions, type Suggestion } from "../../mail/searchSuggestions";
+import type { IndexedAddress } from "../../mail/addressIndex";
 import type { Label } from "../../mail/labelStore";
 import type { FilterDraftFromSearch } from "../../mail/searchToFilter";
 import type { Mailbox } from "../../mail/types";
@@ -78,6 +79,15 @@ export interface SearchBarProps {
   readonly mailboxes?: readonly Mailbox[];
   /** E-15: the folder on screen, for the panel's "En esta carpeta" row. */
   readonly currentMailbox?: Mailbox | undefined;
+  /**
+   * E-04: E7's address index, for completing `from:` / `to:` / `cc:` / `bcc:`.
+   *
+   * The soft dependency `searchSuggestions.ts` declared in E3 and named as the
+   * highest-value missing source in the review (E-05). Absent when the user
+   * opted out or nothing has been indexed, which produces no address rows
+   * rather than an empty section — the same rule `AddressField` follows.
+   */
+  readonly addressSuggestions?: readonly IndexedAddress[];
   /** E3: clears the stored history. Absent hides the affordance. */
   readonly onClearRecent?: (() => void) | undefined;
   /**
@@ -97,11 +107,14 @@ const KIND_LABELS = {
   recent: "search.suggestions.recent",
   label: "search.suggestions.labels",
   operator: "search.suggestions.operators",
+  /* E-04: a value for the operator the user has already finished typing. */
+  value: "search.suggestions.values",
 } as const;
 
 const NO_LABELS: readonly Label[] = [];
 const NO_MAILBOXES: readonly Mailbox[] = [];
 const NO_RECENT: readonly string[] = [];
+const NO_ADDRESSES: readonly IndexedAddress[] = [];
 
 export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function SearchBar(
   {
@@ -113,6 +126,7 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     labels = NO_LABELS,
     mailboxes = NO_MAILBOXES,
     currentMailbox,
+    addressSuggestions = NO_ADDRESSES,
     onClearRecent,
     onCreateFilter,
   },
@@ -148,8 +162,18 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
   useEffect(() => () => { debouncer.cancel(); }, [debouncer]);
 
   const suggestions: readonly Suggestion[] = useMemo(
-    () => buildSuggestions({ input: value, recent: recentSearches, labels }),
-    [value, recentSearches, labels],
+    () =>
+      buildSuggestions({
+        input: value,
+        recent: recentSearches,
+        labels,
+        // E-04: a complete operator opens its VALUES, and these are where the
+        // values come from. Empty arrays mean the corresponding rows are simply
+        // not offered — never an empty section.
+        mailboxes,
+        addresses: addressSuggestions,
+      }),
+    [value, recentSearches, labels, mailboxes, addressSuggestions],
   );
 
   /*
