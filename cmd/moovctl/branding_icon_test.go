@@ -274,3 +274,140 @@ func TestBrandingSetIconHelp(t *testing.T) {
 		}
 	}
 }
+
+// --- the dark-background wordmark --------------------------------------------
+
+// TestBrandingSetLogoDarkRoundTrip: stored under OUR name, shown in show and
+// list, cleared by an empty value, removed by unset — and never confused with
+// the light logo or with the icon.
+func TestBrandingSetLogoDarkRoundTrip(t *testing.T) {
+	root := t.TempDir()
+
+	code, stdout, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "dark.test", "-name", "Areacorp",
+		"-logo", writeTempImage(t, "wordmark-black.png", widePNG(t)),
+		"-logo-dark", writeTempImage(t, "wordmark-white.png", widePNG(t)))
+	if code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "logo-dark.png") {
+		t.Errorf("set did not report where the dark logo was stored:\n%s", stdout)
+	}
+	// A dark wordmark is not an icon source, so no squareness warning and no
+	// icon declaration is owed for it.
+	if strings.Contains(stdout, "not square") {
+		t.Errorf("a wide dark logo was warned about as if it were an icon:\n%s", stdout)
+	}
+
+	doc := readDoc(t, root, "dark.test")
+	if doc.LogoDark != "logo-dark.png" {
+		t.Errorf("logoDark = %q, want logo-dark.png", doc.LogoDark)
+	}
+	if doc.Logo != "logo.png" {
+		t.Errorf("logo = %q; the light logo must be stored separately", doc.Logo)
+	}
+	for _, name := range []string{"logo.png", "logo-dark.png"} {
+		if _, err := os.Stat(filepath.Join(root, "dark.test", name)); err != nil {
+			t.Errorf("%s was not written: %v", name, err)
+		}
+	}
+
+	_, stdout, _ = runCLI(t, "", "branding", "show", "-dir", root, "-host", "dark.test")
+	if !strings.Contains(stdout, "LOGO DARK") || !strings.Contains(stdout, "logo-dark.png") {
+		t.Errorf("show does not carry the dark logo:\n%s", stdout)
+	}
+	// The PWA icons still come from the light logo: the dark one is not in that
+	// chain at all.
+	if !strings.Contains(stdout, "generated from the logo logo.png") {
+		t.Errorf("the dark logo disturbed the icon chain:\n%s", stdout)
+	}
+
+	_, stdout, _ = runCLI(t, "", "branding", "list", "-dir", root)
+	if !strings.Contains(stdout, "LOGO DARK") || !strings.Contains(stdout, "logo-dark.png") {
+		t.Errorf("list does not carry the dark logo:\n%s", stdout)
+	}
+
+	// Clearing stops advertising it and leaves the file, like every other asset.
+	if code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "dark.test", "-logo-dark", ""); code != exitOK {
+		t.Fatalf("clearing exited %d: %s", code, stderr)
+	}
+	after := readDoc(t, root, "dark.test")
+	if after.LogoDark != "" {
+		t.Errorf("logoDark = %q, want it cleared", after.LogoDark)
+	}
+	if after.Logo != "logo.png" || after.Name != "Areacorp" {
+		t.Errorf("clearing the dark logo disturbed the rest: %+v", after)
+	}
+	if _, err := os.Stat(filepath.Join(root, "dark.test", "logo-dark.png")); err != nil {
+		t.Errorf("clearing -logo-dark deleted the operator's file: %v", err)
+	}
+
+	// unset removes it with the others.
+	if code, _, stderr := runCLI(t, "", "branding", "set", "-dir", root, "-host", "dark.test",
+		"-logo-dark", writeTempImage(t, "w.png", widePNG(t))); code != exitOK {
+		t.Fatalf("re-setting exited %d: %s", code, stderr)
+	}
+	if code, _, stderr := runCLI(t, "", "branding", "unset", "-dir", root, "-host", "dark.test"); code != exitOK {
+		t.Fatalf("unset exited %d: %s", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(root, "dark.test", "logo-dark.png")); !os.IsNotExist(err) {
+		t.Errorf("unset left logo-dark.png behind: %v", err)
+	}
+}
+
+// TestBrandingSetLogoDarkIsIndependent: the three marks do not overwrite one
+// another, and replacing one across extensions does not disturb the others.
+func TestBrandingSetLogoDarkIsIndependent(t *testing.T) {
+	root := t.TempDir()
+	if code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "three.test",
+		"-logo", writeTempImage(t, "l.png", widePNG(t)),
+		"-logo-dark", writeTempImage(t, "d.png", widePNG(t)),
+		"-icon", writeTempImage(t, "i.png", squarePNG(t))); code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	doc := readDoc(t, root, "three.test")
+	if doc.Logo != "logo.png" || doc.LogoDark != "logo-dark.png" || doc.Icon != "icon.png" {
+		t.Fatalf("the three marks collided: %+v", doc)
+	}
+
+	// Replacing the dark logo with a JPEG removes logo-dark.png but must not
+	// touch logo.png — the "logo-dark" base is its own, not a suffix of "logo".
+	if code, _, stderr := runCLI(t, "", "branding", "set", "-dir", root, "-host", "three.test",
+		"-logo-dark", writeTempImage(t, "d.jpg", testJPEG)); code != exitOK {
+		t.Fatalf("replacing exited %d: %s", code, stderr)
+	}
+	doc = readDoc(t, root, "three.test")
+	if doc.LogoDark != "logo-dark.jpg" {
+		t.Errorf("logoDark = %q, want logo-dark.jpg", doc.LogoDark)
+	}
+	if doc.Logo != "logo.png" {
+		t.Errorf("logo = %q, want it untouched", doc.Logo)
+	}
+	if _, err := os.Stat(filepath.Join(root, "three.test", "logo.png")); err != nil {
+		t.Errorf("replacing the dark logo deleted logo.png: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "three.test", "logo-dark.png")); !os.IsNotExist(err) {
+		t.Error("the superseded logo-dark.png was left behind to be served by a stale document")
+	}
+	// And a color-only change keeps all three.
+	if code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "three.test", "-color-primary", "#000000"); code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	doc = readDoc(t, root, "three.test")
+	if doc.Logo == "" || doc.LogoDark == "" || doc.Icon == "" {
+		t.Errorf("a color change dropped a mark: %+v", doc)
+	}
+}
+
+// TestBrandingSetLogoDarkHelp: the flag and why it exists are in the usage.
+func TestBrandingSetLogoDarkHelp(t *testing.T) {
+	_, _, stderr := runCLI(t, "", "branding", "set", "-h")
+	for _, want := range []string{"-logo-dark", "dark"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("branding set usage does not mention %q:\n%s", want, stderr)
+		}
+	}
+}

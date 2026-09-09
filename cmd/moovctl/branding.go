@@ -42,6 +42,7 @@ import (
 //
 //	<dir>/<host>/branding.json     the document (name, colors, asset names)
 //	<dir>/<host>/logo.png          the assets, copied and validated
+//	<dir>/<host>/logo-dark.png
 //	<dir>/<host>/icon.png
 //	<dir>/<host>/splash.jpg
 //
@@ -93,6 +94,8 @@ func brandingSet(e *env, args []string) error {
 	tagline := fs.String("tagline", "", "an optional line under the product name on the login panel")
 	supportURL := fs.String("support-url", "", "where \"contact your administrator\" points (https:// or mailto:)")
 	logo := fs.String("logo", "", "path to the logo image (png, jpg, webp or gif)")
+	logoDark := fs.String("logo-dark", "", "path to the wordmark for DARK backgrounds "+
+		"(png, jpg, webp or gif): the login panel and the dark theme")
 	icon := fs.String("icon", "", "path to the SQUARE icon the installed app's icons and the "+
 		"favicon are rendered from (png, jpg or gif); defaults to the logo")
 	splash := fs.String("splash", "", "path to the login panel image (png, jpg, webp or gif)")
@@ -105,11 +108,16 @@ func brandingSet(e *env, args []string) error {
 		out(e.stderr, "Usage: moovctl branding set -host <hostname> [flags]\n\n"+
 			"Writes <dir>/<host>/branding.json and copies the given assets beside it.\n"+
 			"Flags that are not passed keep their current value.\n\n"+
-			"-logo is what the top bar and the login panel show. -icon is the SQUARE\n"+
-			"mark the installed app's icons and the favicon are rendered from, and it\n"+
-			"falls back to the logo. Give one when your primary color is dark: the\n"+
-			"maskable and Apple icons sit on a plate of that color, so a dark logo\n"+
-			"disappears into it.\n\n"+
+			"Three marks, three jobs:\n"+
+			"  -logo       the top bar and the login panel.\n"+
+			"  -logo-dark  the same wordmark drawn for dark backgrounds: the login\n"+
+			"              panel and the dark theme. Without it the app puts the light\n"+
+			"              logo on a small light plate, which is legible but is a plate\n"+
+			"              you did not design.\n"+
+			"  -icon       the SQUARE mark the installed app's icons and the favicon\n"+
+			"              are rendered from; falls back to -logo. Give one when your\n"+
+			"              primary color is dark, since those icons sit on a plate of\n"+
+			"              it and a dark logo disappears into it.\n\n"+
 			"SVG is deliberately not accepted: it is an XML document that can carry\n"+
 			"scripts, and the login page is where passwords are typed. Export to PNG.\n\n")
 		fs.PrintDefaults()
@@ -214,6 +222,7 @@ func brandingSet(e *env, args []string) error {
 		field *string
 	}{
 		{"logo", logo, "logo", &doc.Logo},
+		{"logo-dark", logoDark, "logo-dark", &doc.LogoDark},
 		{"icon", icon, "icon", &doc.Icon},
 		{"splash", splash, "splash", &doc.Splash},
 	}
@@ -261,7 +270,7 @@ func brandingSet(e *env, args []string) error {
 
 	if !changed {
 		return usageErrorf("branding set needs at least one field to change " +
-			"(-name, -logo, -icon, -splash, -color-primary, ...)")
+			"(-name, -logo, -logo-dark, -icon, -splash, -color-primary, ...)")
 	}
 
 	if err := writeBrandingFile(hostDir, doc); err != nil {
@@ -323,6 +332,7 @@ func brandingShow(e *env, args []string) error {
 	outf(w, "TAGLINE\t%s\n", orDash(doc.Tagline))
 	outf(w, "SUPPORT URL\t%s\n", orDash(doc.SupportURL))
 	outf(w, "LOGO\t%s\n", orDash(doc.Logo))
+	outf(w, "LOGO DARK\t%s\n", orDash(doc.LogoDark))
 	outf(w, "ICON\t%s\n", orDash(doc.Icon))
 	outf(w, "SPLASH\t%s\n", orDash(doc.Splash))
 	outf(w, "PWA ICONS\t%s\n", pwaIconsStatus(hostDir, doc.Icon, doc.Logo))
@@ -432,15 +442,15 @@ func brandingList(e *env, args []string) error {
 	sort.Strings(hosts)
 
 	w := tabwriter.NewWriter(e.stdout, 0, 0, 2, ' ', 0)
-	outln(w, "HOST\tNAME\tLOGO\tICON\tSPLASH\tPRIMARY")
+	outln(w, "HOST\tNAME\tLOGO\tLOGO DARK\tICON\tSPLASH\tPRIMARY")
 	for _, h := range hosts {
 		doc, err := readBrandingFile(filepath.Join(root, h))
 		if err != nil {
-			outf(w, "%s\t(unreadable)\t-\t-\t-\t-\n", h)
+			outf(w, "%s\t(unreadable)\t-\t-\t-\t-\t-\n", h)
 			continue
 		}
-		outf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			h, orDash(doc.Name), orDash(doc.Logo), orDash(doc.Icon),
+		outf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			h, orDash(doc.Name), orDash(doc.Logo), orDash(doc.LogoDark), orDash(doc.Icon),
 			orDash(doc.Splash), orDash(doc.Colors.Primary))
 	}
 	return w.Flush()
@@ -497,7 +507,7 @@ func brandingUnset(e *env, args []string) error {
 		// Only the files this CLI wrote, by their recorded names — never a
 		// blanket wipe of the directory, which might hold something an
 		// operator put there.
-		for _, asset := range []string{doc.Logo, doc.Icon, doc.Splash} {
+		for _, asset := range []string{doc.Logo, doc.LogoDark, doc.Icon, doc.Splash} {
 			if name := sanitizeAssetName(asset); name != "" {
 				_ = os.Remove(filepath.Join(hostDir, name))
 			}
@@ -526,6 +536,7 @@ type brandingDocument struct {
 	Tagline    string           `json:"tagline,omitempty"`
 	SupportURL string           `json:"supportUrl,omitempty"`
 	Logo       string           `json:"logo,omitempty"`
+	LogoDark   string           `json:"logoDark,omitempty"`
 	Icon       string           `json:"icon,omitempty"`
 	Splash     string           `json:"splash,omitempty"`
 	Colors     brandingDocColor `json:"colors,omitempty"`
