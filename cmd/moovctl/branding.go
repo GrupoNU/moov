@@ -77,6 +77,8 @@ func brandingSet(e *env, args []string) error {
 	host := fs.String("host", "", "the hostname this branding applies to (required, e.g. mail.example.com)")
 	dir := fs.String("dir", "", "the branding root (default "+envBrandingDir+", or "+defaultBrandingDir+")")
 	name := fs.String("name", "", "the product name shown in the UI and the browser tab")
+	shortName := fs.String("short-name", "", "the name under the installed app's icon (at most 12 characters; "+
+		"derived from -name when not set)")
 	tagline := fs.String("tagline", "", "an optional line under the product name on the login panel")
 	supportURL := fs.String("support-url", "", "where \"contact your administrator\" points (https:// or mailto:)")
 	logo := fs.String("logo", "", "path to the logo image (png, jpg, webp or gif)")
@@ -132,6 +134,18 @@ func brandingSet(e *env, args []string) error {
 
 	if isFlagPassed(fs, "name") {
 		doc.Name = strings.TrimSpace(*name)
+		changed = true
+	}
+	if isFlagPassed(fs, "short-name") {
+		v := strings.TrimSpace(*shortName)
+		// Refused rather than truncated: the server WOULD cut it to twelve,
+		// but an operator who typed "Corporate Mailbox" should learn now that
+		// the home screen will say "Corporate Ma", not discover it on a phone.
+		if n := len([]rune(v)); n > maxShortNameRunes {
+			return usageErrorf("-short-name %q is %d characters; the limit is %d (launchers truncate past it)",
+				v, n, maxShortNameRunes)
+		}
+		doc.ShortName = v
 		changed = true
 	}
 	if isFlagPassed(fs, "tagline") {
@@ -197,13 +211,22 @@ func brandingSet(e *env, args []string) error {
 			changed = true
 			continue
 		}
-		stored, err := copyBrandingAsset(src, hostDir, a.dest)
+		stored, body, err := copyBrandingAsset(src, hostDir, a.dest)
 		if err != nil {
 			return err
 		}
 		*a.field = stored
 		changed = true
 		outf(e.stdout, "Stored %s as %s.\n", a.flag, filepath.Join(hostDir, stored))
+		// The logo is also the source of the installed app's icons, and not
+		// every image the login page can show can be rendered into one (WebP
+		// in particular). Say so NOW, at the terminal, rather than letting the
+		// operator find Moov's mark on a customer's home screen.
+		if a.flag == "logo" {
+			if err := jmaphttp.ValidateBrandingIconSource(body); err != nil {
+				outf(e.stdout, "  Note: the PWA icons will stay Moov's — %s.\n", err)
+			}
+		}
 	}
 
 	if !changed {
@@ -266,16 +289,41 @@ func brandingShow(e *env, args []string) error {
 	w := tabwriter.NewWriter(e.stdout, 0, 0, 2, ' ', 0)
 	outf(w, "HOST\t%s\n", resolvedHost)
 	outf(w, "NAME\t%s\n", orDash(doc.Name))
+	outf(w, "SHORT NAME\t%s\n", orDash(doc.ShortName))
 	outf(w, "TAGLINE\t%s\n", orDash(doc.Tagline))
 	outf(w, "SUPPORT URL\t%s\n", orDash(doc.SupportURL))
 	outf(w, "LOGO\t%s\n", orDash(doc.Logo))
 	outf(w, "SPLASH\t%s\n", orDash(doc.Splash))
+	outf(w, "PWA ICONS\t%s\n", pwaIconsStatus(hostDir, doc.Logo))
 	outf(w, "PRIMARY\t%s\n", orDash(doc.Colors.Primary))
 	outf(w, "ON PRIMARY\t%s\n", orDash(doc.Colors.OnPrimary))
 	outf(w, "SPLASH FROM\t%s\n", orDash(doc.Colors.SplashFrom))
 	outf(w, "SPLASH TO\t%s\n", orDash(doc.Colors.SplashTo))
 	return w.Flush()
 }
+
+// pwaIconsStatus says where the installed app's icons will come from, with
+// the reason whenever the answer is "Moov's": the server logs the same
+// verdict, but an operator running `show` should not have to read the daemon
+// log to learn why a customer's phone shows the wrong mark.
+func pwaIconsStatus(hostDir, logo string) string {
+	name := sanitizeAssetName(logo)
+	if name == "" {
+		return "Moov's (no logo configured)"
+	}
+	body, err := os.ReadFile(filepath.Join(hostDir, name)) // #nosec G304 -- a validated single component under the host directory.
+	if err != nil {
+		return fmt.Sprintf("Moov's (the logo cannot be read: %v)", err)
+	}
+	if err := jmaphttp.ValidateBrandingIconSource(body); err != nil {
+		return fmt.Sprintf("Moov's (%s)", err)
+	}
+	return "generated from " + name
+}
+
+// maxShortNameRunes mirrors the server's cap on shortName; the CLI refuses
+// past it instead of letting the server truncate silently.
+const maxShortNameRunes = 12
 
 // brandingList prints every configured host.
 func brandingList(e *env, args []string) error {
@@ -409,6 +457,7 @@ const brandingFileName = "branding.json"
 // config file part of the server's Go API.
 type brandingDocument struct {
 	Name       string           `json:"name,omitempty"`
+	ShortName  string           `json:"shortName,omitempty"`
 	Tagline    string           `json:"tagline,omitempty"`
 	SupportURL string           `json:"supportUrl,omitempty"`
 	Logo       string           `json:"logo,omitempty"`
@@ -499,26 +548,27 @@ func writeBrandingFile(hostDir string, doc brandingDocument) error {
 }
 
 // copyBrandingAsset validates an image and copies it beside the document,
-// returning the stored filename.
+// returning the stored filename and the bytes it stored (so the caller can
+// judge them further without a second read).
 //
 // The stored name is OURS ("logo.png"), derived from the sniffed type — never
 // the source filename. A customer's file called "../../etc/passwd.png" or one
 // with a name in a script the filesystem renders oddly cannot become part of a
 // URL that way.
-func copyBrandingAsset(src, hostDir, base string) (string, error) {
+func copyBrandingAsset(src, hostDir, base string) (string, []byte, error) {
 	info, err := os.Stat(src)
 	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", src, err)
+		return "", nil, fmt.Errorf("reading %s: %w", src, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", src)
+		return "", nil, fmt.Errorf("%s is not a regular file", src)
 	}
 	if info.Size() > jmaphttp.MaxBrandingAssetBytes {
-		return "", fmt.Errorf("%s is %d bytes; the limit is %d (%d MiB)",
+		return "", nil, fmt.Errorf("%s is %d bytes; the limit is %d (%d MiB)",
 			src, info.Size(), jmaphttp.MaxBrandingAssetBytes, jmaphttp.MaxBrandingAssetBytes>>20)
 	}
 	if info.Size() == 0 {
-		return "", fmt.Errorf("%s is empty", src)
+		return "", nil, fmt.Errorf("%s is empty", src)
 	}
 
 	// The extension check is for the operator's benefit — it names the real
@@ -526,27 +576,27 @@ func copyBrandingAsset(src, hostDir, base string) (string, error) {
 	// a supported image"). The content check below is the one that decides.
 	ext := strings.ToLower(filepath.Ext(src))
 	if ext == ".svg" || ext == ".svgz" {
-		return "", fmt.Errorf("%s: SVG is not accepted — it is an XML document that can carry "+
+		return "", nil, fmt.Errorf("%s: SVG is not accepted — it is an XML document that can carry "+
 			"scripts, and this asset is served from the origin the login page runs on. "+
 			"Export it to PNG", src)
 	}
 	if !containsFold(jmaphttp.AllowedBrandingExtensions, ext) {
-		return "", fmt.Errorf("%s: %q is not a supported image extension (want %s)",
+		return "", nil, fmt.Errorf("%s: %q is not a supported image extension (want %s)",
 			src, ext, strings.Join(jmaphttp.AllowedBrandingExtensions, ", "))
 	}
 
 	body, err := os.ReadFile(src) // #nosec G304 -- an operator-supplied path is the point of the flag; size was capped above.
 	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", src, err)
+		return "", nil, fmt.Errorf("reading %s: %w", src, err)
 	}
 	if len(body) > jmaphttp.MaxBrandingAssetBytes {
-		return "", fmt.Errorf("%s grew past the %d byte limit while being read",
+		return "", nil, fmt.Errorf("%s grew past the %d byte limit while being read",
 			src, jmaphttp.MaxBrandingAssetBytes)
 	}
 
 	suffix, ok := imageExtensionForCLI(body)
 	if !ok {
-		return "", fmt.Errorf("%s does not contain a PNG, JPEG, WebP or GIF image "+
+		return "", nil, fmt.Errorf("%s does not contain a PNG, JPEG, WebP or GIF image "+
 			"(its bytes were checked, not its extension)", src)
 	}
 
@@ -565,9 +615,9 @@ func copyBrandingAsset(src, hostDir, base string) (string, error) {
 	// #nosec G306 -- a brand image, served to anonymous callers by design and
 	// read by the daemon under a different user; 0600 would break both.
 	if err := os.WriteFile(dest, body, 0o644); err != nil {
-		return "", fmt.Errorf("writing %s: %w", dest, err)
+		return "", nil, fmt.Errorf("writing %s: %w", dest, err)
 	}
-	return stored, nil
+	return stored, body, nil
 }
 
 // imageExtensionForCLI sniffs an image and returns the extension to store it

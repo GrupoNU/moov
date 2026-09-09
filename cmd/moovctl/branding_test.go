@@ -501,3 +501,103 @@ func TestWriteBrandingFileIsAtomic(t *testing.T) {
 		t.Errorf("directory contents = %v, want only %s", entries, brandingFileName)
 	}
 }
+
+// --- short name and the PWA icons -------------------------------------------
+
+// TestBrandingSetShortName: persisted verbatim within the cap, refused past
+// it — the server would truncate, the CLI says so first.
+func TestBrandingSetShortName(t *testing.T) {
+	root := t.TempDir()
+	if code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "short.test", "-name", "Acme Corporate Mailbox",
+		"-short-name", " Acme ",
+	); code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	if doc := readDoc(t, root, "short.test"); doc.ShortName != "Acme" {
+		t.Errorf("shortName = %q, want Acme (trimmed)", doc.ShortName)
+	}
+
+	code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "short.test", "-short-name", "Corporate Mailbox")
+	if code != exitUsage {
+		t.Errorf("a 17-character short name exited %d, want %d (usage)", code, exitUsage)
+	}
+	if !strings.Contains(stderr, "12") {
+		t.Errorf("the refusal does not name the limit:\n%s", stderr)
+	}
+	// Refused means unchanged.
+	if doc := readDoc(t, root, "short.test"); doc.ShortName != "Acme" {
+		t.Errorf("shortName = %q after a refused set, want the previous Acme", doc.ShortName)
+	}
+
+	// Twelve exactly, in runes not bytes, is accepted.
+	if code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "short.test", "-short-name", "Ñandú Correo"); code != exitOK {
+		t.Errorf("a 12-rune short name exited %d: %s", code, stderr)
+	}
+
+	code, stdout, _ := runCLI(t, "", "branding", "show", "-dir", root, "-host", "short.test")
+	if code != exitOK || !strings.Contains(stdout, "SHORT NAME") || !strings.Contains(stdout, "Ñandú Correo") {
+		t.Errorf("show does not print the short name:\n%s", stdout)
+	}
+}
+
+// TestBrandingDeclaresIconFallback: a logo the server can display but cannot
+// render into icons is declared at `set` and explained by `show`; a
+// renderable one is reported as the icon source.
+func TestBrandingDeclaresIconFallback(t *testing.T) {
+	root := t.TempDir()
+	webp := writeTempImage(t, "logo.webp",
+		append(append([]byte("RIFF"), 0x10, 0x00, 0x00, 0x00), []byte("WEBPVP8 ")...))
+
+	code, stdout, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "webp.test", "-logo", webp)
+	if code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "PWA icons") || !strings.Contains(stdout, "WebP") {
+		t.Errorf("set did not declare the icon fallback for a WebP logo:\n%s", stdout)
+	}
+
+	code, stdout, _ = runCLI(t, "", "branding", "show", "-dir", root, "-host", "webp.test")
+	if code != exitOK {
+		t.Fatalf("show exited %d", code)
+	}
+	if !strings.Contains(stdout, "PWA ICONS") || !strings.Contains(stdout, "Moov's") || !strings.Contains(stdout, "WebP") {
+		t.Errorf("show does not explain the icon fallback:\n%s", stdout)
+	}
+
+	// A PNG logo: no note at set, and show names it as the source.
+	png := writeTempImage(t, "logo.png", testPNG)
+	code, stdout, stderr = runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "png.test", "-logo", png)
+	if code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	if strings.Contains(stdout, "PWA icons will stay") {
+		t.Errorf("set warned about a renderable PNG logo:\n%s", stdout)
+	}
+	_, stdout, _ = runCLI(t, "", "branding", "show", "-dir", root, "-host", "png.test")
+	if !strings.Contains(stdout, "generated from logo.png") {
+		t.Errorf("show does not name the PNG as the icon source:\n%s", stdout)
+	}
+
+	// No logo at all: Moov's, quietly.
+	if code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "bare.test", "-name", "Bare"); code != exitOK {
+		t.Fatalf("set exited %d: %s", code, stderr)
+	}
+	_, stdout, _ = runCLI(t, "", "branding", "show", "-dir", root, "-host", "bare.test")
+	if !strings.Contains(stdout, "no logo configured") {
+		t.Errorf("show does not say there is no logo:\n%s", stdout)
+	}
+}
+
+// TestShortNameCapMatchesServer pins the CLI's cap to the server's.
+func TestShortNameCapMatchesServer(t *testing.T) {
+	if maxShortNameRunes != jmaphttp.MaxBrandingShortNameRunesForTest {
+		t.Errorf("the CLI refuses past %d runes but the server truncates at %d",
+			maxShortNameRunes, jmaphttp.MaxBrandingShortNameRunesForTest)
+	}
+}
