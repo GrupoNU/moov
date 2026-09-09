@@ -205,8 +205,39 @@
  * enough here (unlike the panel, which needed a scroll container), so no
  * wrapper element is introduced.
  */
-.dividerCell {
+.readingBottom .dividerCell {
   grid-area: divider;
+}
+
+/*
+ * P0-1 — the orphan grid-area trap, and why the three cells below are placed
+ * by explicit column.
+ *
+ * `grid-area: divider` used to be declared UNSCOPED. In `.readingBottom` that
+ * is correct: the area exists. In `.reading` (the "right of the list" split)
+ * there is no `grid-template-areas` at all, so the name resolves to nothing
+ * and CSS does not ignore it — it CREATES an implicit track for the orphan
+ * line names and places the divider there, past the four declared columns.
+ * The reader then slid into the divider's `auto` track and the list, still
+ * mounted, collapsed to `1fr` of zero: the live grid computed as
+ * `260 | 0 | 1771 | 520 | 0 | 9` — six tracks instead of four, list starved to
+ * 0px. Nothing threw, and jsdom cannot see it because jsdom does no layout.
+ *
+ * Scoping the area to `.readingBottom` removes the orphan. Naming the columns
+ * explicitly here removes the whole class of bug: with each cell pinned to its
+ * track, neither DOM sibling order nor a future stray placement property can
+ * decide where a pane lands. The tracks are rail | list | divider | reader.
+ */
+.reading .listColumn {
+  grid-column: 2;
+}
+
+.reading .dividerCell {
+  grid-column: 3;
+}
+
+.reading .readerColumn {
+  grid-column: 4;
 }
 
 .readingBottom .sidebar {
@@ -431,6 +462,16 @@
   .reading [role="separator"] {
     display: none;
   }
+
+  /*
+   * P0-1: the explicit columns above name tracks 2/3/4 of the FOUR-track
+   * split. Here the grid is two tracks and the list and divider are gone, so
+   * the reader must be told its new place — left on `grid-column: 4` it would
+   * create the very implicit tracks the explicit placement exists to prevent.
+   */
+  .reading .readerColumn {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 860px) {
@@ -459,6 +500,12 @@
   .reading .listColumn,
   .readingBottom .listColumn {
     display: none;
+  }
+
+  /* P0-1, same reason as the 1100px block: one track, so the reader is in it.
+   * The sidebar is `display:none` here, which is why column 1 is free. */
+  .reading .readerColumn {
+    grid-column: 1;
   }
 }
 
