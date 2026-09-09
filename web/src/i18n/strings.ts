@@ -476,6 +476,10 @@ export const en = {
     "Mail from these addresses goes straight to Spam. Blocking does not unsubscribe you from anything.",
   "blocked.none": "You have not blocked anyone.",
   "blocked.add": "Block an address",
+  /* F-46: the FIELD is named for what goes in it. Repeating the button's own
+     words above the box printed "Block an address" twice, one of which was not
+     a button — which reads as a stray heading rather than as a label. */
+  "blocked.addressLabel": "Address",
   "blocked.addPlaceholder": "sender@example.com",
   "blocked.remove": "Unblock",
   "blocked.removeConfirm": (address: string): string =>
@@ -1690,6 +1694,7 @@ export const es: Strings = {
     "El correo de estas direcciones va directo a Spam. Bloquear no te da de baja de ninguna lista.",
   "blocked.none": "No bloqueaste a nadie.",
   "blocked.add": "Bloquear una dirección",
+  "blocked.addressLabel": "Dirección",
   "blocked.addPlaceholder": "remitente@ejemplo.com",
   "blocked.remove": "Desbloquear",
   "blocked.removeConfirm": (address: string): string =>

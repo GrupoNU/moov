@@ -92,7 +92,10 @@ export function BlockedSection({
         }}
       >
         <label className={styles.field}>
-          <span className={styles.fieldLabel}>{t("blocked.add")}</span>
+          {/* F-46: the field is named for what goes in it, not for the button
+              beside it — "Bloquear una dirección" printed twice made the first
+              one read as a stray heading. */}
+          <span className={styles.fieldLabel}>{t("blocked.addressLabel")}</span>
           {/*
             `type="text"`, not `type="email"` — the same reason ForwardingSection
             states: a native email input blocks the submit on ITS rules, so our
@@ -113,7 +116,16 @@ export function BlockedSection({
             }}
           />
         </label>
-        <button type="submit" className={styles.primary} disabled={isBusy}>
+        {/*
+          F-45: SECONDARY, not primary.
+
+          Two filled accent buttons stood on the Filtros tab — "Crear un filtro"
+          and "Bloquear una dirección" — competing for the same eye. The tab is
+          named for filters and opens on them, so creating one is the primary
+          action; blocking is the other thing you can do here. Two primaries is
+          no primary.
+        */}
+        <button type="submit" className={styles.secondary} disabled={isBusy}>
           {t("blocked.add")}
         </button>
       </form>

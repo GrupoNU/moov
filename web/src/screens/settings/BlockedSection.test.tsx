@@ -81,7 +81,7 @@ describe("adding a block", () => {
   it("sends the blocked-type draft with the normalized address", async () => {
     const user = userEvent.setup();
     const props = renderSection();
-    await user.type(screen.getByLabelText("Bloquear una dirección"), "  SPAM@Bad.Example  ");
+    await user.type(screen.getByLabelText("Dirección"), "  SPAM@Bad.Example  ");
     await user.click(screen.getByRole("button", { name: "Bloquear una dirección" }));
     expect(props.onBlock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -95,7 +95,7 @@ describe("adding a block", () => {
   it("refuses something that is not an address", async () => {
     const user = userEvent.setup();
     const props = renderSection();
-    await user.type(screen.getByLabelText("Bloquear una dirección"), "no-arroba");
+    await user.type(screen.getByLabelText("Dirección"), "no-arroba");
     await user.click(screen.getByRole("button", { name: "Bloquear una dirección" }));
     expect(props.onBlock).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("dirección de correo completa");
@@ -106,7 +106,7 @@ describe("adding a block", () => {
     const props = renderSection({
       rules: [rule({ id: "r2", type: "blocked", from: ["spam@bad.example"] })],
     });
-    await user.type(screen.getByLabelText("Bloquear una dirección"), "SPAM@BAD.EXAMPLE");
+    await user.type(screen.getByLabelText("Dirección"), "SPAM@BAD.EXAMPLE");
     await user.click(screen.getByRole("button", { name: "Bloquear una dirección" }));
     expect(props.onBlock).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("ya está bloqueada");
@@ -133,5 +133,37 @@ describe("unblocking asks first", () => {
     const dialog = screen.getByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Desbloquear" }));
     expect(props.onUnblock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The tab's button hierarchy and the field's name (F-45, F-46).
+ *
+ * Both were the same small failure in two costumes: two things claiming to be
+ * the same thing. The Filtros tab had TWO filled accent buttons competing for
+ * the eye ("Crear un filtro" and "Bloquear una dirección"), and the block form
+ * printed its button's own words above the box as a label — so the field and
+ * the button had the same accessible name, which is why these very tests had to
+ * disambiguate them by role.
+ */
+describe("the block form's hierarchy (F-45, F-46)", () => {
+  it("names the field for what goes in it, not for the button beside it", () => {
+    renderSection();
+
+    const field = screen.getByLabelText("Dirección");
+    expect(field).toHaveAttribute("type", "text");
+    // The field and the button no longer share a name, so "the address box"
+    // and "the block button" are two different things to a screen reader.
+    expect(field).not.toBe(screen.getByRole("button", { name: "Bloquear una dirección" }));
+  });
+
+  it("makes blocking the secondary action, since the tab is named for filters", () => {
+    renderSection();
+
+    // Two primaries is no primary. The tab opens on filters, so creating one is
+    // the primary action and blocking is the other thing you can do here.
+    expect(screen.getByRole("button", { name: "Bloquear una dirección" })).toHaveClass(
+      "secondary",
+    );
   });
 });
