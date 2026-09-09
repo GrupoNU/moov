@@ -30,15 +30,51 @@
 }
 
 /*
- * The pill is centred-LEFT, not centred: Gmail's box starts right after the
- * rail and runs to about 40% of the viewport, leaving the right third empty.
- * Centring it in the remaining space would push it under the right cluster on
- * a laptop and read as a different product.
+ * A-07/E-10 — the pill is centred-LEFT, and it is WIDE.
+ *
+ * Gmail's box starts a gap after the wordmark (x≈250 at 2560) and runs to
+ * about 40% of the viewport (x≈810), leaving the right third empty. Moov's ran
+ * x≈215→640: flush against the brand and ~425 px, which made search read as an
+ * afterthought clipped to one end of a bar with 1,250 px of nothing in it.
+ *
+ * Three numbers, and each one is doing a job:
+ *
+ *   - `40vw` is the RATIO. Gmail's box is a fraction of the viewport, not a
+ *     fixed width, so it grows with the screen instead of stranding the bar.
+ *   - `720px` is the ceiling. Past it the box stops looking like a control and
+ *     starts looking like the page, and it would begin crowding the right
+ *     cluster on an ultrawide.
+ *   - `420px` is the floor, and it is what makes the box shrink LAST: below
+ *     ~1,050 px of viewport the 40% would drop under a usable width, so the
+ *     grid's `1fr` track hits its minimum and the *brand* track gives up its
+ *     space first (and, at 860 px, collapses outright — see the media query).
+ *     The right cluster is `auto` and never yields, which is the intent: the
+ *     gear and the avatar are fixed landmarks.
+ *
+ * `clamp` rather than a media-query ladder because the transition is
+ * continuous: a stepped width visibly jumps as a window is dragged, and this
+ * bar is the one piece of chrome that must feel nailed down.
+ *
+ * The gap from the wordmark is the grid's own `gap` plus this margin — the
+ * brand track is 244px wide and the mark does not fill it, so without the
+ * extra the pill still reads as touching the logo.
  */
 .search {
   display: flex;
   justify-content: flex-start;
   min-width: 0;
+  margin-left: var(--space-2);
+}
+
+/*
+ * The width lives HERE, on the track, not on the pill inside it: `SearchBar`
+ * is also rendered on surfaces that are not this bar, and a component that
+ * hard-codes "40% of the viewport" would carry that assumption everywhere. The
+ * bar owns the layout; the pill owns its own chrome.
+ */
+.search > * {
+  width: clamp(420px, 40vw, 720px);
+  max-width: 100%;
 }
 
 .right {

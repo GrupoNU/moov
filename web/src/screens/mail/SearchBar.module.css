@@ -1,10 +1,23 @@
+/*
+ * A-07/E-10: the pill no longer caps its OWN width.
+ *
+ * It used to carry `max-width: 34rem` (544 px), which is where the ~425 px box
+ * in the owner's screenshot came from — the bar could offer the track all the
+ * space it liked and the pill would refuse it. Width is now the containing
+ * surface's decision (`TopBar.module.css .search > *` clamps it to Gmail's
+ * 40vw / 420-720 px band), which is the right owner: the same component is
+ * rendered on surfaces whose width has nothing to do with the top bar's.
+ *
+ * `flex: 1` stays, so wherever it lands with no width imposed it still fills
+ * what it is given rather than shrinking to its content.
+ */
 .wrapper {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex: 1;
-  max-width: 34rem;
+  min-width: 0;
   padding: 0 var(--space-3);
   background: var(--surface-canvas);
   border: 1px solid var(--border-subtle);
@@ -346,8 +359,6 @@
   outline-offset: -2px;
 }
 
-@media (max-width: 700px) {
-  .wrapper {
-    max-width: none;
-  }
-}
+/* The old `@media (max-width: 700px) { max-width: none }` is gone with the cap
+ * it lifted: there is no longer a width here to release. The narrow-viewport
+ * behaviour is the top bar's, where the tracks that must yield actually live. */
