@@ -6,6 +6,40 @@
  * the page. The height and the generous radius are what make it read as a
  * "primary action" rather than as another row of the rail.
  */
+/*
+ * A-10 — Gmail's SCALE, and Gmail's COLOUR.
+ *
+ * The reviewed pill measured ~100x32 in solid brand purple. Gmail's is ~135x48
+ * in a light accent with dark text (`#c2e7ff` on `#001d35`) and a soft
+ * elevation. Two separate defects, and the size was the worse of them: at 32 px
+ * the control was the same height as a folder row, so the thing the canon calls
+ * "the most prominent control on the page" read as one more entry in the list
+ * it sits above.
+ *
+ * Size is set by `min-height`/`min-width` rather than by fixed dimensions. A
+ * hard `height: 48px` would clip the label the moment a locale needs two lines
+ * or a user raises their font size; a minimum reaches Gmail's proportions at
+ * the default and grows instead of cropping. `--space-4` block padding is what
+ * makes 48 px the natural height rather than a number the box is forced into,
+ * so the two agree instead of fighting.
+ *
+ * ## Why light-accent and not solid
+ *
+ * Solid was defensible in isolation, but the rail already spends its accent on
+ * the SELECTED folder (`MailboxList .selected` — a filled tint plus a spine).
+ * A solid-purple button directly above it made two different things shout in
+ * the same colour at the same weight, and the eye could not tell which one was
+ * "where you are". Gmail's arrangement resolves this exactly: the compose pill
+ * is a light wash of the accent, the active row is the filled one.
+ *
+ * The fill is mixed against `--surface-default` (the rail's own background)
+ * rather than using `--color-accent-tint`, which is 10% alpha over
+ * *transparent*: a translucent fill would let the list scroll visibly under a
+ * control that must read as solid, and its contrast would depend on whatever
+ * happened to be behind it. Mixing produces an opaque colour with the same
+ * appearance and none of that. It follows the theme in both directions because
+ * both operands are theme tokens.
+ */
 .compose {
   display: inline-flex;
   align-items: center;
@@ -14,22 +48,45 @@
    * Gmail's own pill is intrinsically sized, which is what keeps it reading as
    * a button rather than as a full-width banner. */
   align-self: flex-start;
-  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-4);
+  /* Gmail's proportions, as minimums — see the header on why not fixed. */
+  min-height: 48px;
+  min-width: 135px;
+  padding: var(--space-4) var(--space-5) var(--space-4) var(--space-4);
   margin-bottom: var(--space-3);
   border: 0;
   /* A pill, not a rounded rectangle — the radius is half the height. */
   border-radius: 999px;
-  background: var(--color-accent);
-  color: var(--color-on-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--surface-default));
+  color: var(--text-strong);
+  /* The subtle lift Gmail gives it: enough to sit ABOVE the rail rather than
+   * in it, not enough to read as a floating dialog. */
+  box-shadow: var(--shadow-sm);
   font: inherit;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
+/* Hover deepens the wash and raises the shadow one step — the same pair Gmail
+ * animates, and the reason the transition above lists both. */
 .compose:hover {
-  background: var(--color-accent-hover);
+  background: color-mix(in srgb, var(--color-accent) 28%, var(--surface-default));
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+}
+
+/*
+ * Forced-colors mode drops both the mixed fill and the shadow, which would
+ * leave a borderless pill indistinguishable from the rail. The border is added
+ * only there, so it costs nothing in the ordinary case.
+ */
+@media (forced-colors: active) {
+  .compose {
+    border: 1px solid ButtonText;
+  }
 }
 
 .compose svg {
@@ -60,4 +117,13 @@
    * diameter that would drift from the icon's size. */
   aspect-ratio: 1;
   justify-content: center;
+  /*
+   * A-10: the expanded pill's `min-width: 135px` must NOT survive here.
+   *
+   * With it, `aspect-ratio: 1` would resolve against 135 px and the collapsed
+   * "circle" would become a 135 px disc in a rail 60 px wide — the FAB would
+   * blow the sidebar open. `min-height` is kept: a 48 px round button is
+   * Gmail's own FAB size and is a comfortable pointer target.
+   */
+  min-width: 0;
 }

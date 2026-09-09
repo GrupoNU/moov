@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -74,5 +77,67 @@ describe("the compose pill", () => {
   it("shows the word as real text when the rail is expanded", () => {
     renderButton({ collapsed: false }, "es");
     expect(screen.getByRole("button", { name: "Redactar" })).toHaveTextContent("Redactar");
+  });
+});
+
+/**
+ * A-10 — the pill's SCALE and COLOUR, asserted against the stylesheet.
+ *
+ * The header above says the styling is not what these tests pin, and that was
+ * true while the styling was arbitrary. It is not arbitrary any more: the
+ * review measured ~100x32 in solid brand purple against Gmail's ~135x48 light
+ * accent with a soft lift, and each of those numbers now answers a specific
+ * defect. A regression on any of them is invisible in jsdom — which computes
+ * no cascade and no `color-mix` — so the file is read directly, the same
+ * technique `MailboxList.test.tsx` uses for the row reset.
+ */
+describe("A-10: the pill is at Gmail's scale", () => {
+  const css = readFileSync(
+    resolve(process.cwd(), "src/screens/mail/ComposeButton.module.css"),
+    "utf8",
+  );
+  const compose = /\.compose \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+  const collapsed = /\.composeCollapsed \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+
+  it("reaches Gmail's 48x135 as MINIMUMS, not fixed dimensions", () => {
+    // Minimums rather than `height`/`width`: a hard 48px clips the label the
+    // moment a locale runs long or a user raises their font size. The pill has
+    // to reach Gmail's proportions at the default and GROW past them.
+    expect(compose).toMatch(/min-height:\s*48px/);
+    expect(compose).toMatch(/min-width:\s*135px/);
+    // The lookbehind is not decoration: `\bheight` matches inside `min-height`
+    // (the hyphen is a word boundary), so without it the two assertions above
+    // would contradict these two and the test could never pass.
+    expect(compose).not.toMatch(/(?<!min-|max-)height:\s*\d/);
+    expect(compose).not.toMatch(/(?<!min-|max-)width:\s*\d/);
+  });
+
+  it("carries the subtle elevation instead of sitting flat in the rail", () => {
+    expect(compose).toMatch(/box-shadow:\s*var\(--shadow-sm\)/);
+  });
+
+  it("uses a light wash of the accent with dark text, not a solid fill", () => {
+    /*
+     * The rail already spends its accent on the SELECTED folder. A solid
+     * purple button directly above a solid purple row made two different
+     * things shout in one colour, and the eye could not tell which said
+     * "where you are". Gmail resolves it the same way: light pill, filled row.
+     */
+    expect(compose).toMatch(/background:\s*color-mix\([^)]*var\(--color-accent\)[^)]*\)/);
+    expect(compose).toMatch(/color:\s*var\(--text-strong\)/);
+    expect(compose).not.toMatch(/background:\s*var\(--color-accent\)\s*;/);
+  });
+
+  it("mixes the fill against a SURFACE, so it is opaque", () => {
+    // `--color-accent-tint` is 10% alpha over *transparent*. Using it here
+    // would let the folder list scroll visibly under a control that must read
+    // as solid, and its contrast would depend on whatever was behind it.
+    expect(compose).toMatch(/color-mix\(in srgb,\s*var\(--color-accent\)\s*18%,\s*var\(--surface-default\)\)/);
+  });
+
+  it("releases the min-width when collapsed, or the FAB blows the rail open", () => {
+    // `aspect-ratio: 1` resolving against a surviving 135px minimum would make
+    // the collapsed "circle" a 135px disc in a 60px rail.
+    expect(collapsed).toMatch(/min-width:\s*0/);
   });
 });
