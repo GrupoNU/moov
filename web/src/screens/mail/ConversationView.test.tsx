@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { JmapClient } from "../../api/jmap";
@@ -448,6 +448,51 @@ describe("the keyboard controls it publishes", () => {
 });
 
 describe("per-message actions", () => {
+  it("offers ONE reply arrow and a ⋮ per expanded message — Gmail's shape (C-08)", async () => {
+    const user = userEvent.setup();
+    const { props } = renderConversation();
+    await waitFor(() => {
+      expect(screen.getByText("Sender m3")).toBeInTheDocument();
+    });
+    // Until the thread's rows land the open message renders collapsed; the
+    // actions belong to the EXPANDED rendering.
+    await waitFor(() => {
+      expect(expandedMessages()).toHaveLength(1);
+    });
+    const message = screen.getByText("Sender m3").closest("[data-message-id]")!;
+
+    // The arrow, named for a screen reader and a hover alike.
+    const reply = within(message).getByRole("button", { name: /^responder$/i });
+    expect(reply).toHaveAttribute("title", "Responder");
+    // No text pills for reply-all / forward on the message itself...
+    expect(within(message).queryByRole("button", { name: /responder a todos/i })).not.toBeInTheDocument();
+    expect(within(message).queryByRole("button", { name: /^reenviar$/i })).not.toBeInTheDocument();
+
+    // ...they are one click away in the ⋮, and act on THIS message.
+    await user.click(within(message).getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^reenviar$/i }));
+    expect(props.onForward).toHaveBeenCalledWith(expect.objectContaining({ id: "m3" }));
+
+    await user.click(within(message).getByRole("button", { name: /más acciones/i }));
+    await user.click(screen.getByRole("menuitem", { name: /responder a todos/i }));
+    expect(props.onReply).toHaveBeenCalledWith(expect.objectContaining({ id: "m3" }), true);
+  });
+
+  it("is reachable by keyboard: focus the arrow, Enter replies", async () => {
+    const user = userEvent.setup();
+    const { props } = renderConversation();
+    await waitFor(() => {
+      expect(screen.getByText("Sender m3")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(expandedMessages()).toHaveLength(1);
+    });
+    const message = screen.getByText("Sender m3").closest("[data-message-id]")!;
+    within(message).getByRole("button", { name: /^responder$/i }).focus();
+    await user.keyboard("{Enter}");
+    expect(props.onReply).toHaveBeenCalledWith(expect.objectContaining({ id: "m3" }), false);
+  });
+
   it("replies to the message whose button was pressed, not to the thread", async () => {
     const user = userEvent.setup();
     const { props } = renderConversation();

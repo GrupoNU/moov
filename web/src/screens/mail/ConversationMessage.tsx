@@ -5,6 +5,7 @@ import { senderLabel } from "../../mail/threading";
 import { isFlagged, type Email, type EmailAddress } from "../../mail/types";
 import { AttachmentList } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
+import { PopupMenu } from "./PopupMenu";
 import type { SignImageUrls } from "./SecureHtmlBody";
 import styles from "./ConversationMessage.module.css";
 
@@ -169,21 +170,68 @@ export function ConversationMessage({
         </button>
 
         {/*
-          Per-message actions (canon §2.1). Reply is primary here as it is in
-          the single-message reader; the conversation-wide verbs (archive,
-          delete, spam, move, star) stay in the pane's toolbar above, because
-          they act on the whole thread.
+          Per-message actions (canon §2.1), in Gmail's shape (C-08): ONE reply
+          arrow and a ⋮ holding reply-all and forward. Three text buttons on
+          every expanded message read as three pills per message down a long
+          thread; Gmail keeps one glyph in the sender line and the rest a
+          click away. Both are real buttons — Tab reaches them, Enter and
+          Space press them — and the arrow carries `aria-label` AND `title`
+          with the same word, the answer this app gives everywhere to "an icon
+          is a guessing game". The conversation-wide verbs (archive, delete,
+          spam, move, star) stay in the pane's toolbar, because they act on
+          the whole thread.
         */}
         <div className={styles.messageActions} role="group" aria-label={t("action.more")}>
-          <button type="button" className={styles.messageAction} onClick={onReply}>
-            {t("action.reply")}
+          <button
+            type="button"
+            className={styles.messageIconAction}
+            onClick={onReply}
+            aria-label={t("action.reply")}
+            title={t("action.reply")}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M8 5.5L3.5 9.5 8 13.5" />
+              <path d="M3.8 9.5h6.4a5.3 5.3 0 0 1 5.3 5.3v.7" />
+            </svg>
           </button>
-          <button type="button" className={styles.messageAction} onClick={onReplyAll}>
-            {t("action.replyAll")}
-          </button>
-          <button type="button" className={styles.messageAction} onClick={onForward}>
-            {t("action.forward")}
-          </button>
+          <PopupMenu
+            label={t("action.more")}
+            disabled={false}
+            triggerClassName={styles.messageIconAction}
+            triggerContent={
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" focusable="false">
+                <circle cx="10" cy="4.6" r="1.5" />
+                <circle cx="10" cy="10" r="1.5" />
+                <circle cx="10" cy="15.4" r="1.5" />
+              </svg>
+            }
+          >
+            {(close) => (
+              <>
+                <MessageMenuItem
+                  label={t("action.reply")}
+                  onClick={() => {
+                    onReply();
+                    close();
+                  }}
+                />
+                <MessageMenuItem
+                  label={t("action.replyAll")}
+                  onClick={() => {
+                    onReplyAll();
+                    close();
+                  }}
+                />
+                <MessageMenuItem
+                  label={t("action.forward")}
+                  onClick={() => {
+                    onForward();
+                    close();
+                  }}
+                />
+              </>
+            )}
+          </PopupMenu>
         </div>
       </header>
 
@@ -224,6 +272,27 @@ export function ConversationMessage({
         )}
       </div>
     </article>
+  );
+}
+
+/**
+ * One item of a message's ⋮ menu (C-08): the `li role="none"` wrapping a
+ * `role="menuitem"` button that `PopupMenu` expects, in the same shape the
+ * reader's overflow uses.
+ */
+function MessageMenuItem({
+  label,
+  onClick,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+}): React.JSX.Element {
+  return (
+    <li role="none">
+      <button type="button" role="menuitem" className={styles.menuItem} onClick={onClick}>
+        {label}
+      </button>
+    </li>
   );
 }
 

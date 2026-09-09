@@ -174,27 +174,64 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * C-08: the per-message actions are one reply arrow and a ⋮ (Gmail's sender
+ * line), not three text pills. Same 32px grid and quiet colour as the pane's
+ * toolbar icons, so the two rows read as one family.
+ */
 .messageActions {
   display: flex;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-1);
   flex: none;
 }
 
-.messageAction {
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--text-default);
+.messageIconAction {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-muted);
   background: transparent;
-  border: 1px solid var(--border-default);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.messageIconAction svg {
+  width: 18px;
+  height: 18px;
+}
+
+.messageIconAction:hover,
+.messageIconAction:focus-visible {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  border-color: var(--border-subtle);
+}
+
+/* The ⋮ menu's items — the same declarations every popup menu in this app
+ * uses (CSS modules scope them per file; restating beats importing another
+ * component's stylesheet to look like it). */
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.messageAction:hover,
-.messageAction:focus-visible {
-  background: var(--surface-raised);
-  color: var(--text-strong);
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--color-accent-tint);
 }
 
 .messageBody {
