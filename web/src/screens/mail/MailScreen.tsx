@@ -3136,6 +3136,42 @@ export function MailScreen(): React.JSX.Element {
   const inSnoozed =
     snoozedMailbox !== undefined && activeMailbox?.id === snoozedMailbox.id;
 
+  /**
+   * A-11: the query text a VIRTUAL VIEW is equivalent to, for the search box.
+   *
+   * The review's finding was that no view has a title: Destacados, Pospuestos
+   * and a label view were three identical unlabelled lists, and a user who
+   * clicked one of them from the rail had nothing on screen telling them which
+   * one they had landed in. Gmail answers this in the search box — opening
+   * Destacados puts `is:starred` in it, with a ✕ to leave.
+   *
+   * It is DERIVED from the route, never stored. That is the property that makes
+   * it correct without any clearing logic: navigating to an ordinary folder
+   * produces `undefined` on the next render, so the label cannot go stale, and
+   * there is no state for a missed `setState` to strand. A real search
+   * (`route.kind === "search"`) is deliberately absent — there the user's own
+   * text is in the box and the E-14 context strip names the scope.
+   *
+   * The strings are Gmail's own operator grammar rather than translated
+   * prose, and are not localised for that reason: `is:starred` is what a user
+   * would type to get this list, in any locale, and a translated `es:destacado`
+   * would be a query the box cannot accept.
+   */
+  const viewQuery = useMemo((): string | undefined => {
+    if (route.kind === "starred") return "is:starred";
+    /* Both ways of arriving at Pospuestos: the folder once it exists, and the
+     * placeholder route before the first snooze creates it. They are one view
+     * to the user and must be labelled the same. */
+    if (route.kind === "snoozedEmpty" || inSnoozed) return "in:snoozed";
+    if (route.kind === "label") return `label:${route.name}`;
+    return undefined;
+  }, [route, inSnoozed]);
+
+  /** A-11: the ✕ beside `viewQuery`. Leaving a view is a navigation. */
+  const clearViewQuery = useCallback((): void => {
+    navigate({ kind: "mailbox", mailboxId: "inbox" });
+  }, [navigate]);
+
   /** E4: pending snoozes, by message id — only ever read in the Snoozed view. */
   const [snoozeUntilById, setSnoozeUntilById] = useState<ReadonlyMap<string, string>>(
     () => new Map<string, string>(),
@@ -4197,6 +4233,17 @@ export function MailScreen(): React.JSX.Element {
             : {})}
           onClearRecent={clearRecentSearches}
           /*
+           * A-11: what view you are in, stated where Gmail states it.
+           *
+           * Spread rather than passed as `viewQuery={viewQuery}` so an
+           * ordinary folder omits the prop entirely instead of passing
+           * `undefined` — `exactOptionalPropertyTypes` is on, and the two are
+           * not the same type here.
+           */
+          {...(viewQuery !== undefined
+            ? { viewQuery, onClearView: clearViewQuery }
+            : {})}
+          /*
            * B7: "Crear filtro" (canon 07 §8). Passed only when the server
            * offers Sieve — without it there is no builder to open, and a
            * button that opens nothing is the dead control P4 forbids.
@@ -4507,19 +4554,6 @@ export function MailScreen(): React.JSX.Element {
               busyId={scheduleBusyId}
               locale={locale}
             />
-          ) : route.kind === "snoozedEmpty" ? (
-            /*
-             * "Pospuestos" with no folder behind it yet (owner's finding 3).
-             *
-             * There is nothing to query — GC-10 creates the folder on the first
-             * real snooze — so this states that rather than issuing a request
-             * for a mailbox that does not exist. It is a `status`, not an
-             * error: an empty destination is the normal state of this entry
-             * until the user snoozes something.
-             */
-            <div className={styles.noticeInfo} role="status">
-              {t("snooze.emptyPlaceholder")}
-            </div>
           ) : (
           <>
           {/*
@@ -4795,6 +4829,31 @@ export function MailScreen(): React.JSX.Element {
           </div>
           )}
           </div>
+          {/*
+            A-11 — "Pospuestos" with no folder behind it yet, and why this
+            notice moved DOWN a level.
+
+            It used to replace the whole column, toolbar included, so the view
+            was a blue band alone on a white page: the review read it as broken
+            rather than empty, and the fact that it was in fact broken-looking
+            is the finding. Gmail keeps the chrome on an empty view — the
+            select-all box, the refresh button and the pager stay exactly where
+            they are, and only the ROWS are missing. That is the difference
+            between "there is nothing here" and "something went wrong".
+
+            So the branch is here, where the list would be, and the toolbar
+            above it renders unconditionally. Nothing is fetched: the route
+            resolves no `activeMailbox`, so the query source is `undefined` and
+            no request is made for a mailbox that does not exist — GC-10
+            creates the folder on the first real snooze. `role="status"`
+            because an empty destination is the normal state of this entry,
+            not an error.
+          */}
+          {route.kind === "snoozedEmpty" ? (
+            <div className={styles.noticeInfo} role="status">
+              {t("snooze.emptyPlaceholder")}
+            </div>
+          ) : (
           <MessageList
             labels={labelsApi.labels}
             onSelectLabel={goToLabel}
@@ -4968,6 +5027,7 @@ export function MailScreen(): React.JSX.Element {
               />
             }
           />
+          )}
           </>
           )}
         </main>

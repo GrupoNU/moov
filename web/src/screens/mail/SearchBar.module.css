@@ -64,6 +64,66 @@
   color: var(--text-muted);
 }
 
+/*
+ * A-11: the virtual view's query, drawn inside the pill.
+ *
+ * It has to read as TEXT IN THE BOX, which is what Gmail shows — not as a
+ * chip pinned to one side of it. So: no border, no fill, the input's own font
+ * size and colour, sitting in the same row at the same baseline. The only
+ * thing distinguishing it is the ✕, which is the affordance it exists to
+ * carry.
+ *
+ * `flex: none` and the ellipsis together: a long label name must truncate
+ * rather than push the input out of the pill, and `min-width: 0` is what lets
+ * the ellipsis actually engage inside a flex row.
+ */
+.viewQuery {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+}
+
+.viewQueryText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sized like `.clear` next to it, because they are the same gesture in two
+ * places and a user should not have to aim differently for them. */
+.viewQueryClear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.viewQueryClear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.viewQueryClear:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+
+.viewQueryClear:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
 /* The native clear affordance is removed in favour of our own button, which
  * has an accessible name and matches the product's styling. */
 .input::-webkit-search-cancel-button,

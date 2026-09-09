@@ -290,3 +290,106 @@ describe("E-06/E-07/E-08 — messages, chips and the way out", () => {
     expect(screen.queryByText("Presupuesto marzo")).toBeNull();
   });
 });
+
+/**
+ * A-11 — the box says which view you are in.
+ *
+ * The review's finding: no view has a title, so Destacados, Pospuestos and a
+ * label view were three identical unlabelled lists, and clicking one of them
+ * from the rail left nothing on screen saying which. Gmail answers this in the
+ * search box — `is:starred` appears in it, with a ✕ to leave.
+ *
+ * What these tests protect is the DIVISION: the label must never behave like a
+ * query. It is not submitted, it does not survive the user typing, and its ✕
+ * navigates rather than clearing text that was never entered.
+ */
+/** The default `onSearch` for the tests that are not about searching. */
+function noSearch(): void {
+  return undefined;
+}
+
+function ViewHarness(props: {
+  readonly viewQuery?: string;
+  readonly onClearView?: () => void;
+  readonly onSearch?: (value: string) => void;
+}): React.JSX.Element {
+  const [value, setValue] = useState("");
+  return (
+    <I18nProvider locale="es">
+      <SearchBar
+        value={value}
+        onChange={setValue}
+        onSearch={props.onSearch ?? noSearch}
+        isSearching={false}
+        {...(props.viewQuery !== undefined ? { viewQuery: props.viewQuery } : {})}
+        {...(props.onClearView !== undefined ? { onClearView: props.onClearView } : {})}
+      />
+    </I18nProvider>
+  );
+}
+
+describe("A-11: the view's query in the box", () => {
+  it("shows the view's grammar while the box is empty", () => {
+    render(<ViewHarness viewQuery="is:starred" />);
+    expect(screen.getByText("is:starred")).toBeInTheDocument();
+  });
+
+  it("takes a label's display name, not its wire keyword", () => {
+    // `label:Trabajo` is what a user would type to get this list. The
+    // `$label:` prefix is a wire detail that must never surface.
+    render(<ViewHarness viewQuery="label:Trabajo" />);
+    expect(screen.getByText("label:Trabajo")).toBeInTheDocument();
+  });
+
+  it("is NOT the input's value, so it is never submitted as a query", async () => {
+    const user = userEvent.setup();
+    const onSearch = vi.fn();
+    render(<ViewHarness viewQuery="is:starred" onSearch={onSearch} />);
+
+    const input = screen.getByRole("combobox");
+    // The box is genuinely empty: the label is a sibling, not seeded text.
+    expect(input).toHaveValue("");
+    // Enter on an empty box must not run `is:starred` as a text search — the
+    // view is a route with a `hasKeyword` filter behind it, and turning it
+    // into a query would lose the route the rail highlights from.
+    await user.click(input);
+    await user.keyboard("{Enter}");
+    expect(onSearch).toHaveBeenCalledWith("");
+  });
+
+  it("gets out of the way the moment the user types", async () => {
+    const user = userEvent.setup();
+    render(<ViewHarness viewQuery="is:starred" />);
+
+    await user.type(screen.getByRole("combobox"), "ana");
+    // Their query is what the box is about now; the view's label sitting
+    // beside it would read as text they had entered.
+    expect(screen.queryByText("is:starred")).not.toBeInTheDocument();
+  });
+
+  it("does not put the placeholder and the label in the box at once", () => {
+    render(<ViewHarness viewQuery="is:starred" />);
+    // Two competing answers to "what is in this box".
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "");
+  });
+
+  it("offers a ✕ that LEAVES the view rather than clearing a query", async () => {
+    const user = userEvent.setup();
+    const onClearView = vi.fn();
+    const onSearch = vi.fn();
+    render(
+      <ViewHarness viewQuery="is:starred" onClearView={onClearView} onSearch={onSearch} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Salir de esta vista" }));
+    expect(onClearView).toHaveBeenCalledOnce();
+    // Not a search for the empty string: leaving `is:starred` is a navigation.
+    expect(onSearch).not.toHaveBeenCalled();
+  });
+
+  it("draws nothing at all on an ordinary folder", () => {
+    render(<ViewHarness />);
+    expect(screen.queryByRole("button", { name: "Salir de esta vista" })).toBeNull();
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Buscar correo");
+  });
+});

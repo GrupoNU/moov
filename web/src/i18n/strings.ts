@@ -727,6 +727,10 @@ export const en = {
   "search.label": "Search mail",
   "search.placeholder": "Search mail",
   "search.clear": "Clear search",
+  /* A-11: leaves a VIRTUAL VIEW (Destacados, Pospuestos, a label) rather than
+     clearing a query — the ✕ beside `is:starred` in the box. It navigates, so
+     the wording is about the view, not about the text. */
+  "search.clearView": "Exit this view",
   "search.searching": "Searching…",
   "search.resultCount": (count: number): string =>
     `${count} result${count === 1 ? "" : "s"}`,
@@ -2000,6 +2004,7 @@ export const es: Strings = {
   "search.label": "Buscar correo",
   "search.placeholder": "Buscar correo",
   "search.clear": "Limpiar la búsqueda",
+  "search.clearView": "Salir de esta vista",
   "search.searching": "Buscando…",
   "search.resultCount": (count: number): string =>
     `${count} resultado${count === 1 ? "" : "s"}`,

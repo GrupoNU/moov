@@ -96,6 +96,39 @@ export interface SearchBarProps {
   /** E3: clears the stored history. Absent hides the affordance. */
   readonly onClearRecent?: (() => void) | undefined;
   /**
+   * A-11: the query text a VIRTUAL VIEW is equivalent to — `is:starred`,
+   * `in:snoozed`, `label:Trabajo`.
+   *
+   * Gmail's box is never empty on those views: opening Destacados puts
+   * `is:starred` in it with a ✕ beside it, and that single line is what tells
+   * a user which of the rail's many entries they are looking at. Moov's box
+   * went blank, so Destacados, Pospuestos and a label view were three
+   * identical unlabelled lists.
+   *
+   * It is a DISPLAY value and not the `value`, which is the whole design:
+   *
+   *   - it is never persisted, never stored in recent searches, and never
+   *     submitted — a virtual view is a ROUTE (`{kind:"starred"}`), not a text
+   *     query, and pushing `is:starred` through `onSearch` would turn it into
+   *     one, losing the route the rail highlights from;
+   *   - the moment the user types, `value` takes over and this disappears,
+   *     because they are now writing a real query and the view's label would
+   *     be text they did not enter;
+   *   - navigating to an ordinary folder clears it, because the caller stops
+   *     passing it — there is no state here to go stale.
+   *
+   * Absent (the ordinary case: a folder, or a real search) changes nothing.
+   */
+  readonly viewQuery?: string | undefined;
+  /**
+   * A-11: the ✕ beside `viewQuery`. Leaves the virtual view.
+   *
+   * A separate callback from `onSearch("")` because leaving `is:starred` is a
+   * NAVIGATION — back to the inbox — not the clearing of a query that was
+   * never run.
+   */
+  readonly onClearView?: (() => void) | undefined;
+  /**
    * E12/B7: opens the filter builder pre-filled from the advanced panel
    * (canon 07 §8).
    *
@@ -228,6 +261,8 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
     currentMailbox,
     addressSuggestions = NO_ADDRESSES,
     onClearRecent,
+    viewQuery,
+    onClearView,
     onCreateFilter,
     onPreviewSearch,
     onOpenPreview,
@@ -553,6 +588,50 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
         <path d="M13.2 13.2l4 4" />
       </svg>
 
+      {/*
+        A-11: the virtual view's query, shown INSIDE the pill.
+
+        It renders only while the box is otherwise empty. The moment the user
+        types, `value` is non-empty and this disappears — they are writing a
+        real query, and the view's label sitting beside it would read as text
+        they had entered.
+
+        # Why a chip and not the input's `value`
+
+        The brief says "a display value of the SearchBar", and the honest way
+        to build that is a chip rather than seeding the input. React controls
+        the input, so a seeded `value` of "is:starred" means the first
+        keystroke produces "is:starredf" — the user would have to clear text
+        they never typed. Every fix for that is worse than the chip: making it
+        `readOnly` breaks `/`; clearing on focus makes the label vanish when
+        the user merely tabs past; stripping a known prefix in `onChange` fails
+        the moment someone deliberately types `is:starred` themselves.
+
+        The chip is also more truthful about what it is. `is:starred` here is
+        not a query anyone ran — the route is `{kind:"starred"}`, a
+        `hasKeyword` filter — and drawing it as an unfocusable label rather
+        than as editable text says so. It sits in the input's own row with the
+        input's own type scale, so it reads exactly as Gmail's does.
+      */}
+      {value === "" && viewQuery !== undefined && (
+        <span className={styles.viewQuery}>
+          <span className={styles.viewQueryText}>{viewQuery}</span>
+          {onClearView !== undefined && (
+            <button
+              type="button"
+              className={styles.viewQueryClear}
+              onClick={onClearView}
+              aria-label={t("search.clearView")}
+              title={t("search.clearView")}
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+                <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+              </svg>
+            </button>
+          )}
+        </span>
+      )}
+
       <input
         ref={ref}
         type="search"
@@ -573,7 +652,12 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
         /* A visible placeholder is not a label: it disappears on focus and is
          * not announced reliably. The real label is hidden but present. */
         aria-label={t("search.label")}
-        placeholder={t("search.placeholder")}
+        /* A-11: the placeholder gives way to the view's chip. Showing "Buscar
+         * correo" beside `is:starred` would offer two competing answers to
+         * "what is in this box". */
+        placeholder={
+          value === "" && viewQuery !== undefined ? "" : t("search.placeholder")
+        }
         /* The browser's own search history dropdown covers our results and is
          * shared across sites; a mail search box should not feed it. */
         autoComplete="off"

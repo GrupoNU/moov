@@ -887,3 +887,81 @@ describe("E-14 — a results list says what it is", () => {
   });
 });
 });
+
+/**
+ * A-11 — an empty view keeps its chrome.
+ *
+ * "Pospuestos" before the first snooze had no folder behind it, and the
+ * placeholder that said so REPLACED the whole column: the review saw a blue
+ * band alone on a white page and read the view as broken rather than empty.
+ * That reading is the finding — a surface with no controls on it looks like a
+ * surface that failed to render.
+ *
+ * Gmail keeps the chrome on an empty view. The select-all box, the refresh
+ * button and the pager stay exactly where they are and only the ROWS are
+ * missing, which is what makes "there is nothing here" distinguishable from
+ * "something went wrong".
+ */
+describe("A-11 — Pospuestos vacío keeps the toolbar", () => {
+  beforeEach(() => {
+    window.sessionStorage.setItem(
+      "moov.session.v1",
+      JSON.stringify({ username: "moov-test@example.test", password: "secret" }),
+    );
+    vi.stubGlobal("fetch", vi.fn(fakeFetch));
+    vi.stubGlobal("EventSource", StubEventSource);
+    window.history.replaceState(null, "", "/snoozed");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("draws the list toolbar over the placeholder, not instead of it", async () => {
+    renderShell();
+
+    // The placeholder itself — the honest statement that GC-10 has not created
+    // the folder yet, and the reason nothing is fetched for this route.
+    await waitFor(
+      () => {
+        expect(screen.getByText(en["snooze.emptyPlaceholder"])).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    // And the chrome ABOVE it. Refresh is the toolbar's most stable landmark:
+    // it is present in every mode, online and offline, with or without a
+    // pager, so its absence means the row is genuinely gone rather than merely
+    // rendered in a different shape.
+    expect(screen.getByRole("button", { name: en["list.refresh"] })).toBeInTheDocument();
+  });
+
+  it("puts the view's query in the search box, with a way out", async () => {
+    const user = userEvent.setup();
+    renderShell();
+
+    await waitFor(
+      () => {
+        expect(screen.getByText("in:snoozed")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    /*
+     * Both ways into Pospuestos — this placeholder route and the real folder
+     * once GC-10 creates it — carry the SAME label, because they are one view
+     * to the user.
+     *
+     * The label is derived from the route and never stored, which is what
+     * makes leaving it safe with no clearing logic at all: the ✕ navigates to
+     * the inbox and the next render simply produces `undefined`. There is no
+     * state here for a missed update to strand.
+     */
+    await user.click(screen.getByRole("button", { name: en["search.clearView"] }));
+    await waitFor(() => {
+      expect(screen.queryByText("in:snoozed")).toBeNull();
+    });
+  });
+});
