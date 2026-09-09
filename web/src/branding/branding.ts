@@ -44,6 +44,21 @@ export interface Branding {
    */
   readonly shortName?: string;
   readonly logoUrl: string;
+  /**
+   * A variant of the logo for dark contexts, or "" when the customer supplied
+   * none.
+   *
+   * A wordmark is usually one fixed colour, and the common upload is a dark
+   * one: Areacorp's is pure black, which is invisible on the login brand
+   * panel's dark gradient and in the dark theme's top bar. A second asset is
+   * the only honest fix — recolouring somebody's logo in CSS (a filter, a
+   * blend mode) mangles any logo that is not a flat silhouette.
+   *
+   * When it is "", {@link BrandMark} falls back to drawing the light logo on a
+   * light plate, which keeps a dark wordmark legible without touching its
+   * pixels.
+   */
+  readonly logoDarkUrl: string;
   readonly splashUrl: string;
   readonly colors: BrandingColors;
   readonly tagline: string;
@@ -66,6 +81,7 @@ export const MOOV_DEFAULT_BRANDING: Branding = {
   name: "Moov Mail",
   shortName: "Moov Mail",
   logoUrl: "",
+  logoDarkUrl: "",
   splashUrl: "",
   colors: {
     primary: "#5b5bd6",
@@ -184,6 +200,7 @@ export function mergeBranding(raw: unknown): Branding {
       ? Array.from(doc.shortName.trim()).slice(0, SHORT_NAME_MAX_RUNES).join("")
       : deriveShortName(name),
     logoUrl: isSafeAssetUrl(doc.logoUrl) ? doc.logoUrl : defaults.logoUrl,
+    logoDarkUrl: isSafeAssetUrl(doc.logoDarkUrl) ? doc.logoDarkUrl : defaults.logoDarkUrl,
     splashUrl: isSafeAssetUrl(doc.splashUrl) ? doc.splashUrl : defaults.splashUrl,
     colors: {
       primary: isHexColor(rawColors.primary)

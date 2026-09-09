@@ -9,6 +9,9 @@
    * brandable without shipping a second asset. */
   color: var(--color-accent);
   min-width: 0;
+  /* A near-white that does NOT follow the theme — see the plate block below for
+   * why a theme-reactive token cannot do this job. */
+  --brandmark-plate: #f6f7fb;
 }
 
 .onDark {
@@ -78,6 +81,90 @@
 
 .onDark .name {
   color: var(--brand-on-primary);
+}
+
+/*
+ * --- THE DARK-CONTEXT SWAP ---
+ *
+ * Which logo shows is decided here, in CSS, and never by a theme read in
+ * JavaScript: JS would be a second source of truth for something the cascade
+ * already knows, and it would paint the wrong logo for one frame on load.
+ *
+ * The three-state pattern is tokens.css's, copied deliberately rather than
+ * approximated: an explicit `data-theme` wins in BOTH directions, and the media
+ * query is guarded with `:not([data-theme="light"])` so a user who chose light
+ * on a dark OS keeps the light logo.
+ *
+ * Both images are in the DOM (the component only emits the pair when the two
+ * sources actually differ), so the swap costs no request beyond the second
+ * asset the customer chose to supply.
+ */
+.logoDark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .logoLight {
+    display: none;
+  }
+
+  :root:not([data-theme="light"]) .logoDark {
+    display: block;
+  }
+}
+
+:root[data-theme="dark"] .logoLight {
+  display: none;
+}
+
+:root[data-theme="dark"] .logoDark {
+  display: block;
+}
+
+/*
+ * --- THE PLATE: the fallback when there is no dark variant ---
+ *
+ * A customer who supplied only a dark wordmark (the common case — a pilot
+ * brand's is pure black) would otherwise have an invisible logo on the login
+ * panel's gradient and in the dark theme's top bar. The logo is set on a small
+ * light rectangle instead, so it stays legible untouched.
+ *
+ * Untouched is the point. Recolouring it — `filter: invert()`, a blend mode —
+ * is the obvious-looking fix and it wrecks any logo that is not a flat
+ * silhouette: a two-colour mark comes out as a photographic negative.
+ *
+ * The colour is a LITERAL near-white, not `--surface-default`, and that is the
+ * whole trick: `--surface-default` is itself dark under the dark theme, so
+ * using it would paint a dark plate under a dark logo and change nothing. The
+ * plate has to be light in a dark context by definition, so it cannot be a
+ * theme-reactive token.
+ */
+.plated .logo {
+  border-radius: var(--radius-sm);
+}
+
+/* On the brand panel the gradient is dark in EVERY theme, so the plate is
+   unconditional there. */
+.plated.onDark .logo {
+  background: var(--brandmark-plate);
+  padding: var(--space-1) var(--space-2);
+  /* The padding is inside the fixed height, so the logo would shrink by it
+     without this: box-sizing keeps the mark the same size as an unplated one. */
+  box-sizing: content-box;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .plated .logo {
+    background: var(--brandmark-plate);
+    padding: var(--space-1) var(--space-2);
+    box-sizing: content-box;
+  }
+}
+
+:root[data-theme="dark"] .plated .logo {
+  background: var(--brandmark-plate);
+  padding: var(--space-1) var(--space-2);
+  box-sizing: content-box;
 }
 
 /*

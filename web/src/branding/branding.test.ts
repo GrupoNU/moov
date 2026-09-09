@@ -108,7 +108,29 @@ describe("mergeBranding", () => {
     ]) {
       const brand = mergeBranding({ ...validDocument, logoUrl: hostile });
       expect(brand.logoUrl, `logoUrl ${hostile} must be refused`).toBe("");
+
+      // The dark variant goes into an <img src> on exactly the same screens,
+      // so it gets the same validation rather than being trusted because it
+      // was added later.
+      const dark = mergeBranding({ ...validDocument, logoDarkUrl: hostile });
+      expect(dark.logoDarkUrl, `logoDarkUrl ${hostile} must be refused`).toBe("");
     }
+  });
+
+  it("takes a dark logo variant, and defaults it to empty", () => {
+    /*
+     * A wordmark is usually one fixed colour, and the common upload is a dark
+     * one — Areacorp's is pure black, invisible on the login panel's dark
+     * gradient. The second asset is optional: "" is the normal case and means
+     * "no dark variant", which BrandMark answers with a light plate rather
+     * than by recolouring somebody's logo.
+     */
+    expect(
+      mergeBranding({ ...validDocument, logoDarkUrl: "/branding/assets/x/logo-dark.png" })
+        .logoDarkUrl,
+    ).toBe("/branding/assets/x/logo-dark.png");
+    expect(mergeBranding(validDocument).logoDarkUrl).toBe("");
+    expect(mergeBranding({}).logoDarkUrl).toBe("");
   });
 
   it("refuses a support URL that could execute script", () => {
