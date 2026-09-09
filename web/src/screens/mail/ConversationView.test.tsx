@@ -318,38 +318,58 @@ describe("read-marking", () => {
   });
 });
 
-describe("the conversation bar", () => {
-  it("states the message count and expands everything on demand", async () => {
-    const user = userEvent.setup();
+describe("the expand/collapse-all control (C-06)", () => {
+  /*
+   * C-06: the text strip ("Conversación con N mensajes / Expandir todo") is
+   * gone. The control is Gmail's double chevron in the PANE's header, drawn
+   * from `allExpanded`/`messageCount` published with the controls — so what
+   * is pinned here is that the strip is absent and the published facts track
+   * the state the pane will render from.
+   */
+  it("renders no text strip of its own any more", async () => {
     renderConversation();
     await waitFor(() => {
       expect(screen.getByText("Sender m1")).toBeInTheDocument();
     });
+    expect(screen.queryByRole("button", { name: /expandir todo/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/conversación con/i)).not.toBeInTheDocument();
+  });
 
-    const expandAll = screen.getByRole("button", { name: /expandir todo/i });
-    await user.click(expandAll);
+  it("publishes allExpanded and the count, and keeps them current", async () => {
+    let controls: ConversationControls | undefined;
+    renderConversation({
+      onControls: (next) => {
+        if (next !== undefined) controls = next;
+      },
+    });
+    await waitFor(() => {
+      expect(controls?.messageCount).toBe(3);
+    });
+    expect(controls?.allExpanded).toBe(false);
 
+    await act(async () => {
+      controls?.expandAll();
+      await Promise.resolve();
+    });
     await waitFor(() => {
       expect(expandedMessages()).toHaveLength(3);
     });
-    // ...and the same control now collapses, leaving the newest open.
-    await user.click(screen.getByRole("button", { name: /contraer todo/i }));
+    // The published fact flipped WITH the state — a stale `false` here would
+    // draw the header's chevron pointing the wrong way.
+    await waitFor(() => {
+      expect(controls?.allExpanded).toBe(true);
+    });
+
+    await act(async () => {
+      controls?.collapseAll();
+      await Promise.resolve();
+    });
     await waitFor(() => {
       expect(expandedMessages()).toHaveLength(1);
     });
-  });
-
-  it("does not appear for a single-message conversation", async () => {
-    renderConversation({
-      openEmail: withBody(M3, "alone"),
-      thread: { id: "t1", emailIds: ["m3"] },
-      rows: [M3],
-    });
     await waitFor(() => {
-      expect(screen.getByText("Sender m3")).toBeInTheDocument();
+      expect(controls?.allExpanded).toBe(false);
     });
-    // A control that says "1 message" and a button that does nothing.
-    expect(screen.queryByRole("button", { name: /expandir todo/i })).not.toBeInTheDocument();
   });
 });
 

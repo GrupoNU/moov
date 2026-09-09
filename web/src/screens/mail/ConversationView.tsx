@@ -98,12 +98,24 @@ export interface ConversationViewProps {
   readonly onControls?: (controls: ConversationControls | undefined) => void;
 }
 
-/** What the keyboard can ask of an open conversation. */
+/**
+ * What the keyboard — and, since C-06, the pane's header — can ask of an open
+ * conversation, plus the one fact the header's control needs to draw itself.
+ */
 export interface ConversationControls {
   readonly expandAll: () => void;
   readonly collapseAll: () => void;
   /** `p` / `n`: move to the previous/next message INSIDE the conversation. */
   readonly goToMessage: (direction: "next" | "previous") => void;
+  /**
+   * C-06: whether every message is expanded — what Gmail's double chevron in
+   * the header reflects (`aria-expanded`) and flips. Published here rather
+   * than lifted, for the reason the controls themselves are: the state lives
+   * with the fetch, and the header lives two components up.
+   */
+  readonly allExpanded: boolean;
+  /** How many messages the conversation holds, for the same header. */
+  readonly messageCount: number;
 }
 
 /** How many bodies to request in one batch — Bulwark's `batched()` lesson. */
@@ -124,7 +136,7 @@ export function ConversationView({
   onMarkRead,
   onControls,
 }: ConversationViewProps): React.JSX.Element {
-  const { t, format } = useTranslation();
+  const { t } = useTranslation();
 
   /*
    * The thread's messages, keyed by id.
@@ -366,6 +378,8 @@ export function ConversationView({
     [ordered, currentId, scrollTo],
   );
 
+  const allExpanded = isAllExpanded(state, ordered);
+
   const controls = useMemo<ConversationControls>(
     () => ({
       expandAll: () => {
@@ -375,8 +389,10 @@ export function ConversationView({
         setState((current) => collapseAll(current, ordered));
       },
       goToMessage,
+      allExpanded,
+      messageCount: ordered.length,
     }),
-    [ordered, goToMessage],
+    [ordered, goToMessage, allExpanded],
   );
 
   useEffect(() => {
@@ -388,33 +404,15 @@ export function ConversationView({
 
   // --- render ---------------------------------------------------------------
 
-  const allExpanded = isAllExpanded(state, ordered);
-
+  /*
+   * C-06: no header strip of its own any more. "Conversación con N mensajes /
+   * Expandir todo" was a sentence and a text button where Gmail has a double
+   * chevron at the top right of the subject; that control now lives in the
+   * pane's header (ReadingPane), driven by the `allExpanded` this component
+   * publishes, and the count became the "N de M" position beside ‹ ›.
+   */
   return (
     <div className={styles.conversation} ref={containerRef}>
-      {/*
-        The conversation's own header strip: how many messages, and the
-        expand/collapse-all pair that `;` and `:` also drive. It renders only
-        for a real conversation — a single message must not grow a control that
-        says "1 message" and a button that does nothing.
-      */}
-      {ordered.length > 1 && (
-        <div className={styles.conversationBar}>
-          <span className={styles.count}>{format("reader.threadContext", ordered.length)}</span>
-          <button
-            type="button"
-            className={styles.expandToggle}
-            onClick={() => {
-              if (allExpanded) controls.collapseAll();
-              else controls.expandAll();
-            }}
-            aria-expanded={allExpanded}
-          >
-            {allExpanded ? t("reader.collapseAll") : t("reader.expandAll")}
-          </button>
-        </div>
-      )}
-
       {/* A thread whose rows failed to load still shows the message the user
           opened; saying so beats a silently one-message "conversation". */}
       {rowsError !== undefined && ordered.length < memberIds.length && (

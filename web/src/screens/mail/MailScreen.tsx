@@ -2384,6 +2384,8 @@ export function MailScreen(): React.JSX.Element {
             onPrefillConsumed: () => {
               setFilterPrefill(undefined);
             },
+            /* F-42: one atomic /set, appended to the existing rules. */
+            onImport: filtersApi.importRules,
           }
         : undefined,
     [filtersApi, mailboxes, labelsApi.labels, filterPrefill],
@@ -4831,6 +4833,16 @@ export function MailScreen(): React.JSX.Element {
               onPreviousMessage={siblingGroup("previous") === undefined ? undefined : () => {
                 goToSibling("previous");
               }}
+              /*
+               * C-06: "N de M". The page's offset plus the open group's index,
+               * 1-based; the total is the server's when it counted (the same
+               * `resultTotal` the list's pager shows) and absent otherwise.
+               */
+              listPosition={
+                openGroupIndex >= 0
+                  ? { index: position + openGroupIndex + 1, total: resultTotal }
+                  : undefined
+              }
               /*
                * E1 / canon §2.1 — the conversation reader, gated by the E5
                * preference. With it off the pane is exactly the single-message

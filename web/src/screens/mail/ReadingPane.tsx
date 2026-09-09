@@ -155,6 +155,13 @@ export interface ReadingPaneProps {
   /** Goes to the next/previous message in the list; absent when there is none. */
   readonly onNextMessage: (() => void) | undefined;
   readonly onPreviousMessage: (() => void) | undefined;
+  /**
+   * C-06: where the open conversation sits in the list — Gmail's "8 de 15.287"
+   * beside ‹ ›. `index` is 1-based and absolute (the page's offset is already
+   * added); `total` is the server's count when it gave one, and absent shows
+   * the index alone rather than a made-up denominator.
+   */
+  readonly listPosition?: { readonly index: number; readonly total?: number | undefined } | undefined;
 
   // --- E1: conversation view (canon §2.1) ----------------------------------
   /**
@@ -226,6 +233,7 @@ export function ReadingPane({
   autoLoadImages = false,
   onNextMessage,
   onPreviousMessage,
+  listPosition,
   conversationView,
   targetMessageId,
   onReplyToMessage,
@@ -254,6 +262,22 @@ export function ReadingPane({
    * default.
    */
   const { prefs } = usePrefs();
+
+  /*
+   * C-06: the conversation's controls, kept HERE as well as forwarded to the
+   * host. The host needs them for `;`/`:`/`p`/`n`; this pane needs
+   * `allExpanded` to draw Gmail's double chevron in its own header, which sits
+   * two components above the state that answers it. Same seam, one more
+   * reader — no state is lifted.
+   */
+  const [conversation, setConversation] = useState<ConversationControls | undefined>(undefined);
+  const publishControls = useCallback(
+    (controls: ConversationControls | undefined): void => {
+      setConversation(controls);
+      onConversationControls(controls);
+    },
+    [onConversationControls],
+  );
 
   // The remote-image signer the secure HTML renderer uses (W-A4): the ONLY
   // path by which a message's remote image can ever be fetched, and it goes
@@ -393,6 +417,48 @@ export function ReadingPane({
             beside it, and the close button must not jump under the pointer.
           */}
           <div className={styles.navGroup} role="group" aria-label={t("shortcuts.sectionNavigate")}>
+            {/*
+              C-06: Gmail's double chevron — expand all / collapse all — at the
+              top right, where Gmail puts it. Only for a real conversation: a
+              single message must not grow a control that does nothing. The
+              state comes from the conversation itself (see `publishControls`),
+              so `aria-expanded` and the tooltip can never disagree with what
+              the thread shows; `;` and `:` drive the same two functions.
+            */}
+            {conversationView && conversation !== undefined && conversation.messageCount > 1 && (
+              <button
+                type="button"
+                className={styles.close}
+                onClick={() => {
+                  if (conversation.allExpanded) conversation.collapseAll();
+                  else conversation.expandAll();
+                }}
+                aria-expanded={conversation.allExpanded}
+                aria-label={conversation.allExpanded ? t("reader.collapseAll") : t("reader.expandAll")}
+                title={conversation.allExpanded ? `${t("reader.collapseAll")} (:)` : `${t("reader.expandAll")} (;)`}
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  {conversation.allExpanded ? (
+                    <path d="M5 7.5l5 4 5-4M5 13.5l5-4 5 4" transform="translate(0 -0.5)" />
+                  ) : (
+                    <path d="M5 3.5l5 4 5-4M5 12.5l5 4 5-4" />
+                  )}
+                </svg>
+              </button>
+            )}
+            {/*
+              C-06: "N de M" — the open conversation's place in the list,
+              Gmail's shape exactly, between the chevron and the arrows it
+              qualifies. The index alone when the server declined to count:
+              a denominator we do not have is not a denominator.
+            */}
+            {listPosition !== undefined && (
+              <span className={styles.position} aria-live="polite">
+                {listPosition.total === undefined
+                  ? listPosition.index.toLocaleString(locale)
+                  : format("reader.positionOf", listPosition.index, listPosition.total)}
+              </span>
+            )}
             <button
               type="button"
               className={styles.close}
@@ -896,7 +962,7 @@ export function ReadingPane({
             onReply={onReplyToMessage}
             onForward={onForwardMessage}
             onMarkRead={onMarkMessagesRead}
-            onControls={onConversationControls}
+            onControls={publishControls}
           />
         ) : (
           /* Keyed by message id so per-message state — the remote-images

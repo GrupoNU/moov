@@ -642,3 +642,70 @@ describe("the default reply behaviour", () => {
     expect(props.onReplyAll).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * C-06: the thread header — Gmail's double chevron and "N de M".
+ *
+ * The chevron is drawn from what the conversation PUBLISHES, so these run
+ * the real ConversationView under the pane with a stubbed client answering
+ * the thread's rows, the way ConversationView.test does.
+ */
+describe("C-06: the thread header", () => {
+  function threadClient(rows: readonly Email[]): JmapClient {
+    const client = new JmapClient({ username: "u", password: "p" });
+    vi.spyOn(client, "call").mockImplementation((invocations) => {
+      const [name, args, id] = invocations[0] as [string, Record<string, unknown>, string];
+      const ids = (args.ids ?? []) as readonly string[];
+      const list = rows.filter((row) => ids.includes(row.id));
+      return Promise.resolve({ methodResponses: [[name, { list }, id]] } as never);
+    });
+    return client;
+  }
+
+  const older: Email = {
+    ...message({ id: "m0", receivedAt: "2026-08-19T10:00:00Z", keywords: { $seen: true } }),
+    threadId: "t1",
+  };
+  const newest: Email = { ...message({ keywords: { $seen: true } }), threadId: "t1" };
+
+  it("offers the double chevron for a real conversation, flipping aria-expanded", async () => {
+    const user = userEvent.setup();
+    renderPane({
+      conversationView: true,
+      email: newest,
+      thread: { id: "t1", emailIds: ["m0", "m1"] },
+      client: threadClient([older, newest]),
+    });
+
+    const chevron = await screen.findByRole("button", { name: /^expandir todo$/i });
+    expect(chevron).toHaveAttribute("aria-expanded", "false");
+    // The old text strip is gone.
+    expect(screen.queryByText(/conversación con/i)).not.toBeInTheDocument();
+
+    await user.click(chevron);
+    const collapse = await screen.findByRole("button", { name: /^contraer todo$/i });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("grows no chevron for a single message", async () => {
+    renderPane({
+      conversationView: true,
+      email: newest,
+      thread: { id: "t1", emailIds: ["m1"] },
+      client: threadClient([newest]),
+    });
+    await screen.findByText("Ana");
+    expect(screen.queryByRole("button", { name: /expandir todo/i })).not.toBeInTheDocument();
+  });
+
+  it("states the position as 'N de M' beside the arrows", () => {
+    renderPane({ listPosition: { index: 8, total: 15287 } });
+    expect(screen.getByText("8 de 15.287")).toBeInTheDocument();
+  });
+
+  it("states the index alone when the server did not count", () => {
+    renderPane({ listPosition: { index: 8 } });
+    expect(screen.getByText("8")).toBeInTheDocument();
+    expect(screen.queryByText(/8 de/)).not.toBeInTheDocument();
+  });
+});

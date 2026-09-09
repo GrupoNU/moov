@@ -391,6 +391,16 @@ a.attachmentName:focus-visible {
   cursor: default;
 }
 
+/* C-06: "N de M", quiet and tabular, sitting on the arrows' centre line. */
+.position {
+  align-self: center;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /*
  * The Spam banner (canon §4.1.9).
  *
