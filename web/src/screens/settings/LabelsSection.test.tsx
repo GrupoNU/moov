@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { I18nProvider } from "../../i18n/I18nProvider";
+import { es } from "../../i18n/strings";
 import { labelBudget, MAX_DURABLE_KEYWORDS } from "../../mail/labels";
 import { DEFAULT_LABEL_COLOR_ID, LABEL_COLORS } from "../../mail/labelPalette";
 import type { Label } from "../../mail/labelStore";
@@ -19,6 +20,20 @@ import { LabelsSection } from "./LabelsSection";
  * obeys. Anything less and the 27th label is created, applied, read back for
  * weeks, and then vanishes from every message at once (validation V1).
  */
+
+/**
+ * The name a swatch announces (F-31): "Ámbar · Suave".
+ *
+ * Built here from the SAME string table the component reads, so this is a
+ * check that every palette entry has a name rather than a second copy of the
+ * names — a hardcoded list would pass while the component rendered the raw id
+ * for a hue nobody added to the table.
+ */
+function colorName(color: (typeof LABEL_COLORS)[number]): string {
+  const hue = es[`label.hue.${color.hue}` as keyof typeof es];
+  const step = es[`label.step.${color.step}` as keyof typeof es];
+  return `${String(hue)} · ${String(step)}`;
+}
 
 function label(name: string, colorId = DEFAULT_LABEL_COLOR_ID): Label {
   return { keyword: `$label:${name}`, name, colorId, visibility: "show" };
@@ -149,19 +164,51 @@ describe("the palette is closed and reachable", () => {
     // the pairs someone checked (canon §2.6). Every palette entry is offered,
     // and nothing outside it is.
     for (const color of LABEL_COLORS) {
-      expect(screen.getAllByRole("radio", { name: color.id }).length).toBeGreaterThan(0);
+      expect(
+        screen.getAllByRole("radio", { name: colorName(color) }).length,
+        `no swatch for ${color.id}`,
+      ).toBeGreaterThan(0);
     }
-    // The create picker offers exactly the palette, no more.
+    // The create picker offers exactly the palette, no more — twenty-four
+    // since F-31 gave every hue a bold step.
     const [createGroup] = screen.getAllByRole("radiogroup");
     expect(createGroup).toBeDefined();
     expect(within(createGroup!).getAllByRole("radio")).toHaveLength(LABEL_COLORS.length);
   });
 
-  it("names each swatch, so it is not an unlabelled coloured div", () => {
+  /*
+   * F-31. The swatches used to announce their raw ids ("slate", "amber") and
+   * show no tooltip at all: a sighted user hovering a pastel learned nothing,
+   * and a screen-reader user heard a word out of our source code.
+   */
+  it("names each swatch with words a person would use, not with its id", () => {
     renderSection();
-    for (const color of LABEL_COLORS.slice(0, 3)) {
-      expect(screen.getAllByRole("radio", { name: color.id }).length).toBeGreaterThan(0);
-    }
+
+    expect(screen.getAllByRole("radio", { name: "Ámbar · Suave" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("radio", { name: "Rojo · Intenso" }).length).toBeGreaterThan(0);
+    // The id is gone from the announcement entirely.
+    expect(screen.queryByRole("radio", { name: "amber" })).not.toBeInTheDocument();
+  });
+
+  it("puts the same name in the tooltip, so hover and screen reader agree", () => {
+    renderSection();
+
+    const swatch = screen.getAllByRole("radio", { name: "Azul · Intenso" })[0];
+    expect(swatch?.closest("label")).toHaveAttribute("title", "Azul · Intenso");
+  });
+
+  it("offers every hue at both strengths (F-31)", () => {
+    renderSection();
+
+    // Twelve pales beside each other were "casi indistinguibles"; a user who
+    // wants one label to be loud now has a way to say so.
+    const [createGroup] = screen.getAllByRole("radiogroup");
+    // The name lives in the wrapping <label>, which is also the tooltip's home.
+    const names = within(createGroup!)
+      .getAllByRole("radio")
+      .map((radio) => radio.closest("label")?.getAttribute("title") ?? "");
+    expect(names.filter((name) => name.includes("Suave"))).toHaveLength(12);
+    expect(names.filter((name) => name.includes("Intenso"))).toHaveLength(12);
   });
 });
 
@@ -225,9 +272,42 @@ describe("the list", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/ya existe/i);
   });
 
-  it("says so when there are no labels at all", () => {
+  /*
+   * F-30. "Todavía no hay etiquetas" was true and useless: it told a user who
+   * had arrived looking for labels that they were in the right place, and
+   * offered them nothing. The real block is not the button — it is "what would
+   * I even call one".
+   */
+  it("invites the first label instead of stating its absence", () => {
     renderSection({ labels: [], budget: labelBudget([], []) });
-    expect(screen.getByText(/todavía no hay etiquetas/i)).toBeInTheDocument();
+
+    expect(screen.getByText(/creá tu primera etiqueta/i)).toBeInTheDocument();
+    // The one sentence that makes a label worth wanting: it crosses folders.
+    expect(screen.getByText(/cruza carpetas/i)).toBeInTheDocument();
+  });
+
+  it("prefills the name box from an example rather than creating anything", async () => {
+    const user = userEvent.setup();
+    const props = renderSection({ labels: [], budget: labelBudget([], []) });
+
+    await user.click(screen.getByRole("button", { name: /usar «Facturas» como nombre/i }));
+
+    // The example is a starting point the user can edit, not a decision made
+    // on their behalf — nothing was created.
+    expect(screen.getByLabelText(/nombre de la etiqueta/i)).toHaveValue("Facturas");
+    expect(props.onCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates from a prefilled example when the user then submits", async () => {
+    const user = userEvent.setup();
+    const props = renderSection({ labels: [], budget: labelBudget([], []) });
+
+    await user.click(screen.getByRole("button", { name: /usar «Viajes» como nombre/i }));
+    await user.click(screen.getByRole("button", { name: "Etiqueta nueva" }));
+
+    // The chip also sets the colour it was drawn in, so what the user saw is
+    // what they get.
+    expect(props.onCreate).toHaveBeenCalledWith("Viajes", "teal-bold");
   });
 });
 

@@ -1084,7 +1084,48 @@ export const en = {
   "label.plural": "Labels",
   "label.labelAs": "Label as",
   "label.manage": "Manage labels…",
+  /*
+   * F-30: an actionable empty state, not a full stop.
+   *
+   * "No labels yet" is true and useless — it tells a user who has arrived
+   * looking for labels that they are in the right place and offers them
+   * nothing. Gmail's own empty states name the first thing to do; the three
+   * examples exist because "what would I even call one" is the actual block,
+   * and clicking one fills the name box rather than creating anything.
+   */
   "label.none": "No labels yet",
+  "label.emptyTitle": "Create your first label",
+  "label.emptyBody":
+    "A label crosses folders: one message can carry several, and clicking one shows everything that carries it. Start from an example or type your own name.",
+  "label.emptyExamples": "For example:",
+  "label.example.invoices": "Invoices",
+  "label.example.travel": "Travel",
+  "label.example.followUp": "Follow up",
+  "label.useExample": (name: string): string => `Use “${name}” as the name`,
+
+  /*
+   * F-31: the swatches carry names.
+   *
+   * A grid of coloured squares has no accessible name beyond its id, and the
+   * ids were being read out raw ("slate", "amber-bold"). These are the names a
+   * person would use, and they are the swatch's title AND its accessible name —
+   * so the tooltip and the screen reader say the same thing.
+   */
+  "label.colorName": (hue: string, step: string): string => `${hue} · ${step}`,
+  "label.step.pale": "Pale",
+  "label.step.bold": "Bold",
+  "label.hue.slate": "Grey",
+  "label.hue.red": "Red",
+  "label.hue.orange": "Orange",
+  "label.hue.amber": "Amber",
+  "label.hue.lime": "Lime",
+  "label.hue.green": "Green",
+  "label.hue.teal": "Teal",
+  "label.hue.cyan": "Cyan",
+  "label.hue.blue": "Blue",
+  "label.hue.indigo": "Indigo",
+  "label.hue.purple": "Purple",
+  "label.hue.pink": "Pink",
   // P0-5c: the folder-visibility table, the other half of the rail's curation.
   "folders.heading": "Folders",
   "folders.help":
@@ -2206,6 +2247,30 @@ export const es: Strings = {
   "label.labelAs": "Etiquetar como",
   "label.manage": "Administrar etiquetas…",
   "label.none": "Todavía no hay etiquetas",
+  "label.emptyTitle": "Creá tu primera etiqueta",
+  "label.emptyBody":
+    "Una etiqueta cruza carpetas: un mensaje puede llevar varias, y al hacer clic en una ves todo lo que la lleva. Arrancá desde un ejemplo o escribí tu propio nombre.",
+  "label.emptyExamples": "Por ejemplo:",
+  "label.example.invoices": "Facturas",
+  "label.example.travel": "Viajes",
+  "label.example.followUp": "Pendiente",
+  "label.useExample": (name: string): string => `Usar «${name}» como nombre`,
+
+  "label.colorName": (hue: string, step: string): string => `${hue} · ${step}`,
+  "label.step.pale": "Suave",
+  "label.step.bold": "Intenso",
+  "label.hue.slate": "Gris",
+  "label.hue.red": "Rojo",
+  "label.hue.orange": "Naranja",
+  "label.hue.amber": "Ámbar",
+  "label.hue.lime": "Lima",
+  "label.hue.green": "Verde",
+  "label.hue.teal": "Verde azulado",
+  "label.hue.cyan": "Cian",
+  "label.hue.blue": "Azul",
+  "label.hue.indigo": "Índigo",
+  "label.hue.purple": "Violeta",
+  "label.hue.pink": "Rosa",
   "folders.heading": "Carpetas",
   "folders.help":
     "Las carpetas que tu cliente de correo crea para sincronizar calendarios, contactos o errores de sincronización quedan ocultas del riel por defecto. No se borra nada: mostrá acá la que quieras.",

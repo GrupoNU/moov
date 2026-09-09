@@ -7,6 +7,7 @@ import {
   isLabelColorId,
   labelColor,
   labelColorVariables,
+  LABEL_COLOR_STEPS,
   LABEL_COLORS,
   meetsAA,
   parseHex,
@@ -14,15 +15,50 @@ import {
 } from "./labelPalette";
 
 describe("the palette is closed and well-formed", () => {
-  it("has twelve entries with unique ids", () => {
-    expect(LABEL_COLORS).toHaveLength(12);
+  it("has twelve hues at two strengths, with unique ids (F-31)", () => {
+    // Twelve pales beside each other were "casi indistinguibles" (F-31), and a
+    // user who wanted one label to be loud had no way to say so.
+    expect(LABEL_COLORS).toHaveLength(24);
     const ids = new Set(LABEL_COLORS.map((color) => color.id));
     expect(ids.size).toBe(LABEL_COLORS.length);
+    expect(new Set(LABEL_COLORS.map((color) => color.hue)).size).toBe(12);
+    for (const step of LABEL_COLOR_STEPS) {
+      expect(LABEL_COLORS.filter((color) => color.step === step)).toHaveLength(12);
+    }
   });
 
   it("names ids rather than hex values, so a colour can be re-tuned later", () => {
     for (const color of LABEL_COLORS) {
-      expect(color.id).toMatch(/^[a-z]+$/);
+      expect(color.id).toMatch(/^[a-z]+(-bold)?$/);
+    }
+  });
+
+  /*
+   * The compatibility guarantee, asserted rather than assumed.
+   *
+   * The PALE step keeps the bare hue name because that is what every label
+   * created before F-31 stored. Renaming them to "amber-pale" would have turned
+   * every existing label into an unknown id and silently repainted the user's
+   * whole set grey — a data migration disguised as a palette tweak.
+   */
+  it("leaves the pre-existing ids meaning exactly what they meant", () => {
+    for (const color of LABEL_COLORS) {
+      if (color.step !== "pale") continue;
+      expect(color.id).toBe(color.hue);
+    }
+    // The original twelve, spot-checked against the values they shipped with.
+    expect(labelColor("amber").light).toBe("#fef3c7");
+    expect(labelColor("blue").lightText).toBe("#1e3a8a");
+  });
+
+  it("gives every hue a bold step that is one ground in both themes", () => {
+    for (const color of LABEL_COLORS) {
+      if (color.step !== "bold") continue;
+      // A saturated chip reads correctly on a white page and on a dark one, so
+      // inverting it would produce a second colour for no gain.
+      expect(color.dark).toBe(color.light);
+      expect(color.lightText).toBe("#ffffff");
+      expect(color.darkText).toBe("#ffffff");
     }
   });
 
@@ -123,5 +159,21 @@ describe("labelColorVariables", () => {
       "--label-bg-dark": blue.dark,
       "--label-fg-dark": blue.darkText,
     });
+  });
+});
+
+/**
+ * The default is spelt out rather than indexed out of the generated list, so
+ * that it is total by construction. This is the check that keeps the two from
+ * drifting: the fallback must still BE a member of the palette, with the same
+ * values the generator produces for it.
+ */
+describe("the default entry", () => {
+  it("is a real member of the palette, not a parallel definition", () => {
+    const fallback = labelColor(undefined);
+    const listed = LABEL_COLORS.find((color) => color.id === DEFAULT_LABEL_COLOR_ID);
+
+    expect(listed).toBeDefined();
+    expect(fallback).toEqual(listed);
   });
 });

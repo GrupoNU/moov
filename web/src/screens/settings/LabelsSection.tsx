@@ -1,7 +1,12 @@
 import { useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
-import { labelColorVariables, LABEL_COLORS } from "../../mail/labelPalette";
+import {
+  DEFAULT_LABEL_COLOR_ID,
+  labelColorVariables,
+  LABEL_COLORS,
+  type LabelColorStep,
+} from "../../mail/labelPalette";
 import {
   LABEL_VISIBILITIES,
   type Label,
@@ -322,7 +327,50 @@ export function LabelsSection({
           </li>
         ))}
 
-        {labels.length === 0 && <li className={styles.empty}>{t("label.none")}</li>}
+        {labels.length === 0 && (
+          /*
+            F-30: an actionable empty state, not a full stop.
+
+            "Todavía no hay etiquetas" is true and useless — it tells a user who
+            arrived looking for labels that they are in the right place and
+            offers them nothing. What replaces it names the first thing to do,
+            says in one line what a label IS on this server (it crosses folders,
+            which is the whole reason to want one), and offers three examples.
+
+            The examples PREFILL the name box rather than creating anything.
+            Creating a label from a click would be a decision the user did not
+            make, and the block here is not the button — it is "what would I
+            even call one", which a name they can then edit answers.
+          */
+          <li className={styles.empty}>
+            <strong className={styles.emptyTitle}>{t("label.emptyTitle")}</strong>
+            <span className={styles.emptyBody}>{t("label.emptyBody")}</span>
+            <span className={styles.emptyExamples}>
+              <span className={styles.fieldLabel}>{t("label.emptyExamples")}</span>
+              {EXAMPLE_LABEL_KEYS.map((key, index) => {
+                const name = t(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={styles.exampleChip}
+                    // The example's own colour, so the chips also demonstrate
+                    // what a coloured label looks like.
+                    style={labelColorVariables(EXAMPLE_COLOR_IDS[index])}
+                    aria-label={format("label.useExample", name)}
+                    onClick={() => {
+                      setName(name);
+                      setColorId(EXAMPLE_COLOR_IDS[index] ?? DEFAULT_LABEL_COLOR_ID);
+                      setProblem(undefined);
+                    }}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </span>
+          </li>
+        )}
       </ul>
 
       {folders !== undefined && <FoldersTable {...folders} />}
@@ -413,8 +461,20 @@ function FoldersTable({
  * A radio group and not a `<select>` of colour names: the choice IS the colour,
  * so it has to be seen. `role="radiogroup"` with one radio per swatch is the
  * APG pattern for "pick exactly one of these", and it gives each swatch an
- * accessible name (the colour's id) that a screen reader can read — which a
- * grid of unlabelled coloured divs cannot.
+ * accessible name a screen reader can read — which a grid of unlabelled
+ * coloured divs cannot.
+ *
+ * # F-31: the swatches are NAMED, and there are twice as many
+ *
+ * They were reading out their raw ids ("slate", "amber") and showing no tooltip
+ * at all, so a sighted user hovering a pastel learned nothing and a screen
+ * reader user heard a word from our source code. Each swatch now carries the
+ * name a person would use — "Ámbar · Suave" — as BOTH its `title` and its
+ * accessible name, so the tooltip and the announcement agree.
+ *
+ * The grid is laid out one row per hue (`--palette-columns: 2`), so a hue's
+ * pale and bold steps sit beside each other and the twenty-four squares read as
+ * twelve colours at two strengths rather than as twenty-four unrelated ones.
  */
 function ColorPicker({
   value,
@@ -427,32 +487,69 @@ function ColorPicker({
   readonly onChange: (id: string) => void;
   readonly label: string;
 }): React.JSX.Element {
+  const { t, format } = useTranslation();
   return (
     <span className={styles.palette} role="radiogroup" aria-label={label}>
-      {LABEL_COLORS.map((color) => (
-        <label key={color.id} className={styles.swatchLabel}>
-          <input
-            type="radio"
-            className="visually-hidden"
-            name={`${label}-color`}
-            value={color.id}
-            checked={value === color.id}
-            disabled={disabled}
-            onChange={() => {
-              onChange(color.id);
-            }}
-          />
-          <span
-            className={`${styles.swatch} ${value === color.id ? styles.swatchActive : ""}`}
-            style={labelColorVariables(color.id)}
-            aria-hidden="true"
-          />
-          <span className="visually-hidden">{color.id}</span>
-        </label>
-      ))}
+      {LABEL_COLORS.map((color) => {
+        const name = format(
+          "label.colorName",
+          t(HUE_KEYS[color.hue] ?? "label.color"),
+          t(STEP_KEYS[color.step]),
+        );
+        return (
+          <label key={color.id} className={styles.swatchLabel} title={name}>
+            <input
+              type="radio"
+              className="visually-hidden"
+              name={`${label}-color`}
+              value={color.id}
+              checked={value === color.id}
+              disabled={disabled}
+              onChange={() => {
+                onChange(color.id);
+              }}
+            />
+            <span
+              className={`${styles.swatch} ${value === color.id ? styles.swatchActive : ""}`}
+              style={labelColorVariables(color.id)}
+              aria-hidden="true"
+            />
+            <span className="visually-hidden">{name}</span>
+          </label>
+        );
+      })}
     </span>
   );
 }
+
+/**
+ * The hue names, as a lookup rather than a total record.
+ *
+ * The palette's `hue` is a plain string (it is derived, not a closed union that
+ * would force this table to be total), so an unknown hue falls back to the
+ * generic "Color" rather than rendering a raw key. A palette entry added
+ * without a name is then a swatch that says "Color · Intenso" — imprecise, but
+ * never a string from our source code on a user's screen.
+ */
+const HUE_KEYS: Readonly<Record<string, PlainStringKey | undefined>> = {
+  slate: "label.hue.slate",
+  red: "label.hue.red",
+  orange: "label.hue.orange",
+  amber: "label.hue.amber",
+  lime: "label.hue.lime",
+  green: "label.hue.green",
+  teal: "label.hue.teal",
+  cyan: "label.hue.cyan",
+  blue: "label.hue.blue",
+  indigo: "label.hue.indigo",
+  purple: "label.hue.purple",
+  pink: "label.hue.pink",
+};
+
+const STEP_KEYS: Readonly<Record<LabelColorStep, PlainStringKey>> = {
+  pale: "label.step.pale",
+  bold: "label.step.bold",
+};
 
 const PROBLEM_KEYS: Readonly<Record<LabelNameProblem | "full", PlainStringKey>> = {
   empty: "label.error.empty",
@@ -462,6 +559,24 @@ const PROBLEM_KEYS: Readonly<Record<LabelNameProblem | "full", PlainStringKey>> 
   control: "label.error.control",
   full: "label.error.full",
 };
+
+/**
+ * The three examples the empty state offers (F-30).
+ *
+ * Three, and these three, because they are the categories a person recognises
+ * without thinking: a bill, a trip, a thing you owe someone. The point is not
+ * that a user wants exactly these — it is that seeing them answers "what would
+ * I even call one", which is the real block a bare "no labels yet" leaves in
+ * place.
+ */
+const EXAMPLE_LABEL_KEYS: readonly PlainStringKey[] = [
+  "label.example.invoices",
+  "label.example.travel",
+  "label.example.followUp",
+];
+
+/** One colour per example, so the chips also show what a label looks like. */
+const EXAMPLE_COLOR_IDS: readonly string[] = ["amber", "teal-bold", "red"];
 
 const VISIBILITY_KEYS: Readonly<Record<LabelVisibility, PlainStringKey>> = {
   show: "label.visibility.show",

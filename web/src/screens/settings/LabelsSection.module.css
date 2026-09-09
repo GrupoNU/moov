@@ -263,3 +263,88 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/*
+ * F-31: the palette is two columns per hue, so a colour's pale and bold steps
+ * sit beside each other. Twenty-four squares in a ragged wrap read as
+ * twenty-four unrelated colours; in pairs they read as twelve at two strengths.
+ */
+.palette {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  grid-auto-flow: row;
+  gap: var(--space-1);
+  max-width: none;
+}
+
+/*
+ * F-30: the actionable empty state.
+ *
+ * A column, because it is three things in order — what to do, why it is worth
+ * doing, and a way to start — rather than one sentence.
+ */
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.emptyTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.emptyBody {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.emptyExamples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * The example chips are drawn exactly like a real label chip — they are a
+ * preview as much as a shortcut — but they are BUTTONS, so the cursor and the
+ * keyboard treat them as the affordance they are.
+ */
+.exampleChip {
+  padding: 0.0625rem var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--label-bg);
+  color: var(--label-fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.exampleChip:hover {
+  filter: brightness(0.95);
+}
+
+/*
+ * The chips' dark pair, defined here as well as in the media query — the same
+ * rule `.chip` follows, and for the same reason: a colour whose only definition
+ * lives inside a conditional block is a colour that vanishes when the condition
+ * is false.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .exampleChip {
+    background: var(--label-bg-dark);
+    color: var(--label-fg-dark);
+  }
+}
+
+:root[data-theme="dark"] .exampleChip {
+  background: var(--label-bg-dark);
+  color: var(--label-fg-dark);
+}

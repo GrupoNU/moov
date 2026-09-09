@@ -46,7 +46,20 @@ export interface LabelColor {
   readonly dark: string;
   /** Text on {@link dark}. */
   readonly darkText: string;
+  /**
+   * The hue's family, shared by its pale and bold steps (F-31).
+   *
+   * Used to lay the picker out as one row per hue, so the two steps of a
+   * colour sit beside each other and the grid reads as twelve hues at two
+   * strengths rather than as twenty-four unrelated squares.
+   */
+  readonly hue: string;
+  /** "pale" or "bold" — which step of the hue this is. */
+  readonly step: LabelColorStep;
 }
+
+export const LABEL_COLOR_STEPS = ["pale", "bold"] as const;
+export type LabelColorStep = (typeof LABEL_COLOR_STEPS)[number];
 
 /**
  * The palette.
@@ -60,28 +73,139 @@ export interface LabelColor {
  * on a pale tint; the dark pairs invert to a light text on a desaturated deep
  * tint, because a pale tint on a dark page glows.
  */
-const SLATE: LabelColor = {
-  id: "slate",
-  light: "#e2e8f0",
-  lightText: "#1e293b",
-  dark: "#334155",
-  darkText: "#e2e8f0",
+/**
+ * The twelve hues, each at TWO strengths (F-31).
+ *
+ * # Why a second step, when twelve pales were the deliberate number
+ *
+ * The review put it plainly: eleven pastels beside each other were "casi
+ * indistinguibles". That is not a failure of the palette's REASONING — pale
+ * tints with dark text are the right default, they carry AA everywhere, and
+ * they let a chip sit in a list without shouting — it is a failure of RANGE. A
+ * user labelling "Facturas" and "Urgente" wants one of them to be loud, and
+ * with only pales the only way to say "this one matters" is to pick a hue that
+ * happens to be darker, which is a distinction nobody can predict.
+ *
+ * So each hue now has a `bold` step: the SAME saturated ground in both themes
+ * with white text. That is the one place this file departs from "four values,
+ * two pairs", and it is deliberate — a saturated chip reads correctly on a
+ * white page and on a dark one, so inverting it would produce a second colour
+ * for no gain. The pale step keeps the original inversion, because a pale tint
+ * on a dark page really does glow.
+ *
+ * Twenty-four is still a closed palette and still contrast-guaranteed by the
+ * test below; what it stops being is a grid of near-identical squares. Bulwark
+ * ships 39 (3 steps × 13 hues); with a 26-keyword ceiling a user will not hold
+ * more than ~20 labels, so a third step would be a longer grid to scan for no
+ * additional expressive power.
+ */
+
+/** The hue order, which is also the picker's row order. */
+const HUES = [
+  "slate",
+  "red",
+  "orange",
+  "amber",
+  "lime",
+  "green",
+  "teal",
+  "cyan",
+  "blue",
+  "indigo",
+  "purple",
+  "pink",
+] as const;
+
+/** The pale step's four values, per hue. */
+const PALE: Readonly<
+  Record<(typeof HUES)[number], readonly [string, string, string, string]>
+> = {
+  slate: ["#e2e8f0", "#1e293b", "#334155", "#e2e8f0"],
+  red: ["#fee2e2", "#7f1d1d", "#7f1d1d", "#fee2e2"],
+  orange: ["#ffedd5", "#7c2d12", "#7c2d12", "#ffedd5"],
+  amber: ["#fef3c7", "#78350f", "#78350f", "#fef3c7"],
+  lime: ["#ecfccb", "#365314", "#365314", "#ecfccb"],
+  green: ["#dcfce7", "#14532d", "#14532d", "#dcfce7"],
+  teal: ["#ccfbf1", "#134e4a", "#134e4a", "#ccfbf1"],
+  cyan: ["#cffafe", "#164e63", "#164e63", "#cffafe"],
+  blue: ["#dbeafe", "#1e3a8a", "#1e3a8a", "#dbeafe"],
+  indigo: ["#e0e7ff", "#312e81", "#312e81", "#e0e7ff"],
+  purple: ["#f3e8ff", "#581c87", "#581c87", "#f3e8ff"],
+  pink: ["#fce7f3", "#831843", "#831843", "#fce7f3"],
 };
 
-export const LABEL_COLORS: readonly LabelColor[] = [
-  SLATE,
-  { id: "red", light: "#fee2e2", lightText: "#7f1d1d", dark: "#7f1d1d", darkText: "#fee2e2" },
-  { id: "orange", light: "#ffedd5", lightText: "#7c2d12", dark: "#7c2d12", darkText: "#ffedd5" },
-  { id: "amber", light: "#fef3c7", lightText: "#78350f", dark: "#78350f", darkText: "#fef3c7" },
-  { id: "lime", light: "#ecfccb", lightText: "#365314", dark: "#365314", darkText: "#ecfccb" },
-  { id: "green", light: "#dcfce7", lightText: "#14532d", dark: "#14532d", darkText: "#dcfce7" },
-  { id: "teal", light: "#ccfbf1", lightText: "#134e4a", dark: "#134e4a", darkText: "#ccfbf1" },
-  { id: "cyan", light: "#cffafe", lightText: "#164e63", dark: "#164e63", darkText: "#cffafe" },
-  { id: "blue", light: "#dbeafe", lightText: "#1e3a8a", dark: "#1e3a8a", darkText: "#dbeafe" },
-  { id: "indigo", light: "#e0e7ff", lightText: "#312e81", dark: "#312e81", darkText: "#e0e7ff" },
-  { id: "purple", light: "#f3e8ff", lightText: "#581c87", dark: "#581c87", darkText: "#f3e8ff" },
-  { id: "pink", light: "#fce7f3", lightText: "#831843", dark: "#831843", darkText: "#fce7f3" },
-];
+/**
+ * The bold step's ground, in BOTH themes, with white text.
+ *
+ * Every one of these clears AA against `#ffffff` with room to spare (the
+ * tightest is lime at 4.99:1), which the palette test asserts rather than
+ * trusts — these were chosen by measurement, not by eye.
+ */
+const BOLD: Readonly<Record<(typeof HUES)[number], string>> = {
+  slate: "#334155",
+  red: "#b91c1c",
+  orange: "#c2410c",
+  amber: "#b45309",
+  lime: "#4d7c0f",
+  green: "#15803d",
+  teal: "#0f766e",
+  cyan: "#0e7490",
+  blue: "#1d4ed8",
+  indigo: "#4338ca",
+  purple: "#7e22ce",
+  pink: "#be185d",
+};
+
+/**
+ * The palette, built from the two tables.
+ *
+ * # The ids are load-bearing and BACKWARD-COMPATIBLE
+ *
+ * The pale step keeps the bare hue name (`"amber"`), which is what every label
+ * created before this change stored. Renaming them to `"amber-pale"` would have
+ * turned every existing label into an unknown id and silently repainted the
+ * user's whole set grey. The new step takes the suffixed id (`"amber-bold"`),
+ * so the addition is additive in the only sense that matters: no stored value
+ * changes meaning.
+ */
+export const LABEL_COLORS: readonly LabelColor[] = HUES.flatMap((hue) => {
+  const [light, lightText, dark, darkText] = PALE[hue];
+  const bold = BOLD[hue];
+  return [
+    { id: hue, light, lightText, dark, darkText, hue, step: "pale" as const },
+    {
+      // The suffixed id is the NEW one; the bare name stays with the pale step
+      // so no label created before this change changes colour.
+      id: `${hue}-bold`,
+      light: bold,
+      lightText: "#ffffff",
+      dark: bold,
+      darkText: "#ffffff",
+      hue,
+      step: "bold" as const,
+    },
+  ];
+});
+
+/**
+ * The default, WRITTEN OUT rather than indexed out of the list.
+ *
+ * `LABEL_COLORS[0]` would be the same object, and would need an assertion the
+ * linter forbids for a good reason: an index into a generated array is a claim
+ * the type system cannot check, and a fallback that could be `undefined` is
+ * exactly the thing this binding exists to rule out. Spelt as a literal it is
+ * total by construction, and the palette test asserts it is also a MEMBER of
+ * the list — so the two cannot drift apart silently.
+ */
+const SLATE: LabelColor = {
+  id: "slate",
+  light: PALE.slate[0],
+  lightText: PALE.slate[1],
+  dark: PALE.slate[2],
+  darkText: PALE.slate[3],
+  hue: "slate",
+  step: "pale",
+};
 
 /** The id used when a label has no colour, or names one this build removed. */
 export const DEFAULT_LABEL_COLOR_ID = "slate";
