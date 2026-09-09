@@ -193,3 +193,90 @@ describe("which signature the composer pre-fills", () => {
     expect(await savedBody(bodies)).toContain("From the identity");
   });
 });
+
+/**
+ * D-10 — the signature is on SCREEN, not only on the wire.
+ *
+ * The tests above prove the right signature reaches the server. What the
+ * side-by-side review asked (item D-10, "verificar que 'nuevo' siembra firma
+ * por defecto") was the other half, and the answer was no: a fresh composer
+ * opened blank and the signature appeared for the first time in the sent
+ * message. Someone who wanted to edit it for one message could not, and someone
+ * who did not know it existed sent it without ever seeing it.
+ */
+describe("D-10 — a fresh composer opens with the signature in it", () => {
+  it("seeds forNew into the body of a new plain-text message", async () => {
+    const { client } = harness();
+    renderComposer(client, { ...DEFAULT_PREFS, signatures: SIGNATURES }, {
+      ...newDraft(false),
+      focusField: "to",
+    });
+
+    const body = await screen.findByRole("textbox", { name: "Message" });
+    await waitFor(() => {
+      expect((body as HTMLTextAreaElement).value).toContain("Work signature");
+    });
+  });
+
+  it("falls back to the identity's own when no named signature is selected", async () => {
+    const { client } = harness();
+    renderComposer(client, DEFAULT_PREFS, { ...newDraft(false), focusField: "to" });
+
+    const body = await screen.findByRole("textbox", { name: "Message" });
+    await waitFor(() => {
+      expect((body as HTMLTextAreaElement).value).toContain("From the identity");
+    });
+  });
+
+  it("seeds it into the RICH surface too, which is uncontrolled", async () => {
+    const { client } = harness();
+    renderComposer(client, { ...DEFAULT_PREFS, signatures: SIGNATURES }, {
+      ...newDraft(true),
+      focusField: "to",
+    });
+
+    // The rich body is a contentEditable React does not re-render, so the seed
+    // only reaches it through `BodyEditor`'s seedKey. A state-only fix would
+    // pass the wire tests above and leave this one blank.
+    const body = await screen.findByRole("textbox", { name: "Message" });
+    await waitFor(() => {
+      expect(body.innerHTML).toContain("Work signature");
+    });
+  });
+
+  it("does NOT prepend one above a reply's quoted text", async () => {
+    const { client } = harness();
+    renderComposer(client, { ...DEFAULT_PREFS, signatures: SIGNATURES }, {
+      ...newDraft(false),
+      intent: "reply",
+      text: "\n\n> lo que dijo el otro",
+    });
+
+    const body = await screen.findByRole("textbox", { name: "Message" });
+    // The body already carries someone else's words; seeding into it would put
+    // a signature above them, which is not what "seed the signature" means.
+    expect((body as HTMLTextAreaElement).value).not.toContain("Brief signature");
+  });
+
+  it("does not duplicate it on send — withSignature is idempotent", async () => {
+    const user = userEvent.setup();
+    const { client, bodies } = harness();
+    renderComposer(client, { ...DEFAULT_PREFS, signatures: SIGNATURES }, {
+      ...newDraft(false),
+      to: [makeChip("destino@example.test")],
+      subject: "Hola",
+    });
+
+    const editor = await screen.findByRole("textbox", { name: "Message" });
+    await waitFor(() => {
+      expect((editor as HTMLTextAreaElement).value).toContain("Work signature");
+    });
+    await send(user);
+
+    const body = await savedBody(bodies);
+    // Once in the seeded body, and `spec`'s substring check refusing to add a
+    // second copy — which is the property that makes seeding safe to add
+    // without touching the send path.
+    expect(body.split("Work signature").length - 1).toBe(1);
+  });
+});

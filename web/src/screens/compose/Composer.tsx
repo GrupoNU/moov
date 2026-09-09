@@ -246,6 +246,11 @@ export function Composer({
   const [isRich, setRich] = useState(
     draft.html !== undefined && (draft.html !== "" || loadBodyMode() === "rich"),
   );
+  /**
+   * D-10: bumped when this component writes the body itself, so `BodyEditor`
+   * re-seeds its uncontrolled surface. See the signature-seeding effect.
+   */
+  const [seedNonce, setSeedNonce] = useState(0);
   const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>(
     initialAttachments ?? [],
   );
@@ -422,6 +427,82 @@ export function Composer({
   useEffect(() => {
     specRef.current = spec;
   }, [spec]);
+
+  /*
+   * D-10: the signature is SEEDED into the editor, not only into the wire.
+   *
+   * # What the review found
+   *
+   * `spec` above appends the resolved signature on its way to the server, and
+   * `ComposerSignatures.test.tsx` proves the right one lands there. What
+   * nothing did was put it on SCREEN: a fresh composer opened blank, the user
+   * wrote, and the signature appeared for the first time in the sent message.
+   * That is wrong in both directions — someone who wants to edit or delete it
+   * for one message cannot, and someone who does not know it exists sends it
+   * without ever seeing it. Gmail pre-fills the body, and so does every client
+   * that RFC 8621 §6 is describing when it says a client SHOULD insert the
+   * Identity's signature.
+   *
+   * # Why it is a mount-time seed and not a derived value
+   *
+   * The body is the USER's after the first keystroke. Recomputing it when the
+   * preference changes would overwrite what they wrote; deriving it on every
+   * render would fight the uncontrolled editor. So it runs once per
+   * COMPOSITION, keyed on `seedKey` exactly as `BodyEditor`'s own re-seed is,
+   * and only into an EMPTY body — a reply's quoted text or a resumed draft
+   * already carries whatever signature it was written with.
+   *
+   * `withSignature` stays in `spec` and is idempotent by substring check, so
+   * the seeded copy is not appended a second time on send. That is the property
+   * that makes seeding safe to add without touching the send path at all.
+   */
+  const seededRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (identity === undefined) return;
+    if (seededRef.current === draft.seedKey) return;
+
+    const named = resolveSignature(prefs.signatures, signatureIntent(draft.intent));
+    const signature = isRich
+      ? (named?.html ?? identity.htmlSignature)
+      : (named?.text ?? identity.textSignature);
+    if (signature === "") return;
+
+    /*
+     * Marked seeded only once a signature was actually written, so a composer
+     * that mounts before `identity` has arrived from `Identity/get` still gets
+     * one when it does — the effect re-runs and finds the key unconsumed.
+     */
+    seededRef.current = draft.seedKey;
+
+    /*
+     * Only into a body with nothing in it. A reply arrives carrying the quoted
+     * original, and prepending a signature above someone else's words is not
+     * what "seed the signature" means.
+     *
+     * The emptiness is read from the current state directly rather than inside
+     * an updater, because the rich branch has to do a SECOND thing when it
+     * writes — bump the seed nonce — and a state updater that fires another
+     * setState is a side effect React is allowed to run twice.
+     */
+    if (isRich) {
+      if (html.trim() !== "") return;
+      setHtml(withSignature("", signature, true));
+      /*
+       * The nonce is what makes the rich surface actually show it. `BodyEditor`
+       * writes `innerHTML` when its `seedKey` changes and NEVER on an `html`
+       * change — doing so would move the caret to offset 0 on every keystroke —
+       * so setting the state alone would fix the wire and leave the visible
+       * editor blank, which is the exact half-fix this item exists to avoid.
+       */
+      setSeedNonce((nonce) => nonce + 1);
+    } else {
+      if (text.trim() !== "") return;
+      setText(withSignature("", signature, false));
+    }
+    // `html` and `text` are read, so they are named. The `seededRef` guard at
+    // the top is what keeps the re-runs a keystroke causes from costing
+    // anything — it returns before touching state on every one of them.
+  }, [draft.seedKey, draft.intent, identity, prefs.signatures, isRich, html, text]);
 
   // --- autosave ------------------------------------------------------------
 
@@ -1317,7 +1398,9 @@ export function Composer({
             setHtml(next);
             touched();
           }}
-          seedKey={draft.seedKey}
+          /* D-10: the nonce is part of the seed identity, so a signature this
+             component wrote reaches the uncontrolled rich surface. */
+          seedKey={`${draft.seedKey}#${String(seedNonce)}`}
         />
 
         <AttachmentList attachments={attachments} onRemove={removeAttachment} />
