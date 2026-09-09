@@ -75,7 +75,19 @@ import (
 // that old binary refuse instead (ErrPrefsUnknownVersion), which is the
 // recoverable failure of the two — the same argument the error's own
 // documentation makes, now with real data behind it.
-const PrefsSchemaVersion = 2
+//
+// # v3 (folderVisibility)
+//
+// v3 adds exactly one key, FolderVisibility: which mailboxes the client draws
+// in its folder rail, keyed by the display name the client shows the user.
+//
+// It is a PURE ADDITION on the same terms v2 was — no key renamed, retyped or
+// re-encoded — so the lift is again the empty operation, and the bump is taken
+// for the one reason that is not about reading: a v2-stamped document carrying
+// a user's folder choices would be read by the PREVIOUS release, re-encoded
+// without them, and every hidden folder would silently reappear on the first
+// settings save. Stamping v3 makes that binary refuse instead.
+const PrefsSchemaVersion = 3
 
 // prefsVersionKey is the document key holding the schema version.
 const prefsVersionKey = "v"
@@ -291,6 +303,45 @@ type Prefs struct {
 	// only ever disagree about what the composer PRE-FILLED, which is a client
 	// preference by definition.
 	Signatures SignaturePrefs `json:"signatures"`
+
+	// ---------------------------------------------------------------------
+	// v3 — the folder rail
+	// ---------------------------------------------------------------------
+
+	// FolderVisibility is which mailboxes the client draws in its folder rail,
+	// keyed by the mailbox DISPLAY NAME as the client shows it to the user, with
+	// values "show", "hide" or "showIfUnread" — the same three Gmail gives its
+	// label list, and the same three LabelPrefs.Visibility carries.
+	//
+	// # It stores only EXPLICIT choices, and that is the whole design
+	//
+	// An absent key is not "hidden" and not "shown": it is "the client has no
+	// instruction here, so its own policy decides". Gmail's rail is full of such
+	// policy — Inbox always visible, Trash below the fold, an empty user folder
+	// treated one way and a busy one another — and that policy belongs to the
+	// client because it is a rendering decision that changes with the surface
+	// (a phone rail and a desktop rail want different answers for the same
+	// account).
+	//
+	// The server's job is narrower and more durable: remember what the user
+	// SAID. Writing a default in here would freeze today's client policy into
+	// every account's stored document, so a later improvement to the rail would
+	// reach only accounts created after it — which is precisely the failure the
+	// defaults-on-read mechanism exists to prevent, reintroduced one level down.
+	//
+	// The key is a display name rather than a mailbox id for the same reason
+	// Labels' key is a label name: an id is a row in a cache Moov can rebuild
+	// (ADR-001's reconstructible-cache invariant), and a preference that dies
+	// with a resync is not a preference. A renamed folder loses its entry, which
+	// is honest — the user hid a folder called something else.
+	//
+	// The map is capped at MaxFolderVisibility entries and each key at
+	// MaxFolderNameBytes; both are enforced by the JMAP layer, which is where a
+	// refusal can name the offending property.
+	//
+	// Omitted (nil) is distinct from empty only in encoding, never in meaning:
+	// both are "the user has expressed no folder preference".
+	FolderVisibility map[string]string `json:"folderVisibility,omitempty"`
 }
 
 // LabelPrefs is one label's presentation metadata (v2).
@@ -407,6 +458,12 @@ func DefaultPrefs() Prefs {
 		SendAndArchive:       true,    // registered divergence — see the field.
 		DefaultReplyBehavior: "reply", // canon §2.3; the asymmetric-failure argument.
 		Signatures:           SignaturePrefs{},
+
+		// v3. NIL, and unlike every other default this one is not a product
+		// choice deferred to a constant — it is the ABSENCE of a choice, on
+		// purpose. The rail's defaults are the client's policy (see the field),
+		// so the honest factory setting is "the user has said nothing".
+		FolderVisibility: nil,
 	}
 }
 
@@ -455,6 +512,14 @@ func (p Prefs) Equal(other Prefs) bool {
 			return false
 		}
 	}
+	if len(p.FolderVisibility) != len(other.FolderVisibility) {
+		return false
+	}
+	for name, v := range p.FolderVisibility {
+		if w, ok := other.FolderVisibility[name]; !ok || v != w {
+			return false
+		}
+	}
 	return true
 }
 
@@ -477,6 +542,12 @@ func (p Prefs) Clone() Prefs {
 		out.Signatures.Items = make(map[string]SignatureItem, len(p.Signatures.Items))
 		for k, v := range p.Signatures.Items {
 			out.Signatures.Items[k] = v
+		}
+	}
+	if p.FolderVisibility != nil {
+		out.FolderVisibility = make(map[string]string, len(p.FolderVisibility))
+		for k, v := range p.FolderVisibility {
+			out.FolderVisibility[k] = v
 		}
 	}
 	return out
@@ -525,8 +596,9 @@ type PrefsRecord struct {
 //	                           v1-shaped keys, since v1 is the first schema
 //	                           that ever existed. Refusing them would fail
 //	                           reads on rows this very migration creates.
-//	v == 1                  -> decode the v1 keys, LIFT to v2 (which is the
-//	                           empty operation — see below), and fill.
+//	v == 1                  -> decode the v1 keys, LIFT to v2 and then to v3
+//	                           (both the empty operation — see below), and fill.
+//	v == 2                  -> decode, LIFT to v3, and fill.
 //	v == PrefsSchemaVersion -> decode and fill.
 //	anything else           -> ErrPrefsUnknownVersion. That covers a version
 //	                           from the FUTURE, which is the real case (see the
@@ -593,13 +665,22 @@ func migratePrefs(raw []byte) (Prefs, int, error) {
 		if err := json.Unmarshal(raw, &out); err != nil {
 			return Prefs{}, 0, fmt.Errorf("decoding the stored v1 preferences: %w", err)
 		}
-		return liftPrefsV1ToV2(out), 1, nil
+		// The composition the chain was written for: a v1 document walks
+		// 1 -> 2 -> 3 through steps each written and tested once, rather than
+		// needing a fresh direct-to-current decoder per stored version.
+		return liftPrefsV2ToV3(liftPrefsV1ToV2(out)), 1, nil
 
 	case 2:
 		if err := json.Unmarshal(raw, &out); err != nil {
 			return Prefs{}, 0, fmt.Errorf("decoding the stored v2 preferences: %w", err)
 		}
-		return out, 2, nil
+		return liftPrefsV2ToV3(out), 2, nil
+
+	case 3:
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return Prefs{}, 0, fmt.Errorf("decoding the stored v3 preferences: %w", err)
+		}
+		return out, 3, nil
 
 	default:
 		return Prefs{}, 0, fmt.Errorf("%w: the stored document declares v%d, this build reads up to v%d",
@@ -623,6 +704,22 @@ func migratePrefs(raw []byte) (Prefs, int, error) {
 // cheap.
 func liftPrefsV1ToV2(p Prefs) Prefs { return p }
 
+// liftPrefsV2ToV3 raises a decoded v2 document to the v3 schema.
+//
+// It is the IDENTITY, for exactly the reason liftPrefsV1ToV2 is: v3 renames
+// nothing and retypes nothing, and its single new key (folderVisibility) is
+// absent from a v2 document — which the defaults-on-read decode has already
+// left at its default, nil.
+//
+// The nil default is what makes the empty lift CORRECT here rather than merely
+// convenient. If v3's factory setting were a populated map ("hide Spam by
+// default", say), a v2 document would have to be given that map on the way up,
+// and the lift would stop being empty — but it is not, because the rail's
+// defaults are the client's policy and the server stores only what the user
+// said (see Prefs.FolderVisibility). A v2 user therefore arrives at v3 having
+// expressed no folder preference, which is the truth about them.
+func liftPrefsV2ToV3(p Prefs) Prefs { return p }
+
 // encodePrefs renders preferences for storage: the full typed object plus its
 // version key.
 //
@@ -635,7 +732,8 @@ func liftPrefsV1ToV2(p Prefs) Prefs { return p }
 // the others exactly as they were served, which is the idempotence property
 // the JMAP layer's per-property patch depends on.
 //
-// The two v2 MAPS are the deliberate exception, tagged `omitempty`: an empty
+// The MAPS are the deliberate exception, tagged `omitempty` — the two v2 ones
+// and v3's folderVisibility alike: an empty
 // `labels` map carries no information a missing one does not, and writing
 // `"labels":{}` into every row would put a key in the column whose only effect
 // is to make a document that means "nothing customized" look different from

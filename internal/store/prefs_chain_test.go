@@ -152,7 +152,7 @@ func TestMigratePrefsV1DocumentsLiftLosslessly(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range v2OnlyKeys {
+	for _, key := range append(append([]string(nil), v2OnlyKeys...), v3OnlyKeys...) {
 		delete(doc, key)
 	}
 	doc["v"] = 1
@@ -197,6 +197,209 @@ func TestMigratePrefsV1DocumentsLiftLosslessly(t *testing.T) {
 	if got.Signatures.Items != nil || got.Signatures.ForNew != "" || got.Signatures.ForReply != "" {
 		t.Errorf("signatures = %+v, want the empty default", got.Signatures)
 	}
+	// And v3's key, which a v1 document walks two lifts to reach.
+	if got.FolderVisibility != nil {
+		t.Errorf("folderVisibility = %v, want nil for a document that names none", got.FolderVisibility)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v3 — folderVisibility
+// ---------------------------------------------------------------------------
+
+// TestMigratePrefsV2DocumentsLiftLosslessly is v3's half of the property the
+// bump rests on: a document written by the PREVIOUS release must read back with
+// every v2 choice intact and folderVisibility at its default.
+//
+// Like the v1 fixture it is built by encoding and deleting rather than by hand,
+// so it cannot drift from the real v2 key set — and it populates both v2 maps,
+// because a lift only ever exercised on scalars is a lift untested for the
+// shapes that actually carry a user's work.
+func TestMigratePrefsV2DocumentsLiftLosslessly(t *testing.T) {
+	v2 := DefaultPrefs()
+	v2.Density = "compact"
+	v2.Theme = "dark"
+	v2.Language = "es-AR"
+	v2.Labels = map[string]LabelPrefs{
+		"Facturas": {Color: "amber", Visibility: "showIfUnread"},
+		"Equipo":   {Color: "teal", Visibility: "hide"},
+	}
+	v2.OfflineDepth = OfflineDepthPrefs{HeadersPerMailbox: 500, Bodies: 250}
+	v2.AddressAutocomplete = "manual"
+	v2.SendAndArchive = false
+	v2.DefaultReplyBehavior = "replyAll"
+	v2.Signatures = SignaturePrefs{
+		Items:  map[string]SignatureItem{"work": {Name: "Work", TextBody: "-- \nD"}},
+		ForNew: "work",
+	}
+
+	raw, err := encodePrefs(v2)
+	if err != nil {
+		t.Fatalf("encodePrefs: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range v3OnlyKeys {
+		delete(doc, key)
+	}
+	doc["v"] = 2
+	legacy, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, version, err := migratePrefs(legacy)
+	if err != nil {
+		t.Fatalf("migratePrefs on a v2 document: %v", err)
+	}
+	// The version REPORTED is the version STORED, not the one lifted to.
+	if version != 2 {
+		t.Errorf("version = %d, want 2 (the version the document was STORED as)", version)
+	}
+	if !got.Equal(v2) {
+		t.Errorf("a v2 document did not lift losslessly:\n got %+v\nwant %+v", got, v2)
+	}
+	// The maps specifically: Equal walks them, but a decoder that lost a nested
+	// field would need this to be named.
+	if l := got.Labels["Facturas"]; l.Color != "amber" || l.Visibility != "showIfUnread" {
+		t.Errorf("the Facturas label did not survive the lift: %+v", l)
+	}
+	if s := got.Signatures.Items["work"]; s.Name != "Work" {
+		t.Errorf("the work signature did not survive the lift: %+v", s)
+	}
+	// And v3's key is at its default — which for this one key is the ABSENCE of
+	// a choice, not a populated map. A lift that invented rail defaults here
+	// would freeze today's client policy into every pre-existing account.
+	if got.FolderVisibility != nil {
+		t.Errorf("folderVisibility = %v, want nil: a v2 user has expressed no folder preference",
+			got.FolderVisibility)
+	}
+}
+
+// TestMigratePrefsV3RoundTripsFolderVisibility drives the new key through the
+// encoder and back with the map POPULATED, including the two key shapes that
+// are realistic and awkward: a name carrying a slash (Dovecot produces
+// "Sync issues/Conflicts" on its own) and a non-ASCII name.
+func TestMigratePrefsV3RoundTripsFolderVisibility(t *testing.T) {
+	in := DefaultPrefs()
+	in.FolderVisibility = map[string]string{
+		"Archivo":               "hide",
+		"Sync issues/Conflicts": "showIfUnread",
+		"Notas":                 "show",
+	}
+
+	raw, err := encodePrefs(in)
+	if err != nil {
+		t.Fatalf("encodePrefs: %v", err)
+	}
+	got, version, err := migratePrefs(raw)
+	if err != nil {
+		t.Fatalf("migratePrefs: %v", err)
+	}
+	if version != PrefsSchemaVersion {
+		t.Errorf("version = %d, want %d", version, PrefsSchemaVersion)
+	}
+	if !got.Equal(in) {
+		t.Errorf("the v3 round trip changed the value:\n in: %+v\nout: %+v", in, got)
+	}
+	// A slash in a KEY is nothing special to JSON — the escaping question is
+	// the JMAP layer's JSON Pointer, not this one — and pinning it here is what
+	// makes that division visible.
+	if got.FolderVisibility["Sync issues/Conflicts"] != "showIfUnread" {
+		t.Errorf("a folder name containing a slash did not round-trip: %v", got.FolderVisibility)
+	}
+}
+
+// TestMigratePrefsV3EmptyMapReadsBackAsNil pins folderVisibility's `omitempty`
+// on the same terms as the v2 maps: an empty map and a missing key both mean
+// "no expressed choice", and Equal treats them as the same value, so the stored
+// form must not distinguish them either.
+func TestMigratePrefsV3EmptyMapReadsBackAsNil(t *testing.T) {
+	in := DefaultPrefs()
+	in.FolderVisibility = map[string]string{}
+
+	raw, err := encodePrefs(in)
+	if err != nil {
+		t.Fatalf("encodePrefs: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := doc["folderVisibility"]; present {
+		t.Errorf("an empty folderVisibility map was written as a key: %s", raw)
+	}
+
+	got, _, err := migratePrefs(raw)
+	if err != nil {
+		t.Fatalf("migratePrefs: %v", err)
+	}
+	if got.FolderVisibility != nil {
+		t.Errorf("folderVisibility = %v, want nil after a round trip through empty", got.FolderVisibility)
+	}
+	if !got.Equal(in) {
+		t.Error("an empty folderVisibility map and a nil one must be equal")
+	}
+}
+
+// TestPrefsEqualAndCloneCoverFolderVisibility guards the two hand-written
+// methods against the field they were most likely to be updated without: a
+// field Equal forgets makes every test that uses it vacuous for that field, and
+// a map Clone aliases lets the JMAP layer's read-patch-write edit the value it
+// was only reading from.
+func TestPrefsEqualAndCloneCoverFolderVisibility(t *testing.T) {
+	base := DefaultPrefs()
+	base.FolderVisibility = map[string]string{"Archivo": "hide"}
+
+	for name, mutate := range map[string]func(p *Prefs){
+		"a folder added":      func(p *Prefs) { p.FolderVisibility["Spam"] = "hide" },
+		"a folder forgotten":  func(p *Prefs) { delete(p.FolderVisibility, "Archivo") },
+		"a folder re-decided": func(p *Prefs) { p.FolderVisibility["Archivo"] = "showIfUnread" },
+		"the whole map wiped": func(p *Prefs) { p.FolderVisibility = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			other := base.Clone()
+			mutate(&other)
+			if base.Equal(other) {
+				t.Errorf("Equal reports two values identical although %s: the field is unguarded", name)
+			}
+		})
+	}
+
+	// Clone must be deep, and a nil map must stay nil.
+	clone := base.Clone()
+	clone.FolderVisibility["Archivo"] = "show"
+	clone.FolderVisibility["Notas"] = "hide"
+	if base.FolderVisibility["Archivo"] != "hide" || len(base.FolderVisibility) != 1 {
+		t.Errorf("Clone aliases the folder map: the source is now %v", base.FolderVisibility)
+	}
+	if DefaultPrefs().Clone().FolderVisibility != nil {
+		t.Error("Clone turned a nil folder map into an empty one")
+	}
+}
+
+// TestLiftPrefsV2ToV3IsTheIdentity states the chain's newest step as the
+// property it is, rather than leaving it implied by the end-to-end tests.
+//
+// It matters because the step is EMPTY only as long as v3's default is the
+// absence of a choice. A future edit that gave folderVisibility a populated
+// default would have to fill it here for pre-v3 documents, and this test is
+// what turns that omission into a failure instead of into a silent difference
+// between old and new accounts.
+func TestLiftPrefsV2ToV3IsTheIdentity(t *testing.T) {
+	in := DefaultPrefs()
+	in.Theme = "dark"
+	in.Labels = map[string]LabelPrefs{"a": {Color: "red", Visibility: "show"}}
+
+	if got := liftPrefsV2ToV3(in); !got.Equal(in) {
+		t.Errorf("liftPrefsV2ToV3 changed the value:\n in: %+v\nout: %+v", in, got)
+	}
+	if DefaultPrefs().FolderVisibility != nil {
+		t.Error("the v3 default is a populated map: the lift can no longer be the identity, " +
+			"because a v1/v2 document would need that map filled in on the way up")
+	}
 }
 
 // v2OnlyKeys are the JSON keys v2 added. Named once so the tests that must
@@ -205,6 +408,9 @@ var v2OnlyKeys = []string{
 	"labels", "offlineDepth", "addressAutocomplete",
 	"sendAndArchive", "defaultReplyBehavior", "signatures",
 }
+
+// v3OnlyKeys are the JSON keys v3 added — exactly one.
+var v3OnlyKeys = []string{"folderVisibility"}
 
 // TestMigratePrefsV2RoundTripsTheNewKeys drives every v2 key through the
 // encoder and back, with the maps populated: a map whose encoding is only ever
@@ -397,13 +603,14 @@ func TestEncodePrefsWritesEveryKeyPlusTheVersion(t *testing.T) {
 	// Prefs/set naming one property must preserve the others exactly as they
 	// were served, which is the idempotence the JMAP patch depends on.
 	//
-	// The two v2 MAPS are the documented exception — `omitempty`, because an
-	// empty map carries nothing a missing key does not — so this fixture
-	// populates them, and the empty case is pinned separately by
-	// TestMigratePrefsV2EmptyMapsReadBackAsNil.
+	// The MAPS are the documented exception — `omitempty`, because an empty map
+	// carries nothing a missing key does not — so this fixture populates all
+	// three, and the empty case is pinned separately by
+	// TestMigratePrefsV2EmptyMapsReadBackAsNil and its v3 counterpart.
 	full := DefaultPrefs()
 	full.Labels = map[string]LabelPrefs{"a": {Color: "red", Visibility: "show"}}
 	full.Signatures.Items = map[string]SignatureItem{"s": {Name: "S"}}
+	full.FolderVisibility = map[string]string{"Archivo": "hide"}
 
 	raw, err := encodePrefs(full)
 	if err != nil {
@@ -423,6 +630,8 @@ func TestEncodePrefsWritesEveryKeyPlusTheVersion(t *testing.T) {
 		// v2.
 		"labels", "offlineDepth", "addressAutocomplete",
 		"sendAndArchive", "defaultReplyBehavior", "signatures",
+		// v3.
+		"folderVisibility",
 	}
 	for _, key := range want {
 		if _, ok := doc[key]; !ok {
@@ -435,10 +644,11 @@ func TestEncodePrefsWritesEveryKeyPlusTheVersion(t *testing.T) {
 }
 
 // TestEncodePrefsStampsTheCurrentVersion pins that the stored document declares
-// v2 and not the version it happened to be read at. This is the whole reason
-// the bump was taken (PrefsSchemaVersion's comment): a document carrying v2 data
-// under a v1 stamp would be read, downgraded and overwritten by the previous
-// release, silently destroying a user's labels.
+// the CURRENT version and not the version it happened to be read at. This is
+// the whole reason each bump was taken (PrefsSchemaVersion's comment): a
+// document carrying v3 data under a v2 stamp would be read, downgraded and
+// overwritten by the previous release, silently destroying a user's folder
+// choices — the same argument v2 made about labels.
 func TestEncodePrefsStampsTheCurrentVersion(t *testing.T) {
 	raw, err := encodePrefs(DefaultPrefs())
 	if err != nil {
@@ -452,8 +662,8 @@ func TestEncodePrefsStampsTheCurrentVersion(t *testing.T) {
 	if !ok || int(v) != PrefsSchemaVersion {
 		t.Fatalf(`document "v" = %v, want %d`, doc["v"], PrefsSchemaVersion)
 	}
-	if PrefsSchemaVersion != 2 {
-		t.Errorf("PrefsSchemaVersion = %d; this batch ships v2", PrefsSchemaVersion)
+	if PrefsSchemaVersion != 3 {
+		t.Errorf("PrefsSchemaVersion = %d; this batch ships v3 (folderVisibility)", PrefsSchemaVersion)
 	}
 }
 
@@ -527,5 +737,17 @@ func TestDefaultPrefsMatchTheSignedDecisions(t *testing.T) {
 	}
 	if d.Signatures.Items != nil || d.Signatures.ForNew != "" || d.Signatures.ForReply != "" {
 		t.Errorf("the default signatures are %+v, want empty", d.Signatures)
+	}
+
+	// --- v3 ---
+
+	// The rail's defaults belong to the CLIENT. Storing one here would freeze
+	// today's rendering policy into every account's document, so a later
+	// improvement to the rail would reach only accounts created after it — the
+	// exact failure defaults-on-read exists to prevent, one level down.
+	if d.FolderVisibility != nil {
+		t.Errorf("the default folderVisibility is %v, want nil: the server stores only the "+
+			"choices a user made, and what to draw for an unnamed folder is the client's policy",
+			d.FolderVisibility)
 	}
 }
