@@ -186,6 +186,12 @@ services:
       # configurable for a client served from elsewhere (S1 H7).
       MOOV_JMAP_CORS_ORIGINS: ${MOOV_JMAP_CORS_ORIGINS:-}
 
+      # --- Branding (W-A1): per-host brand, PWA manifest and icons.
+      # The path INSIDE the container; the host side is the bind mount below.
+      # An empty directory is a complete configuration (every host gets Moov's
+      # brand), so this is always set rather than made optional.
+      MOOV_BRANDING_DIR: /etc/moov/branding
+
       # --- Operational HTTP: /healthz and /metrics (E8-lite).
       MOOV_HTTP_ADDR: ":8080"
 
@@ -197,6 +203,12 @@ services:
       # Content-addressed message blobs. A named volume, not a bind mount: this
       # is Moov's own data, and Dovecot must never see it.
       - blobs:/var/lib/moov/blobs
+      # Per-host branding, written on the HOST by `moovctl branding set` and
+      # read here. Read-only: the daemon serves it and never writes it. A
+      # missing host directory is created empty by Docker (root-owned, 0755,
+      # readable by the nonroot daemon), which serves Moov's defaults — a
+      # valid state, so a fresh install needs no manual mkdir.
+      - ${MOOV_BRANDING_HOST_DIR:-/etc/moov/branding}:/etc/moov/branding:ro
 
     # No `ports:` — deliberately, and this is the VPN-only property. The JMAP
     # listener (8620) and the metrics listener (8080) are reachable ONLY from

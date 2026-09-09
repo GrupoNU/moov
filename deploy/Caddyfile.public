@@ -132,11 +132,15 @@ https://moov.atmosfera.cloud:443, https://mail.gruponu.com:443, https://mail.are
 
 	# --- JMAP routes -> moovd ---
 	#
-	# Byte-for-byte the same matcher as Caddyfile.pilot, deliberately: the public
-	# and VPN entries must route identically, or a bug reproduces on one path and
-	# not the other. It covers both route vocabularies so the S1 jmap-proxy
-	# rollback stays a one-line change here too.
-	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource*
+	# Byte-for-byte the same matcher as Caddyfile.pilot (and as the Bulwark
+	# vhost below), deliberately: the public and VPN entries must route
+	# identically, or a bug reproduces on one path and not the other. It covers
+	# both route vocabularies so the S1 jmap-proxy rollback stays a one-line
+	# change here too, plus /branding* — the per-Host brand document, assets,
+	# PWA manifest and icons, which are moovd's, not the static PWA's. Without
+	# that entry the SPA shell answered those URLs with index.html (found live,
+	# 2026-09-09) and every host installed as Moov.
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding*
 	handle @jmap {
 		reverse_proxy moovd:8620 {
 			# SSE (/jmap/eventsource) is a long-lived stream that must not be
@@ -223,7 +227,8 @@ https://bulwark.atmosfera.cloud:443 {
 		-Server
 	}
 
-	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource*
+	# Same matcher as the branded vhost above and as Caddyfile.pilot.
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding*
 	handle @jmap {
 		reverse_proxy moovd:8620 {
 			flush_interval -1

@@ -40,9 +40,15 @@
 :8090 {
 	# Both route vocabularies, so this matcher works for either backend:
 	#   Moov:       /.well-known/jmap, /jmap/api, /jmap/download/*, /jmap/upload/*,
-	#               /jmap/eventsource
+	#               /jmap/eventsource, and the public branding routes —
+	#               /branding, /branding/assets/*, /branding/manifest.webmanifest,
+	#               /branding/icons/* (per-Host brand, manifest and PWA icons).
 	#   jmap-proxy: /session, /jmap, /raw/*, /upload/*, /eventsource
-	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource*
+	#
+	# /branding* MUST reach moovd: without it the SPA's index.html is served
+	# for those URLs and the browser gets HTML where it expected a manifest
+	# or an icon (this exact miss was found live on 2026-09-09).
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding*
 	handle @jmap {
 		reverse_proxy moovd:8620
 	}
