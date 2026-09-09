@@ -211,6 +211,30 @@ describe("Crear filtro (E12/B7)", () => {
     expect(result.usable).toBe(true);
   });
 
+  it("E-23: says WHY it is greyed, on the page and not in a tooltip", () => {
+    /*
+     * The `title` was the whole defect: it needs a hover, so it never reached a
+     * touch user or a keyboard user — and a disabled button is not hoverable at
+     * all in some browsers, which put the explanation out of reach of exactly
+     * the people who most needed it.
+     */
+    renderPanel("factura", vi.fn());
+    const button = screen.getByRole("button", { name: /crear filtro/i });
+    expect(button).toBeDisabled();
+
+    const whyId = button.getAttribute("aria-describedby");
+    expect(whyId).not.toBeNull();
+    expect(document.getElementById(whyId ?? "")?.textContent ?? "").not.toBe("");
+  });
+
+  it("E-23: carries no such note when the button works", () => {
+    renderPanel("from:a@b.com", vi.fn());
+    const button = screen.getByRole("button", { name: /crear filtro/i });
+    expect(button).not.toBeDisabled();
+    // The panel does not carry a permanent explanation of a state it is not in.
+    expect(button.getAttribute("aria-describedby")).toBeNull();
+  });
+
   it("is DISABLED when nothing would become a rule condition", () => {
     /*
      * A rule with no conditions matches EVERY message. A search of pure free

@@ -502,9 +502,18 @@ export function SearchOptions({
       </div>
 
       <div className={styles.actions}>
+        {/*
+          E-22: "Limpiar" is a TEXT LINK, not a third button.
+
+          Gmail's panel ends in two buttons. Ours ended in three of equal
+          weight, which reads as three equally likely next steps — and one of
+          them throws away everything the user just typed. Demoting it to a link
+          on the left is what puts the destructive option where the eye does not
+          land first, without hiding it.
+        */}
         <button
           type="button"
-          className={styles.secondary}
+          className={styles.reset}
           onClick={() => {
             setState(stateFromQuery("", mailboxes));
           }}
@@ -532,11 +541,16 @@ export function SearchOptions({
             type="button"
             className={styles.secondary}
             disabled={!filterDraft.usable}
-            title={
-              filterDraft.usable
-                ? t("search.options.createFilter")
-                : t("search.options.createFilterUnusable")
-            }
+            /*
+              E-23: the reason it is disabled is now VISIBLE (below), and this
+              points at it. A `title` alone was the whole defect: it needs a
+              hover, so it never reaches a touch user or a keyboard user, and a
+              disabled button is not hoverable in some browsers at all — which
+              made the explanation unreachable exactly for the people who most
+              needed it. `aria-describedby` is how the same sentence reaches a
+              screen reader.
+            */
+            {...(filterDraft.usable ? {} : { "aria-describedby": field("filter-why") })}
             onClick={() => {
               onCreateFilter(filterDraft);
             }}
@@ -559,6 +573,18 @@ export function SearchOptions({
         it from. They would discover it weeks later, as archived mail they
         wanted.
       */}
+      {/*
+        E-23: why "Crear filtro" is greyed, as text on the page.
+
+        Rendered only when it IS greyed, so the panel does not carry a
+        permanent explanation of a state it is not in.
+      */}
+      {onCreateFilter !== undefined && !filterDraft.usable && (
+        <p className={styles.disabledWhy} id={field("filter-why")}>
+          {t("search.options.createFilterUnusable")}
+        </p>
+      )}
+
       {onCreateFilter !== undefined && filterDraft.dropped.length > 0 && (
         <p className={styles.droppedNote} role="status">
           {format(
