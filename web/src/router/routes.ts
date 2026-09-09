@@ -24,6 +24,37 @@
  * ("/mail/search") would make every mailbox-shaped code path special-case it.
  */
 
+/**
+ * The page a list route is showing, when it is not the first (B-12).
+ *
+ * # Why the pager belongs in the URL after all
+ *
+ * `MailScreen` held this in `useState` with a documented reason: a page number
+ * is not shareable, because "their inbox's page 3 holds different mail, and
+ * mine holds different mail an hour later". That is true and it is an argument
+ * about SHARING — but it is not the only thing a URL does. Back and reload are
+ * the other two, and the review caught both failing: paging to 3 and pressing
+ * Back left the app entirely instead of stepping to page 2, and reloading
+ * dropped the user to page 1 with no indication anything had moved.
+ *
+ * A URL is the history entry. Anything the user navigated to and expects Back
+ * to return from has to be in it, whether or not it means the same thing to
+ * somebody else — and Gmail's own `#inbox/p2` is exactly this shape.
+ *
+ * # Why page 1 has no parameter
+ *
+ * `/mail/inbox` and `/mail/inbox?p=1` would be two URLs for one destination,
+ * and `routesEqual` is `formatRoute` equality — so the router would think a
+ * navigation happened where none did, pushing a duplicate history entry that
+ * Back would have to be pressed twice to escape. One canonical form removes the
+ * question, the same way `formatRoute` always writes the settings tab.
+ *
+ * 1-based, because it is what the URL says and what a user reads: `?p=2` is the
+ * second page. The conversion to the 0-based `position` the server pages by
+ * happens at the one place that talks to the server.
+ */
+export type PageNumber = number;
+
 /** The application's destinations. A closed union: adding one is a compile error everywhere it must be handled. */
 export type Route =
   /** The message list for one mailbox, optionally with a message open. */
@@ -32,12 +63,15 @@ export type Route =
       /** A JMAP mailbox id ("mc"), or a role alias ("inbox") resolved at render time. */
       readonly mailboxId: string;
       readonly messageId?: string;
+      /** B-12: the 1-based page, absent on page one. See {@link PageNumber}. */
+      readonly page?: PageNumber;
     }
   /** Full-text search across the account. */
   | {
       readonly kind: "search";
       readonly query: string;
       readonly messageId?: string;
+      readonly page?: PageNumber;
     }
   /**
    * E8: every message carrying one user label.
@@ -58,6 +92,7 @@ export type Route =
       /** The label's display name, un-prefixed. */
       readonly name: string;
       readonly messageId?: string;
+      readonly page?: PageNumber;
     }
   /**
    * E9: the Outbox — mail composed offline, waiting for a connection.
@@ -83,7 +118,11 @@ export type Route =
    * messages: opening one from here has to be a link a user can share, and
    * coming back has to land on the starred list rather than on the inbox.
    */
-  | { readonly kind: "starred"; readonly messageId?: string }
+  | {
+      readonly kind: "starred";
+      readonly messageId?: string;
+      readonly page?: PageNumber;
+    }
   /**
    * "Pospuestos" before the Snoozed folder exists (owner's finding 3).
    *
@@ -235,12 +274,24 @@ export function parseRoute(url: string): Route {
       ? withoutLeading.slice(0, -1)
       : withoutLeading;
 
+  /*
+   * B-12: `?p=N`, spread as `{ page: N }` or as nothing at all.
+   *
+   * Spread rather than assigned so page one produces a route with NO `page`
+   * key — under `exactOptionalPropertyTypes` an explicit `page: undefined` is
+   * a different object from an absent one, and `toEqual` in the round-trip
+   * test sees the difference. That is the compiler enforcing the canonical
+   * form the header argues for.
+   */
+  const page = parsePageParam(parsed.searchParams.get("p"));
+  const pageProp = page === undefined ? {} : { page };
+
   if (segments[0] === "search") {
     const query = parsed.searchParams.get("q") ?? "";
     const messageId = segments[1];
     return messageId !== undefined && messageId !== ""
-      ? { kind: "search", query, messageId: decodeURIComponent(messageId) }
-      : { kind: "search", query };
+      ? { kind: "search", query, messageId: decodeURIComponent(messageId), ...pageProp }
+      : { kind: "search", query, ...pageProp };
   }
 
   /*
@@ -255,8 +306,8 @@ export function parseRoute(url: string): Route {
     const messageId = segments[2];
     const decoded = decodeURIComponent(name);
     return messageId !== undefined && messageId !== ""
-      ? { kind: "label", name: decoded, messageId: decodeURIComponent(messageId) }
-      : { kind: "label", name: decoded };
+      ? { kind: "label", name: decoded, messageId: decodeURIComponent(messageId), ...pageProp }
+      : { kind: "label", name: decoded, ...pageProp };
   }
 
   /*
@@ -267,8 +318,8 @@ export function parseRoute(url: string): Route {
   if (segments[0] === "starred") {
     const messageId = segments[1];
     return messageId !== undefined && messageId !== ""
-      ? { kind: "starred", messageId: decodeURIComponent(messageId) }
-      : { kind: "starred" };
+      ? { kind: "starred", messageId: decodeURIComponent(messageId), ...pageProp }
+      : { kind: "starred", ...pageProp };
   }
 
   // Like the Outbox: one fixed segment, nothing to parameterise, no message to
@@ -306,11 +357,37 @@ export function parseRoute(url: string): Route {
     const messageId = segments[2];
     const mailboxId = decodeURIComponent(mailbox);
     return messageId !== undefined && messageId !== ""
-      ? { kind: "mailbox", mailboxId, messageId: decodeURIComponent(messageId) }
-      : { kind: "mailbox", mailboxId };
+      ? { kind: "mailbox", mailboxId, messageId: decodeURIComponent(messageId), ...pageProp }
+      : { kind: "mailbox", mailboxId, ...pageProp };
   }
 
   return DEFAULT_ROUTE;
+}
+
+/**
+ * `?p=` as a page number, or undefined for anything that is not one (B-12).
+ *
+ * Every rejection lands on undefined, which renders page one — the same
+ * posture `parseRoute` takes overall: a URL a user typed, truncated or edited
+ * by hand must never produce a blank screen or an error. "p=0", "p=-3",
+ * "p=abc", "p=1.5" and "p=" are all simply "the first page".
+ *
+ * The upper bound is the pager's own reach: `mail/paging.ts` mirrors the
+ * server's `MaxQueryReach` of 100,000 over pages of 50, so page 2,000 is the
+ * last one that can be served. A hand-typed `?p=999999` clamps to page one
+ * rather than requesting a position the server will answer with an empty list
+ * that looks like lost mail.
+ */
+const MAX_PAGE = 2000;
+
+function parsePageParam(raw: string | null): number | undefined {
+  if (raw === null || raw === "") return undefined;
+  // `Number` and not `parseInt`: `parseInt("2abc")` is 2, which would silently
+  // accept a malformed parameter as a page.
+  const value = Number(raw);
+  if (!Number.isInteger(value)) return undefined;
+  if (value <= 1 || value > MAX_PAGE) return undefined;
+  return value;
 }
 
 /**
@@ -325,32 +402,45 @@ export function formatRoute(route: Route): string {
   switch (route.kind) {
     case "mailbox": {
       const base = `/mail/${encodeURIComponent(route.mailboxId)}`;
-      return route.messageId !== undefined
-        ? `${base}/${encodeURIComponent(route.messageId)}`
-        : base;
+      const path =
+        route.messageId !== undefined
+          ? `${base}/${encodeURIComponent(route.messageId)}`
+          : base;
+      return `${path}${pageQuery(route.page)}`;
     }
     case "label": {
       // The name IS encoded, which is what keeps "work/clients" one segment.
       const base = `/label/${encodeURIComponent(route.name)}`;
-      return route.messageId !== undefined
-        ? `${base}/${encodeURIComponent(route.messageId)}`
-        : base;
+      const path =
+        route.messageId !== undefined
+          ? `${base}/${encodeURIComponent(route.messageId)}`
+          : base;
+      return `${path}${pageQuery(route.page)}`;
     }
     case "search": {
       // The query lives in the search string rather than the path: it is
       // free text, it may be empty, and `?q=` is the form users recognise
       // and that search engines and browsers autocomplete sensibly.
-      const suffix = route.query === "" ? "" : `?q=${encodeURIComponent(route.query)}`;
+      const params: string[] = [];
+      if (route.query !== "") params.push(`q=${encodeURIComponent(route.query)}`);
+      // B-12: `p` after `q`, always in this order — `formatRoute` equality IS
+      // `routesEqual`, so two spellings of one destination would make the
+      // router see a navigation where none happened.
+      if (isPagedBeyondFirst(route.page)) params.push(`p=${String(route.page)}`);
+      const suffix = params.length === 0 ? "" : `?${params.join("&")}`;
       const base =
         route.messageId !== undefined
           ? `/search/${encodeURIComponent(route.messageId)}`
           : "/search";
       return `${base}${suffix}`;
     }
-    case "starred":
-      return route.messageId !== undefined
-        ? `/starred/${encodeURIComponent(route.messageId)}`
-        : "/starred";
+    case "starred": {
+      const path =
+        route.messageId !== undefined
+          ? `/starred/${encodeURIComponent(route.messageId)}`
+          : "/starred";
+      return `${path}${pageQuery(route.page)}`;
+    }
     case "snoozedEmpty":
       return "/snoozed";
     case "outbox":
@@ -369,6 +459,64 @@ export function formatRoute(route: Route): string {
   }
 }
 
+/** True when a page number is worth writing into a URL (B-12). */
+function isPagedBeyondFirst(page: number | undefined): boolean {
+  return page !== undefined && page > 1;
+}
+
+/** `?p=N`, or "" for page one — the canonical form. */
+function pageQuery(page: number | undefined): string {
+  return isPagedBeyondFirst(page) ? `?p=${String(page)}` : "";
+}
+
+/**
+ * The page a route is showing — always a real 1-based number (B-12).
+ *
+ * Routes with no list (the Outbox, Scheduled, settings, the empty Pospuestos)
+ * answer 1 rather than undefined, so a caller never has to ask "does this
+ * destination page" before asking "which page". Those views simply do not call
+ * it.
+ */
+export function pageOf(route: Route): number {
+  if (
+    route.kind === "outbox" ||
+    route.kind === "scheduled" ||
+    route.kind === "snoozedEmpty" ||
+    route.kind === "settings"
+  ) {
+    return 1;
+  }
+  return route.page ?? 1;
+}
+
+/**
+ * The same list at a different page (B-12).
+ *
+ * The counterpart to {@link withMessage}, and it exists for the same reason:
+ * building a fresh route at each call site is how a pager loses the search
+ * query, the label name or the open message it was paging underneath.
+ *
+ * Page one drops the key entirely rather than setting it to 1 — the canonical
+ * form `PageNumber` documents, without which `/mail/inbox` and
+ * `/mail/inbox?p=1` become two URLs for one destination and `routesEqual`
+ * reports a navigation that did not happen.
+ *
+ * A non-list route absorbs the request unchanged, exactly as `withMessage`
+ * does for a message: there is no list to page.
+ */
+export function withPage(route: Route, page: number): Route {
+  if (
+    route.kind === "outbox" ||
+    route.kind === "scheduled" ||
+    route.kind === "snoozedEmpty" ||
+    route.kind === "settings"
+  ) {
+    return route;
+  }
+  const { page: _dropped, ...rest } = route;
+  return page > 1 ? { ...rest, page } : rest;
+}
+
 /** True when two routes denote the same destination. */
 export function routesEqual(a: Route, b: Route): boolean {
   return formatRoute(a) === formatRoute(b);
@@ -382,20 +530,31 @@ export function routesEqual(a: Route, b: Route): boolean {
  * site.
  */
 export function withMessage(route: Route, messageId: string | undefined): Route {
+  /*
+   * B-12: the PAGE survives opening and closing a message, for exactly the
+   * reason this function exists at all. Opening a message from page 3 and
+   * closing it again has to land back on page 3 — dropping the parameter here
+   * would silently reset the list under the reader, which is the same class of
+   * bug as losing the search query.
+   */
+  const current = pageOf(route);
+  const pageProp = current > 1 ? { page: current } : {};
   if (route.kind === "mailbox") {
     return messageId === undefined
-      ? { kind: "mailbox", mailboxId: route.mailboxId }
-      : { kind: "mailbox", mailboxId: route.mailboxId, messageId };
+      ? { kind: "mailbox", mailboxId: route.mailboxId, ...pageProp }
+      : { kind: "mailbox", mailboxId: route.mailboxId, messageId, ...pageProp };
   }
   if (route.kind === "label") {
     return messageId === undefined
-      ? { kind: "label", name: route.name }
-      : { kind: "label", name: route.name, messageId };
+      ? { kind: "label", name: route.name, ...pageProp }
+      : { kind: "label", name: route.name, messageId, ...pageProp };
   }
   if (route.kind === "starred") {
     // A list of real messages, so it behaves like the mailbox and label views:
     // opening one keeps the starred list underneath it.
-    return messageId === undefined ? { kind: "starred" } : { kind: "starred", messageId };
+    return messageId === undefined
+      ? { kind: "starred", ...pageProp }
+      : { kind: "starred", messageId, ...pageProp };
   }
   /*
    * E9: the Outbox holds no messages the reader can open, so it absorbs the

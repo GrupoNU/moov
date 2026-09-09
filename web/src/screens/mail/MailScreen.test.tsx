@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 // The shell renders in English under jsdom, so assertions read their expected
 // names out of the table rather than hard-coding either language's literals.
 import { en } from "../../i18n/strings";
+import { PAGE_SIZE } from "../../mail/paging";
 import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS } from "../../mail/prefs";
 import { OfflineProvider } from "../../offline/OfflineProvider";
@@ -160,6 +161,15 @@ let emailSetCalls: Record<string, unknown>[] = [];
 /** Every `filter` the shell sent to `Email/query`, in order. */
 let emailQueryFilters: unknown[] = [];
 
+/**
+ * Every `position` the shell asked `Email/query` for, in order (B-12).
+ *
+ * This is what makes the page-in-the-URL test assert the WIRING rather than
+ * jsdom's history: the URL saying `?p=3` proves nothing on its own, but the
+ * shell then asking the server for position 100 proves it read it.
+ */
+let emailQueryPositions: unknown[] = [];
+
 /** Answers one JMAP method call with something shaped like the real thing. */
 function respond(name: string, args: Record<string, unknown>): Record<string, unknown> {
   switch (name) {
@@ -167,6 +177,7 @@ function respond(name: string, args: Record<string, unknown>): Record<string, un
       return { accountId: ACCOUNT, state: "mb-1", list: [INBOX], notFound: [] };
     case "Email/query":
       emailQueryFilters.push(args.filter);
+      emailQueryPositions.push(args.position);
       return {
         accountId: ACCOUNT,
         queryState: "q-1",
@@ -359,6 +370,7 @@ describe("MailScreen — the shell's canary", () => {
     threadTwoEmailIds = ["e2"];
     emailSetCalls = [];
     emailQueryFilters = [];
+    emailQueryPositions = [];
     /*
      * The router is backed by `window.location`, which jsdom keeps for the
      * whole FILE. Without this reset a test that navigated (the settings walk
@@ -742,6 +754,76 @@ describe("MailScreen — the shell's canary", () => {
     );
     await waitFor(() => {
       expect(screen.queryByRole("toolbar")).not.toBeNull();
+    });
+  });
+
+  /**
+   * B-12: the page is in the URL, so Back steps through pages.
+   *
+   * The pager's own arithmetic is `mail/paging.ts` and the URL shape is
+   * `router/routes.ts`; both are pure and tested there. What is only decidable
+   * HERE is the wiring the review found missing: that paging pushes a history
+   * entry rather than assigning to local state, so Back returns to the previous
+   * page instead of leaving the app.
+   */
+  it("puts the page in the URL and steps back through pages (B-12)", async () => {
+    // No `userEvent` here: the fixture's short page correctly disables the
+    // pager's arrow, so the navigation is driven through the URL — which is the
+    // path a bookmark, a reload and Back all take anyway.
+    renderShell();
+    await waitFor(
+      () => {
+        expect(screen.getByText("The first message")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+
+    /*
+     * Page one carries no URL parameter — one destination, one URL — and sends
+     * no `position` either: `mail/api.ts` omits it at 0, which is RFC 8620's
+     * own default. So "page one" is `undefined` on the wire, not `0`.
+     */
+    expect(window.location.search).toBe("");
+    expect(emailQueryPositions).toContain(undefined);
+    expect(emailQueryPositions).not.toContain(2 * PAGE_SIZE);
+
+    /*
+     * The OLDER arrow is correctly disabled here: the fixture serves a short
+     * page, the result is exhausted, and `hasNextPage` refuses an arrow that
+     * would page into nothing. So the navigation is driven through the URL
+     * instead — which is not a workaround but the more valuable path, because
+     * it is the one a bookmark, a reload and Back all take, and it is exactly
+     * the one that did not work before B-12: `?p=` was not in the route model
+     * at all, so the list always rendered page one whatever the URL said.
+     */
+    expect(screen.getByRole("button", { name: en["list.page.older"] })).toBeDisabled();
+
+    // In `act`, because the popstate listener sets router state synchronously
+    // and React otherwise warns that an update escaped the test's control.
+    act(() => {
+      window.history.pushState(null, "", "/mail/inbox?p=3");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    /*
+     * The assertion that matters. Not that the URL says `?p=3` — jsdom would
+     * report that whether or not the app noticed — but that the shell READ it
+     * and asked the server for the third page: position 100, from page 3 over
+     * `PAGE_SIZE` 50.
+     */
+    await waitFor(() => {
+      expect(emailQueryPositions).toContain(2 * PAGE_SIZE);
+    });
+
+    // And Back returns to the page before it rather than out of the app, with
+    // the shell re-querying position 0 rather than leaving page 3 on screen.
+    emailQueryPositions = [];
+    window.history.back();
+    await waitFor(() => {
+      expect(window.location.search).toBe("");
+    });
+    await waitFor(() => {
+      expect(emailQueryPositions).toContain(undefined);
     });
   });
 });

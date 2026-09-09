@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { JmapClient, withAccessToken, type BasicCredentials } from "../../api/jmap";
 import { TokenManager } from "../../api/tokens";
@@ -123,7 +123,9 @@ import {
   DEFAULT_ROUTE,
   DEFAULT_SETTINGS_TAB,
   openMessageId as routeMessageId,
+  pageOf,
   withMessage,
+  withPage,
   type Route,
   type SettingsTab,
 } from "../../router/routes";
@@ -338,20 +340,39 @@ export function MailScreen(): React.JSX.Element {
   const [resultTotal, setResultTotal] = useState<number | undefined>(undefined);
 
   /**
-   * B4: the page offset the list is showing (canon 07 §3).
+   * B-12: the page offset the list is showing, DERIVED FROM THE URL.
    *
-   * State rather than a route parameter, and the choice is deliberate. A page
-   * number in the URL would make "/mail/inbox?p=3" a shareable link to a
-   * position that means nothing to the recipient — their inbox's page 3 holds
-   * different mail, and mine holds different mail an hour later. Gmail's own
-   * pager is likewise not in its URL. What IS shareable stays shareable: the
-   * folder, the search, and the open message.
+   * # Why this stopped being local state
    *
-   * It resets whenever the LIST identity changes, which is what keeps a folder
-   * switch from landing on page 3 of a folder with six messages — the same rule
-   * and the same `listKey` the virtualizer resets its scroll on.
+   * B4 put it in `useState` with an argument that was true as far as it went: a
+   * page number is not shareable, because "their inbox's page 3 holds different
+   * mail, and mine holds different mail an hour later". Sharing, though, is one
+   * of three things a URL does, and the review caught the other two failing.
+   * Paging to 3 and pressing Back left the app entirely rather than stepping to
+   * page 2. Reloading dropped the user silently to page 1. Both are the URL not
+   * holding state the user navigated to and expects Back to return from —
+   * regardless of whether it means the same thing to somebody else. Gmail's own
+   * `#inbox/p2` is exactly this shape.
+   *
+   * So there is no page state here any more. The single source is the route,
+   * and `setPosition` navigates rather than assigning — which is what makes
+   * Back work by construction instead of by a listener that has to be kept in
+   * step with a separate copy.
+   *
+   * The reset on a list change happens for free: a new folder is a new route
+   * built without a page, so the parameter is simply not there. That replaces
+   * B4's `useLayoutEffect`, and replaces it with something that cannot be
+   * out of order with the paint.
    */
-  const [position, setPosition] = useState(0);
+  const position = (pageOf(route) - 1) * PAGE_SIZE;
+  const setPosition = useCallback(
+    (next: number): void => {
+      // `navigate`, not `replace`: paging is a destination the user chose, and
+      // Back must return from it. That IS the finding.
+      navigate(withPage(route, Math.floor(next / PAGE_SIZE) + 1));
+    },
+    [navigate, route],
+  );
 
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [detail, setDetail] = useState<{ email?: Email; thread?: Thread }>({});
@@ -976,20 +997,19 @@ export function MailScreen(): React.JSX.Element {
         `mailbox:${activeMailbox?.id ?? ""}:${prefs.inboxType}:${collapseThreads ? "c" : "m"}`;
 
   /*
-   * B4: a NEW list starts at page one.
+   * B-12: a new list starting at page one needs no effect any more.
    *
-   * `listKey` is exactly the identity the virtualizer resets its scroll on, and
-   * the pager has to follow it for the same reason: an offset into the previous
-   * list means nothing in this one. Without this, switching from a 15,000-row
-   * inbox at page 40 to a folder with six messages would land on an empty page
-   * that looks like the folder is empty.
+   * B4 reset the offset in a `useLayoutEffect` keyed on `listKey`, so that
+   * switching from a 15,000-row inbox at page 40 to a folder with six messages
+   * did not land on an empty page that looks like an empty folder. That is
+   * still exactly right, and it is now structural rather than reactive: the
+   * page lives in the ROUTE, and navigating to another folder builds a route
+   * without a page parameter, so the new list is on page one by construction.
    *
-   * A layout effect, not a plain one, so the reset happens before paint —
-   * otherwise one frame renders the new folder at the old offset.
+   * The effect is gone rather than kept as a belt: it would now fight the URL,
+   * resetting a page the user deep-linked to or reached with Back the moment
+   * `listKey` was recomputed.
    */
-  useLayoutEffect(() => {
-    setPosition(0);
-  }, [listKey]);
 
   useEffect(() => {
     if (client === undefined || accountId === "" || filter === undefined) {
@@ -1373,6 +1393,12 @@ export function MailScreen(): React.JSX.Element {
   const targetMessageId =
     openMessageId !== undefined && openMessageId !== rowOpenedId ? openMessageId : undefined;
 
+  /** C-14: the addresses that read as "mí" in a recipient line. */
+  const ownAddresses = useMemo(
+    () => [username, identity?.email].filter((address): address is string => address !== undefined && address !== ""),
+    [username, identity?.email],
+  );
+
   useEffect(() => {
     if (client === undefined || accountId === "" || openMessageId === undefined) {
       setDetail({});
@@ -1393,12 +1419,6 @@ export function MailScreen(): React.JSX.Element {
             ...(result.thread !== undefined ? { thread: result.thread } : {}),
           });
           /*
-  /** C-14: the addresses that read as "mí" in a recipient line. */
-  const ownAddresses = useMemo(
-    () => [username, identity?.email].filter((address): address is string => address !== undefined && address !== ""),
-    [username, identity?.email],
-  );
-
            * E9: a body is cached because the user OPENED it, never
            * speculatively. Pre-fetching bodies would multiply every sync by the
            * average message size for mail nobody may ever read — a cost paid on
@@ -4973,6 +4993,8 @@ export function MailScreen(): React.JSX.Element {
               conversationView={prefs.conversationView}
               /* C-05: only a message asked for BY NAME is force-expanded. */
               targetMessageId={targetMessageId}
+              /* C-14: login name and primary identity — what "mí" means. */
+              ownAddresses={ownAddresses}
               onReplyToMessage={replyToMessage}
               onForwardMessage={forwardMessage}
               onMarkMessagesRead={markMessagesRead}
@@ -4993,8 +5015,6 @@ export function MailScreen(): React.JSX.Element {
           option in the panel is about.
         */}
         {quickSettingsOpen && (
-              /* C-14: login name and primary identity — what "mí" means. */
-              ownAddresses={ownAddresses}
           /*
            * The wrapper exists for ONE reason: the "below the list" layout
            * places its panes by named grid AREAS, and a grid area can only be

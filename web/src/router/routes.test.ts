@@ -5,9 +5,11 @@ import {
   formatRoute,
   isRoleAlias,
   openMessageId,
+  pageOf,
   parseRoute,
   routesEqual,
   withMessage,
+  withPage,
   SETTINGS_TABS,
   DEFAULT_SETTINGS_TAB,
   isSettingsTab,
@@ -98,10 +100,123 @@ describe("round-tripping", () => {
     { kind: "snoozedEmpty" },
     // E12: every settings tab, so a renamed one cannot break its own URL.
     ...SETTINGS_TABS.map((tab) => ({ kind: "settings", tab }) as const),
+    // B-12: the page rides along on every list-bearing route, with and without
+    // a message open — Back has to step through pages, and a paged list has to
+    // survive a reload.
+    { kind: "mailbox", mailboxId: "inbox", page: 3 },
+    { kind: "mailbox", mailboxId: "inbox", messageId: "e42", page: 7 },
+    { kind: "label", name: "work/clients", page: 2 },
+    { kind: "starred", page: 4 },
+    { kind: "starred", messageId: "e1", page: 4 },
+    { kind: "search", query: "arquitectura", page: 5 },
+    { kind: "search", query: "", page: 2 },
+    { kind: "search", query: "a b", messageId: "e1", page: 9 },
   ];
 
   it.each(routes)("survives format → parse: %o", (route) => {
     expect(parseRoute(formatRoute(route))).toEqual(route);
+  });
+});
+
+describe("the page in the URL (B-12)", () => {
+  it("writes no parameter for page one — one destination, one URL", () => {
+    /*
+     * `/mail/inbox` and `/mail/inbox?p=1` would be two spellings of one place,
+     * and `routesEqual` IS `formatRoute` equality — so the router would see a
+     * navigation where none happened and push a duplicate history entry that
+     * Back needs two presses to escape.
+     */
+    expect(formatRoute({ kind: "mailbox", mailboxId: "inbox" })).toBe("/mail/inbox");
+    expect(formatRoute({ kind: "mailbox", mailboxId: "inbox", page: 1 })).toBe("/mail/inbox");
+    expect(
+      routesEqual(
+        { kind: "mailbox", mailboxId: "inbox" },
+        { kind: "mailbox", mailboxId: "inbox", page: 1 },
+      ),
+    ).toBe(true);
+  });
+
+  it("writes ?p=N from page two onward", () => {
+    expect(formatRoute({ kind: "mailbox", mailboxId: "inbox", page: 3 })).toBe(
+      "/mail/inbox?p=3",
+    );
+  });
+
+  it("keeps q before p in a search, so one destination has one spelling", () => {
+    expect(formatRoute({ kind: "search", query: "hola", page: 2 })).toBe(
+      "/search?q=hola&p=2",
+    );
+  });
+
+  it("reads the page back off a URL a user could have typed", () => {
+    expect(parseRoute("/mail/inbox?p=4")).toEqual({
+      kind: "mailbox",
+      mailboxId: "inbox",
+      page: 4,
+    });
+    expect(parseRoute("/search?q=x&p=2")).toEqual({ kind: "search", query: "x", page: 2 });
+  });
+
+  it.each([
+    ["p=1", "the canonical first page"],
+    ["p=0", "not a page"],
+    ["p=-3", "not a page"],
+    ["p=abc", "not a number"],
+    ["p=1.5", "not an integer"],
+    ["p=2abc", "Number rejects what parseInt would have accepted as 2"],
+    ["p=", "empty"],
+    ["p=999999", "past the server's reach ceiling"],
+  ])("falls back to page one for ?%s (%s)", (query) => {
+    /*
+     * Every rejection lands on page one, never on an error and never on a
+     * blank screen — the same posture `parseRoute` takes for the whole URL. A
+     * hand-edited parameter is a thing users do, and the honest answer to a
+     * nonsense page is the first one.
+     */
+    expect(parseRoute(`/mail/inbox?${query}`)).toEqual({
+      kind: "mailbox",
+      mailboxId: "inbox",
+    });
+  });
+
+  it("keeps the page when a message is opened and closed on it", () => {
+    // The bug this prevents: reading a message from page 3 and coming back to
+    // page 1, with the list silently reset under the reader.
+    const paged: Route = { kind: "mailbox", mailboxId: "inbox", page: 3 };
+    const opened = withMessage(paged, "e9");
+    expect(opened).toEqual({ kind: "mailbox", mailboxId: "inbox", messageId: "e9", page: 3 });
+    expect(withMessage(opened, undefined)).toEqual(paged);
+  });
+
+  it("keeps the search query when the page changes, and vice versa", () => {
+    const searched: Route = { kind: "search", query: "arquitectura" };
+    expect(withPage(searched, 2)).toEqual({ kind: "search", query: "arquitectura", page: 2 });
+  });
+
+  it("DROPS the key rather than storing 1 when paging back to the first page", () => {
+    const paged: Route = { kind: "label", name: "work", page: 5 };
+    expect(withPage(paged, 1)).toEqual({ kind: "label", name: "work" });
+    // Not `{ name: "work", page: 1 }` — under exactOptionalPropertyTypes those
+    // are different objects, and only one of them round-trips.
+    expect(Object.hasOwn(withPage(paged, 1), "page")).toBe(false);
+  });
+
+  it("is absorbed by the routes that have no list", () => {
+    // The Outbox is a local queue and settings is not mail at all; paging
+    // either is a request with no meaning, answered by leaving it alone rather
+    // than by inventing a route.
+    expect(withPage({ kind: "outbox" }, 3)).toEqual({ kind: "outbox" });
+    expect(withPage({ kind: "settings", tab: "general" }, 3)).toEqual({
+      kind: "settings",
+      tab: "general",
+    });
+    expect(pageOf({ kind: "outbox" })).toBe(1);
+  });
+
+  it("reports page one for a list route that carries no page", () => {
+    // So a caller never has to ask "does this page" before "which page".
+    expect(pageOf({ kind: "mailbox", mailboxId: "inbox" })).toBe(1);
+    expect(pageOf({ kind: "mailbox", mailboxId: "inbox", page: 6 })).toBe(6);
   });
 });
 
