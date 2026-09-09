@@ -4,6 +4,7 @@ import { useTranslation } from "../../i18n/I18nProvider";
 import { formatListDate, initialsFor, machineDate } from "../../mail/format";
 import { usePrefs } from "../../mail/PrefsProvider";
 import { labelsFor, type Label } from "../../mail/labelStore";
+import { previewText } from "../../mail/previewText";
 import { rowHeightFor } from "../../mail/prefs";
 import { displaySubject, senderLabel, type ThreadGroup } from "../../mail/threading";
 import { computeWindow, scrollOffsetToReveal, totalHeight } from "../../mail/windowing";
@@ -448,7 +449,14 @@ function MessageRow({
   // E5: the snippet is dropped from the DOM when the preference is off, not
   // hidden — a screen reader must not read a preview the sighted user turned
   // off, and the row's own text is what the setting is about.
-  const preview = showSnippet ? (latest.preview ?? "") : "";
+  //
+  // B-08: and what it shows is the CLEANED line — tracking URLs collapsed to
+  // their domain, so the sentence the message actually opens with is not pushed
+  // off the row by sixty characters of campaign parameters. `previewText` is
+  // pure and documents why this is a render-time rule rather than a stored one.
+  // The SEARCH snippet below is deliberately not put through it: a match inside
+  // a URL is a legitimate answer to "why is this row in my results".
+  const preview = showSnippet ? previewText(latest.preview ?? "") : "";
 
   /*
    * E8: the row's chips.

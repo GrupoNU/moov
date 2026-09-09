@@ -254,8 +254,26 @@
   color: var(--text-muted);
 }
 
+/*
+ * B-08: the preview is BOUNDED, not merely clipped by the window.
+ *
+ * `flex: 1` let the line grow to whatever the row had spare, which on a 2560px
+ * display is most of the row — the reviewed screenshot shows preview text
+ * running to within a few pixels of the date, roughly 500px past where Gmail
+ * stops. That is not more information, it is a line too long to scan: the eye
+ * has to travel the full width of the screen to reach a date it wanted at a
+ * glance.
+ *
+ * `flex: 0 1 auto` with a `max-width` in `ch` makes the line as long as its
+ * content up to a readable measure and no longer, leaving the rest of the track
+ * as whitespace before the meta column. The `ch` unit rather than px because
+ * the bound is about how many CHARACTERS the eye scans, which is what changes
+ * when the density preference changes the font — and it holds at every window
+ * width instead of only at the one that was measured.
+ */
 .preview {
-  flex: 1;
+  flex: 0 1 auto;
+  max-width: 90ch;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

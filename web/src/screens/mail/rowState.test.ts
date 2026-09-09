@@ -84,6 +84,19 @@ describe("the message row's state layer", () => {
     expect(css).not.toMatch(/\.(selected|checked) \.hoverActions \{[^{}]*linear-gradient/);
   });
 
+  it("bounds the preview's measure rather than letting it fill the row (B-08)", () => {
+    /*
+     * `flex: 1` let the preview take every spare pixel, which on a 2560px
+     * display put text within a few pixels of the date — roughly 500px past
+     * where Gmail stops. The bound is in `ch` because it is about how many
+     * characters the eye scans, which is what moves when density changes the
+     * font; a px bound would hold only at the width it was measured at.
+     */
+    const preview = rule(".preview");
+    expect(preview).toMatch(/max-width:\s*\d+ch/);
+    expect(preview).not.toMatch(/flex:\s*1\s*;/);
+  });
+
   it("aligns the hover strip to the row's own padding (B-04)", () => {
     // A constant inset clipped the fourth icon wherever `--row-padding-x` was
     // smaller than it — which is every density below "default".
