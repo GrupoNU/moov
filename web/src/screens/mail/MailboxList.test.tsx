@@ -431,3 +431,47 @@ describe("P0-5a: the row reset", () => {
     expect(rule).toMatch(/width:\s*100%/);
   });
 });
+
+/**
+ * A-09 — the counter is plain text, and the accent belongs to the active row.
+ *
+ * The reviewed rail drew a filled accent capsule beside every folder holding
+ * unread mail, so a dozen rows carried a solid block of brand colour at once
+ * and the one row that actually meant something — the folder you are in — had
+ * no colour left to be distinguished by. Gmail draws a right-aligned grey
+ * number and spends its accent exactly once.
+ *
+ * Asserted against the stylesheet for the reason the row reset above is: jsdom
+ * resolves no cascade, so a render test cannot tell a capsule from a number.
+ */
+describe("A-09: the rail counters", () => {
+  const css = readFileSync(
+    resolve(process.cwd(), "src/screens/mail/MailboxList.module.css"),
+    "utf8",
+  );
+  const badge = /\.badge \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+  const unreadBadge = /\.unread \.badge \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+
+  it("draws a right-aligned tabular grey number, with no pill behind it", () => {
+    expect(badge).toMatch(/color:\s*var\(--text-muted\)/);
+    expect(badge).toMatch(/text-align:\s*right/);
+    // Tabular figures are what make the column a straight right edge rather
+    // than a shimmering one as digit widths change.
+    expect(badge).toMatch(/font-variant-numeric:\s*tabular-nums/);
+    // The capsule: a fill and a full radius. Neither may come back.
+    expect(badge).not.toMatch(/background/);
+    expect(badge).not.toMatch(/border-radius/);
+  });
+
+  it("marks unread by WEIGHT only — never by an accent fill", () => {
+    expect(unreadBadge).toMatch(/font-weight:\s*var\(--weight-semibold\)/);
+    expect(unreadBadge).not.toMatch(/background/);
+  });
+
+  it("reserves the accent for the row you are on", () => {
+    // The rule that painted a selected row's counter in the accent is gone
+    // outright: `.selected` already carries a tint AND a spine, and a third
+    // accented thing in the same row diluted the one signal that says "here".
+    expect(css).not.toMatch(/\.selected \.badge \{/);
+  });
+});

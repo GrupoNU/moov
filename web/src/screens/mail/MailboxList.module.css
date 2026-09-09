@@ -147,28 +147,48 @@ button.row {
   color: var(--text-strong);
 }
 
+/*
+ * A-09 — the counter is TEXT, not a pill.
+ *
+ * It used to be a filled accent capsule on any row with unread mail, which put
+ * a solid block of brand colour beside a dozen folders at once. Gmail draws a
+ * plain right-aligned grey number and reserves colour for one thing: the row
+ * you are on. The rail then has exactly one accent, and it means "here".
+ *
+ * That is the whole rule, and it is why the two overrides below the base are
+ * gone rather than restyled. `.unread .badge` and `.selected .badge` both
+ * painted the capsule; the first competed with the bold NAME that already says
+ * "unread", the second competed with `.selected`'s own tint and spine.
+ *
+ * What survives from the old rule and why:
+ *
+ *   - `tabular-nums`, so a column of counts does not shimmer as digits change
+ *     width — it is the reason the numbers form a readable right edge at all.
+ *   - `min-width`, which keeps single- and triple-digit rows aligned. It is
+ *     narrower now (no capsule padding to reserve) but it still has a job.
+ *   - `text-align: right`, replacing `center`: centred text inside a fixed
+ *     minimum drifts left as the number shortens, which is exactly the ragged
+ *     edge the column exists to avoid.
+ */
 .badge {
   flex: none;
-  min-width: 20px;
-  padding: 0 var(--space-2);
+  min-width: 1.5rem;
   font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
   line-height: 18px;
-  text-align: center;
+  text-align: right;
   color: var(--text-muted);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-full);
 }
 
+/*
+ * Unread is carried by WEIGHT alone — the one thing Gmail changes about the
+ * number. The name beside it goes bold and darker at the same time (see
+ * `.unread .name`), so the pair reads as one state rather than as two
+ * decorations that happen to coincide.
+ */
 .unread .badge {
-  color: var(--color-on-accent);
-  background: var(--color-accent);
-}
-
-.selected .badge {
-  color: var(--color-on-accent);
-  background: var(--color-accent);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
 }
 
 /* --- the loading skeleton --- */
