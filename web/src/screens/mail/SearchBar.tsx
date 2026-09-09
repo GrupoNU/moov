@@ -34,6 +34,13 @@ import styles from "./SearchBar.module.css";
  * server's `maxConcurrentRequests` of 8 — is why it is a cancel-and-fire seam
  * rather than a bare call.
  *
+ * # Escape leaves, X clears (P0-4, E-28)
+ *
+ * Escape closes the popup if one is open, and otherwise blurs. It does NOT
+ * clear the query: that is the X's job. Blurring is load-bearing rather than
+ * cosmetic — every global shortcut is suppressed while an input has focus, so
+ * a field that never gave focus back was a trap in which `?` reached the
+ * browser instead of the shortcuts dialog.
  *
  * # E3: the combobox, and how it coexists with the debounce
  *
@@ -251,21 +258,40 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
       }
 
       if (event.key === "Escape") {
-        // Escape dismisses the POPUP first, then clears the field — innermost
-        // affordance first, exactly as the menus behave.
+        /*
+         * P0-4 + E-28: Escape LEAVES the field. The X clears it.
+         *
+         * Two bugs lived in the old three-branch version. First, no branch
+         * ever called `blur()`, so after any search the caret stayed in the
+         * box — and every global shortcut is suppressed while an INPUT has
+         * focus (`isTypingTarget`), so `?` opened the browser's own field
+         * history instead of the shortcuts dialog. The field was a focus trap
+         * with no visible walls.
+         *
+         * Second, Escape used to CLEAR the query. That is not Gmail's shape:
+         * there, Escape returns you to the list and the text survives, because
+         * a user who dismisses a popup has not asked to lose what they typed —
+         * they may well want to edit it. Clearing is the X's job, which is
+         * beside the box and says so.
+         *
+         * So: the popup closes first (innermost affordance, as the menus do),
+         * and the next Escape blurs. Focus goes to the document rather than to
+         * a named element because the shortcut layer listens there; that is the
+         * exact symmetric of `focusSearch`, which pulls focus IN from wherever
+         * it was.
+         */
         if (isOpen) {
           event.stopPropagation();
           setOpen(false);
           setActiveIndex(-1);
           return;
         }
-        if (value !== "") {
-          event.stopPropagation();
-          clear();
-        }
+        event.stopPropagation();
+        setActiveIndex(-1);
+        event.currentTarget.blur();
       }
     },
-    [suggestions, activeIndex, accept, debouncer, isOpen, value, clear],
+    [suggestions, activeIndex, accept, debouncer, isOpen, value],
   );
 
   const activeId = activeIndex >= 0 ? `${listboxId}-${String(activeIndex)}` : undefined;

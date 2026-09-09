@@ -7,11 +7,13 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import { SearchBar } from "./SearchBar";
 
 /**
- * The search field: typing must not search (P0-3, 2026-09-08).
+ * The search field's two P0 regressions (2026-09-08).
  *
- * The debounce shipped as a plausible convenience and made the field hostile —
- * every pause mid-word navigated, so a half-typed `from:` came back "no
- * matches" while the user's finger was on the next key.
+ * Both are about what the box does when the user has NOT asked for anything:
+ * typing must not search (P0-3) and Escape must give focus back (P0-4). Each
+ * shipped as a plausible-looking convenience and each made the field hostile —
+ * the first navigated on every half-typed operator, the second trapped the
+ * caret so no global shortcut could fire again.
  */
 
 /** A controlled host, because the real screen owns the text. */
@@ -49,6 +51,26 @@ describe("the search field", () => {
     await user.type(input, "from:ana{Enter}");
 
     expect(onSearch).toHaveBeenCalledWith("from:ana");
+  });
+
+  it("gives focus back on Escape, and keeps the query", async () => {
+    const user = userEvent.setup();
+    const onSearch = vi.fn();
+    render(<Harness onSearch={onSearch} />);
+
+    const input = screen.getByRole("combobox");
+    await user.click(input);
+    await user.type(input, "presupuesto");
+    expect(document.activeElement).toBe(input);
+
+    // Focusing opens the suggestion popup, so the first Escape may spend
+    // itself closing it — the field's documented innermost-first order.
+    await user.keyboard("{Escape}");
+    if (document.activeElement === input) await user.keyboard("{Escape}");
+
+    expect(document.activeElement).not.toBe(input);
+    // E-28: Escape leaves; it does not clear. The X clears.
+    expect(input).toHaveValue("presupuesto");
   });
 
   it("clears from the X, which is the affordance that says so", async () => {
