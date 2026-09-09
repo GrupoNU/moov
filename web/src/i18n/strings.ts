@@ -742,6 +742,10 @@ export const en = {
   "shortcuts.close": "Close",
   "shortcuts.disabled":
     "Keyboard shortcuts are off in Settings. Escape and / still work, so you can close this and reach search.",
+  // C-03: a very long message is clipped at a cap and offered whole — the
+  // control that raises the sandboxed frame's estimated height.
+  "reader.showWholeMessage": "Show the whole message",
+  "reader.showLess": "Show less",
   "shortcuts.open": "Open the message",
   // E1: j/k and n/p are two different axes and the help has to say so, or the
   // second pair looks like a duplicate of the first.
@@ -1880,6 +1884,8 @@ export const es: Strings = {
   "shortcuts.delete": "Eliminar",
   "shortcuts.flag": "Destacar",
   "shortcuts.selectRow": "Seleccionar esta conversación",
+  "reader.showWholeMessage": "Mostrar el mensaje completo",
+  "reader.showLess": "Mostrar menos",
   "shortcuts.compose": "Escribir un mensaje nuevo",
   "shortcuts.reply": "Responder",
   "shortcuts.replyAll": "Responder a todos",

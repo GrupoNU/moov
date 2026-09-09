@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useTranslation } from "../../i18n/I18nProvider";
+import {
+  DEFAULT_FRAME_WIDTH_PX,
+  estimateFrameHeight,
+  frameSizing,
+} from "../../mail/html/frameHeight";
 import {
   sanitizeEmailHtml,
   type SanitizedEmailHtml,
@@ -32,17 +37,23 @@ import styles from "./SecureHtmlBody.module.css";
  * loud and the images stay hidden; a silent broken-image grid would read as
  * our bug and teach users the banner does nothing.
  *
- * # Height, and the refusal behind it
+ * # Height, and the price of the sandbox (C-03)
  *
- * The frame fills the reading pane and the MESSAGE scrolls inside it.
- * Sizing the frame to its content is deliberately not implemented: every
- * mechanism that could measure a cross-origin sandboxed document requires
- * granting the content a capability the sandbox exists to refuse —
- * allow-scripts (a measuring script posting its height) or
- * allow-same-origin (the parent reading scrollHeight). W-A4 forbids both,
- * so the guarantee wins over the feature. The trade also means hostile
- * content cannot grow the frame to cover app UI, and scroll-jacking stays
- * inside a box the user can scroll past.
+ * The frame is sized to its content by an ESTIMATE computed in the parent
+ * from the sanitized string (`mail/html/frameHeight.ts`, which also records
+ * why every measuring alternative was rejected). No capability is granted for
+ * it: every mechanism that could MEASURE a cross-origin sandboxed document —
+ * allow-scripts for a script posting its height, allow-same-origin for the
+ * parent reading scrollHeight — is one the sandbox exists to refuse, and
+ * W-A4 forbids both. The estimate needs no channel because the parent already
+ * holds the very string it hands to the srcdoc.
+ *
+ * The price is that it IS an estimate: an undershoot leaves the frame with its
+ * own scrollbar (the state every message used to be in), an overshoot leaves
+ * white space. It is clamped, so hostile content cannot grow the frame over
+ * the app's chrome, and a very long message is clipped behind an explicit
+ * "show the whole message" — Gmail's own shape. A test pins that the sandbox
+ * attribute stayed byte-identical through all of this.
  *
  * # Quoted-text trimming (L3 epic E1, canon §2.1)
  *
@@ -197,6 +208,41 @@ export function SecureHtmlBody({
     });
   }, [rendered, split, showQuoted]);
 
+  /*
+   * C-03: the frame's height, estimated in the PARENT (see the header comment
+   * and mail/html/frameHeight.ts).
+   *
+   * The width the estimate is computed against is the container's own, read
+   * with a ResizeObserver on OUR element — nothing about this touches the
+   * frame's document. Where the observer does not exist (jsdom, old
+   * webviews) the default column width is assumed; the estimate degrades to
+   * "a bit off", never to a broken pane.
+   */
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [frameWidth, setFrameWidth] = useState(DEFAULT_FRAME_WIDTH_PX);
+  const [showWhole, setShowWhole] = useState(false);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (element === null || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined && width > 0) setFrameWidth(Math.round(width));
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  const sizing = useMemo(() => {
+    if (split === undefined) return undefined;
+    // The SAME string the srcdoc carries: the visible half, plus the tail
+    // only when it is shown — a hidden quote must not reserve its height.
+    const inDocument = showQuoted ? split.visible + split.quoted : split.visible;
+    return frameSizing(estimateFrameHeight(inDocument, frameWidth), showWhole);
+  }, [split, showQuoted, frameWidth, showWhole]);
+
   // Sanitization failed, or stripped the message down to nothing: say so and
   // show the plain-text alternative if the caller has one. Never render an
   // empty frame — it looks like data loss and hides that a formatted version
@@ -217,7 +263,7 @@ export function SecureHtmlBody({
   const inlineDropped = rendered?.droppedInlineImageCount ?? 0;
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} ref={containerRef}>
       {showBlockedBanner && (
         <div className={styles.imageBanner}>
           <span className={styles.imageBannerText}>
@@ -268,7 +314,34 @@ export function SecureHtmlBody({
         /* Belt and braces with the sanitizer's rel=noreferrer: nothing about
          * the app's URL crosses into the frame's requests. */
         referrerPolicy="no-referrer"
+        /* C-03: the estimated height, as an inline style so the number is
+         * observable (tests) and so a stylesheet cannot silently override
+         * the clamp. Nothing else about the element changed. */
+        style={sizing === undefined ? undefined : { height: `${sizing.heightPx}px` }}
       />
+
+      {/*
+        C-03: a very long message is clipped at the collapsed cap and offered
+        whole. The control is the app's, outside the frame — the same
+        mechanism as the trimmed-quote toggle: no capability crosses in, the
+        parent just decides a different height. `aria-expanded` says which.
+      */}
+      {sizing?.isClipped === true && (
+        <div className={styles.trimRow}>
+          <button
+            type="button"
+            className={styles.trimToggle}
+            onClick={() => {
+              setShowWhole((current) => !current);
+            }}
+            aria-expanded={showWhole}
+          >
+            <span className={styles.trimLabel}>
+              {showWhole ? t("reader.showLess") : t("reader.showWholeMessage")}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/*
         E1 / canon §2.1: "Show trimmed content".

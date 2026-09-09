@@ -1,28 +1,29 @@
 /*
  * The secure HTML body (W-A4).
  *
- * The container is a flex column that FILLS the body region, and the iframe
- * takes whatever height the banners leave: the message scrolls inside the
- * frame (its own document, its own scrollbars), so hostile content can never
- * grow the frame over the app's UI, and wide content scrolls horizontally
- * inside the frame without breaking the app's layout. See SecureHtmlBody.tsx
- * on why sizing-to-content is refused.
+ * The container is a flex column; the iframe's HEIGHT is an inline style set
+ * by the component from a content-derived estimate (C-03; see
+ * mail/html/frameHeight.ts for the reasoning and the clamp). It is not a
+ * flex-grow item any more: a frame that stretched to fill the pane was the
+ * 320px empty box under every short mail, and one that could grow without a
+ * clamp would let hostile content push the app's chrome away. Wide content
+ * still scrolls horizontally inside the frame, never the app.
  */
 
 .container {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: none;
   min-height: 0;
   gap: var(--space-3);
 }
 
 .frame {
-  flex: 1 1 auto;
+  flex: none;
+  display: block;
   width: 100%;
-  /* A floor so the frame stays usable when notices stack above it or the
-   * pane is short; below it the pane itself scrolls. */
-  min-height: 20rem;
+  /* The floor matches MIN_FRAME_PX; the real height rides inline. */
+  min-height: 4rem;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   /* The frame's document paints white in both themes (mail is authored on
