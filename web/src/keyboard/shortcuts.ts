@@ -692,6 +692,20 @@ export const SHORTCUT_HELP: readonly ShortcutHelpEntry[] = [
   { keys: [";"], descriptionKey: "shortcuts.expandAll", section: "navigate" },
   { keys: [":"], descriptionKey: "shortcuts.collapseAll", section: "navigate" },
   { keys: ["/"], descriptionKey: "shortcuts.search", section: "navigate" },
+  /*
+   * E-32 — the keys INSIDE the search box.
+   *
+   * Documented here but not resolved by `resolveShortcut`, exactly like the
+   * composer's Ctrl+Enter row above: the typing guard refuses every key while
+   * an input has focus — correctly, or `e` would archive a message while you
+   * typed one — so the box owns them itself. A user does not care which module
+   * implements a key, and the sheet's whole job is to answer "what can I press
+   * here". Leaving the box's three keys out made the one surface a person is
+   * most likely to get stuck in the one surface the sheet said nothing about.
+   */
+  { keys: ["Esc"], descriptionKey: "shortcuts.searchLeave", section: "navigate" },
+  { keys: ["Enter"], descriptionKey: "shortcuts.searchRun", section: "navigate" },
+  { keys: ["↑", "↓"], descriptionKey: "shortcuts.searchSuggestions", section: "navigate" },
   // E11: the two application keys that reach the toolbar and its overflow.
   { keys: [","], descriptionKey: "shortcuts.focusToolbar", section: "navigate" },
   { keys: ["."], descriptionKey: "shortcuts.moreActions", section: "navigate" },

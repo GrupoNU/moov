@@ -834,6 +834,12 @@ export const en = {
   "shortcuts.collapseAll": "Collapse the conversation",
   "shortcuts.back": "Back to the list",
   "shortcuts.search": "Search",
+  /* E-32: the keys INSIDE the box. They are the box's own — the typing guard
+     refuses every global key while an input has focus — but a user does not
+     care which module implements a key. */
+  "shortcuts.searchLeave": "Leave the search box (the text stays)",
+  "shortcuts.searchRun": "Run the search",
+  "shortcuts.searchSuggestions": "Move through the suggestions",
   "shortcuts.archive": "Archive",
   "shortcuts.delete": "Delete",
   "shortcuts.flag": "Star",
@@ -2072,6 +2078,9 @@ export const es: Strings = {
   "shortcuts.collapseAll": "Contraer la conversación",
   "shortcuts.back": "Volver a la lista",
   "shortcuts.search": "Buscar",
+  "shortcuts.searchLeave": "Salir de la caja de búsqueda (el texto queda)",
+  "shortcuts.searchRun": "Ejecutar la búsqueda",
+  "shortcuts.searchSuggestions": "Recorrer las sugerencias",
   "shortcuts.archive": "Archivar",
   "shortcuts.delete": "Eliminar",
   "shortcuts.flag": "Destacar",

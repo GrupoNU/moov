@@ -138,6 +138,14 @@ export function ShortcutsDialog({ isOpen, onClose }: ShortcutsDialogProps): Reac
           headings would put the <h3>s between <dt>/<dd> pairs, which is
           invalid and makes a screen reader announce one long list.
         */}
+        {/*
+          E-31: the sections flow into two columns from ~1100px.
+
+          A wrapper rather than columnising `.content`, because the header and
+          the disabled note must stay full width — a title balanced into a
+          column is a title in the wrong place.
+        */}
+        <div className={styles.sections}>
         {SHORTCUT_SECTIONS.map((section) => {
           const entries = SHORTCUT_HELP.filter((entry) => entry.section === section);
           if (entries.length === 0) return null;
@@ -172,6 +180,7 @@ export function ShortcutsDialog({ isOpen, onClose }: ShortcutsDialogProps): Reac
             </section>
           );
         })}
+        </div>
       </div>
     </dialog>
   );

@@ -1,8 +1,21 @@
+/*
+ * E-31: two columns from ~1100px.
+ *
+ * The sheet documents forty-odd keys. At 42rem those were one column of
+ * sections that scrolled — which is the shape that makes a REFERENCE
+ * unusable, because you cannot see the group you want and the group you are in
+ * at the same time. Gmail's own sheet is two columns for exactly this reason.
+ *
+ * The cap grows to 64rem so there is room for two, and `.sections` below does
+ * the columnising. Below 1100px the viewport clamp takes over and it stays one
+ * column, which is right: two 25rem columns in a 900px window is two cramped
+ * columns rather than one readable one.
+ */
 .dialog {
   padding: 0;
   border: none;
   background: transparent;
-  max-width: min(42rem, calc(100vw - 2rem));
+  max-width: min(64rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 4rem);
   /* The dialog element centres itself with margin:auto in the top layer. */
   margin: auto;
@@ -59,10 +72,39 @@
   border-color: var(--border-subtle);
 }
 
+/*
+ * E-31: the sections flow into two columns on a wide sheet.
+ *
+ * CSS multi-column rather than a grid, because the sections are of very
+ * different heights (five keys, then thirteen) and `columns` BALANCES them —
+ * a two-track grid would put five rows beside thirteen and leave a hole.
+ *
+ * `break-inside: avoid` on the section is what keeps a group from being split
+ * down the middle of the fold, which would be worse than one column: a heading
+ * at the bottom of the left column with its keys at the top of the right is a
+ * reference that reads as broken.
+ *
+ * One column below 1100px: two 25rem columns in a 900px window is two cramped
+ * columns rather than one readable one.
+ */
+.sections {
+  column-gap: var(--space-6);
+}
+
+@media (min-width: 1100px) {
+  .sections {
+    columns: 2;
+  }
+}
+
 /* E11: the grouped sheet. The heading carries the group; the rule under it is
  * what makes the grouping readable at a glance rather than only on reading. */
-.section + .section {
-  margin-top: var(--space-5);
+.section {
+  break-inside: avoid;
+  /* The margin goes BELOW rather than on `+ .section`, so a section that starts
+     a column is not left flush against the top while the one above it in the
+     other column carries the gap. */
+  margin-bottom: var(--space-5);
 }
 
 .sectionTitle {
@@ -76,13 +118,17 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/*
+ * E-31: ONE column inside a section, now that the SECTIONS are the two columns.
+ *
+ * The auto-fit grid this replaces put a section's own entries side by side,
+ * which fought the outer columns for the same width and produced four narrow
+ * tracks on a wide sheet — the keys and their descriptions ending up on
+ * separate lines.
+ */
 .list {
   margin: 0;
-  display: grid;
-  /* Two columns on a wide sheet, one on a narrow one — without a media query,
-   * because the sheet's own width is what matters, not the viewport's. */
-  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
-  gap: var(--space-2) var(--space-6);
+  display: block;
 }
 
 .entry {

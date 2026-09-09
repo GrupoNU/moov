@@ -861,3 +861,32 @@ describe("E4: b, m and g b", () => {
     expect(entries).toContain("g b");
   });
 });
+
+/**
+ * E-32 — the sheet documents the SEARCH BOX's own keys.
+ *
+ * They are the box's, not the resolver's: the typing guard refuses every global
+ * key while an input has focus — correctly, or `e` would archive a message
+ * while you typed one — so `SearchBar` handles them itself. Leaving them out of
+ * the sheet made the one surface a person is most likely to get stuck in the
+ * one surface the sheet said nothing about, which is exactly backwards.
+ *
+ * A user does not care which module implements a key. The composer's
+ * Ctrl+Enter row is documented on the same footing and for the same reason.
+ */
+describe("E-32 — the search box's keys are on the cheat sheet", () => {
+  const described = new Set(SHORTCUT_HELP.map((entry) => entry.descriptionKey));
+
+  it("documents leaving the box, running the search, and the suggestions", () => {
+    expect(described.has("shortcuts.searchLeave")).toBe(true);
+    expect(described.has("shortcuts.searchRun")).toBe(true);
+    expect(described.has("shortcuts.searchSuggestions")).toBe(true);
+  });
+
+  it("says the arrows in a way a person recognises", () => {
+    const entry = SHORTCUT_HELP.find(
+      (item) => item.descriptionKey === "shortcuts.searchSuggestions",
+    );
+    expect(entry?.keys).toEqual(["↑", "↓"]);
+  });
+});
