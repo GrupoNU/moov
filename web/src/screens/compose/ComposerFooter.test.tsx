@@ -134,6 +134,36 @@ describe("D-01/D-04 — the formatting row lives in the footer, behind Aa", () =
   });
 });
 
+describe("D-09 — schedule send is Send's caret, and it retires offline", () => {
+  it("welds the caret to Send when the server advertises a horizon", () => {
+    renderComposer({ maxDelayedSendSeconds: 30 * 24 * 3600 });
+    const send = screen.getByRole("button", { name: "Send" });
+    const caret = screen.getByRole("button", { name: "Send later" });
+    // Two buttons in ONE group: the caret must be a tab stop of its own with
+    // its own accessible name, never part of Send's hit area — which is what
+    // the E4 reasoning this reverses was protecting against.
+    expect(caret).not.toBe(send);
+    const group = send.parentElement;
+    expect(group).not.toBeNull();
+    // The menu wraps its trigger in a positioning div, so the caret is a
+    // DESCENDANT of the group rather than a sibling of Send.
+    expect(group?.contains(caret)).toBe(true);
+  });
+
+  it("is absent — not disabled — while offline", () => {
+    renderComposer({ maxDelayedSendSeconds: 30 * 24 * 3600, isOnline: false });
+    // A disabled half of a split button reads as "broken". An absent one reads
+    // as "Send", which is what the button still does: the Outbox takes it.
+    expect(screen.queryByRole("button", { name: "Send later" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Send" })).not.toBeNull();
+  });
+
+  it("is absent when the server advertises no delayed-send horizon", () => {
+    renderComposer();
+    expect(screen.queryByRole("button", { name: "Send later" })).toBeNull();
+  });
+});
+
 describe("D-08 — the From row says the address once", () => {
   it("collapses to the mailbox when the display name IS the mailbox", () => {
     renderComposer({

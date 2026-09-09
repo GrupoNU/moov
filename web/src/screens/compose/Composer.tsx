@@ -265,6 +265,23 @@ export function Composer({
   const [formatHost, setFormatHost] = useState<HTMLDivElement | null>(null);
   const [showFormatBar, setShowFormatBar] = useState(() => loadComposeFormatBar());
 
+  /**
+   * D-09: whether the send pill carries its schedule caret (owner's decision,
+   * 2026-09-09).
+   *
+   * Two conditions, and neither is cosmetic. The server must ADVERTISE a
+   * delayed-send horizon (`maxDelayedSendSeconds`), because a picker offering a
+   * date the server would refuse breaks J1's "declared == applied". And the
+   * browser must be ONLINE, because a schedule is a promise only the server can
+   * keep and there is no Outbox for it.
+   *
+   * Offline the caret is REMOVED, not disabled. A disabled half of a split
+   * button reads as "this is broken"; an absent one reads as "Send", which is
+   * exactly what the button still does — the Outbox takes the message and
+   * sends it when the network returns.
+   */
+  const showScheduleCaret = maxDelayedSendSeconds !== undefined && isOnline;
+
   const [draftId, setDraftId] = useState<string | undefined>(draft.existingDraftId);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
@@ -1343,13 +1360,41 @@ export function Composer({
 
           <div className={styles.actionRow}>
           <div className={styles.footerLeft}>
-            <button
-              type="submit"
-              className={styles.send}
-              disabled={!canSend || isSending || pending !== undefined}
-            >
-              {isSending ? t("compose.sending") : t("compose.send")}
-            </button>
+            {/*
+              D-09: Send is a SPLIT BUTTON — the pill, with the schedule caret
+              welded to its right edge (owner's decision, 2026-09-09).
+
+              The clock that used to float loose beside Send is gone. Its
+              rationale was real and is recorded in `ScheduleMenu`'s header, so
+              this is a reversal on the record rather than a silent overwrite.
+            */}
+            <div className={styles.sendGroup}>
+              <button
+                type="submit"
+                className={[styles.send, showScheduleCaret ? styles.sendSplit : ""]
+                  .filter(Boolean)
+                  .join(" ")}
+                disabled={!canSend || isSending || pending !== undefined}
+              >
+                {isSending ? t("compose.sending") : t("compose.send")}
+              </button>
+
+              {showScheduleCaret && maxDelayedSendSeconds !== undefined && (
+                <ScheduleMenu
+                  disabled={!canSend || isSending || pending !== undefined}
+                  maxDelayedSendSeconds={maxDelayedSendSeconds}
+                  onSchedule={(sendAt) => {
+                    void schedule(sendAt);
+                  }}
+                  triggerClassName={styles.sendCaret}
+                  triggerContent={
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                      <path d="M6 8.5l4 4 4-4" />
+                    </svg>
+                  }
+                />
+              )}
+            </div>
 
             {/*
               E7: Send & Archive (canon §2.3, /a/users/answer/9282734).
@@ -1385,37 +1430,6 @@ export function Composer({
               >
                 {t("send.andArchive")}
               </button>
-            )}
-
-            {/*
-              E4: "Schedule send" — a SECONDARY action beside Send, not a
-              variant of it (canon §2.3).
-
-              Two reasons it is its own control rather than a dropdown ON the
-              send button. First, Send must stay a single unambiguous click:
-              splitting it means a user aiming for "send" can land on a caret
-              and open a menu instead, which is the one place in a mail client
-              where a mis-click is expensive. Second, it is UNAVAILABLE offline
-              — a schedule is a promise only the server can keep, and there is
-              no queue for it — so it has to be able to disappear without
-              taking Send with it.
-            */}
-            {maxDelayedSendSeconds !== undefined && isOnline && (
-              <ScheduleMenu
-                disabled={!canSend || isSending || pending !== undefined}
-                maxDelayedSendSeconds={maxDelayedSendSeconds}
-                onSchedule={(sendAt) => {
-                  void schedule(sendAt);
-                }}
-                triggerClassName={styles.iconButton}
-                triggerContent={
-                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                    <circle cx="10" cy="11" r="6.3" />
-                    <path d="M10 7.6v3.6l2.4 1.4" />
-                    <path d="M16.2 4.4l-2.6 2.6m2.6-2.6h-2.4m2.4 0v2.4" />
-                  </svg>
-                }
-              />
             )}
 
             {/*

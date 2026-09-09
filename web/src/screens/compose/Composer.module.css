@@ -378,6 +378,70 @@
 }
 
 /*
+ * D-09: the split send button — the pill and its schedule caret, welded
+ * (owner's decision, 2026-09-09).
+ *
+ * The two halves are separate <button>s inside one group rather than one
+ * button with a nested control, because they do different things and each must
+ * be its own tab stop with its own accessible name — a caret that is part of
+ * Send's hit area is a caret that sends when you meant to schedule.
+ *
+ * The seam is a 1px inset line rather than a border, so the group's outline
+ * stays a single continuous pill: a real border between them would break the
+ * silhouette that makes it read as one control.
+ */
+.sendGroup {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+/*
+ * `PopupMenu` wraps its trigger in a positioning div, so the caret is a
+ * grandchild of the group rather than a sibling of Send. It has to stretch, or
+ * the caret would be a short button floating beside a taller pill instead of
+ * the pill's own right half.
+ */
+.sendGroup > div {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.sendSplit {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  padding-right: var(--space-4);
+}
+
+.sendCaret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0 var(--radius-full, 999px) var(--radius-full, 999px) 0;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: inset 1px 0 0 rgb(255 255 255 / 0.28);
+  cursor: pointer;
+}
+
+.sendCaret:hover:not(:disabled),
+.sendCaret:focus-visible:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.sendCaret:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sendCaret svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+/*
  * E7: Send & Archive — a SECONDARY action beside Send, never a variant of it.
  *
  * The same reasoning `ScheduleMenu` records: Send must stay one unambiguous

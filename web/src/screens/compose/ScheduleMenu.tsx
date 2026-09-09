@@ -32,6 +32,35 @@ import styles from "../mail/SnoozeMenu.module.css";
  * `maxDelayedSend` of 30 days. So this menu checks `withinDelayHorizon` and
  * refuses past it, in the user's language, one round trip before the server
  * would say the same thing in English.
+ *
+ * # D-09: the trigger became Send's caret — reversed on the record, 2026-09-09
+ *
+ * E4 rendered this menu behind a CLOCK ICON floating loose beside Send, and the
+ * reasoning was written down: Send must stay one unambiguous click, because
+ * splitting it lets a user aiming for "send" land on a caret and open a menu
+ * instead, and this is the one screen where a mis-click is expensive; and the
+ * control has to be able to vanish offline without taking Send with it.
+ *
+ * The side-by-side review (2026-09-08, item D-09) put that against Gmail, where
+ * the schedule is a `▾` welded to the send button, and the owner decided for
+ * Gmail's shape on 2026-09-09: paridad de memoria muscular beats a local
+ * argument, however sound, when the local argument is what makes the product
+ * feel like a different product.
+ *
+ * Both halves of the original reasoning survive in the new shape rather than
+ * being discarded:
+ *
+ *   - the mis-click risk is answered by making the caret its own `<button>`
+ *     with its own accessible name and its own tab stop, welded visually but
+ *     never part of Send's hit area;
+ *   - the offline case is answered by REMOVING the caret rather than disabling
+ *     it (`Composer.showScheduleCaret`). A disabled half reads as "broken"; an
+ *     absent one reads as "Send", which is what the button still does — the
+ *     Outbox takes the message and sends it when the network returns.
+ *
+ * Nothing in this component changed: it already took its trigger's class and
+ * content from the caller, which is why the reversal cost a stylesheet and a
+ * conditional rather than a rewrite.
  */
 export function ScheduleMenu({
   disabled,
