@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { useConfirm } from "../../components/useConfirm";
 import { useTranslation } from "../../i18n/I18nProvider";
@@ -13,9 +13,13 @@ import {
 } from "../../mail/filterSummary";
 import {
   EMPTY_RULE,
+  exportFilters,
+  filtersExportFilename,
+  parseFiltersExport,
   type FilterRule,
   type FilterRuleDraft,
   type ForwardingAddress,
+  type ImportProblem,
 } from "../../mail/filters";
 import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
@@ -91,6 +95,17 @@ export interface FiltersSectionProps {
    */
   readonly prefill?: FilterRuleDraft | undefined;
   readonly onPrefillConsumed?: (() => void) | undefined;
+  /**
+   * F-42: applies an imported rule set.
+   *
+   * The whole set, not one rule: an import is all-or-nothing (see
+   * `parseFiltersExport`), because a half-applied set is a filtering
+   * configuration nobody designed and Sieve's order-dependence means the half
+   * that landed can behave differently from the half that was meant to be
+   * there. Absent removes the Import button — a caller with no way to write
+   * must not offer to.
+   */
+  readonly onImport?: ((rules: readonly FilterRuleDraft[]) => void) | undefined;
 }
 
 export function FiltersSection({
@@ -109,6 +124,7 @@ export function FiltersSection({
   error,
   prefill,
   onPrefillConsumed,
+  onImport,
 }: FiltersSectionProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -258,16 +274,34 @@ export function FiltersSection({
         {visible.length === 0 && <li className={styles.empty}>{t("filters.none")}</li>}
       </ul>
 
-      <button
-        type="button"
-        className={styles.primary}
-        disabled={isBusy}
-        onClick={() => {
-          setEditing("new");
-        }}
-      >
-        {t("filters.create")}
-      </button>
+      <div className={styles.listActions}>
+        <button
+          type="button"
+          className={styles.primary}
+          disabled={isBusy}
+          onClick={() => {
+            setEditing("new");
+          }}
+        >
+          {t("filters.create")}
+        </button>
+
+        {/*
+          F-42: import and export.
+
+          The review called their absence a contradiction of positioning — Sieve
+          is behind these rules, so exporting them is trivial, and a webmail
+          whose selling point is that your mail is yours should not be the one
+          place your rules are trapped. They are SECONDARY buttons beside the
+          primary create: a user who came here to add a filter must not have to
+          pick "Crear" out of three equally loud options.
+        */}
+        <FiltersTransfer
+          rules={visible}
+          onImport={onImport}
+          isBusy={isBusy}
+        />
+      </div>
 
       {editing !== undefined && (
         <FilterBuilder
@@ -336,6 +370,161 @@ function ForeignScriptBanner({
     </div>
   );
 }
+
+/**
+ * Import and export (F-42).
+ *
+ * # Why the export is a Blob download and not a link to a server route
+ *
+ * The rules are already in memory — the section renders them — so there is
+ * nothing for a round trip to fetch, and a server route would need its own
+ * auth, its own content-disposition and its own test. `URL.createObjectURL`
+ * over a Blob is the whole implementation, and the object URL is revoked
+ * immediately after the click: an un-revoked one keeps the JSON alive in the
+ * page for the tab's whole lifetime.
+ *
+ * # Why the import is a hidden `<input type="file">` behind a button
+ *
+ * A bare file input is unstylable and reads as "Elegir archivo — ningún archivo
+ * seleccionado", which is neither of the two words a user is looking for. The
+ * input keeps every accessibility property (it is a real control with a real
+ * label, reachable and operable) and the button that opens it is the visible
+ * affordance — the standard pattern, not a workaround.
+ *
+ * # What it says when it refuses
+ *
+ * Every refusal names its reason, because "no se pudo importar" over a file the
+ * user chose is a dead end: they cannot tell a wrong file from a corrupt one
+ * from a version this build is too old to read. `parseFiltersExport` returns
+ * the reason and this maps it to one sentence.
+ */
+function FiltersTransfer({
+  rules,
+  onImport,
+  isBusy,
+}: {
+  readonly rules: readonly FilterRule[];
+  readonly onImport: ((rules: readonly FilterRuleDraft[]) => void) | undefined;
+  readonly isBusy: boolean;
+}): React.JSX.Element {
+  const { t, format } = useTranslation();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputId = useId();
+  const [problem, setProblem] = useState<ImportProblem | undefined>(undefined);
+  const [imported, setImported] = useState<number | undefined>(undefined);
+
+  const download = (): void => {
+    const blob = new Blob([JSON.stringify(exportFilters(rules), null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filtersExportFilename();
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /*
+   * `FileReader`, not `Blob.text()`.
+   *
+   * `text()` is the tidier API and is unavailable in two places that matter: on
+   * older Safari, and in jsdom — which is where these tests run, so choosing it
+   * would have made the whole import path untestable except in a browser.
+   * `FileReader` is the interoperable reader, and its `onerror` is a real path
+   * (a file that vanished between the picker and the read) that `text()`'s
+   * rejection would have needed a `.catch` for anyway.
+   */
+  const read = (file: File): void => {
+    setProblem(undefined);
+    setImported(undefined);
+    const reader = new FileReader();
+    reader.onerror = (): void => {
+      setProblem("notJson");
+    };
+    reader.onload = (): void => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      const result = parseFiltersExport(text);
+      if (result.rules === undefined) {
+        setProblem(result.problem ?? "notOurFormat");
+        return;
+      }
+      onImport?.(result.rules);
+      setImported(result.rules.length);
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.secondary}
+        disabled={isBusy || rules.length === 0}
+        onClick={download}
+      >
+        {t("filters.export")}
+      </button>
+
+      {onImport !== undefined && (
+        <>
+          <button
+            type="button"
+            className={styles.secondary}
+            disabled={isBusy}
+            onClick={() => {
+              inputRef.current?.click();
+            }}
+          >
+            {t("filters.import")}
+          </button>
+          <label className="visually-hidden" htmlFor={inputId}>
+            {t("filters.import")}
+          </label>
+          <input
+            ref={inputRef}
+            id={inputId}
+            type="file"
+            className="visually-hidden"
+            accept="application/json,.json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              /*
+               * The input is CLEARED after every read, so choosing the same
+               * file twice fires `change` twice. Without it, a user who fixed a
+               * malformed file and re-picked it would get no event at all.
+               */
+              event.target.value = "";
+              if (file !== undefined) read(file);
+            }}
+          />
+        </>
+      )}
+
+      {/* The honest sentence: this is our format, not Gmail's XML. */}
+      <span className={styles.hint}>{t("filters.transferNote")}</span>
+
+      {problem !== undefined && (
+        <p className={styles.error} role="alert">
+          {t(IMPORT_PROBLEM_KEYS[problem])}
+        </p>
+      )}
+      {imported !== undefined && (
+        <p className={styles.hint} role="status">
+          {format("filters.imported", imported)}
+        </p>
+      )}
+    </>
+  );
+}
+
+const IMPORT_PROBLEM_KEYS: Readonly<Record<ImportProblem, PlainStringKey>> = {
+  notJson: "filters.import.notJson",
+  notOurFormat: "filters.import.notOurFormat",
+  futureVersion: "filters.import.futureVersion",
+  noRules: "filters.import.noRules",
+  badRule: "filters.import.badRule",
+};
 
 // ---------------------------------------------------------------------------
 // the builder

@@ -510,6 +510,41 @@ export async function createFilterRule(
   return readSetResponse(responseFor(response.methodResponses, "s"));
 }
 
+/**
+ * Creates several rules in ONE `/set` (F-42's import path).
+ *
+ * # Why one call and not a loop over {@link createFilterRule}
+ *
+ * The server applies a `/set` as one unit and pushes ONE regenerated script, so
+ * a batch either lands whole or does not land at all. A loop would push N
+ * scripts, leave a partial rule set behind if the fifth call failed, and — for
+ * a surface where ORDER is configuration — could interleave with the watcher's
+ * own reload between calls. All-or-nothing is what the import promises the user
+ * ("none were imported"), and this is what makes the promise true rather than
+ * approximately true.
+ *
+ * The creation ids are positional (`n0`, `n1`, …) because the server appends
+ * creates to the current list in order, so the array's order becomes the
+ * script's order — which is exactly what the export document carries.
+ */
+export async function createFilterRules(
+  client: JmapClient,
+  accountId: string,
+  drafts: readonly FilterRuleDraft[],
+  signal?: AbortSignal,
+): Promise<SetOutcome> {
+  const create: Record<string, FilterRuleDraft> = {};
+  drafts.forEach((draft, index) => {
+    create[`n${String(index)}`] = draft;
+  });
+  const response = await client.call(
+    [["FilterRule/set", { accountId, create }, "s"]],
+    FILTER_CAPS,
+    signal,
+  );
+  return readSetResponse(responseFor(response.methodResponses, "s"));
+}
+
 /** Updates one rule with a complete field set (the server patches over base). */
 export async function updateFilterRule(
   client: JmapClient,
@@ -613,6 +648,145 @@ export async function persistRuleOrder(
     signal,
   );
   return readSetResponse(responseFor(response.methodResponses, "s"));
+}
+
+// ---------------------------------------------------------------------------
+// import and export (review F-42)
+// ---------------------------------------------------------------------------
+
+/**
+ * The export envelope, and the honest statement of what it is NOT.
+ *
+ * # This is Moov's format, not Gmail's
+ *
+ * Gmail exports filters as an Atom XML document whose entries carry
+ * `apps:property` elements from Google's own namespace. We do not read or write
+ * that, and pretending otherwise by naming the file `mailFilters.xml` would be
+ * the worst of both: a user would hand it to Gmail and get an error with no
+ * explanation. So the file is JSON, the envelope names itself, and the UI says
+ * in one line that it round-trips with Moov and not with Gmail.
+ *
+ * Importing Gmail's XML is a real want and a real piece of work — the criteria
+ * do not map one-to-one (Gmail's `hasTheWord` is a search query; ours is a
+ * closed set of fields, GC-4) — and it is deliberately out of scope here rather
+ * than half-done. What IS in scope is the thing the review called the
+ * contradiction: Sieve is behind these rules, so exporting them is trivial, and
+ * a webmail whose selling point is that your mail is yours should not be the
+ * one place your rules are trapped.
+ *
+ * # Why the payload is the WIRE object
+ *
+ * `FilterRuleDraft` is exactly what `FilterRule/set` accepts, minus the
+ * server-set id. Exporting that means the import path is the same `/set` every
+ * other write uses — no translation layer, and nothing that could accept a file
+ * the server would then refuse.
+ */
+export const FILTERS_EXPORT_KIND = "moov.filters";
+
+/** Bumped only when the payload shape changes incompatibly. */
+export const FILTERS_EXPORT_VERSION = 1;
+
+export interface FiltersExport {
+  readonly kind: typeof FILTERS_EXPORT_KIND;
+  readonly version: number;
+  /**
+   * The rules, in evaluation order.
+   *
+   * Order is configuration here (Sieve runs top to bottom and `stop` ends the
+   * script), so the ARRAY's order is the meaningful part of this file — there
+   * is no position field to carry it, exactly as on the wire.
+   */
+  readonly rules: readonly FilterRuleDraft[];
+}
+
+/**
+ * Serializes rules to the export document.
+ *
+ * The ids are stripped, deliberately: they are server-set and opaque, and a
+ * file that carried them would look importable into the account it came from
+ * and only that one. Without them the document is what it should be — a
+ * portable description of the rules, importable anywhere.
+ */
+export function exportFilters(rules: readonly FilterRule[]): FiltersExport {
+  return {
+    kind: FILTERS_EXPORT_KIND,
+    version: FILTERS_EXPORT_VERSION,
+    rules: rules.map(ruleDraft),
+  };
+}
+
+/** The suggested filename, dated so two exports do not overwrite each other. */
+export function filtersExportFilename(now: Date = new Date()): string {
+  const day = now.toISOString().slice(0, 10);
+  return `moov-filtros-${day}.json`;
+}
+
+/** Why an import file was refused. The UI maps each to one sentence. */
+export type ImportProblem =
+  | "notJson"
+  | "notOurFormat"
+  | "futureVersion"
+  | "noRules"
+  | "badRule";
+
+export interface ImportResult {
+  readonly rules?: readonly FilterRuleDraft[];
+  readonly problem?: ImportProblem;
+}
+
+/**
+ * Reads an export document back, refusing anything it cannot vouch for.
+ *
+ * # Why this validates rather than trusting `JSON.parse`
+ *
+ * The input is a FILE THE USER CHOSE, which is the one input on this surface
+ * that did not come from our server. Casting it to `FiltersExport` and handing
+ * it to `FilterRule/set` would send arbitrary JSON to the mail server and turn
+ * a mistyped filename into an `invalidProperties` the user cannot act on. So
+ * every rule goes through {@link parseFilterRule} — the same reader the wire
+ * uses — with a synthesised id, and anything that fails is a refusal WITH A
+ * REASON rather than a partial import.
+ *
+ * All-or-nothing on purpose: a half-applied set of rules is a filtering
+ * configuration nobody designed, and Sieve's order-dependence means the half
+ * that landed can behave differently from the half that was meant to be there.
+ */
+export function parseFiltersExport(text: string): ImportResult {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { problem: "notJson" };
+  }
+  if (typeof raw !== "object" || raw === null) return { problem: "notOurFormat" };
+  const doc = raw as Record<string, unknown>;
+  if (doc.kind !== FILTERS_EXPORT_KIND) return { problem: "notOurFormat" };
+  /*
+   * A NEWER version is refused rather than read optimistically: a field this
+   * build does not know is a rule that would import with part of its behaviour
+   * silently missing, which is worse than not importing it.
+   */
+  if (typeof doc.version !== "number" || doc.version > FILTERS_EXPORT_VERSION) {
+    return { problem: "futureVersion" };
+  }
+  if (!Array.isArray(doc.rules)) return { problem: "notOurFormat" };
+  if (doc.rules.length === 0) return { problem: "noRules" };
+
+  const rules: FilterRuleDraft[] = [];
+  for (const item of doc.rules as readonly unknown[]) {
+    if (typeof item !== "object" || item === null) return { problem: "badRule" };
+    /*
+     * `parseFilterRule` requires an id (the wire always has one), so a
+     * placeholder is supplied and then dropped by `ruleDraft`. Reusing the wire
+     * reader rather than writing a second one is what guarantees an imported
+     * rule is shaped exactly like a fetched one — including its fallbacks for
+     * a missing field.
+     */
+    const parsed = parseFilterRule({ ...(item as Record<string, unknown>), id: "import" });
+    if (parsed === undefined) return { problem: "badRule" };
+    rules.push(ruleDraft(parsed));
+  }
+  return { rules };
 }
 
 /** Patches the forward-all singleton. */

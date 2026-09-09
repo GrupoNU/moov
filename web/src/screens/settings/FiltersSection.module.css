@@ -357,3 +357,24 @@
   background: var(--color-warning-bg-dark, #2b2110);
   color: var(--color-warning-text-dark, #f2d9a5);
 }
+
+/*
+ * The row under the list: "Crear un filtro" (primary) beside Import/Export
+ * (secondary) and the format note (F-42, F-45).
+ *
+ * `align-items: center` and a wrap, so the note settles beside the buttons on
+ * a wide panel and under them on a narrow one — the note is an explanation of
+ * the two secondary buttons, not a caption for the whole section.
+ */
+.listActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The primary is `align-self: flex-start` for the standalone case; inside the
+ * action row that would fight the row's own alignment. */
+.listActions .primary {
+  align-self: auto;
+}

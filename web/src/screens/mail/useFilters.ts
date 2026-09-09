@@ -4,6 +4,7 @@ import type { JmapClient, JmapSession } from "../../api/jmap";
 import {
   activateManagedScript,
   createFilterRule,
+  createFilterRules,
   createForwardingAddress,
   destroyFilterRules,
   destroyForwardingAddress,
@@ -76,6 +77,16 @@ export interface FiltersApi {
   readonly rules: readonly FilterRule[];
   readonly scriptActive: boolean;
   readonly createRule: (draft: FilterRuleDraft) => void;
+  /**
+   * F-42: applies an imported rule set, appended to whatever is there.
+   *
+   * APPENDED rather than replacing: destroying the user's existing filters
+   * because they imported a file is a destructive action nobody asked for, and
+   * the export names no account it came from. What the user gets is both sets,
+   * with the imported ones at the end — which they can then reorder, since
+   * order is the one thing this surface makes explicit.
+   */
+  readonly importRules: (drafts: readonly FilterRuleDraft[]) => void;
   readonly updateRule: (id: string, draft: FilterRuleDraft) => void;
   readonly deleteRule: (rule: FilterRule) => void;
   readonly moveRule: (id: string, direction: "up" | "down") => void;
@@ -254,6 +265,16 @@ export function useFilters({
     [client, accountId, run],
   );
 
+  const importRules = useCallback(
+    (drafts: readonly FilterRuleDraft[]): void => {
+      if (client === undefined || accountId === undefined) return;
+      if (drafts.length === 0) return;
+      // ONE /set, so the import is atomic — see `createFilterRules`.
+      void run(() => createFilterRules(client, accountId, drafts));
+    },
+    [client, accountId, run],
+  );
+
   const updateRule = useCallback(
     (id: string, draft: FilterRuleDraft): void => {
       if (client === undefined || accountId === undefined) return;
@@ -374,6 +395,7 @@ export function useFilters({
     // that omits the property.
     scriptActive: config?.scriptActive ?? true,
     createRule,
+    importRules,
     updateRule,
     deleteRule,
     moveRule,

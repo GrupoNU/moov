@@ -8,18 +8,22 @@ import {
   CAP_SIEVE,
   CAP_VACATION,
   createFilterRule,
+  createFilterRules,
   createForwardingAddress,
   destroyFilterRules,
   destroyForwardingAddress,
   e6Capabilities,
+  exportFilters,
   EMPTY_RULE,
   fetchFilters,
   fetchForwardingAddresses,
   fetchQuota,
   fetchSieveScripts,
   fetchVacation,
+  filtersExportFilename,
   forwardingVerifyUrl,
   parseFilterRule,
+  parseFiltersExport,
   parseForwardingAddress,
   parseQuota,
   parseVacation,
@@ -549,5 +553,96 @@ describe("SieveScript — activation, the fix the banner offers", () => {
     expect(sent[0]?.[1]).not.toHaveProperty("update");
     expect(sent[0]?.[1]).not.toHaveProperty("destroy");
     expect(usingLog[0]).toEqual([CAP_CORE, CAP_SIEVE]);
+  });
+});
+
+/**
+ * Import and export (review F-42).
+ *
+ * The review called the absence a contradiction of positioning: Sieve is behind
+ * these rules, so exporting them is trivial, and a webmail whose selling point
+ * is that your mail is yours should not be the one place your rules are
+ * trapped.
+ *
+ * What these pin is the pair of properties that make the feature worth having:
+ * a ROUND TRIP that survives (export then import gives back the same rules),
+ * and a REFUSAL that names its reason for every file it will not read. A parser
+ * that silently dropped a field would be worse than no import at all — the
+ * user would have a filter that looks right and behaves differently.
+ */
+describe("filters import/export (F-42)", () => {
+  const rule = parseFilterRule(WIRE_RULE)!;
+  const second = parseFilterRule({
+    ...WIRE_RULE,
+    id: "rffffffffffff",
+    name: "Second",
+    subject: ["urgente"],
+  })!;
+
+  it("round-trips a rule set through the file, in order", () => {
+    const doc = exportFilters([rule, second]);
+    const result = parseFiltersExport(JSON.stringify(doc));
+
+    expect(result.problem).toBeUndefined();
+    // Exactly what `FilterRule/set` accepts: the wire object minus the
+    // server-set id, which is why the import path needs no translation layer.
+    expect(result.rules).toEqual([ruleDraft(rule), ruleDraft(second)]);
+    // Order is configuration on this surface (Sieve runs top to bottom), so
+    // the array's order is the meaningful part of the document.
+    expect(result.rules?.[0]?.name).toBe(rule.name);
+    expect(result.rules?.[1]?.name).toBe("Second");
+  });
+
+  it("strips the server-set ids, so the file is portable rather than account-bound", () => {
+    const doc = exportFilters([rule]);
+    expect(JSON.stringify(doc)).not.toContain(rule.id);
+    expect(doc.kind).toBe("moov.filters");
+  });
+
+  it("names the file with the date, so two exports do not overwrite each other", () => {
+    expect(filtersExportFilename(new Date("2026-09-09T12:00:00Z"))).toBe(
+      "moov-filtros-2026-09-09.json",
+    );
+  });
+
+  it("refuses a file that is not JSON, and says which failure it was", () => {
+    expect(parseFiltersExport("<?xml version=\"1.0\"?><feed/>").problem).toBe("notJson");
+  });
+
+  it("refuses valid JSON that is not our document — Gmail's export included", () => {
+    expect(parseFiltersExport('{"feed":{"entry":[]}}').problem).toBe("notOurFormat");
+    expect(parseFiltersExport("[]").problem).toBe("notOurFormat");
+    expect(parseFiltersExport("null").problem).toBe("notOurFormat");
+  });
+
+  it("refuses a NEWER version rather than reading it optimistically", () => {
+    // A field this build does not know would import with part of its behaviour
+    // silently missing, which is worse than not importing it.
+    const doc = { ...exportFilters([rule]), version: 99 };
+    expect(parseFiltersExport(JSON.stringify(doc)).problem).toBe("futureVersion");
+  });
+
+  it("refuses an empty export rather than reporting a successful no-op", () => {
+    expect(parseFiltersExport(JSON.stringify(exportFilters([]))).problem).toBe("noRules");
+  });
+
+  it("refuses the WHOLE file when one rule is malformed", () => {
+    const doc = { ...exportFilters([rule]), rules: [ruleDraft(rule), "not a rule"] };
+    // All-or-nothing: a half-applied set is a filtering configuration nobody
+    // designed, and order-dependence means the half that landed can behave
+    // differently from the half that was meant to be there.
+    expect(parseFiltersExport(JSON.stringify(doc)).problem).toBe("badRule");
+  });
+
+  it("sends every imported rule in ONE /set, so the import is atomic", async () => {
+    const { client, sent, usingLog } = stub({ s: { created: {} } });
+    await createFilterRules(client, ACCOUNT, [ruleDraft(rule), ruleDraft(second)]);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.[0]).toBe("FilterRule/set");
+    // Positional creation ids: the server appends creates in order, so the
+    // array's order becomes the script's order.
+    expect(Object.keys(sent[0]?.[1].create as object)).toEqual(["n0", "n1"]);
+    expect(usingLog[0]).toEqual([CAP_CORE, CAP_FILTERS]);
   });
 });

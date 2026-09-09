@@ -378,6 +378,25 @@ export const en = {
   "filters.description":
     "Rules run on the mail server as it arrives, so they keep working when Moov is closed. They run IN ORDER, top to bottom.",
   "filters.create": "Create a filter",
+  /*
+   * F-42. The note says whose format this is, in the one place a user is
+   * deciding what to do with the file — naming it after Gmail's XML would send
+   * them to Gmail with something Gmail cannot read.
+   */
+  "filters.export": "Export filters",
+  "filters.import": "Import filters",
+  "filters.transferNote":
+    "The file is Moov's own JSON, not Gmail's XML: it round-trips with another Moov account and Gmail will not read it.",
+  "filters.imported": (count: number): string =>
+    count === 1 ? "1 filter imported." : `${String(count)} filters imported.`,
+  "filters.import.notJson": "That file is not JSON. Pick the file an export produced.",
+  "filters.import.notOurFormat":
+    "That file is not a Moov filter export. Gmail's XML export is not supported.",
+  "filters.import.futureVersion":
+    "That file was written by a newer version of Moov. Update, then import it.",
+  "filters.import.noRules": "That export has no filters in it.",
+  "filters.import.badRule":
+    "One of the filters in that file is malformed, so none were imported.",
   "filters.edit": "Edit",
   "filters.delete": "Delete",
   "filters.none": "No filters yet.",
@@ -719,6 +738,9 @@ export const en = {
   // "Collapse" keeps the newest message open — see collapseAll's rationale.
   "reader.expandAll": "Expand all",
   "reader.collapseAll": "Collapse all",
+  // C-06: the open conversation's place in the list, beside ‹ ›.
+  "reader.positionOf": (index: number, total: number): string =>
+    `${index.toLocaleString("en")} of ${total.toLocaleString("en")}`,
   "reader.threadLoadFailed":
     "The rest of this conversation could not be loaded. The message you opened is shown below.",
   "reader.emptyBody": "This message has no text content.",
@@ -738,9 +760,6 @@ export const en = {
       : `${count} remote images are hidden to protect your privacy.`,
   "reader.showImages": "Show images",
   // E1 / canon §2.1: Gmail's "Show trimmed content". The wording says CONTENT
-  // C-06: the open conversation's place in the list, beside ‹ ›.
-  "reader.positionOf": (index: number, total: number): string =>
-    `${index.toLocaleString("en")} of ${total.toLocaleString("en")}`,
   // rather than "quote", because what is hidden is often a forwarded header
   // block or an Outlook divider, not a quotation.
   "reader.showTrimmed": "Show trimmed content",
@@ -1580,6 +1599,20 @@ export const es: Strings = {
   "filters.description":
     "Las reglas corren en el servidor de correo cuando el mensaje llega, así siguen funcionando con Moov cerrado. Se aplican EN ORDEN, de arriba hacia abajo.",
   "filters.create": "Crear un filtro",
+  "filters.export": "Exportar filtros",
+  "filters.import": "Importar filtros",
+  "filters.transferNote":
+    "El archivo es el JSON propio de Moov, no el XML de Gmail: vuelve a entrar en otra cuenta de Moov y Gmail no lo lee.",
+  "filters.imported": (count: number): string =>
+    count === 1 ? "Se importó 1 filtro." : `Se importaron ${String(count)} filtros.`,
+  "filters.import.notJson": "Ese archivo no es JSON. Elegí el que produjo una exportación.",
+  "filters.import.notOurFormat":
+    "Ese archivo no es una exportación de filtros de Moov. El XML de Gmail no está soportado.",
+  "filters.import.futureVersion":
+    "Ese archivo lo escribió una versión más nueva de Moov. Actualizá y volvé a importarlo.",
+  "filters.import.noRules": "Esa exportación no tiene ningún filtro.",
+  "filters.import.badRule":
+    "Uno de los filtros de ese archivo está mal formado, así que no se importó ninguno.",
   "filters.edit": "Editar",
   "filters.delete": "Eliminar",
   "filters.none": "Todavía no hay filtros.",
@@ -1874,6 +1907,8 @@ export const es: Strings = {
     `Conversación con ${count} mensajes`,
   "reader.expandAll": "Expandir todo",
   "reader.collapseAll": "Contraer todo",
+  "reader.positionOf": (index: number, total: number): string =>
+    `${index.toLocaleString("es")} de ${total.toLocaleString("es")}`,
   "reader.threadLoadFailed":
     "No se pudo cargar el resto de esta conversación. Abajo se muestra el mensaje que abriste.",
   "reader.emptyBody": "Este mensaje no tiene contenido de texto.",
@@ -1907,8 +1942,6 @@ export const es: Strings = {
   "shortcuts.close": "Cerrar",
   "shortcuts.disabled":
     "Los atajos de teclado están desactivados en Configuración. Escape y / siguen andando, así podés cerrar esto y llegar a la búsqueda.",
-  "reader.positionOf": (index: number, total: number): string =>
-    `${index.toLocaleString("es")} de ${total.toLocaleString("es")}`,
   "shortcuts.open": "Abrir el mensaje",
   "shortcuts.next": "Conversación siguiente",
   "shortcuts.previous": "Conversación anterior",

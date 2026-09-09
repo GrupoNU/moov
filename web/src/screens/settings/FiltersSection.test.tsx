@@ -3,7 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { EMPTY_RULE, parseFilterRule, type FilterRule, type ForwardingAddress } from "../../mail/filters";
+import {
+  EMPTY_RULE,
+  exportFilters,
+  parseFilterRule,
+  type FilterRule,
+  type FilterRuleDraft,
+  type ForwardingAddress,
+} from "../../mail/filters";
 import type { Label } from "../../mail/labelStore";
 import type { Mailbox } from "../../mail/types";
 import { FiltersSection } from "./FiltersSection";
@@ -71,6 +78,7 @@ function renderSection(
     onDelete: vi.fn(),
     onMove: vi.fn(),
     onActivate: vi.fn(),
+    onImport: vi.fn() as ((rules: readonly FilterRuleDraft[]) => void) | undefined,
     ...overrides,
   };
   render(
@@ -381,5 +389,91 @@ describe("deleting a filter asks first", () => {
     const dialog = screen.getByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Eliminar" }));
     expect(props.onDelete).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Import and export (F-42).
+ *
+ * The download itself is a Blob and an `<a>.click()` that jsdom cannot follow,
+ * so what these cover is everything on THIS side of it: that both affordances
+ * are there, that the format note is on screen at the moment the user decides
+ * what to do with the file, that a good file reaches the caller as parsed
+ * drafts, and — the one that matters — that a bad file produces a named reason
+ * rather than silence.
+ */
+describe("importing and exporting (F-42)", () => {
+  /** A file the browser's `File.text()` will read back. */
+  function file(name: string, text: string): File {
+    return new File([text], name, { type: "application/json" });
+  }
+
+  it("offers both, and says whose format the file is", () => {
+    renderSection();
+
+    expect(screen.getByRole("button", { name: /exportar filtros/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /importar filtros/i })).toBeEnabled();
+    // Naming it after Gmail's XML would send the user to Gmail with something
+    // Gmail cannot read.
+    expect(screen.getByText(/JSON propio de Moov, no el XML de Gmail/i)).toBeInTheDocument();
+  });
+
+  it("cannot export nothing", () => {
+    renderSection({ rules: [] });
+    expect(screen.getByRole("button", { name: /exportar filtros/i })).toBeDisabled();
+  });
+
+  it("hides the import when the caller has no way to write", () => {
+    renderSection({ onImport: undefined });
+    expect(screen.queryByRole("button", { name: /importar filtros/i })).not.toBeInTheDocument();
+  });
+
+  it("hands the caller the parsed drafts of a good file", async () => {
+    const user = userEvent.setup();
+    const onImport = vi.fn();
+    renderSection({ onImport });
+
+    const doc = exportFilters([rule({ id: "rX", name: "boletines", from: ["news@x.test"] })]);
+    await user.upload(
+      screen.getByLabelText(/importar filtros/i),
+      file("moov-filtros.json", JSON.stringify(doc)),
+    );
+
+    await screen.findByText(/se importó 1 filtro/i);
+    expect(onImport).toHaveBeenCalledTimes(1);
+    // The drafts, not the file: no ids, exactly what `FilterRule/set` accepts.
+    expect(onImport.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({ name: "boletines", from: ["news@x.test"] }),
+    ]);
+  });
+
+  it("names the reason a malformed file was refused, and writes nothing", async () => {
+    const user = userEvent.setup();
+    const onImport = vi.fn();
+    renderSection({ onImport });
+
+    await user.upload(
+      screen.getByLabelText(/importar filtros/i),
+      file("broken.json", "{ this is not json"),
+    );
+
+    // "No se pudo importar" over a file the user chose is a dead end: they
+    // cannot tell a wrong file from a corrupt one.
+    expect(await screen.findByRole("alert")).toHaveTextContent(/no es JSON/i);
+    expect(onImport).not.toHaveBeenCalled();
+  });
+
+  it("says so when the file is valid JSON but not ours", async () => {
+    const user = userEvent.setup();
+    const onImport = vi.fn();
+    renderSection({ onImport });
+
+    await user.upload(
+      screen.getByLabelText(/importar filtros/i),
+      file("gmail.json", '{"feed":{"entry":[]}}'),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/El XML de Gmail no está soportado/i);
+    expect(onImport).not.toHaveBeenCalled();
   });
 });
