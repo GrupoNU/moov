@@ -144,8 +144,10 @@ func TestBrandingIsPublic(t *testing.T) {
 // route added with public:true — or a copy-paste that marks an authenticated
 // one public — fails here rather than in production.
 //
-// Three routes, each with a reason to exist without HTTP auth:
-//   - the two branding routes ARE the login screen (branding.go);
+// Five routes, each with a reason to exist without HTTP auth:
+//   - the four branding routes ARE the login screen and the installed app's
+//     identity (branding.go, branding_pwa.go) — the browser fetches the
+//     manifest and icons before any credential exists;
 //   - PathImageProxy is requested by an <img> inside a sandboxed iframe,
 //     which can attach no Authorization header — it is authorized by an HMAC
 //     minted through the AUTHENTICATED sign route instead, and
@@ -155,9 +157,11 @@ func TestPublicRouteSetIsExactlyBranding(t *testing.T) {
 	srv := brandingServer(t, "")
 
 	want := map[string]bool{
-		PathBranding:      true,
-		PathBrandingAsset: true,
-		PathImageProxy:    true,
+		PathBranding:         true,
+		PathBrandingAsset:    true,
+		PathBrandingManifest: true,
+		PathBrandingIcon:     true,
+		PathImageProxy:       true,
 	}
 	got := make(map[string]bool)
 	for _, rt := range srv.routes() {
@@ -799,7 +803,7 @@ func TestBrandingStoreCachesAndExpires(t *testing.T) {
 
 	now := time.Now()
 	clock := func() time.Time { return now }
-	store := newBrandingStore(root, clock)
+	store := newBrandingStore(root, nil, clock)
 
 	if doc, _ := store.resolve("ttl.test"); doc.Name != "First" {
 		t.Fatalf("name = %q, want First", doc.Name)

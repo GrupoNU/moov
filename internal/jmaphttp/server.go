@@ -320,7 +320,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		notifier:         cfg.Notifier,
 		state:            cfg.State,
 		maxSSEPerAccount: maxSSE,
-		branding:         newBrandingStore(cfg.BrandingDir, nil),
+		branding:         newBrandingStore(cfg.BrandingDir, cfg.Logger, nil),
 		imgproxy:         imgproxy,
 		tokens:           tokens,
 	}, nil

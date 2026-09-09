@@ -43,11 +43,10 @@ type route struct {
 	// The field is explicit, and named for what it grants rather than for what
 	// it skips, because the default must stay "authenticated": a route added
 	// to the table below without thinking about this field gets the zero value
-	// and is therefore protected. Exactly two routes set it, both branding
-	// (W-A1), and the reason is in branding.go — the brand IS the login
-	// screen, so it cannot live behind the credentials the login screen exists
-	// to collect. A test pins the public set so a third one cannot appear
-	// unnoticed.
+	// and is therefore protected. The branding routes set it (W-A1), and the
+	// reason is in branding.go — the brand IS the login screen, so it cannot
+	// live behind the credentials the login screen exists to collect. A test
+	// pins the public set so another one cannot appear unnoticed.
 	public bool
 
 	// tokenScope, when set, additionally lets the route accept a scoped
@@ -88,6 +87,10 @@ func (s *Server) routes() []route {
 		// Branding (W-A1): public by design, see branding.go.
 		{method: http.MethodGet, pattern: PathBranding, handler: s.handleBranding, public: true},
 		{method: http.MethodGet, pattern: PathBrandingAsset, handler: s.handleBrandingAsset, public: true},
+		// The PWA manifest and icons the shell links (branding_pwa.go): the
+		// browser fetches them before, and independently of, any login.
+		{method: http.MethodGet, pattern: PathBrandingManifest, handler: s.handleBrandingManifest, public: true},
+		{method: http.MethodGet, pattern: PathBrandingIcon, handler: s.handleBrandingIcon, public: true},
 
 		// The remote-image proxy (ADR §5). Signing requires auth; serving a
 		// signed image CANNOT (the requester is an <img> in a sandboxed

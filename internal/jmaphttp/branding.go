@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -48,7 +49,9 @@ import (
 // defaults — INDISTINGUISHABLE from a hostname that is configured to look like
 // Moov. Existence is never confirmed or denied.
 
-// BrandingPaths are the two routes the branding feature adds.
+// BrandingPaths are the routes the branding feature adds. Two more — the
+// per-host PWA manifest and the generated icons — live in branding_pwa.go and
+// resolve the Host exactly as these do.
 const (
 	// PathBranding serves the resolved branding document. GET, public.
 	PathBranding = "/branding"
@@ -94,6 +97,12 @@ const brandingConfigFile = "branding.json"
 type Branding struct {
 	// Name is the product name shown in the UI and the browser tab.
 	Name string `json:"name"`
+
+	// ShortName is the name under an installed icon on a home screen, where
+	// the manifest spec and every launcher truncate past roughly a dozen
+	// characters. It is the manifest's short_name. Configured explicitly or
+	// derived from Name (see deriveShortName); never empty.
+	ShortName string `json:"shortName"`
 
 	// LogoURL and SplashURL are absolute-path URLs on THIS origin (never a
 	// third-party URL: a customer-supplied external URL would be a tracking
@@ -157,7 +166,10 @@ type BrandingColors struct {
 // those numbers in a test rather than trusting this comment.
 func DefaultBranding() Branding {
 	return Branding{
-		Name:      "Moov Mail",
+		Name: "Moov Mail",
+		// "Moov", not the derived "Moov Mail": the embedded manifest says so,
+		// and a test pins the two together.
+		ShortName: "Moov",
 		LogoURL:   "",
 		SplashURL: "",
 		Colors: BrandingColors{
@@ -181,28 +193,56 @@ type BrandingConfig struct {
 	Dir string
 }
 
-// brandingStore resolves and caches branding documents from the filesystem.
+// brandingStore resolves and caches branding documents from the filesystem,
+// and the PWA icons rendered from them (branding_pwa.go).
 type brandingStore struct {
 	dir string
+	log *slog.Logger
 
 	mu    sync.Mutex
 	cache map[string]brandingEntry
+	// icons caches rendered PWA icons, keyed by host, logo digest, accent
+	// color and icon name (see iconCacheKey). Only a host whose logo was
+	// actually rendered gets an entry, so the map is bounded by the number of
+	// CONFIGURED hosts, not by the Host headers strangers send.
+	icons map[string]iconEntry
 	now   func() time.Time
 }
 
+// brandingEntry is one host's resolved state for one cache TTL: the public
+// document, its ETag, and what the icon route needs to know about the logo
+// without re-deriving it per request.
 type brandingEntry struct {
 	doc     Branding
 	etag    string
 	expires time.Time
+
+	// logo is the validated asset filename the document advertises as
+	// LogoURL, or "" when there is none to render icons from.
+	logo string
+	// logoSum is the hex SHA-256 of the logo bytes at resolve time; it is
+	// part of the icon cache key, so a replaced logo renders fresh icons at
+	// the next TTL without a restart.
+	logoSum string
+	// iconIssue is non-empty when a logo IS configured but cannot be turned
+	// into icons (WebP, undecodable, oversized, missing). The icon route then
+	// serves Moov's icons, and the reason was logged once when this entry was
+	// built — which is what "declared, rate-limited by the TTL" means.
+	iconIssue string
 }
 
-func newBrandingStore(dir string, now func() time.Time) *brandingStore {
+func newBrandingStore(dir string, logger *slog.Logger, now func() time.Time) *brandingStore {
 	if now == nil {
 		now = time.Now
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &brandingStore{
 		dir:   strings.TrimSpace(dir),
+		log:   logger,
 		cache: make(map[string]brandingEntry),
+		icons: make(map[string]iconEntry),
 		now:   now,
 	}
 }
@@ -311,32 +351,40 @@ func resolveBrandingHost(raw string) string {
 // unbranded. A malformed document IS logged, so an operator learns their
 // typo did not take effect.
 func (b *brandingStore) resolve(host string) (Branding, string) {
+	e := b.resolveEntry(host)
+	return e.doc, e.etag
+}
+
+// resolveEntry is resolve with the icon-side state attached. It never returns
+// an error, for the same reason resolve does not.
+func (b *brandingStore) resolveEntry(host string) brandingEntry {
 	if b == nil || b.dir == "" || host == "" {
 		doc := DefaultBranding()
-		return doc, brandingETag(doc)
+		return brandingEntry{doc: doc, etag: brandingETag(doc)}
 	}
 
 	now := b.now()
 	b.mu.Lock()
 	if e, ok := b.cache[host]; ok && now.Before(e.expires) {
 		b.mu.Unlock()
-		return e.doc, e.etag
+		return e
 	}
 	b.mu.Unlock()
 
-	doc := b.load(host)
-	etag := brandingETag(doc)
+	e := b.load(host)
+	e.etag = brandingETag(e.doc)
+	e.expires = now.Add(brandingCacheTTL)
 
 	b.mu.Lock()
-	b.cache[host] = brandingEntry{doc: doc, etag: etag, expires: now.Add(brandingCacheTTL)}
+	b.cache[host] = e
 	b.mu.Unlock()
 
-	return doc, etag
+	return e
 }
 
 // load reads and validates one host's configuration from disk.
-func (b *brandingStore) load(host string) Branding {
-	fallback := DefaultBranding()
+func (b *brandingStore) load(host string) brandingEntry {
+	fallback := brandingEntry{doc: DefaultBranding()}
 
 	// #nosec G304 -- `host` is not caller-controlled input at this point: every
 	// path into this function runs it through resolveBrandingHost, which admits
@@ -354,11 +402,18 @@ func (b *brandingStore) load(host string) Branding {
 		return fallback
 	}
 
-	doc := fallback
+	entry := fallback
+	doc := &entry.doc
 	doc.Default = false
 
 	if n := strings.TrimSpace(file.Name); n != "" {
 		doc.Name = truncateRunes(n, 64)
+		// A customer's name gets a customer's short name; Moov's authored
+		// "Moov" only survives when the name is still Moov's.
+		doc.ShortName = deriveShortName(doc.Name)
+	}
+	if s := strings.TrimSpace(file.ShortName); s != "" {
+		doc.ShortName = truncateRunes(s, maxShortNameRunes)
 	}
 	if t := strings.TrimSpace(file.Tagline); t != "" {
 		doc.Tagline = truncateRunes(t, 160)
@@ -387,9 +442,26 @@ func (b *brandingStore) load(host string) Branding {
 	// validation right now. That is what keeps the document honest: the URL in
 	// the response is a URL that will serve bytes, not a promise about a file
 	// that was valid when the CLI ran.
-	if name := safeAssetName(file.Logo); name != "" {
-		if _, _, err := b.openAsset(host, name); err == nil {
+	if strings.TrimSpace(file.Logo) != "" {
+		name := safeAssetName(file.Logo)
+		body, _, err := b.openAsset(host, name)
+		switch {
+		case name == "" || err != nil:
+			// Not advertised, and — because the icon route would otherwise
+			// silently show Moov's mark on a customer's home screen — said out
+			// loud, once per TTL.
+			entry.iconIssue = "the configured logo is missing or is not a valid image"
+		default:
 			doc.LogoURL = brandingAssetURL(host, name)
+			entry.logo = name
+			entry.logoSum = hex.EncodeToString(sha256sum(body))
+			if err := ValidateBrandingIconSource(body); err != nil {
+				entry.iconIssue = err.Error()
+			}
+		}
+		if entry.iconIssue != "" {
+			b.log.Warn("jmaphttp: branding logo cannot be rendered as PWA icons; serving Moov's icons",
+				"host", host, "logo", file.Logo, "reason", entry.iconIssue)
 		}
 	}
 	if name := safeAssetName(file.Splash); name != "" {
@@ -398,7 +470,33 @@ func (b *brandingStore) load(host string) Branding {
 		}
 	}
 
-	return doc
+	return entry
+}
+
+// maxShortNameRunes is the cap on Branding.ShortName. Twelve is what the
+// manifest spec recommends as the length launchers can show without
+// truncation, and it is what `moovctl branding set -short-name` refuses past.
+const maxShortNameRunes = 12
+
+// deriveShortName picks the home-screen label for a brand that did not
+// configure one: the name itself when it fits, otherwise its first word,
+// itself cut to fit. "Acme Mail" stays "Acme Mail"; "Corporate Mailbox Acme"
+// becomes "Corporate".
+func deriveShortName(name string) string {
+	n := strings.TrimSpace(name)
+	if len([]rune(n)) <= maxShortNameRunes {
+		return n
+	}
+	if fields := strings.Fields(n); len(fields) > 0 {
+		return truncateRunes(fields[0], maxShortNameRunes)
+	}
+	return truncateRunes(n, maxShortNameRunes)
+}
+
+// sha256sum is the digest of a byte slice, used to key the icon cache.
+func sha256sum(b []byte) []byte {
+	sum := sha256.Sum256(b)
+	return sum[:]
 }
 
 // brandingFile is the on-disk shape `moovctl branding set` writes. It is
@@ -407,6 +505,7 @@ func (b *brandingStore) load(host string) Branding {
 // customer-supplied string ends up as an <img src> pointing anywhere.
 type brandingFile struct {
 	Name       string             `json:"name,omitempty"`
+	ShortName  string             `json:"shortName,omitempty"`
 	Tagline    string             `json:"tagline,omitempty"`
 	SupportURL string             `json:"supportUrl,omitempty"`
 	Logo       string             `json:"logo,omitempty"`
@@ -600,13 +699,19 @@ func truncateRunes(s string, maxRunes int) string {
 // answered 304. It is derived from the document itself rather than from file
 // mtimes: two hosts with identical branding legitimately share an ETag, and a
 // file rewritten with the same content correctly does not invalidate caches.
+//
+// EVERY field of the document is in the fingerprint. The list is written out
+// rather than hashing the JSON so that adding a field to Branding is a
+// conscious edit here too — and a test changes each field in turn and demands
+// a different tag, because supportUrl once went missing from this list and a
+// cache kept serving the old link until it expired.
 func brandingETag(doc Branding) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
-		doc.Name, doc.LogoURL, doc.SplashURL,
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
+		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL,
 		doc.Colors.Primary, doc.Colors.OnPrimary,
 		doc.Colors.SplashFrom, doc.Colors.SplashTo,
-		doc.Tagline, doc.Default)
+		doc.Tagline, doc.SupportURL, doc.Default)
 	return `"` + hex.EncodeToString(h.Sum(nil))[:16] + `"`
 }
 

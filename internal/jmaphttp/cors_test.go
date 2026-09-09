@@ -21,6 +21,10 @@ var corsRoutes = []struct{ method, path string }{
 	// /branding cross-origin like any other endpoint.
 	{http.MethodGet, "/branding"},
 	{http.MethodGet, "/branding/assets/mail.example.com/logo.png"},
+	// The per-host PWA manifest and icons (branding_pwa.go), public like the
+	// two above and fetched by the browser itself on any origin it is told.
+	{http.MethodGet, "/branding/manifest.webmanifest"},
+	{http.MethodGet, "/branding/icons/icon-192.png"},
 	// The remote-image proxy (W-A4). The sign route is a normal authenticated
 	// POST; the serve route is fetched by an <img> in the message iframe, so
 	// it too gets a preflight like any endpoint the app calls cross-origin.

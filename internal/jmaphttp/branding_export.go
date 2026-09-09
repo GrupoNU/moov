@@ -27,3 +27,7 @@ func ResolveBrandingHostForTest(raw string) string { return resolveBrandingHost(
 // BrandingConfigFileForTest is the per-host document's filename, exposed so the
 // writer and the reader cannot disagree about it.
 const BrandingConfigFileForTest = brandingConfigFile
+
+// MaxBrandingShortNameRunesForTest is the shortName cap, exposed so the CLI's
+// refusal threshold and the server's truncation cannot disagree.
+const MaxBrandingShortNameRunesForTest = maxShortNameRunes
