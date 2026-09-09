@@ -571,8 +571,11 @@ func TestBrandingIconsFallBackAndDeclare(t *testing.T) {
 				}
 			}
 
-			// Declared once, however many requests arrived within the TTL...
-			const msg = "serving Moov's icons"
+			// Declared once, however many requests arrived within the TTL.
+			// The message names the failure, not the destination: the same
+			// line is emitted when the icon falls through to the logo, and
+			// the "using" attribute says where the icons came from.
+			const msg = "cannot be rendered as PWA icons"
 			if n := logs.count(msg); n != 1 {
 				t.Errorf("fallback declared %d times within one TTL, want exactly 1", n)
 			}
@@ -597,7 +600,7 @@ func TestBrandingIconsSilentWhenNoLogo(t *testing.T) {
 	if got, _ := store.icon("nologo.test", brandingIconSpecs[0]); got == nil {
 		t.Error("no icon served")
 	}
-	if n := logs.count("serving Moov's icons"); n != 0 {
+	if n := logs.count("cannot be rendered as PWA icons"); n != 0 {
 		t.Errorf("a host without a logo logged %d fallback warnings", n)
 	}
 }
@@ -837,6 +840,7 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 		"ShortName":         func(d *Branding) { d.ShortName += "x" },
 		"LogoURL":           func(d *Branding) { d.LogoURL = "/branding/assets/h/logo.png" },
 		"SplashURL":         func(d *Branding) { d.SplashURL = "/branding/assets/h/splash.png" },
+		"IconURL":           func(d *Branding) { d.IconURL = "/branding/assets/h/icon.png" },
 		"Colors.Primary":    func(d *Branding) { d.Colors.Primary = "#000001" },
 		"Colors.OnPrimary":  func(d *Branding) { d.Colors.OnPrimary = "#000001" },
 		"Colors.SplashFrom": func(d *Branding) { d.Colors.SplashFrom = "#000001" },
@@ -876,7 +880,7 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 	full.Tagline, full.SupportURL = "t", "u" // omitempty fields must be present to be seen
 	walk("", full)
 	jsonToGo := map[string]string{
-		"name": "Name", "shortName": "ShortName", "logoUrl": "LogoURL", "splashUrl": "SplashURL",
+		"name": "Name", "shortName": "ShortName", "logoUrl": "LogoURL", "splashUrl": "SplashURL", "iconUrl": "IconURL",
 		"colors.primary": "Colors.Primary", "colors.onPrimary": "Colors.OnPrimary",
 		"colors.splashFrom": "Colors.SplashFrom", "colors.splashTo": "Colors.SplashTo",
 		"tagline": "Tagline", "supportUrl": "SupportURL", "default": "Default",

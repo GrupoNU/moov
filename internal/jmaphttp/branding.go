@@ -111,6 +111,23 @@ type Branding struct {
 	LogoURL   string `json:"logoUrl"`
 	SplashURL string `json:"splashUrl"`
 
+	// IconURL is the optional SQUARE mark the launcher icons and the favicon
+	// are rendered from, on this origin like the others; empty when the brand
+	// configured none, in which case the icons are rendered from LogoURL.
+	//
+	// It exists because the two jobs are not the same picture. The top bar and
+	// the login panel show a wordmark, often wide and often in the brand's
+	// primary color; the maskable and Apple icons sit on an OPAQUE plate of
+	// that same primary color, so a brand whose primary is #000000 and whose
+	// wordmark is black renders a black glyph on a black plate — invisible.
+	// Such a brand kit almost always has a square glyph meant for dark
+	// backgrounds, and this is where it goes.
+	//
+	// The PWA does not consume it yet: the icons are rendered server-side and
+	// the document is what describes the brand completely, so it is here for
+	// the description rather than for a client to draw.
+	IconURL string `json:"iconUrl"`
+
 	// Colors are the brand's design tokens. Every value is a validated CSS hex
 	// color (#rgb or #rrggbb); the client assigns them to custom properties
 	// without parsing.
@@ -172,6 +189,7 @@ func DefaultBranding() Branding {
 		ShortName: "Moov",
 		LogoURL:   "",
 		SplashURL: "",
+		IconURL:   "",
 		Colors: BrandingColors{
 			Primary:    "#5b5bd6",
 			OnPrimary:  "#ffffff",
@@ -201,9 +219,9 @@ type brandingStore struct {
 
 	mu    sync.Mutex
 	cache map[string]brandingEntry
-	// icons caches rendered PWA icons, keyed by host, logo digest, accent
-	// color and icon name (see iconCacheKey). Only a host whose logo was
-	// actually rendered gets an entry, so the map is bounded by the number of
+	// icons caches rendered PWA icons, keyed by host, icon-source digest,
+	// accent color and icon name (see iconCacheKey). Only a host whose brand
+	// was actually rendered gets an entry, so the map is bounded by the number of
 	// CONFIGURED hosts, not by the Host headers strangers send.
 	icons map[string]iconEntry
 	now   func() time.Time
@@ -217,19 +235,32 @@ type brandingEntry struct {
 	etag    string
 	expires time.Time
 
-	// logo is the validated asset filename the document advertises as
-	// LogoURL, or "" when there is none to render icons from.
-	logo string
-	// logoSum is the hex SHA-256 of the logo bytes at resolve time; it is
-	// part of the icon cache key, so a replaced logo renders fresh icons at
+	// iconFile is the validated asset filename the icons are RENDERED from —
+	// the configured square icon when there is a usable one, otherwise the
+	// logo — or "" when there is nothing to render from and Moov's icons are
+	// the answer.
+	iconFile string
+	// iconSum is the hex SHA-256 of iconFile's bytes at resolve time; it is
+	// part of the icon cache key, so a replaced source renders fresh icons at
 	// the next TTL without a restart.
-	logoSum string
-	// iconIssue is non-empty when a logo IS configured but cannot be turned
-	// into icons (WebP, undecodable, oversized, missing). The icon route then
-	// serves Moov's icons, and the reason was logged once when this entry was
-	// built — which is what "declared, rate-limited by the TTL" means.
+	iconSum string
+	// iconSource names which configured asset iconFile is: brandingSourceIcon
+	// or brandingSourceLogo. Empty when there is none.
+	iconSource string
+	// iconIssue is non-empty when an icon source IS configured but cannot be
+	// turned into icons (WebP, undecodable, oversized, missing) and nothing
+	// further down the chain could either. The icon route then serves Moov's
+	// icons, and the reason was logged once when this entry was built — which
+	// is what "declared, rate-limited by the TTL" means.
 	iconIssue string
 }
+
+// The two names an entry's icon source can carry. They are the words the CLI
+// prints and the log lines use, so operator-facing text and code agree.
+const (
+	brandingSourceIcon = "icon"
+	brandingSourceLogo = "logo"
+)
 
 func newBrandingStore(dir string, logger *slog.Logger, now func() time.Time) *brandingStore {
 	if now == nil {
@@ -442,28 +473,34 @@ func (b *brandingStore) load(host string) brandingEntry {
 	// validation right now. That is what keeps the document honest: the URL in
 	// the response is a URL that will serve bytes, not a promise about a file
 	// that was valid when the CLI ran.
-	if strings.TrimSpace(file.Logo) != "" {
-		name := safeAssetName(file.Logo)
-		body, _, err := b.openAsset(host, name)
-		switch {
-		case name == "" || err != nil:
-			// Not advertised, and — because the icon route would otherwise
-			// silently show Moov's mark on a customer's home screen — said out
-			// loud, once per TTL.
-			entry.iconIssue = "the configured logo is missing or is not a valid image"
-		default:
-			doc.LogoURL = brandingAssetURL(host, name)
-			entry.logo = name
-			entry.logoSum = hex.EncodeToString(sha256sum(body))
-			if err := ValidateBrandingIconSource(body); err != nil {
-				entry.iconIssue = err.Error()
-			}
-		}
-		if entry.iconIssue != "" {
-			b.log.Warn("jmaphttp: branding logo cannot be rendered as PWA icons; serving Moov's icons",
-				"host", host, "logo", file.Logo, "reason", entry.iconIssue)
-		}
+	logo := b.loadIconCandidate(host, file.Logo)
+	icon := b.loadIconCandidate(host, file.Icon)
+	if logo.url != "" {
+		doc.LogoURL = logo.url
 	}
+	if icon.url != "" {
+		doc.IconURL = icon.url
+	}
+
+	// The fallback chain for the RENDERED icons: the configured icon, then the
+	// logo, then Moov's own. The icon wins whenever it is usable, because a
+	// brand that bothered to supply a square mark supplied it for exactly this.
+	switch {
+	case icon.usable():
+		entry.iconFile, entry.iconSum, entry.iconSource = icon.name, icon.sum, brandingSourceIcon
+	case logo.usable():
+		entry.iconFile, entry.iconSum, entry.iconSource = logo.name, logo.sum, brandingSourceLogo
+	}
+	// Declared whenever something WAS configured for the icons and could not be
+	// used — including the case where the icon failed and the logo took over,
+	// which is a working brand but not the one the operator asked for.
+	if issue := brandingIconIssue(icon, logo, entry.iconSource); issue != "" {
+		entry.iconIssue = issue
+		b.log.Warn("jmaphttp: the configured branding icon source cannot be rendered as PWA icons",
+			"host", host, "icon", file.Icon, "logo", file.Logo,
+			"using", brandingIconUsing(entry.iconSource), "reason", issue)
+	}
+
 	if name := safeAssetName(file.Splash); name != "" {
 		if _, _, err := b.openAsset(host, name); err == nil {
 			doc.SplashURL = brandingAssetURL(host, name)
@@ -471,6 +508,77 @@ func (b *brandingStore) load(host string) brandingEntry {
 	}
 
 	return entry
+}
+
+// brandingCandidate is one configured asset weighed as a source for the PWA
+// icons: whether it is advertisable at all, and whether it can be RENDERED.
+type brandingCandidate struct {
+	// configured is what branding.json named, trimmed; "" means the field was
+	// absent, which is not a problem and never declared.
+	configured string
+	// name is the validated filename, "" when the file is missing, unreadable
+	// or not an image at all.
+	name string
+	// url is what the document advertises for it, "" when name is.
+	url string
+	// sum is the hex SHA-256 of its bytes.
+	sum string
+	// err is why it cannot be rendered into icons; nil when it can.
+	err error
+}
+
+func (c brandingCandidate) usable() bool { return c.name != "" && c.err == nil }
+
+// loadIconCandidate reads one configured asset and judges it, without deciding
+// anything: the caller composes the chain.
+func (b *brandingStore) loadIconCandidate(host, configured string) brandingCandidate {
+	c := brandingCandidate{configured: strings.TrimSpace(configured)}
+	if c.configured == "" {
+		return c
+	}
+	name := safeAssetName(c.configured)
+	body, _, err := b.openAsset(host, name)
+	if name == "" || err != nil {
+		c.err = errors.New("the file is missing or is not a valid image")
+		return c
+	}
+	c.name = name
+	c.url = brandingAssetURL(host, name)
+	c.sum = hex.EncodeToString(sha256sum(body))
+	c.err = ValidateBrandingIconSource(body)
+	return c
+}
+
+// brandingIconIssue is the sentence an operator reads when the icons are not
+// coming from where they asked. It names the FILE that failed and the rest of
+// the chain, because "the logo cannot be rendered" told an operator who had
+// configured an icon nothing about which of their two files was the problem.
+func brandingIconIssue(icon, logo brandingCandidate, source string) string {
+	var parts []string
+	if icon.configured != "" && icon.err != nil {
+		parts = append(parts, fmt.Sprintf("the configured icon %q cannot be rendered: %v", icon.configured, icon.err))
+	}
+	if logo.configured != "" && logo.err != nil && source != brandingSourceLogo {
+		parts = append(parts, fmt.Sprintf("the configured logo %q cannot be rendered: %v", logo.configured, logo.err))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "; ") +
+		" (the icons are rendered from icon, then logo, then Moov's own; " +
+		"this host is being served " + brandingIconUsing(source) + ")"
+}
+
+// brandingIconUsing names, in the operator's words, where the icons come from.
+func brandingIconUsing(source string) string {
+	switch source {
+	case brandingSourceIcon:
+		return "the configured icon"
+	case brandingSourceLogo:
+		return "the configured logo"
+	default:
+		return "Moov's icons"
+	}
 }
 
 // maxShortNameRunes is the cap on Branding.ShortName. Twelve is what the
@@ -509,6 +617,7 @@ type brandingFile struct {
 	Tagline    string             `json:"tagline,omitempty"`
 	SupportURL string             `json:"supportUrl,omitempty"`
 	Logo       string             `json:"logo,omitempty"`
+	Icon       string             `json:"icon,omitempty"`
 	Splash     string             `json:"splash,omitempty"`
 	Colors     brandingFileColors `json:"colors,omitempty"`
 }
@@ -707,8 +816,8 @@ func truncateRunes(s string, maxRunes int) string {
 // cache kept serving the old link until it expired.
 func brandingETag(doc Branding) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
-		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL,
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
+		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL, doc.IconURL,
 		doc.Colors.Primary, doc.Colors.OnPrimary,
 		doc.Colors.SplashFrom, doc.Colors.SplashTo,
 		doc.Tagline, doc.SupportURL, doc.Default)

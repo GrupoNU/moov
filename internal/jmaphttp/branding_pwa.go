@@ -49,11 +49,19 @@ import (
 //
 // # Icons are rendered, cached, and fall back loudly
 //
-// A configured logo (PNG, JPEG or GIF; dimensions capped before decoding) is
-// rendered into every icon size on demand and cached by host, logo digest,
-// accent color and name for the document cache's TTL. A logo that cannot be
-// rendered — WebP, undecodable, oversized, missing — degrades to Moov's icons
-// AND is declared: one log line per host per TTL, and a line in `moovctl
+// The icons are rendered from the brand's optional SQUARE `icon` when it has
+// one, and from its `logo` otherwise — a chain of icon, then logo, then Moov's
+// own. The two exist separately because the maskable and Apple icons sit on an
+// opaque plate of the primary color, so a black wordmark on a brand whose
+// primary is black renders invisible; the square glyph a brand kit keeps for
+// dark backgrounds goes in `icon`.
+//
+// The chosen source (PNG, JPEG or GIF; dimensions capped before decoding) is
+// rendered into every icon size on demand and cached by host, source digest,
+// accent color and name for the document cache's TTL. A source that cannot be
+// rendered — WebP, undecodable, oversized, missing — falls through to the next
+// link AND is declared: one log line per host per TTL naming the file that
+// failed and where the icons are coming from instead, and a line in `moovctl
 // branding show`. Silent fallback would put Moov's mark on a customer's
 // phone with nothing to tell the operator why.
 
@@ -283,11 +291,13 @@ func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 		return defaultIcon(spec)
 	}
 	e := b.resolveEntry(host)
-	if e.logo == "" || e.iconIssue != "" {
+	// iconFile is already the winner of the icon -> logo -> Moov chain, and it
+	// is empty precisely when Moov's own icons are the answer.
+	if e.iconFile == "" {
 		return defaultIcon(spec)
 	}
 
-	key := iconCacheKey(host, e.logoSum, e.doc.Colors.Primary, spec.name)
+	key := iconCacheKey(host, e.iconSum, e.doc.Colors.Primary, spec.name)
 	now := b.now()
 	b.mu.Lock()
 	if cached, ok := b.icons[key]; ok && now.Before(cached.expires) {
@@ -296,7 +306,7 @@ func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 	}
 	b.mu.Unlock()
 
-	logoBytes, _, err := b.openAsset(host, e.logo)
+	logoBytes, _, err := b.openAsset(host, e.iconFile)
 	if err != nil {
 		return defaultIcon(spec)
 	}
