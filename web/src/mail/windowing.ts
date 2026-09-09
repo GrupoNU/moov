@@ -17,18 +17,29 @@
  * previews are traded away for a list that cannot jump.
  */
 
-/** The pixel height of one message row. Must match `--row-height` in CSS. */
-export const ROW_HEIGHT = 72;
+/**
+ * The pixel height of one message row. Must match `--row-height` in CSS.
+ *
+ * The DEFAULT density's height, which is what a caller that passes no height
+ * gets — `rowHeight.test.ts` pins the two together. B-11 moved it from 72 to
+ * Gmail's own ~40, and this constant had to move with the table rather than be
+ * left as a second opinion about what a row is.
+ */
+export const ROW_HEIGHT = 40;
 
 /**
  * How many rows to render beyond the viewport on each side.
  *
  * Overscan trades memory for the chance that a fast scroll outruns React's
- * next paint and shows blank space. Six rows ≈ 432 px of buffer above and
- * below, which covers a flick on a 60 Hz display without rendering a
- * meaningful fraction of a 200-row window.
+ * next paint and shows blank space.
+ *
+ * B-11 shrank the default row from 72 px to 40, which shrank six rows of buffer
+ * from ~432 px to ~240 — so the count went up to keep roughly the same DISTANCE
+ * of protection, because what outruns a paint is pixels of scroll per frame,
+ * not rows. Ten rows is ~400 px at the default density and ~320 at compact,
+ * still a negligible fraction of a 200-row window.
  */
-export const OVERSCAN = 6;
+export const OVERSCAN = 10;
 
 /** The slice of rows a virtualized list should render. */
 export interface WindowRange {

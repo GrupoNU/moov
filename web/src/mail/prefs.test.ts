@@ -288,10 +288,16 @@ describe("density", () => {
     expect(new Set(heights).size).toBe(DENSITIES.length);
   });
 
-  it("keeps the default at the height P2 shipped and the stylesheet draws", () => {
-    // Changing this is a product decision, not a refactor: it is the number
-    // `--row-height` and the virtualizer both start from.
-    expect(rowHeightFor("default")).toBe(72);
+  it("keeps the default at Gmail's own row height (B-11)", () => {
+    /*
+     * Changing this is a product decision, not a refactor: it is the number
+     * `--row-height` and the virtualizer both start from.
+     *
+     * It was 72 — what P2 shipped — until the side-by-side review measured
+     * Gmail at ~40 and found our COMPACT setting (56) still looser than Gmail's
+     * normal one. The whole scale moved down to anchor here.
+     */
+    expect(rowHeightFor("default")).toBe(40);
   });
 
   it("orders the three densities as their names promise", () => {

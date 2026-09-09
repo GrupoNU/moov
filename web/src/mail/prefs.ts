@@ -829,12 +829,29 @@ export async function savePrefs(
  * ONE number that both sides read, rather than a CSS value the maths never
  * hears about.
  *
- * The values: 72 px is what P2 shipped and stays "default". "comfortable" is
- * Gmail's roomier row; "compact" drops the preview line's breathing room to
- * fit roughly a third more mail on a laptop screen. Google publishes no pixel
- * values for its three names (canon §5 records the absence), so these are ours
- * and are chosen to be visibly distinct — a density setting whose steps are
- * 4 px apart is a control the user cannot tell is working.
+ * # The scale, and why it moved (B-11)
+ *
+ * It used to be 56 / 72 / 88. The side-by-side review measured Gmail's default
+ * row at roughly 40 px and found ours at COMPACT was 56 — so Moov's tightest
+ * setting was still 40% looser than Gmail's normal one, and the whole scale sat
+ * a step and a half above the product it is benchmarked against. A user landing
+ * from Gmail saw a third less mail per screen with no setting that would give
+ * it back.
+ *
+ * It is now 32 / 40 / 48, anchored on Gmail's 40 for "default". Google publishes
+ * no pixel values for its three names (canon §5 records the absence), so the
+ * neighbours are ours: ±8 px, which is one step of the spacing scale and is
+ * visibly distinct — a density setting whose steps are 4 px apart is a control
+ * the user cannot tell is working.
+ *
+ * 32 px is the floor and it is a real constraint, not a round number. The row's
+ * tallest contents are the avatar and the hover-action buttons, and both had to
+ * come down to fit inside it with any breathing room at all — the avatar from
+ * 34 px (which alone was TALLER than the row this scale now asks for) to 24 px,
+ * and the actions from 1.75rem to 1.5rem. Those are in the stylesheet, driven
+ * by `--row-avatar` and `--row-action` from this same table, so the geometry
+ * has one source rather than a CSS literal that a future change to these
+ * numbers would silently outgrow.
  */
 export interface DensityMetrics {
   /** The row height in pixels — the virtualizer's divisor. */
@@ -843,12 +860,30 @@ export interface DensityMetrics {
   readonly rowPaddingX: number;
   /** Gap between a row's cells. */
   readonly rowGap: number;
+  /**
+   * The sender avatar's diameter (B-11).
+   *
+   * Part of the density table rather than a CSS literal because it is the
+   * row's TALLEST content: at the old fixed 34 px it did not fit inside the
+   * 32 px compact row at all, and a literal is exactly the kind of value that
+   * silently outgrows a scale someone later tightens.
+   */
+  readonly avatarSize: number;
+  /** The hover-action button's box, for the same reason. */
+  readonly actionSize: number;
 }
 
+/*
+ * Every row must clear its own contents. Compact is the binding case: a 32 px
+ * row holding a 24 px avatar leaves 4 px above and below, which is tight and is
+ * the point of the setting — but it is not NEGATIVE, and a test asserts that
+ * for all three so a future tightening cannot ship a row its own avatar
+ * overflows.
+ */
 const DENSITY_METRICS: Readonly<Record<Density, DensityMetrics>> = {
-  default: { rowHeight: 72, rowPaddingX: 16, rowGap: 12 },
-  comfortable: { rowHeight: 88, rowPaddingX: 20, rowGap: 14 },
-  compact: { rowHeight: 56, rowPaddingX: 12, rowGap: 8 },
+  default: { rowHeight: 40, rowPaddingX: 16, rowGap: 12, avatarSize: 28, actionSize: 28 },
+  comfortable: { rowHeight: 48, rowPaddingX: 20, rowGap: 14, avatarSize: 32, actionSize: 32 },
+  compact: { rowHeight: 32, rowPaddingX: 12, rowGap: 8, avatarSize: 24, actionSize: 24 },
 };
 
 /** The geometry for a density. */
@@ -873,6 +908,10 @@ export function densityVariables(density: Density): Readonly<Record<string, stri
     "--row-height": `${metrics.rowHeight}px`,
     "--row-padding-x": `${metrics.rowPaddingX}px`,
     "--row-gap": `${metrics.rowGap}px`,
+    // B-11: the two contents that have to shrink with the row, so the 32px
+    // compact row is not overflowed by its own avatar.
+    "--row-avatar": `${metrics.avatarSize}px`,
+    "--row-action": `${metrics.actionSize}px`,
   };
 }
 

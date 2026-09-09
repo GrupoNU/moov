@@ -12,13 +12,22 @@
  * the `var(…, …)` sense: they are what the list draws with before the prefs
  * load resolves, and they are the "default" density's own values, so the
  * pre-load paint and the post-load paint agree for the overwhelmingly common
- * case. The literal 72px here is what the unit test pins.
+ * case. The literals here are what the unit test pins against that table.
+ *
+ * B-11 moved the scale to Gmail's own (32/40/48) and added two more variables:
+ * the avatar and the hover-action button size with the row, because at 34px the
+ * avatar was taller than the compact row the new scale asks for.
  */
 
 .container {
-  --row-height-fallback: 72px;
+  --row-height-fallback: 40px;
   --row-padding-x-fallback: 16px;
   --row-gap-fallback: 12px;
+  /* B-11: the avatar and the hover buttons shrink with the row, so the 32px
+   * compact row is not overflowed by its own contents. Same fallback rule as
+   * the three above — these are the "default" density's values. */
+  --row-avatar-fallback: 28px;
+  --row-action-fallback: 28px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -177,8 +186,8 @@
 
 .avatar {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: var(--row-avatar, var(--row-avatar-fallback));
+  height: var(--row-avatar, var(--row-avatar-fallback));
   display: grid;
   place-items: center;
   border-radius: var(--radius-full);
@@ -431,8 +440,10 @@
 
 .skeletonAvatar {
   flex: none;
-  width: 34px;
-  height: 34px;
+  /* The skeleton must occupy the same geometry as the rows it stands in for,
+     or the list visibly resizes the moment the data arrives. */
+  width: var(--row-avatar, var(--row-avatar-fallback));
+  height: var(--row-avatar, var(--row-avatar-fallback));
   border-radius: var(--radius-full);
   background: var(--surface-sunken);
   animation: row-pulse 1.8s var(--ease-out) infinite;
@@ -569,8 +580,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  /* B-11: sized from the density table, not a fixed 1.75rem — at the 32px
+   * compact row a 28px button leaves 2px of clearance and the strip looks
+   * jammed; 24px is what makes the tightest row still read as a row. */
+  width: var(--row-action, var(--row-action-fallback));
+  height: var(--row-action, var(--row-action-fallback));
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
