@@ -172,9 +172,19 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(handleAsset(request));
   }
 
-  // Everything else — the manifest, icons, favicon — falls through to the
-  // network untouched. They are small, they are already HTTP-cached, and
-  // adding them here would buy nothing but a second staleness surface.
+  /*
+   * Everything else falls through to the network untouched. It is small, it is
+   * already HTTP-cached, and adding it here would buy nothing but a second
+   * staleness surface.
+   *
+   * Note what is NOT in that "everything else" any more: the shell links its
+   * manifest, favicon and apple-touch-icon under `/branding/...`, so they were
+   * already returned above by `isBypassed` — deliberately. Those responses are
+   * resolved per Host by the server, and a worker that cached them would serve
+   * one customer's icon on another customer's host. The prefix match covers
+   * every current and future path under it, so nothing has to be added here
+   * when the server grows another branded asset.
+   */
 });
 
 /**

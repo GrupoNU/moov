@@ -193,6 +193,21 @@ describe("the service worker", () => {
   it("treats only Vite's hashed output as immutable", () => {
     expect(source).toContain('"/assets/"');
   });
+
+  it("bypasses the shell's branded manifest and icons by prefix", () => {
+    /*
+     * The shell links /branding/manifest.webmanifest and /branding/icons/*.
+     * Those are resolved per Host by the server, so a cached copy would serve
+     * one customer's icon on another customer's host. `/branding` is in the
+     * deny list and matched by PREFIX, which is what covers the sub-paths —
+     * this test is the pin on that reasoning, not a second copy of the list.
+     */
+    const bypassed = (pathname: string): boolean =>
+      source.includes('"/branding"') && pathname.startsWith("/branding");
+    expect(bypassed("/branding/manifest.webmanifest")).toBe(true);
+    expect(bypassed("/branding/icons/favicon-32.png")).toBe(true);
+    expect(source).toContain("startsWith(prefix)");
+  });
 });
 
 describe("the offline page", () => {
