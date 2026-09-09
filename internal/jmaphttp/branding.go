@@ -111,6 +111,21 @@ type Branding struct {
 	LogoURL   string `json:"logoUrl"`
 	SplashURL string `json:"splashUrl"`
 
+	// LogoDarkURL is the optional wordmark for DARK backgrounds: the login
+	// panel, whose gradient runs between SplashFrom and SplashTo, and the dark
+	// theme's top bar. Empty when the brand configured none.
+	//
+	// It is the mirror of the problem IconURL solves. Areacorp's wordmark is
+	// black, so on the dark login panel it is a black mark on a dark ground —
+	// invisible. A brand kit that has a dark-background wordmark puts it here;
+	// without one the client draws the light logo on a small light plate, which
+	// is legible but is a plate the customer did not design.
+	//
+	// It plays NO part in generating the PWA icons: that chain is icon, then
+	// logo, then Moov's own, and a second wordmark would only add a way for the
+	// home screen to disagree with the top bar.
+	LogoDarkURL string `json:"logoDarkUrl"`
+
 	// IconURL is the optional SQUARE mark the launcher icons and the favicon
 	// are rendered from, on this origin like the others; empty when the brand
 	// configured none, in which case the icons are rendered from LogoURL.
@@ -186,10 +201,11 @@ func DefaultBranding() Branding {
 		Name: "Moov Mail",
 		// "Moov", not the derived "Moov Mail": the embedded manifest says so,
 		// and a test pins the two together.
-		ShortName: "Moov",
-		LogoURL:   "",
-		SplashURL: "",
-		IconURL:   "",
+		ShortName:   "Moov",
+		LogoURL:     "",
+		SplashURL:   "",
+		IconURL:     "",
+		LogoDarkURL: "",
 		Colors: BrandingColors{
 			Primary:    "#5b5bd6",
 			OnPrimary:  "#ffffff",
@@ -501,6 +517,14 @@ func (b *brandingStore) load(host string) brandingEntry {
 			"using", brandingIconUsing(entry.iconSource), "reason", issue)
 	}
 
+	// logoDark and splash are advertised on presence and validity alone. Neither
+	// feeds the icon renderer, so there is nothing to declare when one is a
+	// WebP: it displays perfectly well in the page that asked for it.
+	if name := safeAssetName(file.LogoDark); name != "" {
+		if _, _, err := b.openAsset(host, name); err == nil {
+			doc.LogoDarkURL = brandingAssetURL(host, name)
+		}
+	}
 	if name := safeAssetName(file.Splash); name != "" {
 		if _, _, err := b.openAsset(host, name); err == nil {
 			doc.SplashURL = brandingAssetURL(host, name)
@@ -617,6 +641,7 @@ type brandingFile struct {
 	Tagline    string             `json:"tagline,omitempty"`
 	SupportURL string             `json:"supportUrl,omitempty"`
 	Logo       string             `json:"logo,omitempty"`
+	LogoDark   string             `json:"logoDark,omitempty"`
 	Icon       string             `json:"icon,omitempty"`
 	Splash     string             `json:"splash,omitempty"`
 	Colors     brandingFileColors `json:"colors,omitempty"`
@@ -816,8 +841,8 @@ func truncateRunes(s string, maxRunes int) string {
 // cache kept serving the old link until it expired.
 func brandingETag(doc Branding) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
-		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL, doc.IconURL,
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
+		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL, doc.IconURL, doc.LogoDarkURL,
 		doc.Colors.Primary, doc.Colors.OnPrimary,
 		doc.Colors.SplashFrom, doc.Colors.SplashTo,
 		doc.Tagline, doc.SupportURL, doc.Default)

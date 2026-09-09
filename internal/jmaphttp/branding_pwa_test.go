@@ -844,6 +844,7 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 		"LogoURL":           func(d *Branding) { d.LogoURL = "/branding/assets/h/logo.png" },
 		"SplashURL":         func(d *Branding) { d.SplashURL = "/branding/assets/h/splash.png" },
 		"IconURL":           func(d *Branding) { d.IconURL = "/branding/assets/h/icon.png" },
+		"LogoDarkURL":       func(d *Branding) { d.LogoDarkURL = "/branding/assets/h/logo-dark.png" },
 		"Colors.Primary":    func(d *Branding) { d.Colors.Primary = "#000001" },
 		"Colors.OnPrimary":  func(d *Branding) { d.Colors.OnPrimary = "#000001" },
 		"Colors.SplashFrom": func(d *Branding) { d.Colors.SplashFrom = "#000001" },
@@ -884,6 +885,7 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 	walk("", full)
 	jsonToGo := map[string]string{
 		"name": "Name", "shortName": "ShortName", "logoUrl": "LogoURL", "splashUrl": "SplashURL", "iconUrl": "IconURL",
+		"logoDarkUrl":    "LogoDarkURL",
 		"colors.primary": "Colors.Primary", "colors.onPrimary": "Colors.OnPrimary",
 		"colors.splashFrom": "Colors.SplashFrom", "colors.splashTo": "Colors.SplashTo",
 		"tagline": "Tagline", "supportUrl": "SupportURL", "default": "Default",

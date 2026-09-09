@@ -429,3 +429,170 @@ func TestSpecForSource(t *testing.T) {
 		}
 	}
 }
+
+// --- the optional dark-background wordmark -----------------------------------
+//
+// The mirror of the problem the square icon solves, found on the same live
+// gate: Areacorp's wordmark is black, so on the dark login panel it is a black
+// mark on a dark ground. `logoDark` is where a brand kit's dark-background
+// wordmark goes. It is advertised on presence and validity alone and plays NO
+// part in generating the icons — that chain stays icon, then logo, then Moov's.
+
+func TestBrandingLogoDarkAdvertised(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "dark.test", map[string]any{
+		"name": "Areacorp", "logo": "logo.png", "logoDark": "logo-dark.png",
+	}, map[string][]byte{
+		"logo.png":      redLogoPNG(t),
+		"logo-dark.png": whiteIconPNG(t),
+	})
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "dark.test", nil))
+
+	if doc.LogoDarkURL != "/branding/assets/dark.test/logo-dark.png" {
+		t.Errorf("logoDarkUrl = %q", doc.LogoDarkURL)
+	}
+	if doc.LogoURL != "/branding/assets/dark.test/logo.png" {
+		t.Errorf("logoUrl = %q; the light logo is untouched", doc.LogoURL)
+	}
+	// It serves bytes, like any other asset, with the same hostile-content
+	// headers.
+	rec := getBranding(t, srv, doc.LogoDarkURL, "dark.test", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", doc.LogoDarkURL, rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("missing nosniff on the dark logo")
+	}
+}
+
+// TestBrandingLogoDarkAbsentOrInvalid: not configured, missing on disk, not an
+// image, or a name that is not a safe single component — all of them mean the
+// same thing, an empty logoDarkUrl, with no effect on anything else.
+func TestBrandingLogoDarkAbsentOrInvalid(t *testing.T) {
+	cases := []struct {
+		name       string
+		configured string
+		assets     map[string][]byte
+	}{
+		{"not configured", "", map[string][]byte{"logo.png": redLogoPNG(t)}},
+		{"missing on disk", "logo-dark.png", map[string][]byte{"logo.png": redLogoPNG(t)}},
+		{"not an image", "logo-dark.png", map[string][]byte{
+			"logo.png": redLogoPNG(t), "logo-dark.png": []byte("<!doctype html><script>alert(1)</script>"),
+		}},
+		{"traversal", "../secret.png", map[string][]byte{"logo.png": redLogoPNG(t)}},
+		{"the config file itself", brandingConfigFile, map[string][]byte{"logo.png": redLogoPNG(t)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			doc := map[string]any{"name": "Dark", "logo": "logo.png"}
+			if tc.configured != "" {
+				doc["logoDark"] = tc.configured
+			}
+			writeBrand(t, root, "dark.test", doc, tc.assets)
+
+			store := newBrandingStore(root, nil, nil)
+			entry := store.resolveEntry("dark.test")
+			if entry.doc.LogoDarkURL != "" {
+				t.Errorf("logoDarkUrl = %q, want it not advertised", entry.doc.LogoDarkURL)
+			}
+			// The rest of the brand is unaffected, and the icons still come
+			// from the light logo: a dark wordmark is not an icon source.
+			if entry.doc.LogoURL == "" {
+				t.Error("the light logo was dropped")
+			}
+			if entry.iconSource != brandingSourceLogo || entry.iconFile != "logo.png" {
+				t.Errorf("icon source = %q/%q, want the logo", entry.iconSource, entry.iconFile)
+			}
+			if entry.iconIssue != "" {
+				t.Errorf("a dark-logo problem was declared as an ICON problem: %s", entry.iconIssue)
+			}
+		})
+	}
+}
+
+// TestBrandingLogoDarkIsNotAnIconSource: even when it is the ONLY usable
+// image, the icons are Moov's. A second wordmark must never become the mark on
+// a home screen, or the phone and the top bar could disagree.
+func TestBrandingLogoDarkIsNotAnIconSource(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "only.test", map[string]any{
+		"name": "Only Dark", "logoDark": "logo-dark.png",
+	}, map[string][]byte{"logo-dark.png": whiteIconPNG(t)})
+
+	store := newBrandingStore(root, nil, nil)
+	entry := store.resolveEntry("only.test")
+	if entry.doc.LogoDarkURL == "" {
+		t.Fatal("the dark logo was not advertised")
+	}
+	if entry.iconFile != "" || entry.iconSource != "" {
+		t.Errorf("the dark logo became an icon source: %q/%q", entry.iconFile, entry.iconSource)
+	}
+	for _, spec := range brandingIconSpecs {
+		got, gotETag := store.icon("only.test", spec)
+		want, wantETag := defaultIcon(spec)
+		if !bytes.Equal(got, want) || gotETag != wantETag {
+			t.Errorf("%s: a dark wordmark was rendered as an icon", spec.name)
+		}
+	}
+}
+
+// TestBrandingLogoDarkETagChanges: logoDarkUrl is in the fingerprint, so
+// adding one invalidates a cached document instead of leaving the old one in
+// front of a browser for the whole max-age.
+func TestBrandingLogoDarkETagChanges(t *testing.T) {
+	base := DefaultBranding()
+	withDark := base
+	withDark.LogoDarkURL = "/branding/assets/h/logo-dark.png"
+	if brandingETag(base) == brandingETag(withDark) {
+		t.Error("changing logoDarkUrl did not change the ETag")
+	}
+
+	root := t.TempDir()
+	writeBrand(t, root, "etagdark.test", map[string]any{"name": "Etag", "logo": "logo.png"},
+		map[string][]byte{"logo.png": redLogoPNG(t), "logo-dark.png": whiteIconPNG(t)})
+	now := time.Now()
+	store := newBrandingStore(root, nil, func() time.Time { return now })
+	_, first := store.resolve("etagdark.test")
+
+	writeBrand(t, root, "etagdark.test", map[string]any{
+		"name": "Etag", "logo": "logo.png", "logoDark": "logo-dark.png",
+	}, nil)
+	now = now.Add(brandingCacheTTL + time.Second)
+	doc, after := store.resolve("etagdark.test")
+	if doc.LogoDarkURL == "" {
+		t.Fatal("the dark logo was not picked up")
+	}
+	if after == first {
+		t.Error("adding a dark logo did not change the document ETag")
+	}
+}
+
+// TestBrandingLogoDarkDoesNotLeakExistence: an unconfigured host and a
+// Moov-lookalike still answer identically, dark logo included.
+func TestBrandingLogoDarkDoesNotLeakExistence(t *testing.T) {
+	root := t.TempDir()
+	def := DefaultBranding()
+	writeBrand(t, root, "lookalikedark.test", map[string]any{
+		"name": def.Name, "shortName": def.ShortName,
+		"colors": map[string]string{
+			"primary": def.Colors.Primary, "onPrimary": def.Colors.OnPrimary,
+			"splashFrom": def.Colors.SplashFrom, "splashTo": def.Colors.SplashTo,
+		},
+	}, nil)
+	srv := brandingServer(t, root)
+
+	a := decodeBranding(t, getBranding(t, srv, PathBranding, "lookalikedark.test", nil))
+	b := decodeBranding(t, getBranding(t, srv, PathBranding, "absent.test", nil))
+	if a.LogoDarkURL != "" || b.LogoDarkURL != "" {
+		t.Errorf("logoDarkUrl leaked: %q vs %q", a.LogoDarkURL, b.LogoDarkURL)
+	}
+	a.Default, b.Default = false, false
+	if a != b {
+		t.Errorf("documents differ:\n%+v\n%+v", a, b)
+	}
+}
