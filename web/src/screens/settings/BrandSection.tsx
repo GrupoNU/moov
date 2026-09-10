@@ -7,6 +7,7 @@ import { MOOV_DEFAULT_BRANDING, brandSeeds, type Branding } from "../../branding
 import { THEME_SURFACES, derivePalette, type ThemeName } from "../../branding/palette";
 import {
   ACCEPTED_IMAGE_EXTENSIONS,
+  ACCEPTED_IMAGE_TYPES,
   ASSET_KINDS,
   checkImageFile,
   type AssetKind,
@@ -762,7 +763,16 @@ function AssetRow({
               type="file"
               data-testid={`brand-file-${kind}`}
               className="visually-hidden"
-              accept={ACCEPTED_IMAGE_EXTENSIONS.join(",")}
+              /*
+               * Both the MIME types and the extensions. Platforms disagree
+               * about which one they honour — a file whose type the OS does not
+               * know is filtered out by a type-only accept, and a type-only
+               * accept is ignored outright by some Android pickers — so listing
+               * both is the only way the dialog offers the same set everywhere.
+               * The DROP path has no accept at all, which is why `checkImageFile`
+               * is the real gate and this is only a convenience.
+               */
+              accept={[...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_IMAGE_EXTENSIONS].join(",")}
               tabIndex={-1}
               aria-hidden="true"
               onChange={(event) => {
