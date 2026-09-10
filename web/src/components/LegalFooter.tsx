@@ -13,7 +13,7 @@ export interface LegalFooterProps {
 }
 
 /**
- * The legal footer: attribution, the source offer, the licence, and the
+ * The legal footer: attribution, the source offer, the license, and the
  * operator's own policy links.
  *
  * # Why the source link cannot be branded away

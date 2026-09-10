@@ -26,6 +26,30 @@
  * keeps word ORDER a property of the translation: "wait 30 seconds" and
  * "esperá 30 segundos" put the number in different places relative to the
  * verb, and a template with positional holes cannot express that.
+ *
+ * # The brand name is a parameter, never a literal
+ *
+ * The product is installed under the host's own name: on mail.areacorp.com.ar
+ * it is "Área Mail", not Moov. So every string that names the product takes
+ * the brand as its FIRST and ONLY parameter, `(brand: string) => string`, and
+ * `useTranslation` binds it — call sites still write `t("filters.activate")`
+ * and get "Activar las reglas de Área Mail". Threading the brand through every
+ * call site instead would put the same `useBranding()` line in forty
+ * components and make forgetting it the default failure.
+ *
+ * That includes strings that describe the SOFTWARE rather than the brand
+ * ("Moov never deletes a Sieve script it did not write"). The user is talking
+ * to the product in front of them; which engine is behind it is not their
+ * concern, and naming an unfamiliar one mid-sentence reads as a bug.
+ *
+ * The exceptions are deliberate and pinned by `noMoovInStrings` in
+ * `strings.test.ts`: `legal.poweredBy` is an attribution, and an attribution
+ * that renamed itself per host would be worthless.
+ *
+ * Spanish must stay grammatical for ANY name. "las reglas de ${brand}" works
+ * for every brand; "el ${brand}" or "la ${brand} nueva" would not, because the
+ * name's gender and number are unknowable. Prefer constructions where the name
+ * is a bare apposition or follows "de".
  */
 
 /** The English strings — the source of truth for the key set. */
@@ -64,16 +88,18 @@ export const en = {
   "error.invalidCredentials.body":
     "Check the address and password and try again. Use the password for this mailbox, not the one for another service.",
 
-  "error.notProvisioned.title": "This mailbox is not set up in Moov yet",
-  "error.notProvisioned.body":
-    "Your password was correct, but this mailbox has not been added to Moov. An administrator has to enable it before you can sign in.",
+  "error.notProvisioned.title": (brand: BrandName): string =>
+    `This mailbox is not set up in ${brand} yet`,
+  "error.notProvisioned.body": (brand: BrandName): string =>
+    `Your password was correct, but this mailbox has not been added to ${brand}. An administrator has to enable it before you can sign in.`,
 
   "error.rateLimited.title": "Too many attempts",
   "error.rateLimited.body": "Wait a moment before trying again.",
   "error.rateLimited.bodyWithSeconds": (seconds: number): string =>
     `Wait about ${seconds} second${seconds === 1 ? "" : "s"} before trying again.`,
 
-  "error.serverError.title": "Moov is not answering right now",
+  "error.serverError.title": (brand: BrandName): string =>
+    `${brand} is not answering right now`,
   "error.serverError.body":
     "The server is reachable but could not complete the request. This is not a problem with your account — try again shortly.",
 
@@ -173,7 +199,8 @@ export const en = {
   "settings.open": "Settings",
   "settings.close": "Close",
   "settings.section.appearance": "Appearance",
-  "settings.theme.description": "Choose how Moov looks, or follow your system.",
+  "settings.theme.description": (brand: BrandName): string =>
+    `Choose how ${brand} looks, or follow your system.`,
 
   // --- settings: E5, the full surface ---
   "settings.search.label": "Search settings",
@@ -216,7 +243,8 @@ export const en = {
   "settings.openQuickPanel": "Open quick settings",
 
   "settings.language.label": "Language",
-  "settings.language.description": "The language Moov's interface is written in.",
+  "settings.language.description": (brand: BrandName): string =>
+    `The language the ${brand} interface is written in.`,
   "settings.language.auto": "Match my browser",
   "settings.language.es": "Español",
   "settings.language.en": "English",
@@ -227,8 +255,8 @@ export const en = {
   "settings.undoSend.seconds": (seconds: number): string => `${seconds} seconds`,
 
   "settings.images.label": "Remote images",
-  "settings.images.description":
-    "Images always load through Moov's proxy, so the sender never learns you opened the message. Spam is always excluded.",
+  "settings.images.description": (brand: BrandName): string =>
+    `Images always load through the ${brand} proxy, so the sender never learns you opened the message. Spam is always excluded.`,
   "settings.images.always": "Always show",
   "settings.images.ask": "Ask before showing",
   /*
@@ -281,8 +309,8 @@ export const en = {
   "settings.inboxType.starred_first": "Starred first",
 
   "settings.notifications.label": "Desktop notifications",
-  "settings.notifications.description":
-    "Moov notifies while this tab is open, like Gmail on the web does.",
+  "settings.notifications.description": (brand: BrandName): string =>
+    `${brand} notifies while this tab is open, like Gmail on the web does.`,
   "settings.notifications.new": "New mail",
   "settings.notifications.off": "Off",
   "settings.notifications.granted": "Your browser allows notifications.",
@@ -382,8 +410,8 @@ export const en = {
    * deployment.
    */
   "settings.filters.soon": "This server does not offer filters",
-  "settings.filters.soonBody":
-    "Filters are Sieve rules stored on the mail server. This deployment does not advertise the capability, so Moov has nothing to configure.",
+  "settings.filters.soonBody": (brand: BrandName): string =>
+    `Filters are Sieve rules stored on the mail server. This deployment does not advertise the capability, so ${brand} has nothing to configure.`,
   "settings.forwarding.soon": "This server does not offer forwarding",
   "settings.forwarding.soonBody":
     "Forwarding and blocked senders are Sieve recipes. This deployment does not advertise the capability.",
@@ -392,8 +420,8 @@ export const en = {
     "The out-of-office reply is Dovecot's Sieve `vacation`. This deployment does not advertise the capability.",
 
   // --- E6: filters (GC-4) ---
-  "filters.description":
-    "Rules run on the mail server as it arrives, so they keep working when Moov is closed. They run IN ORDER, top to bottom.",
+  "filters.description": (brand: BrandName): string =>
+    `Rules run on the mail server as it arrives, so they keep working when ${brand} is closed. They run IN ORDER, top to bottom.`,
   "filters.create": "Create a filter",
   /*
    * F-42. The note says whose format this is, in the one place a user is
@@ -402,15 +430,15 @@ export const en = {
    */
   "filters.export": "Export filters",
   "filters.import": "Import filters",
-  "filters.transferNote":
-    "The file is Moov's own JSON, not Gmail's XML: it round-trips with another Moov account and Gmail will not read it.",
+  "filters.transferNote": (brand: BrandName): string =>
+    `The file is the ${brand} JSON format, not Gmail's XML: it round-trips with another ${brand} account and Gmail will not read it.`,
   "filters.imported": (count: number): string =>
     count === 1 ? "1 filter imported." : `${String(count)} filters imported.`,
   "filters.import.notJson": "That file is not JSON. Pick the file an export produced.",
-  "filters.import.notOurFormat":
-    "That file is not a Moov filter export. Gmail's XML export is not supported.",
-  "filters.import.futureVersion":
-    "That file was written by a newer version of Moov. Update, then import it.",
+  "filters.import.notOurFormat": (brand: BrandName): string =>
+    `That file is not a ${brand} filter export. Gmail's XML export is not supported.`,
+  "filters.import.futureVersion": (brand: BrandName): string =>
+    `That file was written by a newer version of ${brand}. Update, then import it.`,
   "filters.import.noRules": "That export has no filters in it.",
   "filters.import.badRule":
     "One of the filters in that file is malformed, so none were imported.",
@@ -434,13 +462,14 @@ export const en = {
   "filters.loadFailed": "The filters could not be loaded",
 
   // The scriptActive banner — the honesty bit, in words.
-  "filters.foreignScript": "Moov's rules are not running",
-  "filters.foreignScriptBody":
-    "Another Sieve script is active on the server, so these rules exist but do not filter your mail. Moov never deletes a script it did not write — activating Moov's rules leaves the other one stored, just no longer the active one.",
-  "filters.activate": "Activate Moov's rules",
+  "filters.foreignScript": (brand: BrandName): string =>
+    `The ${brand} rules are not running`,
+  "filters.foreignScriptBody": (brand: BrandName): string =>
+    `Another Sieve script is active on the server, so these rules exist but do not filter your mail. ${brand} never deletes a script it did not write — activating the ${brand} rules leaves the other one stored, just no longer the active one.`,
+  "filters.activate": (brand: BrandName): string => `Activate the ${brand} rules`,
   "filters.activating": "Activating…",
   "filters.activateFailed": "The rules could not be activated",
-  "filters.activated": "Moov's rules are active",
+  "filters.activated": (brand: BrandName): string => `The ${brand} rules are active`,
 
   // The builder.
   "filters.builder.newTitle": "New filter",
@@ -472,8 +501,8 @@ export const en = {
   "filters.builder.stop": "Stop processing further rules",
   "filters.builder.save": "Save",
   "filters.builder.cancel": "Cancel",
-  "filters.builder.noDateNote":
-    "There is no date condition, and no free-text search condition: Sieve has no equivalent, so Moov restricts rather than pretends. Use search for those.",
+  "filters.builder.noDateNote": (brand: BrandName): string =>
+    `There is no date condition, and no free-text search condition: Sieve has no equivalent, so ${brand} restricts rather than pretends. Use search for those.`,
   "filters.builder.multiHint": "One per line.",
 
   // The builder's problems, mirrored from the server's own model.
@@ -529,8 +558,8 @@ export const en = {
   "vacation.saved": "Vacation reply saved",
   "vacation.saveFailed": "The vacation reply could not be saved",
   "vacation.loadFailed": "The vacation reply could not be loaded",
-  "vacation.htmlNote":
-    "This responder has an HTML body set elsewhere. Moov edits the plain-text version and leaves the HTML untouched.",
+  "vacation.htmlNote": (brand: BrandName): string =>
+    `This responder has an HTML body set elsewhere. ${brand} edits the plain-text version and leaves the HTML untouched.`,
   "vacation.problem.endBeforeStart": "The last day is before the first day.",
   "vacation.problem.emptyMessage": "Write a subject or a message.",
   "vacation.problem.invalidDate": "That is not a date.",
@@ -572,7 +601,7 @@ export const en = {
   "forwarding.forwardAllTo": "Forward to",
   "forwarding.forwardAllNeedsVerified":
     "Add and verify a destination address first.",
-  "forwarding.disposition": "Keep Moov's copy",
+  "forwarding.disposition": (brand: BrandName): string => `Keep the ${brand} copy`,
   "forwarding.dispositionKeep": "in the inbox",
   "forwarding.dispositionArchive": "in Archive",
   "forwarding.saveFailed": "Forwarding could not be saved",
@@ -738,8 +767,8 @@ export const en = {
   "search.everywhere": "All mail",
   // The graceful degradation the brief requires: never a silent empty list.
   "search.unsupported": "This server cannot answer that search",
-  "search.unsupportedBody":
-    "Moov's search covers text, sender, recipient and subject, and can be narrowed to one folder and a date range. Other conditions are not available yet.",
+  "search.unsupportedBody": (brand: BrandName): string =>
+    `Search in ${brand} covers text, sender, recipient and subject, and can be narrowed to one folder and a date range. Other conditions are not available yet.`,
 
   // --- P2: the reading pane ---
   "reader.from": "From",
@@ -816,9 +845,10 @@ export const en = {
   // The honest fallback: sanitization refused the whole document. Never
   // rendered silently — the user is told a formatted version exists.
   "reader.htmlSanitizeFailed": "The formatted version cannot be shown safely",
-  "reader.htmlSanitizeFailedBody":
-    "This message's formatting could not be made safe to display, so Moov is not showing it. The plain-text version, when the sender included one, is shown below; the original message can be downloaded in full.",
-  "reader.parseFailed": "Moov could not read this message's contents",
+  "reader.htmlSanitizeFailedBody": (brand: BrandName): string =>
+    `This message's formatting could not be made safe to display, so ${brand} is not showing it. The plain-text version, when the sender included one, is shown below; the original message can be downloaded in full.`,
+  "reader.parseFailed": (brand: BrandName): string =>
+    `${brand} could not read this message's contents`,
   "reader.parseFailedBody":
     "The message is stored safely and can be downloaded in full, but its structure could not be parsed.",
 
@@ -976,8 +1006,8 @@ export const en = {
 
   // --- E2: the reader's new surfaces ---
   "reader.spamBanner": "This message is in Spam",
-  "reader.spamBannerBody":
-    "Moov shows it because you asked for it, and keeps its images and links inert. If it does not belong here, mark it as not spam.",
+  "reader.spamBannerBody": (brand: BrandName): string =>
+    `${brand} shows it because you asked for it, and keeps its images and links inert. If it does not belong here, mark it as not spam.`,
   "reader.spamImagesBlocked":
     "Images are never loaded for a message in Spam.",
   // --- E10: suspicious mail outside Spam (canon §4.1.15) ---
@@ -1430,7 +1460,7 @@ export const en = {
 
   // --- the legal footer (AGPL-3.0 §13) ---
   //
-  // The source-code link is a LICENCE OBLIGATION, not a credit: AGPL §13
+  // The source-code link is a LICENSE OBLIGATION, not a credit: AGPL §13
   // requires that a user interacting with the program over a network be
   // offered the corresponding source. It is therefore not removable by a
   // customer's branding, and it points at the exact commit that built the
@@ -1438,10 +1468,10 @@ export const en = {
   "legal.poweredBy": "Powered by Moov · NU Desarrollos Conscientes",
   "legal.sourceCode": "Source code",
   "legal.sourceCommit": (commit: string): string => `Build ${commit}`,
-  "legal.license": "AGPL-3.0 licence",
+  "legal.license": "AGPL-3.0 license",
   "legal.privacy": "Privacy",
   "legal.terms": "Terms",
-  "legal.label": "Legal and licence",
+  "legal.label": "Legal and license",
 } as const;
 
 /**
@@ -1463,6 +1493,77 @@ export type Strings = {
 
 /** A translation key. */
 export type StringKey = keyof Strings;
+
+/**
+ * The host's brand name, as a NOMINAL type.
+ *
+ * A plain `string` parameter would not do. The table already holds a dozen
+ * entries shaped `(name: string) => string` — `label.renameTitle`,
+ * `forwarding.codeSent` — and a structural test could not tell those from a
+ * brand string, so `t` would have silently swallowed keys that need a real
+ * argument and rendered the brand name where a label name belonged.
+ *
+ * The intersection with an unexported unique symbol makes the two shapes
+ * genuinely disjoint to the type system while staying a `string` at runtime:
+ * `brandName(name)` is the only way in, and it is a cast, not a wrapper.
+ */
+declare const brandNameTag: unique symbol;
+export type BrandName = string & { readonly [brandNameTag]: true };
+
+/** Marks a name as THE brand name. Compiles to nothing. */
+export function brandName(name: string): BrandName {
+  return name as BrandName;
+}
+
+/** A string that names the product, and therefore takes the brand. */
+export type BrandString = (brand: BrandName) => string;
+
+/**
+ * True when a value is exactly a brand string.
+ *
+ * The test is on the PARAMETER TUPLE, not on assignability to `BrandString`.
+ * `(name: string) => string` IS assignable to `(brand: BrandName) => string` —
+ * parameters are contravariant, and `BrandName` is a `string` — so the obvious
+ * `extends BrandString` would have swallowed `label.renameTitle` and every
+ * other one-string format key. Comparing `Parameters<T>` to `[BrandName]`
+ * puts `BrandName` in a covariant position, where a plain `string` does not
+ * match it and the nominal tag does its job.
+ */
+type IsBrandString<T> = T extends (...args: never[]) => string
+  ? Parameters<T> extends [BrandName]
+    ? true
+    : false
+  : false;
+
+/**
+ * The keys `useTranslation`'s `t` resolves on its own.
+ *
+ * Plain text, or text that only needs the brand — which `t` supplies. Both are
+ * "plain" from a caller's point of view, and that is the distinction that
+ * matters at a call site: `t(key)` returns a finished string.
+ */
+export type PlainKey = {
+  [K in keyof Strings]: Strings[K] extends string
+    ? K
+    : IsBrandString<Strings[K]> extends true
+      ? K
+      : never;
+}[keyof Strings];
+
+/**
+ * Keys whose value is a formatting function of REAL parameters.
+ *
+ * Brand strings are excluded deliberately: a brand string is `t`'s business,
+ * and letting a call site pass its own brand would be the one way to get an
+ * unbranded word on screen.
+ */
+export type FormatKey = {
+  [K in keyof Strings]: Strings[K] extends string
+    ? never
+    : IsBrandString<Strings[K]> extends true
+      ? never
+      : K;
+}[keyof Strings];
 
 /**
  * Spanish — the pilot's language.
@@ -1497,16 +1598,18 @@ export const es: Strings = {
   "error.invalidCredentials.body":
     "Revisá la dirección y la contraseña e intentá de nuevo. Usá la contraseña de este buzón, no la de otro servicio.",
 
-  "error.notProvisioned.title": "Este buzón todavía no está habilitado en Moov",
-  "error.notProvisioned.body":
-    "Tu contraseña era correcta, pero este buzón no fue dado de alta en Moov. Un administrador tiene que habilitarlo antes de que puedas entrar.",
+  "error.notProvisioned.title": (brand: BrandName): string =>
+    `Este buzón todavía no está habilitado en ${brand}`,
+  "error.notProvisioned.body": (brand: BrandName): string =>
+    `Tu contraseña era correcta, pero este buzón no fue dado de alta en ${brand}. Un administrador tiene que habilitarlo antes de que puedas entrar.`,
 
   "error.rateLimited.title": "Demasiados intentos",
   "error.rateLimited.body": "Esperá un momento antes de volver a intentar.",
   "error.rateLimited.bodyWithSeconds": (seconds: number): string =>
     `Esperá unos ${seconds} segundo${seconds === 1 ? "" : "s"} antes de volver a intentar.`,
 
-  "error.serverError.title": "Moov no está respondiendo en este momento",
+  "error.serverError.title": (brand: BrandName): string =>
+    `${brand} no está respondiendo en este momento`,
   "error.serverError.body":
     "El servidor está accesible pero no pudo completar el pedido. No es un problema de tu cuenta: intentá de nuevo en un momento.",
 
@@ -1564,7 +1667,8 @@ export const es: Strings = {
   "settings.open": "Configuración",
   "settings.close": "Cerrar",
   "settings.section.appearance": "Apariencia",
-  "settings.theme.description": "Elegí cómo se ve Moov, o seguí el sistema.",
+  "settings.theme.description": (brand: BrandName): string =>
+    `Elegí cómo se ve ${brand}, o seguí el sistema.`,
 
   "settings.search.label": "Buscar en la configuración",
   "settings.search.placeholder": "Buscar en la configuración",
@@ -1596,7 +1700,8 @@ export const es: Strings = {
   "settings.openQuickPanel": "Abrir los ajustes rápidos",
 
   "settings.language.label": "Idioma",
-  "settings.language.description": "El idioma en el que está escrita la interfaz de Moov.",
+  "settings.language.description": (brand: BrandName): string =>
+    `El idioma en el que está escrita la interfaz de ${brand}.`,
   "settings.language.auto": "El de mi navegador",
   "settings.language.es": "Español",
   "settings.language.en": "English",
@@ -1607,8 +1712,8 @@ export const es: Strings = {
   "settings.undoSend.seconds": (seconds: number): string => `${seconds} segundos`,
 
   "settings.images.label": "Imágenes remotas",
-  "settings.images.description":
-    "Las imágenes siempre pasan por el proxy de Moov, así el remitente nunca se entera de que abriste el mensaje. En Spam nunca se cargan.",
+  "settings.images.description": (brand: BrandName): string =>
+    `Las imágenes siempre pasan por el proxy de ${brand}, así el remitente nunca se entera de que abriste el mensaje. En Spam nunca se cargan.`,
   "settings.images.always": "Mostrar siempre",
   "settings.images.ask": "Preguntar antes de mostrar",
   "settings.images.alwaysNote": "Cada mensaje muestra sus imágenes a través del proxy.",
@@ -1658,8 +1763,8 @@ export const es: Strings = {
   "settings.inboxType.starred_first": "Destacados primero",
 
   "settings.notifications.label": "Notificaciones de escritorio",
-  "settings.notifications.description":
-    "Moov notifica mientras esta pestaña está abierta, igual que Gmail en la web.",
+  "settings.notifications.description": (brand: BrandName): string =>
+    `${brand} notifica mientras esta pestaña está abierta, igual que Gmail en la web.`,
   "settings.notifications.new": "Correo nuevo",
   "settings.notifications.off": "Desactivadas",
   "settings.notifications.granted": "Tu navegador permite las notificaciones.",
@@ -1725,8 +1830,8 @@ export const es: Strings = {
   "settings.addressAutocomplete.cleared": "Direcciones guardadas borradas",
 
   "settings.filters.soon": "Este servidor no ofrece filtros",
-  "settings.filters.soonBody":
-    "Los filtros son reglas Sieve guardadas en el servidor de correo. Esta instalación no anuncia la capacidad, así que Moov no tiene nada que configurar.",
+  "settings.filters.soonBody": (brand: BrandName): string =>
+    `Los filtros son reglas Sieve guardadas en el servidor de correo. Esta instalación no anuncia la capacidad, así que ${brand} no tiene nada que configurar.`,
   "settings.forwarding.soon": "Este servidor no ofrece reenvío",
   "settings.forwarding.soonBody":
     "El reenvío y los remitentes bloqueados son recetas de Sieve. Esta instalación no anuncia la capacidad.",
@@ -1735,20 +1840,20 @@ export const es: Strings = {
     "La respuesta de ausencia es el `vacation` de Sieve, en Dovecot. Esta instalación no anuncia la capacidad.",
 
   // --- E6: filtros (GC-4) ---
-  "filters.description":
-    "Las reglas corren en el servidor de correo cuando el mensaje llega, así siguen funcionando con Moov cerrado. Se aplican EN ORDEN, de arriba hacia abajo.",
+  "filters.description": (brand: BrandName): string =>
+    `Las reglas corren en el servidor de correo cuando el mensaje llega, así siguen funcionando con ${brand} cerrado. Se aplican EN ORDEN, de arriba hacia abajo.`,
   "filters.create": "Crear un filtro",
   "filters.export": "Exportar filtros",
   "filters.import": "Importar filtros",
-  "filters.transferNote":
-    "El archivo es el JSON propio de Moov, no el XML de Gmail: vuelve a entrar en otra cuenta de Moov y Gmail no lo lee.",
+  "filters.transferNote": (brand: BrandName): string =>
+    `El archivo es el JSON propio de ${brand}, no el XML de Gmail: vuelve a entrar en otra cuenta de ${brand} y Gmail no lo lee.`,
   "filters.imported": (count: number): string =>
     count === 1 ? "Se importó 1 filtro." : `Se importaron ${String(count)} filtros.`,
   "filters.import.notJson": "Ese archivo no es JSON. Elegí el que produjo una exportación.",
-  "filters.import.notOurFormat":
-    "Ese archivo no es una exportación de filtros de Moov. El XML de Gmail no está soportado.",
-  "filters.import.futureVersion":
-    "Ese archivo lo escribió una versión más nueva de Moov. Actualizá y volvé a importarlo.",
+  "filters.import.notOurFormat": (brand: BrandName): string =>
+    `Ese archivo no es una exportación de filtros de ${brand}. El XML de Gmail no está soportado.`,
+  "filters.import.futureVersion": (brand: BrandName): string =>
+    `Ese archivo lo escribió una versión más nueva de ${brand}. Actualizá y volvé a importarlo.`,
   "filters.import.noRules": "Esa exportación no tiene ningún filtro.",
   "filters.import.badRule":
     "Uno de los filtros de ese archivo está mal formado, así que no se importó ninguno.",
@@ -1771,13 +1876,14 @@ export const es: Strings = {
   "filters.saveFailed": "El filtro no se pudo guardar",
   "filters.loadFailed": "No se pudieron cargar los filtros",
 
-  "filters.foreignScript": "Las reglas de Moov no se están ejecutando",
-  "filters.foreignScriptBody":
-    "Hay otro script Sieve activo en el servidor, así que estas reglas existen pero no filtran tu correo. Moov nunca borra un script que no escribió: al activar las reglas de Moov, el otro queda guardado, solo deja de ser el activo.",
-  "filters.activate": "Activar las reglas de Moov",
+  "filters.foreignScript": (brand: BrandName): string =>
+    `Las reglas de ${brand} no se están ejecutando`,
+  "filters.foreignScriptBody": (brand: BrandName): string =>
+    `Hay otro script Sieve activo en el servidor, así que estas reglas existen pero no filtran tu correo. ${brand} nunca borra un script que no escribió: al activar las reglas de ${brand}, el otro queda guardado, solo deja de ser el activo.`,
+  "filters.activate": (brand: BrandName): string => `Activar las reglas de ${brand}`,
   "filters.activating": "Activando…",
   "filters.activateFailed": "No se pudieron activar las reglas",
-  "filters.activated": "Las reglas de Moov están activas",
+  "filters.activated": (brand: BrandName): string => `Las reglas de ${brand} están activas`,
 
   "filters.builder.newTitle": "Filtro nuevo",
   "filters.builder.editTitle": "Editar el filtro",
@@ -1808,8 +1914,8 @@ export const es: Strings = {
   "filters.builder.stop": "Dejar de aplicar las reglas siguientes",
   "filters.builder.save": "Guardar",
   "filters.builder.cancel": "Cancelar",
-  "filters.builder.noDateNote":
-    "No hay condición por fecha ni condición de búsqueda libre: Sieve no tiene equivalente, así que Moov se restringe en lugar de fingir. Para eso está la búsqueda.",
+  "filters.builder.noDateNote": (brand: BrandName): string =>
+    `No hay condición por fecha ni condición de búsqueda libre: Sieve no tiene equivalente, así que ${brand} se restringe en lugar de fingir. Para eso está la búsqueda.`,
   "filters.builder.multiHint": "Uno por línea.",
 
   "filters.problem.noCriteria": "Agregá al menos una condición.",
@@ -1862,8 +1968,8 @@ export const es: Strings = {
   "vacation.saved": "Respuesta automática guardada",
   "vacation.saveFailed": "La respuesta automática no se pudo guardar",
   "vacation.loadFailed": "No se pudo cargar la respuesta automática",
-  "vacation.htmlNote":
-    "Esta respuesta tiene un cuerpo HTML puesto desde otro lado. Moov edita la versión de texto y deja el HTML intacto.",
+  "vacation.htmlNote": (brand: BrandName): string =>
+    `Esta respuesta tiene un cuerpo HTML puesto desde otro lado. ${brand} edita la versión de texto y deja el HTML intacto.`,
   "vacation.problem.endBeforeStart": "El último día es anterior al primero.",
   "vacation.problem.emptyMessage": "Escribí un asunto o un mensaje.",
   "vacation.problem.invalidDate": "Eso no es una fecha.",
@@ -1905,7 +2011,7 @@ export const es: Strings = {
   "forwarding.forwardAllTo": "Reenviar a",
   "forwarding.forwardAllNeedsVerified":
     "Agregá y verificá una dirección de destino primero.",
-  "forwarding.disposition": "Conservar la copia de Moov",
+  "forwarding.disposition": (brand: BrandName): string => `Conservar la copia de ${brand}`,
   "forwarding.dispositionKeep": "en Recibidos",
   "forwarding.dispositionArchive": "en Archivo",
   "forwarding.saveFailed": "El reenvío no se pudo guardar",
@@ -2026,8 +2132,8 @@ export const es: Strings = {
   "search.inMailbox": "En esta carpeta",
   "search.everywhere": "Todo el correo",
   "search.unsupported": "Este servidor no puede responder esa búsqueda",
-  "search.unsupportedBody":
-    "La búsqueda de Moov cubre texto, remitente, destinatario y asunto, y se puede acotar a una carpeta y a un rango de fechas. Otras condiciones todavía no están disponibles.",
+  "search.unsupportedBody": (brand: BrandName): string =>
+    `La búsqueda de ${brand} cubre texto, remitente, destinatario y asunto, y se puede acotar a una carpeta y a un rango de fechas. Otras condiciones todavía no están disponibles.`,
 
   "reader.from": "De",
   "reader.to": "Para",
@@ -2079,9 +2185,10 @@ export const es: Strings = {
       ? "1 imagen incrustada no se puede mostrar."
       : `${count} imágenes incrustadas no se pueden mostrar.`,
   "reader.htmlSanitizeFailed": "La versión con formato no se puede mostrar de forma segura",
-  "reader.htmlSanitizeFailedBody":
-    "El formato de este mensaje no se pudo hacer seguro para mostrar, así que Moov no lo muestra. La versión de texto plano, cuando el remitente incluyó una, se muestra abajo; el mensaje original se puede descargar completo.",
-  "reader.parseFailed": "Moov no pudo leer el contenido de este mensaje",
+  "reader.htmlSanitizeFailedBody": (brand: BrandName): string =>
+    `El formato de este mensaje no se pudo hacer seguro para mostrar, así que ${brand} no lo muestra. La versión de texto plano, cuando el remitente incluyó una, se muestra abajo; el mensaje original se puede descargar completo.`,
+  "reader.parseFailed": (brand: BrandName): string =>
+    `${brand} no pudo leer el contenido de este mensaje`,
   "reader.parseFailedBody":
     "El mensaje está guardado a salvo y se puede descargar completo, pero no se pudo interpretar su estructura.",
 
@@ -2214,8 +2321,8 @@ export const es: Strings = {
 
   // --- E2: las superficies nuevas del lector ---
   "reader.spamBanner": "Este mensaje está en Spam",
-  "reader.spamBannerBody":
-    "Moov lo muestra porque lo pediste, y mantiene sus imágenes y enlaces inertes. Si no corresponde que esté acá, marcalo como que no es spam.",
+  "reader.spamBannerBody": (brand: BrandName): string =>
+    `${brand} lo muestra porque lo pediste, y mantiene sus imágenes y enlaces inertes. Si no corresponde que esté acá, marcalo como que no es spam.`,
   "reader.spamImagesBlocked":
     "Las imágenes nunca se cargan en un mensaje que está en Spam.",
   // --- E10: correo sospechoso fuera de Spam (canon §4.1.15) ---

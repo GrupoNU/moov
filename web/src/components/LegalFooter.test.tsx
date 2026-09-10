@@ -14,7 +14,7 @@ import { MOOV_LICENSE_URL, MOOV_REPO_URL, sourceUrlForCommit } from "./legalLink
 /**
  * The legal footer.
  *
- * The three fixed links are a LICENCE obligation (AGPL-3.0 §13), so the tests
+ * The three fixed links are a LICENSE obligation (AGPL-3.0 §13), so the tests
  * that matter most here are the ones asserting a brand cannot make them
  * disappear — a passing "renders on the default brand" would say nothing about
  * the case the clause exists for, which is a customer who rebranded Moov.
@@ -38,7 +38,7 @@ function renderFooter(branding: Branding = MOOV_DEFAULT_BRANDING) {
 }
 
 describe("the source offer (AGPL-3.0 §13)", () => {
-  it("shows attribution, source and licence on Moov's own brand", () => {
+  it("shows attribution, source and license on Moov's own brand", () => {
     renderFooter();
 
     expect(screen.getByRole("link", { name: en["legal.poweredBy"] })).toHaveAttribute(

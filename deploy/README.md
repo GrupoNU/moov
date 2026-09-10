@@ -202,6 +202,8 @@ them:
   "shortName": "Acme",
   "tagline": "Correo corporativo de Acme S.A.",
   "supportUrl": "mailto:soporte@acme.example",
+  "privacyUrl": "https://acme.example/privacidad",
+  "termsUrl": "https://acme.example/terminos",
   "logo": "logo.png",
   "logoDark": "logo-dark.png",
   "icon": "icon.png",
@@ -228,7 +230,21 @@ stays "Acme Mail"; "Correo Corporativo Acme" becomes "Correo").
 characters); empty renders nothing. `supportUrl` is where "contact your
 administrator" points and accepts **only** `https://`, `http://` or `mailto:` —
 so it can never become a `javascript:` URL on the page where passwords are
-typed. `logo`, `logoDark`, `icon` and `splash` name **files sitting beside
+typed.
+
+`privacyUrl` and `termsUrl` are **the operator's own** privacy policy and terms
+of service. They appear in the legal footer — one muted line under the sign-in
+form and at the foot of the message list — beside three links that are **not**
+configurable: "Powered by Moov", the source code at the exact commit the bundle
+was built from, and the AGPL-3.0 license. That trio is a **license obligation**,
+not a credit: AGPL-3.0 §13 requires that anyone interacting with the program
+over a network be offered the corresponding source, so no branding document can
+remove or replace it. What a brand *can* do is add its own two, which are the
+operator's obligations to their users rather than ours. Both accept exactly the
+schemes `supportUrl` does (`https://`, `http://`, `mailto:`); an unset one
+renders no link at all rather than a dead one.
+
+`logo`, `logoDark`, `icon` and `splash` name **files sitting beside
 `branding.json`**, never URLs: a customer-supplied external URL would be a
 tracking pixel on our login page and a mixed-content risk.
 
@@ -386,7 +402,7 @@ docker run --rm --user root \
     -name 'Acme Mail' \
     -short-name 'Acme' \
     -tagline 'Correo corporativo de Acme S.A.' \
-    -support-url 'mailto:soporte@acme.example' \
+    -support-url 'mailto:soporte@acme.example'     -privacy-url 'https://acme.example/privacidad'     -terms-url 'https://acme.example/terminos' \
     -logo /brand/acme/logo.png \
     -logo-dark /brand/acme/logo-on-dark.png \
     -icon /brand/acme/glyph-on-dark.png \

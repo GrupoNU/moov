@@ -10,7 +10,7 @@
 /** Where Moov's source lives. */
 export const MOOV_REPO_URL = "https://github.com/GrupoNU/moov";
 
-/** The licence text, in the repository. */
+/** The license text, in the repository. */
 export const MOOV_LICENSE_URL = `${MOOV_REPO_URL}/blob/main/LICENSE`;
 
 /**
