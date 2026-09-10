@@ -46,6 +46,10 @@ function sweep(): readonly string[] {
     "#808080",
     "#5b5bd6",
     "#c0ffee",
+    // The pastel that motivated the tonal family: adjusted to a deep teal for
+    // TEXT, it made every derived tint teal too and the brand's light cyan
+    // disappeared from the chrome.
+    "#b8faff",
     "#1e1b4b",
     "#4c1d95",
     "#010101",
@@ -221,6 +225,176 @@ describe("derivePalette — the AA constraints, over the whole sweep", () => {
   });
 });
 
+/**
+ * The tonal family: Gmail's three related tones of ONE accent.
+ *
+ * These are the tokens the chrome is painted with — the compose button, the
+ * selected message row, the rail's active folder pill — and the defect they
+ * fix is a hue one, not a contrast one: they used to derive from the ADJUSTED
+ * accent, so a pastel brand whose accent had to become a deep teal to be
+ * readable as text lost its own hue everywhere. They carry text, so AA is
+ * pinned here as well; but the hue assertion is the reason they exist.
+ */
+describe("derivePalette — the tonal containers", () => {
+  it("keeps body text AA on the selected row and on the active pill", () => {
+    for (const input of INPUTS) {
+      const palette = derivePalette(input);
+      for (const theme of THEMES) {
+        const t = palette[theme];
+        const surfaces = THEME_SURFACES[theme];
+        expect(
+          contrastRatio(surfaces.textDefault, t.selectedRow),
+          `${input} ${theme} text on selectedRow ${t.selectedRow}`,
+        ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+        expect(
+          contrastRatio(surfaces.textDefault, t.activePill),
+          `${input} ${theme} text on activePill ${t.activePill}`,
+        ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+        // The pill's label is `--text-strong` (it is bold and it is the "you
+        // are here" mark), so that one is pinned too.
+        expect(
+          contrastRatio(surfaces.textStrong, t.activePill),
+          `${input} ${theme} strong text on activePill ${t.activePill}`,
+        ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      }
+    }
+  });
+
+  it("keeps onAccentContainer AA on the container it is painted on", () => {
+    for (const input of INPUTS) {
+      const palette = derivePalette(input);
+      for (const theme of THEMES) {
+        const t = palette[theme];
+        expect(
+          contrastRatio(t.onAccentContainer, t.accentContainer),
+          `${input} ${theme} ${t.onAccentContainer} on ${t.accentContainer}`,
+        ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      }
+    }
+  });
+
+  it("puts the three tones at their targets, in the designed order", () => {
+    for (const input of INPUTS) {
+      const palette = derivePalette(input);
+      for (const theme of THEMES) {
+        const t = palette[theme];
+        const surfaces = THEME_SURFACES[theme];
+        // Each tone lands on its target lightness (within hex resolution).
+        const near = (hex: string, target: number, name: string): void => {
+          expect(hexToOklch(hex).l, `${input} ${theme} ${name} L`).toBeCloseTo(target, 1);
+        };
+        near(t.accentContainer, surfaces.containerL, "container");
+        near(t.selectedRow, surfaces.selectedRowL, "selectedRow");
+        near(t.activePill, surfaces.activePillL, "activePill");
+        /*
+         * And the order Gmail uses: the row is the faintest, the pill sits
+         * between it and the button. In the light theme "fainter" means closer
+         * to white (higher L); in the dark theme it means closer to black.
+         * Stated as distance from the theme's own surface, the rule is the
+         * same sentence in both.
+         */
+        const depth = (hex: string): number =>
+          Math.abs(hexToOklch(hex).l - hexToOklch(surfaces.surfaceDefault).l);
+        expect(depth(t.selectedRow), `${input} ${theme} row < pill`).toBeLessThan(
+          depth(t.activePill),
+        );
+        expect(depth(t.activePill), `${input} ${theme} pill < container`).toBeLessThan(
+          depth(t.accentContainer),
+        );
+      }
+    }
+  });
+
+  it("derives the trio from the ORIGINAL primary's hue, not from the adjusted accent", () => {
+    for (const input of INPUTS) {
+      const base = hexToOklch(input);
+      // Only meaningful for a colour that HAS a hue: below this chroma the
+      // angle is numerical noise and the tones are greys by design.
+      if (base.c < 0.05) continue;
+      const palette = derivePalette(input);
+      const t = palette.light;
+      for (const [name, hex] of [
+        ["accentContainer", t.accentContainer],
+        ["selectedRow", t.selectedRow],
+        ["activePill", t.activePill],
+      ] as const) {
+        const drift = Math.abs(((hexToOklch(hex).h - base.h + 540) % 360) - 180);
+        expect(drift, `${input} → ${name} ${hex} hue drift`).toBeLessThanOrEqual(8);
+      }
+    }
+  });
+
+  it("keeps a pastel brand's own hue in the chrome — the defect this fixes", () => {
+    /*
+     * #b8faff is light cyan. As TEXT it reads at 1.08:1 on white, so the
+     * accent is dropped to a dark teal — and before this family existed every
+     * tint came from that teal, so the customer's pastel was nowhere on the
+     * screen. Now the ink is teal and the containers are cyan.
+     */
+    const p = derivePalette("#b8faff", "#ffffff");
+    expect(p.light.accent).toBe("#3b7b80");
+    expect(p.light.accentContainer).toBe("#afebef");
+    expect(p.light.onAccentContainer).toBe("#00272a");
+    expect(p.light.selectedRow).toBe("#cffcff");
+    expect(p.light.activePill).toBe("#b6f1f6");
+    expect(p.dark.accentContainer).toBe("#003b3f");
+    expect(p.dark.onAccentContainer).toBe("#b1f2f7");
+    expect(p.dark.selectedRow).toBe("#002022");
+    expect(p.dark.activePill).toBe("#003033");
+    // The containers are LIGHTER than the accent in the light theme — i.e.
+    // they came from the pastel, not from the teal the accent became.
+    for (const tone of [p.light.accentContainer, p.light.selectedRow, p.light.activePill]) {
+      expect(hexToOklch(tone).l).toBeGreaterThan(hexToOklch(p.light.accent).l + 0.2);
+    }
+  });
+
+  it("documents the trio for the Moov default", () => {
+    // The values tokens.css carries by hand; branding.test.ts pins that copy.
+    const p = derivePalette("#5b5bd6", "#ffffff");
+    expect(p.light.accentContainer).toBe("#d6dcff");
+    expect(p.light.onAccentContainer).toBe("#1b1c42");
+    expect(p.light.selectedRow).toBe("#eef1ff");
+    expect(p.light.activePill).toBe("#dee3ff");
+    expect(p.dark.accentContainer).toBe("#2c2f51");
+    expect(p.dark.onAccentContainer).toBe("#dee3ff");
+    expect(p.dark.selectedRow).toBe("#151636");
+    expect(p.dark.activePill).toBe("#222546");
+  });
+
+  it("emits the four as lowercase six-digit hex, and is deterministic", () => {
+    for (const input of INPUTS) {
+      const a = derivePalette(input, "#FFF");
+      const b = derivePalette(input, "#FFF");
+      for (const theme of THEMES) {
+        for (const hex of [
+          a[theme].accentContainer,
+          a[theme].onAccentContainer,
+          a[theme].selectedRow,
+          a[theme].activePill,
+        ]) {
+          expect(hex).toMatch(/^#[0-9a-f]{6}$/);
+        }
+        expect(a[theme]).toEqual(b[theme]);
+      }
+    }
+  });
+
+  it("degrades the corners of the cube to neutral tones rather than to nothing", () => {
+    // Black and white have no hue to keep, so the tones are greys AT THE
+    // TARGET LIGHTNESS — still three distinguishable steps, still AA.
+    for (const input of ["#000000", "#ffffff"]) {
+      const p = derivePalette(input);
+      for (const theme of THEMES) {
+        const t = p[theme];
+        expect(new Set([t.selectedRow, t.activePill, t.accentContainer]).size).toBe(3);
+        expect(
+          contrastRatio(THEME_SURFACES[theme].textDefault, t.selectedRow),
+        ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      }
+    }
+  });
+});
+
 describe("derivePalette — adjusting, and saying so", () => {
   it("returns a passing primary EXACTLY, and declares nothing for that theme", () => {
     for (const input of INPUTS) {
@@ -371,12 +545,14 @@ describe("the surfaces this module assumes match tokens.css", () => {
     expect(token(lightBlock, "--surface-default")).toBe(THEME_SURFACES.light.surfaceDefault);
     expect(token(lightBlock, "--surface-canvas")).toBe(THEME_SURFACES.light.surfaceCanvas);
     expect(token(lightBlock, "--text-default")).toBe(THEME_SURFACES.light.textDefault);
+    expect(token(lightBlock, "--text-strong")).toBe(THEME_SURFACES.light.textStrong);
   });
 
   it("dark", () => {
     expect(token(darkBlock, "--surface-default")).toBe(THEME_SURFACES.dark.surfaceDefault);
     expect(token(darkBlock, "--surface-canvas")).toBe(THEME_SURFACES.dark.surfaceCanvas);
     expect(token(darkBlock, "--text-default")).toBe(THEME_SURFACES.dark.textDefault);
+    expect(token(darkBlock, "--text-strong")).toBe(THEME_SURFACES.dark.textStrong);
   });
 });
 
