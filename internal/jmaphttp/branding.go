@@ -9,15 +9,15 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GrupoNU/moov/internal/branding"
 )
 
 // Branding (arbitration W-A1 of L2-pwa §3): a PUBLIC, unauthenticated
@@ -68,8 +68,9 @@ const (
 	// MaxBrandingAssetBytes caps one asset. 2 MiB is generous for a logo or a
 	// splash photograph and small enough that a hostile directory cannot
 	// exhaust memory: the cap is applied with an io.LimitedReader before the
-	// bytes are buffered.
-	MaxBrandingAssetBytes = 2 << 20
+	// bytes are buffered. The value is owned by internal/branding, the one
+	// writer, so the reader's cap and the writer's cannot disagree.
+	MaxBrandingAssetBytes = branding.MaxAssetBytes
 
 	// brandingCacheTTL is how long a resolved document is remembered in
 	// process. Short enough that `moovctl branding set` shows up without a
@@ -84,9 +85,10 @@ const (
 	BrandingMaxAge = 300
 )
 
-// brandingConfigFile is the per-host document an operator writes (through
-// `moovctl branding set`, which is the only supported writer).
-const brandingConfigFile = "branding.json"
+// brandingConfigFile is the per-host document a writer produces — `moovctl
+// branding` or the admin API (branding_admin.go), both through
+// internal/branding, the only supported writer.
+const brandingConfigFile = branding.ConfigFile
 
 // Branding is the public document GET /branding returns.
 //
@@ -283,6 +285,12 @@ type brandingEntry struct {
 	// icons, and the reason was logged once when this entry was built — which
 	// is what "declared, rate-limited by the TTL" means.
 	iconIssue string
+
+	// admins are the mailboxes the file grants brand administration to
+	// (branding_admin.go), normalized. Read here so the authorizer rides the
+	// same cache as the document — and is invalidated with it on a write.
+	// NEVER copied into doc: the public document must not carry it.
+	admins []string
 }
 
 // The two names an entry's icon source can carry. They are the words the CLI
@@ -370,39 +378,11 @@ func (s *Server) handleBrandingAsset(w http.ResponseWriter, r *http.Request) {
 // escapes, no empty labels. The refusal returns "", which resolve and
 // openAsset both treat as "no configuration", so a hostile Host header
 // degrades to the Moov defaults rather than to a filesystem read.
-func resolveBrandingHost(raw string) string {
-	h := strings.TrimSpace(raw)
-	if h == "" {
-		return ""
-	}
-	// Host may carry a port; SplitHostPort fails when it does not, which is
-	// the common case, so its error is not interesting.
-	if host, _, err := net.SplitHostPort(h); err == nil {
-		h = host
-	}
-	h = strings.TrimSuffix(strings.ToLower(h), ".")
-	// An IPv6 literal arrives bracketed; brackets are not legal in a path
-	// component on every platform, and nobody brands an IP address.
-	if h == "" || strings.ContainsAny(h, `/\[]%:`) {
-		return ""
-	}
-	if h == "." || h == ".." || strings.Contains(h, "..") {
-		return ""
-	}
-	// A conservative hostname alphabet. Anything outside it cannot name a
-	// directory we created, so there is nothing to lose by refusing it.
-	for _, c := range h {
-		switch {
-		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '.':
-		default:
-			return ""
-		}
-	}
-	if strings.HasPrefix(h, ".") || strings.HasPrefix(h, "-") {
-		return ""
-	}
-	return h
-}
+//
+// The rule itself lives in internal/branding (NormalizeHost) so the writers
+// apply exactly it: a host the CLI accepts but the server rejects would be a
+// directory that is silently never served.
+func resolveBrandingHost(raw string) string { return branding.NormalizeHost(raw) }
 
 // resolve returns the branding document for a host and its ETag.
 //
@@ -443,6 +423,25 @@ func (b *brandingStore) resolveEntry(host string) brandingEntry {
 	return e
 }
 
+// invalidate forgets everything cached for one host — the document and every
+// icon rendered from it — so the next request re-reads the directory. The
+// admin API calls it after each write: the 60 s TTL is for the CLI path, and
+// a panel must see its own save on the next paint.
+func (b *brandingStore) invalidate(host string) {
+	if b == nil || host == "" {
+		return
+	}
+	prefix := host + "\x00"
+	b.mu.Lock()
+	delete(b.cache, host)
+	for key := range b.icons {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.icons, key)
+		}
+	}
+	b.mu.Unlock()
+}
+
 // load reads and validates one host's configuration from disk.
 func (b *brandingStore) load(host string) brandingEntry {
 	fallback := brandingEntry{doc: DefaultBranding()}
@@ -465,7 +464,15 @@ func (b *brandingStore) load(host string) brandingEntry {
 
 	entry := fallback
 	doc := &entry.doc
-	doc.Default = false
+	// A document that configures nothing visible — one holding only an admin
+	// list, as the panel's "reset" leaves behind — IS Moov's brand, and says
+	// so. Default is not an existence oracle either way (see Branding).
+	doc.Default = !file.HasBrand()
+	for _, a := range file.BrandAdmins {
+		if m, ok := branding.NormalizeMailbox(a); ok {
+			entry.admins = append(entry.admins, m)
+		}
+	}
 
 	if n := strings.TrimSpace(file.Name); n != "" {
 		doc.Name = truncateRunes(n, 64)
@@ -627,8 +634,8 @@ func brandingIconUsing(source string) string {
 
 // maxShortNameRunes is the cap on Branding.ShortName. Twelve is what the
 // manifest spec recommends as the length launchers can show without
-// truncation, and it is what `moovctl branding set -short-name` refuses past.
-const maxShortNameRunes = 12
+// truncation, and it is what both writers refuse past.
+const maxShortNameRunes = branding.MaxShortNameRunes
 
 // deriveShortName picks the home-screen label for a brand that did not
 // configure one: the name itself when it fits, otherwise its first word,
@@ -651,30 +658,11 @@ func sha256sum(b []byte) []byte {
 	return sum[:]
 }
 
-// brandingFile is the on-disk shape `moovctl branding set` writes. It is
-// deliberately a DIFFERENT type from Branding: the file names local asset
-// FILES, the response carries URLs, and conflating the two is how a
+// brandingFile is the on-disk shape the writers produce (internal/branding).
+// It is deliberately a DIFFERENT type from Branding: the file names local
+// asset FILES, the response carries URLs, and conflating the two is how a
 // customer-supplied string ends up as an <img src> pointing anywhere.
-type brandingFile struct {
-	Name       string             `json:"name,omitempty"`
-	ShortName  string             `json:"shortName,omitempty"`
-	Tagline    string             `json:"tagline,omitempty"`
-	SupportURL string             `json:"supportUrl,omitempty"`
-	PrivacyURL string             `json:"privacyUrl,omitempty"`
-	TermsURL   string             `json:"termsUrl,omitempty"`
-	Logo       string             `json:"logo,omitempty"`
-	LogoDark   string             `json:"logoDark,omitempty"`
-	Icon       string             `json:"icon,omitempty"`
-	Splash     string             `json:"splash,omitempty"`
-	Colors     brandingFileColors `json:"colors,omitempty"`
-}
-
-type brandingFileColors struct {
-	Primary    string `json:"primary,omitempty"`
-	OnPrimary  string `json:"onPrimary,omitempty"`
-	SplashFrom string `json:"splashFrom,omitempty"`
-	SplashTo   string `json:"splashTo,omitempty"`
-}
+type brandingFile = branding.File
 
 // brandingAssetURL builds the on-origin URL for one asset. Root-relative on
 // purpose: the PWA is served from the same origin, and a relative URL cannot
@@ -748,108 +736,32 @@ func (b *brandingStore) openAsset(host, name string) ([]byte, string, error) {
 // itself; refusing it costs a customer one export step. PNG with an alpha
 // channel covers every real logo. (L2-pwa §6 risk 4: "sin SVG sin sanitizar" —
 // this is the strict reading of that line.)
-func safeAssetName(name string) string {
-	n := strings.TrimSpace(name)
-	if n == "" {
-		return ""
-	}
-	// Reject anything with structure before looking at it further.
-	if strings.ContainsAny(n, `/\`) || strings.Contains(n, "..") {
-		return ""
-	}
-	if n != path.Base(n) || n == "." || n == ".." {
-		return ""
-	}
-	if strings.HasPrefix(n, ".") {
-		return ""
-	}
-	if len(n) > 128 {
-		return ""
-	}
-	for _, c := range n {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
-			c == '-', c == '_', c == '.':
-		default:
-			return ""
-		}
-	}
-	// The configuration file itself is never an asset.
-	if strings.EqualFold(n, brandingConfigFile) {
-		return ""
-	}
-	return n
-}
+//
+// The rule is branding.SafeAssetName, shared with the writers.
+func safeAssetName(name string) string { return branding.SafeAssetName(name) }
 
 // AllowedBrandingExtensions are the file extensions `moovctl branding set`
 // accepts. The SERVER does not trust extensions at all (it sniffs), but the
 // CLI checks them so an operator gets a clear refusal at the moment they pass
 // a .svg rather than a silently unbranded login page later.
-var AllowedBrandingExtensions = []string{".png", ".jpg", ".jpeg", ".webp", ".gif"}
+var AllowedBrandingExtensions = branding.AllowedExtensions
 
 // sniffImageType identifies a raster image by its magic bytes and returns the
-// Content-Type to declare.
-//
-// Hand-rolled rather than http.DetectContentType because that function's
-// allowlist is far wider than four image formats — it would happily classify
-// bytes as text/html, which is the one answer this endpoint must never give.
-func sniffImageType(b []byte) (string, bool) {
-	switch {
-	case len(b) >= 8 && string(b[:8]) == "\x89PNG\r\n\x1a\n":
-		return "image/png", true
-	case len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF:
-		return "image/jpeg", true
-	case len(b) >= 12 && string(b[:4]) == "RIFF" && string(b[8:12]) == "WEBP":
-		return "image/webp", true
-	case len(b) >= 6 && (string(b[:6]) == "GIF87a" || string(b[:6]) == "GIF89a"):
-		return "image/gif", true
-	}
-	return "", false
-}
+// Content-Type to declare. See branding.SniffImageType on why it is
+// hand-rolled rather than http.DetectContentType.
+func sniffImageType(b []byte) (string, bool) { return branding.SniffImageType(b) }
 
 // normalizeHexColor validates a CSS hex color and returns it lowercased, or
-// "" if it is not one.
-//
-// Only #rgb and #rrggbb are accepted. Named colors, rgb() and hsl() are
-// refused not because they are dangerous — the value lands in a CSS custom
-// property, not in a script — but because a single accepted syntax is one the
-// client can render, compare and contrast-check without a CSS parser.
-func normalizeHexColor(s string) string {
-	c := strings.TrimSpace(s)
-	if len(c) != 4 && len(c) != 7 {
-		return ""
-	}
-	if c[0] != '#' {
-		return ""
-	}
-	for _, ch := range c[1:] {
-		switch {
-		case ch >= '0' && ch <= '9', ch >= 'a' && ch <= 'f', ch >= 'A' && ch <= 'F':
-		default:
-			return ""
-		}
-	}
-	return strings.ToLower(c)
-}
+// "" if it is not one. Only #rgb and #rrggbb (branding.NormalizeHexColor).
+func normalizeHexColor(s string) string { return branding.NormalizeHexColor(s) }
 
 // safeSupportURL allows only the schemes that can appear in an href on the
-// login page without becoming script execution.
-func safeSupportURL(u string) bool {
-	l := strings.ToLower(strings.TrimSpace(u))
-	return strings.HasPrefix(l, "https://") ||
-		strings.HasPrefix(l, "http://") ||
-		strings.HasPrefix(l, "mailto:")
-}
+// login page without becoming script execution (branding.SafeURL).
+func safeSupportURL(u string) bool { return branding.SafeURL(u) }
 
 // truncateRunes caps a string by RUNES, so a multi-byte name is cut at a
 // character boundary rather than mid-codepoint.
-func truncateRunes(s string, maxRunes int) string {
-	r := []rune(s)
-	if len(r) <= maxRunes {
-		return s
-	}
-	return string(r[:maxRunes])
-}
+func truncateRunes(s string, maxRunes int) string { return branding.TruncateRunes(s, maxRunes) }
 
 // brandingETag fingerprints a document so a conditional request can be
 // answered 304. It is derived from the document itself rather than from file

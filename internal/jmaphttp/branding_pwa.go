@@ -6,7 +6,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -27,6 +26,8 @@ import (
 	// not vendored, so a WebP logo is declared unusable rather than decoded.
 	_ "image/gif"
 	_ "image/jpeg"
+
+	"github.com/GrupoNU/moov/internal/branding"
 )
 
 // The per-host PWA manifest and icons.
@@ -86,7 +87,7 @@ const (
 	// is decoded. image.DecodeConfig reads only the header, so a 40,000 px
 	// PNG that inflates to gigabytes is refused for the cost of a few bytes
 	// — the decompression-bomb defense. 4096 is far more than any icon needs.
-	MaxBrandingLogoDimension = 4096
+	MaxBrandingLogoDimension = branding.MaxIconDimension
 
 	// manifestContentType is the registered media type for a web app manifest.
 	manifestContentType = "application/manifest+json"
@@ -437,11 +438,6 @@ func loadDefaultIcons() {
 
 // --- decoding and rendering ---------------------------------------------------
 
-// errBrandingIconWebP is the one unusable-logo cause worth naming in a
-// sentinel: it is the format an operator is most likely to bring and the
-// only one the server accepts as an asset yet cannot render.
-var errBrandingIconWebP = errors.New("the logo is WebP, which cannot be decoded for PWA icons; provide it as PNG, JPEG or GIF")
-
 // ValidateBrandingIconSource reports whether a logo's bytes can be rendered
 // into PWA icons, and if not, why — in a sentence an operator can act on. It
 // is exported for `moovctl branding`, which uses it to warn at `set` time and
@@ -450,27 +446,7 @@ var errBrandingIconWebP = errors.New("the logo is WebP, which cannot be decoded 
 //
 // It reads only the image header (image.DecodeConfig), never the pixels, so
 // it is safe to call on anything that passed the size cap.
-func ValidateBrandingIconSource(data []byte) error {
-	contentType, ok := sniffImageType(data)
-	if !ok {
-		return errors.New("the logo is not a PNG, JPEG, GIF or WebP image")
-	}
-	if contentType == "image/webp" {
-		return errBrandingIconWebP
-	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("the logo cannot be decoded (%w)", err)
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 {
-		return fmt.Errorf("the logo has no pixels (%dx%d)", cfg.Width, cfg.Height)
-	}
-	if cfg.Width > MaxBrandingLogoDimension || cfg.Height > MaxBrandingLogoDimension {
-		return fmt.Errorf("the logo is %dx%d; the limit is %d px on each side",
-			cfg.Width, cfg.Height, MaxBrandingLogoDimension)
-	}
-	return nil
-}
+func ValidateBrandingIconSource(data []byte) error { return branding.ValidateIconSource(data) }
 
 // decodeBrandingLogo validates and decodes a logo into a premultiplied RGBA
 // image at the origin, the form the resampler and the compositor work on.
