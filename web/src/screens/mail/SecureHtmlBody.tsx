@@ -171,25 +171,52 @@ export function SecureHtmlBody({
     [blockedPass],
   );
 
+  /*
+   * The in-flight guard lives in a REF, not in the dependency array, and that
+   * is the whole point rather than a style choice.
+   *
+   * This effect used to list `signState` among its dependencies while also
+   * calling `setSignState("working")` in its own body. That is a self-
+   * referential effect: the state write re-rendered the component, React ran
+   * the CLEANUP of the invocation that had just started the fetch, and the
+   * cleanup set `cancelled = true` — so when the signing request came back,
+   * its `if (cancelled) return` threw the signed map away. `proxied` stayed
+   * undefined forever, the second sanitize pass never ran, and EVERY remote
+   * image in EVERY message stayed blocked.
+   *
+   * It was invisible from the outside because nothing failed: the pilot's
+   * logs show `/jmap/imgproxy/sign` answering 200 with signed paths and not
+   * one `/jmap/imgproxy?` fetch ever following. The images were signed and
+   * silently discarded.
+   *
+   * So the guard is a ref (a re-render cannot invalidate it) and the
+   * dependencies are only the real INPUTS: what to sign, whether we want it,
+   * and who signs. `signState` is an output of this effect, and an effect
+   * that depends on its own output cancels itself.
+   */
+  const signingRef = useRef(false);
   useEffect(() => {
-    if (!wantsImages || remoteUrls.length === 0) return;
-    if (proxied !== undefined || signState !== "idle") return;
+    if (!wantsImages || remoteUrls.length === 0) return undefined;
+    if (proxied !== undefined || signingRef.current) return undefined;
     let cancelled = false;
+    signingRef.current = true;
     setSignState("working");
     signImageUrls(remoteUrls).then(
       (map) => {
+        signingRef.current = false;
         if (cancelled) return;
         setProxied(map);
         setSignState("idle");
       },
       () => {
+        signingRef.current = false;
         if (!cancelled) setSignState("failed");
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [wantsImages, remoteUrls, proxied, signState, signImageUrls]);
+  }, [wantsImages, remoteUrls, proxied, signImageUrls]);
 
   /*
    * C-11: the inline (`cid:`) images, resolved here in the parent.
