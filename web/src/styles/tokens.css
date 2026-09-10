@@ -85,20 +85,20 @@
   --brand-on-accent-light: #ffffff;
   --brand-accent-tint-light: rgba(91, 91, 214, 0.1);
   --brand-accent-tint-strong-light: rgba(91, 91, 214, 0.18);
-  --brand-accent-container-light: #d6dcff;
+  --brand-accent-container-light: #c6cdff;
   --brand-on-accent-container-light: #1b1c42;
-  --brand-selected-row-light: #eef1ff;
-  --brand-active-pill-light: #dee3ff;
+  --brand-selected-row-light: #f3f4ff;
+  --brand-active-pill-light: #e2e6ff;
   --brand-accent-dark: #6f73f0;
   --brand-accent-hover-dark: #848cff;
   --brand-accent-active-dark: #9da7ff;
   --brand-on-accent-dark: #0d0f17;
   --brand-accent-tint-dark: rgba(111, 115, 240, 0.22);
   --brand-accent-tint-strong-dark: rgba(111, 115, 240, 0.32);
-  --brand-accent-container-dark: #2c2f51;
+  --brand-accent-container-dark: #2f3260;
   --brand-on-accent-container-dark: #dee3ff;
-  --brand-selected-row-dark: #151636;
-  --brand-active-pill-dark: #222546;
+  --brand-selected-row-dark: #151726;
+  --brand-active-pill-dark: #21243e;
 
   /* ---------------------------------------------------------------------
    * Layer 3 — the product's scales. Not brandable.

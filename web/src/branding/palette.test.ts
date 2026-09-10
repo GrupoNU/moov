@@ -7,9 +7,12 @@ import { AA_NORMAL_TEXT, contrastRatio, parseHex } from "../mail/labelPalette";
 import { MOOV_DEFAULT_BRANDING } from "./branding";
 import {
   compositeOver,
+  deltaE,
   derivePalette,
   deriveSplashColors,
   hexToOklch,
+  MIN_DELTA_CONTAINER_PILL,
+  MIN_DELTA_PILL_ROW,
   normalizeHex,
   oklchToHex,
   ON_ACCENT_DARK,
@@ -283,9 +286,24 @@ describe("derivePalette — the tonal containers", () => {
         const near = (hex: string, target: number, name: string): void => {
           expect(hexToOklch(hex).l, `${input} ${theme} ${name} L`).toBeCloseTo(target, 1);
         };
-        near(t.accentContainer, surfaces.containerL, "container");
-        near(t.selectedRow, surfaces.selectedRowL, "selectedRow");
-        near(t.activePill, surfaces.activePillL, "activePill");
+        near(t.selectedRow, surfaces.selectedRow.l, "selectedRow");
+        near(t.activePill, surfaces.activePill.l, "activePill");
+        /*
+         * The container is the one tone allowed to LEAVE its target: when the
+         * separation floor is not met it is pushed away in 0.01 steps. So it
+         * is pinned at its target OR beyond it, in the theme's own direction,
+         * rather than at the target exactly.
+         */
+        const containerL = hexToOklch(t.accentContainer).l;
+        if (surfaces.direction === -1) {
+          expect(containerL, `${input} ${theme} container L`).toBeLessThanOrEqual(
+            surfaces.container.l + 0.02,
+          );
+        } else {
+          expect(containerL, `${input} ${theme} container L`).toBeGreaterThanOrEqual(
+            surfaces.container.l - 0.02,
+          );
+        }
         /*
          * And the order Gmail uses: the row is the faintest, the pill sits
          * between it and the button. In the light theme "fainter" means closer
@@ -301,6 +319,84 @@ describe("derivePalette — the tonal containers", () => {
         expect(depth(t.activePill), `${input} ${theme} pill < container`).toBeLessThan(
           depth(t.accentContainer),
         );
+      }
+    }
+  });
+
+  it("keeps neighbouring tones perceptibly apart, over the whole sweep", () => {
+    /*
+     * The defect this pins, measured live on mail.gruponu.com: with primary
+     * #b8faff the trio came out #afebef / #b6f1f6 / #cffcff and the owner saw
+     * ONE colour. He was right — a pastel's chroma is already under a shared
+     * ceiling, so the only axis left was lightness, and 0.90/0.92/0.96 is not
+     * a visible step. Gmail separates on BOTH axes (its compose container
+     * #c2e7ff is clearly more saturated than its active folder #d3e3fd, and
+     * its selected row is near-white).
+     *
+     * "Perceptibly" is not a matter of opinion here: OKLab was fitted so that
+     * Euclidean distance tracks perceived difference, so the assertion is a
+     * plain ΔE with no weighting — and it runs over every hue, because the
+     * shortfall appeared for ONE family of inputs and passed inspection for
+     * the rest.
+     */
+    for (const input of INPUTS) {
+      const palette = derivePalette(input);
+      for (const theme of THEMES) {
+        const t = palette[theme];
+        expect(
+          deltaE(t.accentContainer, t.activePill),
+          `${input} ${theme} container ${t.accentContainer} vs pill ${t.activePill}`,
+        ).toBeGreaterThanOrEqual(MIN_DELTA_CONTAINER_PILL);
+        expect(
+          deltaE(t.activePill, t.selectedRow),
+          `${input} ${theme} pill ${t.activePill} vs row ${t.selectedRow}`,
+        ).toBeGreaterThanOrEqual(MIN_DELTA_PILL_ROW);
+      }
+    }
+  });
+
+  it("separates by CHROMA as well as by lightness, for a brand that has chroma", () => {
+    /*
+     * The floor above is a distance and could in principle be met by lightness
+     * alone; this is the assertion that the second axis is really in play,
+     * which is the half the first cut was missing. The container is the most
+     * saturated of the three and the row the least — Gmail's own ordering.
+     */
+    for (const input of INPUTS) {
+      const base = hexToOklch(input);
+      // A near-grey brand has no chroma to distribute; its tones are greys.
+      if (base.c < 0.12) continue;
+      const palette = derivePalette(input);
+      for (const theme of THEMES) {
+        const t = palette[theme];
+        const c = (hex: string): number => hexToOklch(hex).c;
+        expect(
+          c(t.accentContainer),
+          `${input} ${theme} container more saturated than pill`,
+        ).toBeGreaterThan(c(t.activePill));
+        expect(
+          c(t.activePill),
+          `${input} ${theme} pill more saturated than row`,
+        ).toBeGreaterThan(c(t.selectedRow));
+      }
+    }
+  });
+
+  it("never exhausts the separation budget — the caps do nearly all the work", () => {
+    /*
+     * The push is a SAFETY NET, not the mechanism. If a hue needed many steps
+     * the targets would be wrong, and the container would be drifting far from
+     * where it was designed to sit; a bound on the drift is how that shows up
+     * as a failing test rather than as a quietly odd-looking brand.
+     */
+    for (const input of INPUTS) {
+      const palette = derivePalette(input);
+      for (const theme of THEMES) {
+        const surfaces = THEME_SURFACES[theme];
+        const drift = Math.abs(
+          hexToOklch(palette[theme].accentContainer).l - surfaces.container.l,
+        );
+        expect(drift, `${input} ${theme} container drift`).toBeLessThanOrEqual(0.05);
       }
     }
   });
@@ -333,14 +429,14 @@ describe("derivePalette — the tonal containers", () => {
      */
     const p = derivePalette("#b8faff", "#ffffff");
     expect(p.light.accent).toBe("#3b7b80");
-    expect(p.light.accentContainer).toBe("#afebef");
+    expect(p.light.accentContainer).toBe("#9ddee3");
     expect(p.light.onAccentContainer).toBe("#00272a");
-    expect(p.light.selectedRow).toBe("#cffcff");
-    expect(p.light.activePill).toBe("#b6f1f6");
-    expect(p.dark.accentContainer).toBe("#003b3f");
+    expect(p.light.selectedRow).toBe("#e3fbfc");
+    expect(p.light.activePill).toBe("#c2f2f6");
+    expect(p.dark.accentContainer).toBe("#004145");
     expect(p.dark.onAccentContainer).toBe("#b1f2f7");
-    expect(p.dark.selectedRow).toBe("#002022");
-    expect(p.dark.activePill).toBe("#003033");
+    expect(p.dark.selectedRow).toBe("#051c1e");
+    expect(p.dark.activePill).toBe("#002d30");
     // The containers are LIGHTER than the accent in the light theme — i.e.
     // they came from the pastel, not from the teal the accent became.
     for (const tone of [p.light.accentContainer, p.light.selectedRow, p.light.activePill]) {
@@ -351,14 +447,14 @@ describe("derivePalette — the tonal containers", () => {
   it("documents the trio for the Moov default", () => {
     // The values tokens.css carries by hand; branding.test.ts pins that copy.
     const p = derivePalette("#5b5bd6", "#ffffff");
-    expect(p.light.accentContainer).toBe("#d6dcff");
+    expect(p.light.accentContainer).toBe("#c6cdff");
     expect(p.light.onAccentContainer).toBe("#1b1c42");
-    expect(p.light.selectedRow).toBe("#eef1ff");
-    expect(p.light.activePill).toBe("#dee3ff");
-    expect(p.dark.accentContainer).toBe("#2c2f51");
+    expect(p.light.selectedRow).toBe("#f3f4ff");
+    expect(p.light.activePill).toBe("#e2e6ff");
+    expect(p.dark.accentContainer).toBe("#2f3260");
     expect(p.dark.onAccentContainer).toBe("#dee3ff");
-    expect(p.dark.selectedRow).toBe("#151636");
-    expect(p.dark.activePill).toBe("#222546");
+    expect(p.dark.selectedRow).toBe("#151726");
+    expect(p.dark.activePill).toBe("#21243e");
   });
 
   it("emits the four as lowercase six-digit hex, and is deterministic", () => {

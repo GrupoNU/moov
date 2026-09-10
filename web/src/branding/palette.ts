@@ -38,6 +38,11 @@
  *     teal for TEXT, and containers derived from the teal erased the brand's
  *     own hue from the chrome. Text on each of these clears 4.5:1, and the
  *     chroma is reduced toward neutral until it does.
+ *   - The three tones are separated on BOTH axes — a lightness target and a
+ *     per-tone chroma CEILING — and the result is measured: neighbouring tones
+ *     are at least {@link MIN_DELTA_CONTAINER_PILL} / {@link MIN_DELTA_PILL_ROW}
+ *     apart in OKLab ΔE, over every hue. Lightness alone separated them by
+ *     0.90/0.92/0.96, which for a pastel brand the eye read as one colour.
  *   - Deterministic: same input, same output, no randomness, no environment.
  *
  * # Why OKLCH and not "mix with black"
@@ -114,6 +119,12 @@ export interface BrandPalette {
  * tokens.css on purpose: this module is pure and cannot read a stylesheet.
  * `palette.test.ts` reads tokens.css as text and fails when the two drift.
  */
+/** Where one tonal container aims: a lightness, and a ceiling on chroma. */
+export interface ToneTarget {
+  readonly l: number;
+  readonly chromaMax: number;
+}
+
 export interface ThemeSurfaces {
   readonly surfaceDefault: string;
   readonly surfaceCanvas: string;
@@ -121,11 +132,22 @@ export interface ThemeSurfaces {
   readonly textDefault: string;
   /** `--text-strong` of the theme: the weight the active pill's label uses. */
   readonly textStrong: string;
-  /** OKLCH lightness targets for the three opaque tonal containers. */
-  readonly containerL: number;
-  readonly onContainerL: number;
-  readonly selectedRowL: number;
-  readonly activePillL: number;
+  /**
+   * Targets for the three opaque tonal containers and the container's ink:
+   * an OKLCH lightness and a chroma CEILING, per tone.
+   *
+   * The ceiling is per tone rather than shared, because that is how Gmail
+   * separates them and a shared one does not work. Its compose container
+   * (#c2e7ff) is visibly more saturated than its active folder (#d3e3fd),
+   * and its selected row is near-white; with one ceiling for all three, a
+   * pastel brand — whose chroma is already under the cap — produced three
+   * tones separated only by lightnesses 0.90/0.92/0.96, which the eye reads
+   * as ONE colour. Saturation is the second axis that pulls them apart.
+   */
+  readonly container: ToneTarget;
+  readonly onContainer: ToneTarget;
+  readonly selectedRow: ToneTarget;
+  readonly activePill: ToneTarget;
   /** Alpha of the light tint and of the strong tint. */
   readonly tintAlpha: number;
   readonly tintStrongAlpha: number;
@@ -141,10 +163,10 @@ export const THEME_SURFACES: Readonly<Record<ThemeName, ThemeSurfaces>> = {
     textStrong: "#12141d",
     tintAlpha: 0.1,
     tintStrongAlpha: 0.18,
-    containerL: 0.9,
-    onContainerL: 0.25,
-    selectedRowL: 0.96,
-    activePillL: 0.92,
+    container: { l: 0.86, chromaMax: 0.1 },
+    onContainer: { l: 0.25, chromaMax: 0.07 },
+    selectedRow: { l: 0.97, chromaMax: 0.025 },
+    activePill: { l: 0.93, chromaMax: 0.05 },
     direction: -1,
   },
   dark: {
@@ -154,10 +176,10 @@ export const THEME_SURFACES: Readonly<Record<ThemeName, ThemeSurfaces>> = {
     textStrong: "#f4f6fb",
     tintAlpha: 0.22,
     tintStrongAlpha: 0.32,
-    containerL: 0.32,
-    onContainerL: 0.92,
-    selectedRowL: 0.22,
-    activePillL: 0.28,
+    container: { l: 0.34, chromaMax: 0.08 },
+    onContainer: { l: 0.92, chromaMax: 0.07 },
+    selectedRow: { l: 0.21, chromaMax: 0.03 },
+    activePill: { l: 0.27, chromaMax: 0.05 },
     direction: 1,
   },
 };
@@ -338,19 +360,51 @@ function stepped(accent: Oklch, step: number, direction: -1 | 1): string {
 // the tonal containers
 // ---------------------------------------------------------------------------
 
-/**
- * The most chroma a tonal container may carry, per theme.
- *
- * A container is a large flat field behind text; at full brand chroma a light
- * one glows and a dark one turns into a colour block that fights the message
- * it holds. Gmail's own containers sit far below its accent's chroma. These
- * ceilings are what make the three tones read as tones of one colour rather
- * than three saturated fills.
- */
-const CONTAINER_CHROMA_MAX = 0.06;
-const ON_CONTAINER_CHROMA_MAX = 0.07;
 /** How far a tone's chroma is pulled toward neutral on each retry. */
 const CHROMA_DECAY = 0.75;
+
+/**
+ * The minimum perceptual distance between neighbouring tones, as OKLab ΔE.
+ *
+ * # Why this exists, measured
+ *
+ * The first cut gave all three tones one chroma ceiling and separated them by
+ * lightness alone. Live on a pastel primary (#b8faff) that produced #afebef,
+ * #b6f1f6 and #cffcff — and the owner, comparing with Gmail, saw ONE colour.
+ * He was right: a pastel's chroma is already under any shared cap, so the only
+ * axis left was lightness, and 0.90/0.92/0.96 is not a visible step.
+ *
+ * Gmail separates on BOTH axes — its compose container #c2e7ff is clearly more
+ * saturated than its active folder #d3e3fd, and its selected row is near-white
+ * — which is what the per-tone ceilings above now reproduce. These two numbers
+ * are the floor under that: not a target the tones aim for, but a distance a
+ * SWEEP over every hue is not allowed to fall below.
+ *
+ * The container/pill gap is the larger of the two because those are the pair
+ * that sit adjacent in the rail, one directly above the other.
+ */
+export const MIN_DELTA_CONTAINER_PILL = 0.06;
+export const MIN_DELTA_PILL_ROW = 0.035;
+/** How far the container moves per attempt when a pair is too close. */
+const SEPARATION_STEP = 0.01;
+/** A ceiling on those attempts; 40 steps is 0.4 in L, past any useful range. */
+const SEPARATION_MAX_STEPS = 40;
+
+/**
+ * Perceptual distance: plain Euclidean in OKLab, which is what OKLab is FOR —
+ * the space was fitted so that equal distances look equally different, so no
+ * weighting is needed and none is applied.
+ */
+export function deltaE(a: string, b: string): number {
+  const toLab = (hex: string): readonly [number, number, number] => {
+    const { l, c, h } = hexToOklch(hex);
+    const rad = (h * Math.PI) / 180;
+    return [l, c * Math.cos(rad), c * Math.sin(rad)];
+  };
+  const [l1, a1, b1] = toLab(a);
+  const [l2, a2, b2] = toLab(b);
+  return Math.hypot(l1 - l2, a1 - a2, b1 - b2);
+}
 
 /**
  * A tonal container: the ORIGINAL primary's hue and chroma at a fixed OKLCH
@@ -372,11 +426,12 @@ const CHROMA_DECAY = 0.75;
  */
 function tonal(
   base: Oklch,
-  lightness: number,
-  chromaMax: number,
+  target: ToneTarget,
   passes: (hex: string) => boolean,
+  lightnessOverride?: number,
 ): string {
-  let chroma = Math.min(base.c, chromaMax);
+  const lightness = lightnessOverride ?? target.l;
+  let chroma = Math.min(base.c, target.chromaMax);
   // 24 decays at 0.75 take any chroma below 1e-3, i.e. to a neutral grey of
   // the target lightness — which always passes, because the targets were
   // chosen against the theme's surfaces. So this loop terminates on a value
@@ -459,30 +514,64 @@ function deriveTheme(
   //    the same hue and falls back to the theme's strong text when the hue
   //    cannot reach 4.5:1 on it — a brand never buys an unreadable button.
   const primaryLch = hexToOklch(primary);
-  const selectedRow = tonal(primaryLch, surfaces.selectedRowL, CONTAINER_CHROMA_MAX, (hex) =>
+  const selectedRow = tonal(primaryLch, surfaces.selectedRow, (hex) =>
     contrastRatio(surfaces.textDefault, hex) >= AA_NORMAL_TEXT,
   );
   const activePill = tonal(
     primaryLch,
-    surfaces.activePillL,
-    CONTAINER_CHROMA_MAX,
+    surfaces.activePill,
     (hex) =>
       contrastRatio(surfaces.textDefault, hex) >= AA_NORMAL_TEXT &&
       contrastRatio(surfaces.textStrong, hex) >= AA_NORMAL_TEXT,
   );
-  const accentContainer = tonal(
-    primaryLch,
-    surfaces.containerL,
-    CONTAINER_CHROMA_MAX,
-    // The container itself only has to be able to CARRY text: the fallback ink
-    // below is the theme's strong text, so the ceiling this checks is the one
-    // that guarantees the button is never unreadable.
-    (hex) => contrastRatio(surfaces.textStrong, hex) >= AA_NORMAL_TEXT,
-  );
+  // The container itself only has to be able to CARRY text: the fallback ink
+  // below is the theme's strong text, so the ceiling this checks is the one
+  // that guarantees the button is never unreadable.
+  const containerReads = (hex: string): boolean =>
+    contrastRatio(surfaces.textStrong, hex) >= AA_NORMAL_TEXT;
+
+  /*
+   * The separation pass.
+   *
+   * The per-tone chroma ceilings do the work for a saturated brand, but a
+   * brand can be pale enough that its chroma is under all three of them — and
+   * then only lightness separates the tones, which is the defect the owner saw
+   * live. So the result is MEASURED (OKLab ΔE) and, when a pair is too close,
+   * the CONTAINER is pushed away in steps of 0.01 L.
+   *
+   * The container is the one that moves, always, and the row and the pill are
+   * never touched: the row's whole job is to be near-white (near-black in
+   * dark), and moving it to buy separation would make every message list look
+   * tinted. Pushing the container in the theme's own direction — darker in
+   * light, lighter in dark — is also the direction that makes the compose
+   * button MORE prominent, which is what it should be.
+   *
+   * If the budget runs out the last attempt stands: an under-separated trio is
+   * a cosmetic shortfall, and refusing to produce a palette would be a blank
+   * app. The sweep in palette.test.ts asserts the budget is never reached.
+   */
+  const push = surfaces.direction === -1 ? -SEPARATION_STEP : SEPARATION_STEP;
+  let accentContainer = tonal(primaryLch, surfaces.container, containerReads);
+  for (let i = 0; i < SEPARATION_MAX_STEPS; i++) {
+    /*
+     * Only the container/pill pair is chased here, because the container is
+     * the only tone that moves and moving it cannot change the pill/row gap.
+     * That gap is held by the ceilings alone, and the sweep asserts it clears
+     * {@link MIN_DELTA_PILL_ROW} for every hue — so a shortfall there is a
+     * failing test that sends someone back to the targets, which is the right
+     * outcome, rather than a loop that spins to its budget and gives up.
+     */
+    if (deltaE(accentContainer, activePill) >= MIN_DELTA_CONTAINER_PILL) break;
+    const l = surfaces.container.l + push * (i + 1);
+    // A push that would leave the usable range buys nothing; stop and keep
+    // what we have rather than walking the container into the surface.
+    if (l <= 0 || l >= 1) break;
+    accentContainer = tonal(primaryLch, surfaces.container, containerReads, l);
+  }
+
   const tintedInk = tonal(
     primaryLch,
-    surfaces.onContainerL,
-    ON_CONTAINER_CHROMA_MAX,
+    surfaces.onContainer,
     (hex) => contrastRatio(hex, accentContainer) >= AA_NORMAL_TEXT,
   );
   const onAccentContainer =
