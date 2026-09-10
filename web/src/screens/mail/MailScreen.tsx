@@ -158,6 +158,7 @@ import { fetchScheduled, type ScheduledSend } from "../../mail/scheduled";
 import { ActionBar } from "./ActionBar";
 import { ComposeButton } from "./ComposeButton";
 import { ConnectionPill } from "./ConnectionPill";
+import { LegalFooter } from "../../components/LegalFooter";
 import { OutboxView } from "./OutboxView";
 import { ScheduledView } from "./ScheduledView";
 import { SnoozeMenu } from "./SnoozeMenu";
@@ -5030,6 +5031,19 @@ export function MailScreen(): React.JSX.Element {
           )}
           </>
           )}
+
+          {/*
+            The legal line at the foot of the list (canon 07: Gmail's own
+            "Términos · Privacidad · Políticas" row lives exactly here).
+
+            It sits INSIDE the list column and OUTSIDE the scroller, so it is
+            always visible rather than something a user has to reach the last
+            message to find — which is what an AGPL §13 source offer has to be.
+            The column is a flex column and this is `flex: none` at one row of
+            small text, so the rows above it keep every pixel they had except
+            those 24.
+          */}
+          <LegalFooter placement="list" />
         </main>
         )}
 

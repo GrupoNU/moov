@@ -8,6 +8,7 @@ import { BrandPanel } from "./BrandPanel";
 import { PasswordField } from "./PasswordField";
 import { ErrorNotice } from "./ErrorNotice";
 import { BrandMark } from "../../components/BrandMark";
+import { LegalFooter } from "../../components/LegalFooter";
 import styles from "./LoginScreen.module.css";
 
 /**
@@ -251,6 +252,16 @@ export function LoginScreen(): React.JSX.Element {
               </a>
             </p>
           )}
+
+          {/*
+            The legal line, LAST inside the form column and outside the form
+            itself — under the submit and under the support link, which is
+            where a footnote belongs and where Gmail puts its own. It is on the
+            form side rather than on the brand panel deliberately: the panel
+            collapses on narrow screens, and the AGPL §13 source offer must be
+            reachable on a phone too.
+          */}
+          <LegalFooter placement="login" />
         </div>
 
         {/*
