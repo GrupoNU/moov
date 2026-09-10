@@ -1,4 +1,12 @@
+import { useCallback, useState } from "react";
+
 import type { Branding } from "../branding/branding";
+import {
+  SIZE_HEIGHTS,
+  logoShapeOf,
+  type BrandMarkSize,
+  type LogoShape,
+} from "./brandMarkShape";
 import styles from "./BrandMark.module.css";
 
 /**
@@ -17,18 +25,24 @@ import styles from "./BrandMark.module.css";
  * The mark itself: a rounded square with an "M" cut through it as a continuous
  * stroke, suggesting a path/route (the product is "Moov"). It reads at 24px.
  *
- * # A logo REPLACES the name; it does not accompany it
+ * # A WIDE logo replaces the name; a SQUARE one cannot
  *
- * When a customer has a logo, it IS their wordmark — it already says the name,
- * graphically. Rendering the text name beside it printed the brand twice, and
- * on the login panel (where the content column is capped at 44ch) the duplicate
- * then ellipsised, so a real pilot brand's panel read "[LOGO] Área …". Gmail
- * shows its mark alone for the same reason.
+ * When a customer's logo is a wordmark, it IS their name — it already says it,
+ * graphically. Rendering the text name beside a wordmark printed the brand
+ * twice, and on the login panel (where the content column is capped at 44ch)
+ * the duplicate then ellipsised, so a real pilot brand's panel read
+ * "[LOGO] Área …".
  *
- * So the name is rendered as TEXT only beside the drawn glyph, where it is
- * doing real work (the glyph is an abstract mark that names nothing). With a
- * logo the name lives in the image's `alt`, which is where a screen reader
- * wants it anyway.
+ * A SQUARE mark is the opposite case, and it is the one the first owner of the
+ * brand panel actually uploaded. A square glyph names nothing: shown alone at
+ * a wordmark's height it is a postage stamp with no text anywhere on the
+ * screen saying whose product this is. Gmail's own bar is the reference — an
+ * "M" glyph WITH the word "Gmail" beside it — and that pairing is exactly what
+ * a square mark needs.
+ *
+ * So the name comes back as text for a square mark, and stays out of the way
+ * for a wide one. Where the line is drawn, and how it is measured, lives in
+ * ./brandMarkShape.
  *
  * # Why a customer's logo is sized by HEIGHT alone
  *
@@ -61,11 +75,11 @@ import styles from "./BrandMark.module.css";
 
 export interface BrandMarkProps {
   readonly branding: Branding;
-  readonly size?: "sm" | "md" | "lg";
+  readonly size?: BrandMarkSize;
   /**
    * Renders the mark alone, without the product name beside it. Only affects
-   * the FALLBACK glyph: a customer's logo is always alone, because the logo
-   * already is the name.
+   * the FALLBACK glyph and a SQUARE logo — a wordmark is always alone, because
+   * the wordmark already is the name.
    */
   readonly iconOnly?: boolean;
   /**
@@ -76,19 +90,6 @@ export interface BrandMarkProps {
   readonly onDark?: boolean;
 }
 
-/**
- * The rendered height of the logo at each size, mirroring BrandMark.module.css.
- *
- * Duplicated in TS because the `height` ATTRIBUTE is what reserves the box
- * before any stylesheet or image has loaded, and an attribute cannot read a
- * class. A test pins these against the stylesheet so the two cannot drift.
- */
-const SIZE_HEIGHTS: Record<NonNullable<BrandMarkProps["size"]>, number> = {
-  sm: 28,
-  md: 32,
-  lg: 44,
-};
-
 export function BrandMark({
   branding,
   size = "md",
@@ -96,6 +97,43 @@ export function BrandMark({
   onDark = false,
 }: BrandMarkProps): React.JSX.Element {
   const hasLogo = branding.logoUrl !== "";
+
+  /*
+   * The shape is MEASURED, not configured.
+   *
+   * The alternative was a `logoShape` field on the branding document, and it
+   * is worse in both directions: an operator would have to describe a file
+   * they can see, and a wrong answer would be a layout bug nobody could
+   * explain. The browser already knows the intrinsic size the moment the image
+   * decodes; reading `naturalWidth/naturalHeight` on `load` is one line and
+   * cannot disagree with the picture.
+   *
+   * BEFORE the load the assumption is WIDE, and that direction is deliberate:
+   * a wordmark (the common upload) then renders at its final size immediately
+   * and never moves, and a square mark grows once, downward-compatibly, into
+   * space the flex row absorbs. Assuming square would make every wordmark
+   * shrink on load — a shift on the most-visited screen in the product.
+   */
+  const [shape, setShape] = useState<LogoShape | undefined>(undefined);
+  const measure = useCallback((image: HTMLImageElement | null) => {
+    if (image === null) return;
+    /*
+     * A cached image can be `complete` before React ever attaches `onLoad`, so
+     * the ref measures whatever is already there and the handler catches the
+     * rest. Measuring in both places is what makes a reload behave like a
+     * first visit.
+     */
+    if (image.complete) {
+      const measured = logoShapeOf(image.naturalWidth, image.naturalHeight);
+      if (measured !== undefined) setShape(measured);
+    }
+  }, []);
+  const onLoad = useCallback((event: React.SyntheticEvent<HTMLImageElement>) => {
+    const measured = logoShapeOf(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
+    if (measured !== undefined) setShape(measured);
+  }, []);
+
+  const effectiveShape: LogoShape = shape ?? "wide";
 
   /*
    * The plate is the no-dark-variant fallback, and it is only needed where the
@@ -106,9 +144,16 @@ export function BrandMark({
    */
   const needsPlate = hasLogo && branding.logoDarkUrl === "";
 
+  /*
+   * The name accompanies a SQUARE logo and the drawn glyph, and never a
+   * wordmark. `iconOnly` suppresses it everywhere it could appear.
+   */
+  const showName = !iconOnly && (!hasLogo || effectiveShape === "square");
+
   const classes = [
     styles.mark,
     styles[size],
+    styles[effectiveShape],
     onDark ? styles.onDark : "",
     needsPlate ? styles.plated : "",
   ]
@@ -118,11 +163,21 @@ export function BrandMark({
   return (
     <span className={classes}>
       {hasLogo ? (
-        <LogoImages branding={branding} size={size} onDark={onDark} />
+        <>
+          <LogoImages
+            branding={branding}
+            size={size}
+            shape={effectiveShape}
+            onDark={onDark}
+            onLoad={onLoad}
+            measure={measure}
+          />
+          {showName && <span className={styles.name}>{branding.name}</span>}
+        </>
       ) : (
         <>
           <MoovGlyph />
-          {!iconOnly && <span className={styles.name}>{branding.name}</span>}
+          {showName && <span className={styles.name}>{branding.name}</span>}
         </>
       )}
     </span>
@@ -141,22 +196,43 @@ export function BrandMark({
 function LogoImages({
   branding,
   size,
+  shape,
   onDark,
+  onLoad,
+  measure,
 }: {
   readonly branding: Branding;
-  readonly size: NonNullable<BrandMarkProps["size"]>;
+  readonly size: BrandMarkSize;
+  readonly shape: LogoShape;
   readonly onDark: boolean;
+  readonly onLoad: (event: React.SyntheticEvent<HTMLImageElement>) => void;
+  readonly measure: (image: HTMLImageElement | null) => void;
 }): React.JSX.Element {
   const hasDarkLogo = branding.logoDarkUrl !== "";
 
   /*
-   * The alt text is the product name, because the logo IS the product name
-   * rendered graphically — a screen reader user must hear the brand, not
-   * "logo". With two images only ONE may carry it: the other is the same
-   * information in a different colour, so it is decorative by definition and
-   * announcing it would make the brand be read out twice.
+   * The alt text is the product name when the logo stands alone, because then
+   * the logo IS the product name rendered graphically — a screen reader user
+   * must hear the brand, not "logo". When the NAME is rendered as text beside
+   * it (a square mark), the image is decorative by definition: announcing it
+   * would read the brand out twice, which is the exact fault the wordmark rule
+   * was written to avoid, in the other direction.
    */
-  const shared = { height: SIZE_HEIGHTS[size], decoding: "async" } as const;
+  const named = shape !== "square";
+  /*
+   * `alt` is written OUT on every <img> below rather than spread in with the
+   * rest, because a lint rule that cannot see through a spread is a lint rule
+   * that cannot protect the one attribute here that a screen reader depends
+   * on. The value is computed once; only its presence is repeated.
+   */
+  const alt = named ? branding.name : "";
+  const hidden = named ? undefined : ("true" as const);
+  const shared = {
+    height: SIZE_HEIGHTS[size][shape],
+    decoding: "async",
+    onLoad,
+    ref: measure,
+  } as const;
 
   if (!hasDarkLogo) {
     /*
@@ -165,7 +241,13 @@ function LogoImages({
      * because there is no other source to choose.
      */
     return (
-      <img className={styles.logo} src={branding.logoUrl} alt={branding.name} {...shared} />
+      <img
+        className={styles.logo}
+        src={branding.logoUrl}
+        alt={alt}
+        aria-hidden={hidden}
+        {...shared}
+      />
     );
   }
 
@@ -179,7 +261,8 @@ function LogoImages({
       <img
         className={styles.logo}
         src={branding.logoDarkUrl}
-        alt={branding.name}
+        alt={alt}
+        aria-hidden={hidden}
         {...shared}
       />
     );
@@ -190,7 +273,8 @@ function LogoImages({
       <img
         className={[styles.logo, styles.logoLight].join(" ")}
         src={branding.logoUrl}
-        alt={branding.name}
+        alt={alt}
+        aria-hidden={hidden}
         {...shared}
       />
       <img

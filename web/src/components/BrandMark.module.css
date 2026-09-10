@@ -170,22 +170,56 @@
 /*
  * --- sizes ---
  *
- * Each size sets the logo's height and its width CEILING. The ceilings are not
- * arbitrary: `sm` is the top bar, whose brand track is a FIXED 244px grid
- * column (TopBar.module.css, canon 07 §1) rather than an `auto` one. That fixed
- * track is what guarantees a wide logo cannot push the centred search pill —
- * the position the entire muscle-memory layout is pinned to — but only as long
- * as the logo fits INSIDE the track: 120px of logo plus the gap plus a
- * truncating name does. `md` and `lg` live in roomier places (the login brand
- * panel is half the screen), so they are allowed more.
+ * Each size sets the logo's height and its width CEILING, and BOTH depend on
+ * the logo's SHAPE (`.wide` / `.square`, set from the measured aspect ratio —
+ * see BrandMark.tsx).
+ *
+ * # Why shape and not one height per size
+ *
+ * A 28px wordmark reads fine: it is 28px tall and 100px wide, so there is a
+ * legible amount of ink on the screen. A 28px SQUARE mark is a postage stamp
+ * with a quarter of the area — and it is the shape the first owner of the
+ * brand panel actually uploaded. Equal heights do not produce equal presence,
+ * so the square gets the taller box (canon 07 §1 measures Gmail's own bar mark
+ * at ~40px) and the wordmark keeps the shorter one.
+ *
+ * # The 244px invariant
+ *
+ * `sm` is the top bar, whose brand track is a FIXED 244px grid column
+ * (TopBar.module.css, canon 07 §1) rather than an `auto` one. That fixed track
+ * is what guarantees a logo cannot push the centred search pill — the position
+ * the entire muscle-memory layout is pinned to — but only as long as
+ * everything in the track fits inside it. The budget, worst case:
+ *
+ *   hamburger 36 + gap 8 + logo 160 + gap 12 + name (truncating) = 216 + name
+ *
+ * which is why the SQUARE `sm` ceiling is small (a square mark at 40px tall is
+ * ~40px wide) and the name that follows it is free to ellipsise. The wide
+ * ceiling is 160px with no name beside it. Neither can reach 244px, and a test
+ * pins the arithmetic.
+ *
+ * `lg` is the login brand panel, which is half the screen and can afford the
+ * mark to be the subject rather than a label.
  *
  * The heights are mirrored in BrandMark.tsx as SIZE_HEIGHTS, for the `height`
  * attribute that reserves the box pre-load. A test pins the two together.
+ *
+ * The GLYPH is deliberately not shape-driven: Moov's own mark is square by
+ * construction and is drawn beside its name already, so it keeps the sizes it
+ * has always had. Changing them would restyle the default brand — what MOST
+ * installations see — to fix a problem the default does not have.
  */
 
-.sm {
-  --brandmark-height: 28px;
-  --brandmark-max-width: 120px;
+.sm.wide {
+  --brandmark-height: 32px;
+  --brandmark-max-width: 160px;
+}
+
+.sm.square {
+  --brandmark-height: 40px;
+  /* A square mark at 40px is ~40px wide; the ceiling only catches a mark that
+     is nearly-but-not-quite square, and keeps it inside the track's budget. */
+  --brandmark-max-width: 72px;
 }
 
 .sm .glyph {
@@ -197,9 +231,14 @@
   font-size: var(--text-lg);
 }
 
-.md {
+.md.wide {
   --brandmark-height: 32px;
   --brandmark-max-width: 160px;
+}
+
+.md.square {
+  --brandmark-height: 40px;
+  --brandmark-max-width: 72px;
 }
 
 .md .glyph {
@@ -211,9 +250,14 @@
   font-size: var(--text-xl);
 }
 
-.lg {
-  --brandmark-height: 44px;
-  --brandmark-max-width: 200px;
+.lg.wide {
+  --brandmark-height: 56px;
+  --brandmark-max-width: 280px;
+}
+
+.lg.square {
+  --brandmark-height: 80px;
+  --brandmark-max-width: 120px;
 }
 
 .lg .glyph {
@@ -221,6 +265,13 @@
   height: 44px;
 }
 
+/*
+ * The name beside a square mark on the login panel takes the PANEL's heading
+ * size, not a label's: there it is the product's name at the top of the
+ * screen, which is what a heading is. The panel's own tagline sits under it at
+ * --text-lg, so the two read as a pair rather than as two labels.
+ */
 .lg .name {
-  font-size: var(--text-2xl);
+  font-size: var(--text-3xl);
+  line-height: var(--leading-tight);
 }
