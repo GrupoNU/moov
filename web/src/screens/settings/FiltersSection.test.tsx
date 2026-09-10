@@ -129,7 +129,7 @@ describe("the scriptActive banner — the honesty bit made visible", () => {
   it("offers the activation, and calls it", async () => {
     const user = userEvent.setup();
     const props = renderSection({ scriptActive: false });
-    await user.click(screen.getByRole("button", { name: "Activar las reglas de Moov" }));
+    await user.click(screen.getByRole("button", { name: "Activar las reglas de Moov Mail" }));
     expect(props.onActivate).toHaveBeenCalledTimes(1);
   });
 
@@ -139,7 +139,7 @@ describe("the scriptActive banner — the honesty bit made visible", () => {
     renderSection({ scriptActive: false, onActivate: undefined });
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Activar las reglas de Moov" }),
+      screen.queryByRole("button", { name: "Activar las reglas de Moov Mail" }),
     ).not.toBeInTheDocument();
   });
 });
@@ -432,7 +432,7 @@ describe("importing and exporting (F-42)", () => {
     expect(screen.getByRole("button", { name: /importar filtros/i })).toBeEnabled();
     // Naming it after Gmail's XML would send the user to Gmail with something
     // Gmail cannot read.
-    expect(screen.getByText(/JSON propio de Moov, no el XML de Gmail/i)).toBeInTheDocument();
+    expect(screen.getByText(/JSON propio de Moov Mail, no el XML de Gmail/i)).toBeInTheDocument();
   });
 
   it("cannot export nothing", () => {

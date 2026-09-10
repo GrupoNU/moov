@@ -165,7 +165,7 @@ describe("forward-all needs a verified destination first", () => {
       addresses: [address("ok@dest.com", "accepted")],
       forwardAll: { enabled: true, address: "ok@dest.com", disposition: "keep" },
     });
-    const picker = screen.getByLabelText("Conservar la copia de Moov");
+    const picker = screen.getByLabelText("Conservar la copia de Moov Mail");
     expect(within(picker).getAllByRole("option")).toHaveLength(2);
     expect(within(picker).getByRole("option", { name: "en Recibidos" })).toBeInTheDocument();
     expect(within(picker).getByRole("option", { name: "en Archivo" })).toBeInTheDocument();
@@ -177,7 +177,7 @@ describe("forward-all needs a verified destination first", () => {
       addresses: [address("ok@dest.com", "accepted")],
       forwardAll: { enabled: true, address: "ok@dest.com", disposition: "keep" },
     });
-    await user.selectOptions(screen.getByLabelText("Conservar la copia de Moov"), "archive");
+    await user.selectOptions(screen.getByLabelText("Conservar la copia de Moov Mail"), "archive");
     expect(props.onSaveForwardAll).toHaveBeenCalledWith({ disposition: "archive" });
   });
 });

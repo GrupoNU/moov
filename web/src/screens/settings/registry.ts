@@ -1,4 +1,4 @@
-import type { Strings } from "../../i18n/strings";
+import type { PlainKey } from "../../i18n/strings";
 import type { PrefKey } from "../../mail/prefs";
 import type { SettingsTab } from "../../router/routes";
 
@@ -23,10 +23,15 @@ import type { SettingsTab } from "../../router/routes";
  * where a search test can import it without pulling a `<dialog>` into scope.
  */
 
-/** The keys these rows may use: the plain-string ones. */
-export type PlainStringKey = {
-  [K in keyof Strings]: Strings[K] extends string ? K : never;
-}[keyof Strings];
+/**
+ * The keys these rows may use: the ones `t` resolves on its own.
+ *
+ * That includes the brand-parameterised strings — from a row's point of view
+ * `t(key)` still returns a finished label, and excluding them would push four
+ * settings descriptions out of the registry the moment they learned the host's
+ * name.
+ */
+export type PlainStringKey = PlainKey;
 
 /**
  * The sections a row can belong to.

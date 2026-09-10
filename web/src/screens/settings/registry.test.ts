@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { en, es, type Strings } from "../../i18n/strings";
+import { brandName, en, es, type BrandName } from "../../i18n/strings";
 import { SETTINGS_TABS } from "../../router/routes";
 import { DEFAULT_PREFS, type PrefKey } from "../../mail/prefs";
 import { foldForSearch } from "../../mail/settingsSearch";
@@ -202,6 +202,23 @@ describe("no drift between the registry and the rendered sheet", () => {
   });
 });
 
+/**
+ * The finished text of one table entry.
+ *
+ * A registry row's key may be a BRAND string — `(brand) => string`, which `t`
+ * resolves on the caller's behalf — so a `typeof value === "string"` assertion
+ * would fail on four perfectly good settings descriptions. What these tests
+ * actually care about is that the row has words, in both locales.
+ */
+function rendered(table: Record<string, unknown>, key: string): string {
+  const value = table[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "function") {
+    return (value as (brand: BrandName) => string)(brandName("Moov Mail"));
+  }
+  return "";
+}
+
 describe("the strings exist in BOTH locales", () => {
   const keysOf = (row: (typeof SETTINGS_ROWS)[number]): readonly string[] =>
     row.descriptionKey === undefined ? [row.labelKey] : [row.labelKey, row.descriptionKey];
@@ -213,18 +230,16 @@ describe("the strings exist in BOTH locales", () => {
     const strings = table as unknown as Record<string, unknown>;
     for (const row of SETTINGS_ROWS) {
       for (const key of keysOf(row)) {
-        const value = strings[key];
-        expect(typeof value, `${key} is missing`).toBe("string");
-        expect(String(value).trim(), `${key} is empty`).not.toBe("");
+        expect(rendered(strings, key).trim(), `${key} is empty or missing`).not.toBe("");
       }
     }
   });
 
   it("has a section title in both locales", () => {
     for (const id of SECTION_IDS) {
-      const key = SECTION_TITLES[id] as keyof Strings;
-      expect(typeof en[key]).toBe("string");
-      expect(typeof es[key]).toBe("string");
+      const key = SECTION_TITLES[id];
+      expect(rendered(en as unknown as Record<string, unknown>, key)).not.toBe("");
+      expect(rendered(es as unknown as Record<string, unknown>, key)).not.toBe("");
     }
   });
 

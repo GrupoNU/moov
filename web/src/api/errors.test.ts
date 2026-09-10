@@ -10,7 +10,8 @@ import {
   type ApiErrorKind,
 } from "./errors";
 import { messageForError } from "./errorMessages";
-import { en, es, type Strings } from "../i18n/strings";
+import { brandName, en, es, type Strings } from "../i18n/strings";
+import { MOOV_DEFAULT_BRANDING } from "../branding/branding";
 import type { Translation } from "../i18n/I18nProvider";
 
 /**
@@ -47,7 +48,13 @@ function response(
 function translationFor(strings: Strings): Translation {
   return {
     locale: "en",
-    t: (key) => strings[key],
+    brand: MOOV_DEFAULT_BRANDING.name,
+    t: (key) => {
+      const value = strings[key];
+      return typeof value === "function"
+        ? (value)(brandName(MOOV_DEFAULT_BRANDING.name))
+        : value;
+    },
     format: (key, ...args) =>
       (strings[key] as unknown as (...a: unknown[]) => string)(...args),
   };

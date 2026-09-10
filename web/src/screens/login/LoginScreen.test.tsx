@@ -7,7 +7,7 @@ import { AuthProvider } from "../../auth/AuthProvider";
 import { BrandingProvider } from "../../branding/BrandingProvider";
 import { MOOV_DEFAULT_BRANDING, type Branding } from "../../branding/branding";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { en } from "../../i18n/strings";
+import { brandName, en } from "../../i18n/strings";
 import { LoginScreen } from "./LoginScreen";
 import type { JmapSession } from "../../api/jmap";
 
@@ -282,8 +282,8 @@ describe("server errors reach the screen with their meaning intact", () => {
     );
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(en["error.notProvisioned.title"]);
-    expect(alert).toHaveTextContent(en["error.notProvisioned.body"]);
+    expect(alert).toHaveTextContent(en["error.notProvisioned.title"](brandName(MOOV_DEFAULT_BRANDING.name)));
+    expect(alert).toHaveTextContent(en["error.notProvisioned.body"](brandName(MOOV_DEFAULT_BRANDING.name)));
     // The remedy is named.
     expect(alert.textContent?.toLowerCase()).toContain("administrator");
     // And it is NOT the generic message.
@@ -304,7 +304,7 @@ describe("server errors reach the screen with their meaning intact", () => {
     await submitAndFail(new ApiError("server-error", "", { status: 503 }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(en["error.serverError.title"]);
+    expect(alert).toHaveTextContent(en["error.serverError.title"](brandName(MOOV_DEFAULT_BRANDING.name)));
     expect(alert.textContent?.toLowerCase()).toContain("account");
   });
 
@@ -361,6 +361,8 @@ describe("branding", () => {
     },
     tagline: "Correo de Acme",
     supportUrl: "https://support.acme.test",
+    privacyUrl: "",
+    termsUrl: "",
     isDefault: false,
   };
 

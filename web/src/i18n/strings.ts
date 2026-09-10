@@ -42,7 +42,7 @@
  * to the product in front of them; which engine is behind it is not their
  * concern, and naming an unfamiliar one mid-sentence reads as a bug.
  *
- * The exceptions are deliberate and pinned by `noMoovInStrings` in
+ * The exceptions are deliberate and pinned by the ALLOWED allowlist in
  * `strings.test.ts`: `legal.poweredBy` is an attribution, and an attribution
  * that renamed itself per host would be worthless.
  *
