@@ -201,6 +201,19 @@ export interface ComposerProps {
    * handover.
    */
   readonly onPopOut?: ((current: ComposerDraft) => void) | undefined;
+  /**
+   * Publishes a "put the caret back in the body" function to the host.
+   *
+   * Gmail's answer to pressing Reply while an inline reply is already open is
+   * to focus the box, not to open a second one — and only this component knows
+   * which of the body editor's two surfaces (the contentEditable or the
+   * textarea) currently exists to be focused.
+   *
+   * A published callback rather than an imperative ref on the component,
+   * matching the seam `ConversationView` already uses for its expand/collapse
+   * controls: the host holds a function it can call, and no state is lifted.
+   */
+  readonly onFocusHandle?: ((focus: (() => void) | undefined) => void) | undefined;
 }
 
 export function Composer({
@@ -227,6 +240,7 @@ export function Composer({
   initialAttachments,
   host = "floating",
   onPopOut,
+  onFocusHandle,
 }: ComposerProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   /*
@@ -1084,6 +1098,24 @@ export function Composer({
    * than silence.
    */
   const bodyRef = useRef<HTMLElement | null>(null);
+
+  /*
+   * Publish the focus handle, and withdraw it on unmount.
+   *
+   * The cleanup is the half that matters: a host still holding a function that
+   * focuses a node from a composer that has closed would silently focus
+   * nothing, and "the shortcut does nothing" is the hardest kind of defect to
+   * report. `undefined` says plainly that there is no box to focus.
+   */
+  useEffect(() => {
+    if (onFocusHandle === undefined) return undefined;
+    onFocusHandle(() => {
+      bodyRef.current?.focus();
+    });
+    return () => {
+      onFocusHandle(undefined);
+    };
+  }, [onFocusHandle]);
   const insertAtCaret = useCallback(
     (value: string): void => {
       const element = bodyRef.current;
@@ -1144,6 +1176,32 @@ export function Composer({
       touched();
     },
     [isRich, touched],
+  );
+
+  /**
+   * The autosave is flushed when this component goes away, however it goes.
+   *
+   * Every deliberate exit already flushes — `closeWithSave`, Escape, the
+   * pop-out — but the INLINE host introduced an exit none of them cover: the
+   * box lives inside the reader, so closing the reader (the ✕, `u`, opening
+   * another conversation, a `Ctrl+Enter` send elsewhere) unmounts it without
+   * anyone calling a close handler. Without this, the last few seconds of
+   * typing would be gone, which is precisely the failure this file's header
+   * says must never happen.
+   *
+   * The floating card is unaffected in practice — it only ever leaves through
+   * a handler that has already flushed — and a second flush is a no-op, so the
+   * guarantee costs nothing there and closes the hole here.
+   *
+   * `scheduler` is deliberately the only dependency: this must run at unmount,
+   * not on every keystroke, and the scheduler is stable for the composer's
+   * life.
+   */
+  useEffect(
+    () => () => {
+      scheduler.flush();
+    },
+    [scheduler],
   );
 
   /** Closing flushes the autosave first — closing must never lose a draft. */
@@ -1213,6 +1271,31 @@ export function Composer({
    */
   const onComposerKeyDown = useCallback(
     (event: KeyboardEvent): void => {
+      /*
+       * Escape in the INLINE box: the caret leaves the editor, and that is all.
+       *
+       * Gmail's inline reply does not close on Escape, and the reason is the
+       * one this whole file is built around — a box holding unsent words must
+       * not vanish on a key people press to dismiss things. What Escape IS for
+       * is getting out of a text field, so the caret leaves the editor and the
+       * reader's own keys (j/k, ;, :) work again without the box moving.
+       *
+       * The floating card is untouched: it is a `<dialog>`, so its Escape
+       * arrives as `cancel` and `onDialogCancel` handles it — flushing the
+       * draft first, then closing, which is the behaviour it shipped with.
+       *
+       * `stopPropagation` keeps the screen's global handler from acting on a
+       * key the composer has answered. It deliberately does NOT preventDefault:
+       * nothing about the key's default behaviour is wrong here, only who else
+       * gets to hear about it.
+       */
+      if (event.key === "Escape" && host === "inline") {
+        event.stopPropagation();
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) active.blur();
+        return;
+      }
+
       const accel = event.ctrlKey || event.metaKey;
       if (!accel || event.altKey) return;
 
@@ -1246,7 +1329,7 @@ export function Composer({
         setFocusField("bcc");
       }
     },
-    [canSend, send],
+    [canSend, send, host],
   );
 
   /*

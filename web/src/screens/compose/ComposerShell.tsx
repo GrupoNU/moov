@@ -160,7 +160,15 @@ export function ComposerShell({
    */
   useEffect(() => {
     if (host !== "inline") return;
-    boundaryRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const element = boundaryRef.current;
+    /*
+     * Guarded because `scrollIntoView` is not universal: jsdom does not
+     * implement it at all, and a composer that THROWS on mount because the
+     * environment cannot scroll would be a real box lost to a cosmetic
+     * nicety. A box that opens without scrolling is still a usable box.
+     */
+    if (typeof element?.scrollIntoView !== "function") return;
+    element.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [host]);
 
   const form = (

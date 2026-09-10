@@ -1203,6 +1203,8 @@ export const en = {
   // The inline reply at the foot of a conversation (canon 07 §7).
   "compose.inlineTo": (recipients: string): string => `Reply to ${recipients}`,
   "compose.popOut": "Open in a separate window",
+  "compose.replaceQuoteConfirm":
+    "You are already writing a reply. Replying to another message replaces the quoted text. Continue?",
   "compose.attach": "Attach a file",
   "compose.attachments": (count: number): string =>
     count === 1 ? "1 attachment" : `${count} attachments`,
@@ -2640,6 +2642,8 @@ export const es: Strings = {
   "compose.restore": "Salir de pantalla completa",
   "compose.inlineTo": (recipients: string): string => `Responder a ${recipients}`,
   "compose.popOut": "Abrir en una ventana aparte",
+  "compose.replaceQuoteConfirm":
+    "Ya estás escribiendo una respuesta. Responder a otro mensaje reemplaza el texto citado. ¿Seguir?",
   "compose.attach": "Adjuntar un archivo",
   "compose.attachments": (count: number): string =>
     count === 1 ? "1 adjunto" : `${count} adjuntos`,
