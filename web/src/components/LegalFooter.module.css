@@ -1,0 +1,69 @@
+/*
+ * The legal footer (AGPL-3.0 §13 plus the operator's own links).
+ *
+ * One line of muted text, Gmail's foot line as the canon. The rules below are
+ * mostly about what this must NOT do: it must not become tall enough to cost a
+ * message row, and it must not draw attention away from the mail.
+ */
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  /* A footer is never a focus stop and never a flex-grow candidate: it takes
+   * exactly the height of its own text. */
+  flex: none;
+}
+
+/*
+ * Under the sign-in form. Centred with the card, which is itself centred, and
+ * given a little air above so it reads as a footnote to the form rather than
+ * as another form control.
+ */
+.login {
+  justify-content: center;
+  margin-top: var(--space-4);
+  text-align: center;
+}
+
+/*
+ * At the foot of the message list.
+ *
+ * The 24px ceiling is the contract with the list: `min-height: 0` on the
+ * scroller means any height taken here is height the rows lose, so this line
+ * gets one row of small text and no more. The horizontal padding lines it up
+ * with the list's own rows rather than with the column edge.
+ */
+.list {
+  justify-content: center;
+  min-height: 24px;
+  padding: var(--space-1) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.separator {
+  /* Purely visual: the links are already separate elements to a screen
+   * reader, and a middot read aloud between them is noise. */
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+@media (forced-colors: active) {
+  .link {
+    /* Custom properties are ignored in forced colours, so the link needs the
+     * system's own link colour to stay distinguishable from the text. */
+    color: LinkText;
+  }
+}

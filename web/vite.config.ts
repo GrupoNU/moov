@@ -1,6 +1,33 @@
 /// <reference types="vitest/config" />
+import { execFileSync } from "node:child_process";
+
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+
+/**
+ * The commit this bundle was built from.
+ *
+ * The legal footer links the source at THIS revision, because AGPL-3.0 §13
+ * requires offering the *corresponding* source to a network user — a link to
+ * whatever `main` happens to be today is a link to a different program.
+ *
+ * Read at CONFIG time, in Node, and inlined by `define`: the alternative (a
+ * runtime fetch of a version endpoint) would put a network request on the
+ * critical path of the login screen to render one line of grey text.
+ *
+ * "dev" when git is absent or the tree is not a checkout — a source tarball
+ * built by a downstream packager is exactly that case, and it must build.
+ */
+function buildCommit(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || "dev";
+  } catch {
+    return "dev";
+  }
+}
 
 /**
  * Vite configuration for the Moov PWA (W-A3: React + TypeScript + Vite, no
@@ -48,6 +75,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    define: {
+      __MOOV_COMMIT__: JSON.stringify(buildCommit()),
+    },
     server: {
       port: 5173,
       strictPort: true,

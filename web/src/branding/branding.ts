@@ -63,6 +63,17 @@ export interface Branding {
   readonly colors: BrandingColors;
   readonly tagline: string;
   readonly supportUrl: string;
+  /**
+   * The operator's privacy policy, or "" when they configured none.
+   *
+   * Distinct from the licence and source links in the legal footer, which are
+   * OURS and non-removable (AGPL-3.0 §13): this one is the operator's own
+   * obligation to their users, and only they can say where it lives. Empty
+   * renders nothing rather than a dead link.
+   */
+  readonly privacyUrl: string;
+  /** The operator's terms of service, or "" when they configured none. */
+  readonly termsUrl: string;
   /** True when this is Moov's own brand rather than a configured customer's. */
   readonly isDefault: boolean;
 }
@@ -91,6 +102,8 @@ export const MOOV_DEFAULT_BRANDING: Branding = {
   },
   tagline: "",
   supportUrl: "",
+  privacyUrl: "",
+  termsUrl: "",
   isDefault: true,
 };
 
@@ -218,6 +231,13 @@ export function mergeBranding(raw: unknown): Branding {
     },
     tagline: isNonEmptyString(doc.tagline) ? doc.tagline.trim() : defaults.tagline,
     supportUrl: isSafeLinkUrl(doc.supportUrl) ? doc.supportUrl : defaults.supportUrl,
+    // The same scheme allow-list as supportUrl, for the same reason: these
+    // three are the only strings in the document that become an `href`, and a
+    // javascript: URL in one of them would be script execution on the login
+    // screen. A rejected value falls back to "" — no link at all — rather than
+    // to some other host's policy page.
+    privacyUrl: isSafeLinkUrl(doc.privacyUrl) ? doc.privacyUrl : defaults.privacyUrl,
+    termsUrl: isSafeLinkUrl(doc.termsUrl) ? doc.termsUrl : defaults.termsUrl,
     // The server's `default` flag is authoritative when present; anything else
     // is treated as "a brand was configured", which is the safe reading (it
     // only affects whether the UI may show Moov's own wordmark).

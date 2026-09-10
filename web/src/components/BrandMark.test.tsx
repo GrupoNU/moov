@@ -40,6 +40,8 @@ function branding(overrides: Partial<Branding> = {}): Branding {
     },
     tagline: "",
     supportUrl: "",
+    privacyUrl: "",
+    termsUrl: "",
     isDefault: false,
     ...overrides,
   };

@@ -44,3 +44,12 @@ declare module "*?raw" {
   const content: string;
   export default content;
 }
+
+/**
+ * The git commit this bundle was built from, inlined by Vite's `define`
+ * (see vite.config.ts). "dev" outside a git checkout.
+ *
+ * Declared as a global rather than read from `import.meta.env` because this
+ * file deliberately does not load `vite/client` — see the note at the top.
+ */
+declare const __MOOV_COMMIT__: string;
