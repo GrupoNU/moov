@@ -376,10 +376,11 @@ Each piece earns its place:
 - **`IMG` from the running container** — the brand is written by exactly the
   binary that will serve it, whatever tag is deployed, with no second source of
   truth to drift.
-- **`--user 65532:65532`** — the branding directory is root-owned on the host, and the
-  image runs non-root. Without it the write fails on permissions.
-- **`-v /etc/moov/branding:/etc/moov/branding`** — writable, unlike the
-  service's own bind, and at the same path both sides so `MOOV_BRANDING_DIR`
+- **`--user 65532:65532`** — the daemon's own unprivileged uid, so files the
+  CLI writes stay writable by the Settings → Marca panel and vice versa (the
+  host directory is owned by that uid, see "Granting brand admins").
+- **`-v /etc/moov/branding:/etc/moov/branding`** — the same bind the service
+  has, at the same path both sides so `MOOV_BRANDING_DIR`
   and the default agree without a `-dir`.
 - **`-v /root/brand:/brand:ro`** — the source images, read-only: this container
   has no business writing to wherever the brand kit lives.
