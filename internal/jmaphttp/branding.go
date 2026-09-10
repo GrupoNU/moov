@@ -505,11 +505,31 @@ func (b *brandingStore) load(host string) brandingEntry {
 	if c := normalizeHexColor(file.Colors.OnPrimary); c != "" {
 		doc.Colors.OnPrimary = c
 	}
-	if c := normalizeHexColor(file.Colors.SplashFrom); c != "" {
-		doc.Colors.SplashFrom = c
+	// The gradient stops follow the primary when the brand did not choose them.
+	//
+	// Falling back to MOOV's violet here was the bug an owner found on the first
+	// real use of the brand panel: they set a pale cyan primary, left the two
+	// splash fields alone because they had no opinion about them, and got a
+	// violet login panel that belonged to a different product. A brand that
+	// configures a primary and nothing else has said everything it needs to say
+	// about its gradient, so it is DERIVED from that primary (branding.
+	// DeriveSplashColors) rather than inherited from ours. Each stop is still
+	// overridable on its own: the derivation only fills the ones left empty.
+	derivedFrom, derivedTo := "", ""
+	if normalizeHexColor(file.Colors.Primary) != "" {
+		derivedFrom, derivedTo = branding.DeriveSplashColors(doc.Colors.Primary)
 	}
-	if c := normalizeHexColor(file.Colors.SplashTo); c != "" {
+	switch c := normalizeHexColor(file.Colors.SplashFrom); {
+	case c != "":
+		doc.Colors.SplashFrom = c
+	case derivedFrom != "":
+		doc.Colors.SplashFrom = derivedFrom
+	}
+	switch c := normalizeHexColor(file.Colors.SplashTo); {
+	case c != "":
 		doc.Colors.SplashTo = c
+	case derivedTo != "":
+		doc.Colors.SplashTo = derivedTo
 	}
 
 	// An asset is advertised only if the file is present AND still passes

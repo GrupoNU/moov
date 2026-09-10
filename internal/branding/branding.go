@@ -19,8 +19,11 @@
 package branding
 
 import (
+	"fmt"
+	"math"
 	"net"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -426,3 +429,75 @@ func TruncateRunes(s string, maxRunes int) string {
 // RuneLen is the length of a string in runes, the unit every cap in this
 // package is expressed in.
 func RuneLen(s string) int { return len([]rune(s)) }
+
+// SplashFromMixToward and SplashToMixToward are how far the derived gradient
+// stops sit from the primary, as a fraction of the way to black.
+//
+// The gradient is a BACKDROP: the login panel's mark, name and tagline sit on
+// it, so both stops have to be dark enough for white text and far enough apart
+// to read as a gradient rather than as a flat field. 70% and 35% give a deep
+// stop and a mid stop that are recognizably the customer's hue — which is the
+// whole point of deriving them instead of falling back to Moov's violet.
+const (
+	SplashFromMixToward = 0.70
+	SplashToMixToward   = 0.35
+)
+
+// DeriveSplashColors returns the two gradient stops for a configured primary:
+// the primary mixed toward black by SplashFromMixToward and SplashToMixToward.
+//
+// # Why sRGB and not OKLCH
+//
+// The palette derivation in the PWA moves lightness in OKLCH, because there the
+// output is an ACCENT that has to stay recognizably the customer's color while
+// clearing a contrast threshold. This is a different job: the output is a
+// decorative backdrop with no contrast constraint of its own (the panel's scrim
+// owns that), and a straight channel mix is the operation an operator can check
+// with a calculator. Deterministic, dependency-free, and it never leaves the
+// gamut because both endpoints are in it.
+//
+// The primary must already be normalized (NormalizeHexColor). An unparseable
+// value returns two empty strings, and the caller keeps its own fallback.
+func DeriveSplashColors(primary string) (from, to string) {
+	r, g, b, ok := parseHexColor(primary)
+	if !ok {
+		return "", ""
+	}
+	return mixTowardBlack(r, g, b, SplashFromMixToward),
+		mixTowardBlack(r, g, b, SplashToMixToward)
+}
+
+// parseHexColor splits a normalized #rgb or #rrggbb into channels.
+func parseHexColor(s string) (r, g, b uint8, ok bool) {
+	c := NormalizeHexColor(s)
+	if c == "" {
+		return 0, 0, 0, false
+	}
+	digits := c[1:]
+	if len(digits) == 3 {
+		// #abc means #aabbcc: each digit is doubled, not zero-padded.
+		digits = string([]byte{digits[0], digits[0], digits[1], digits[1], digits[2], digits[2]})
+	}
+	v, err := strconv.ParseUint(digits, 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return uint8(v >> 16), uint8(v >> 8), uint8(v), true //nolint:gosec // masked by the shifts
+}
+
+// mixTowardBlack scales every channel by (1-amount) and renders the result as
+// a lowercase hex literal. Rounding is half-up on each channel independently.
+func mixTowardBlack(r, g, b uint8, amount float64) string {
+	keep := 1 - amount
+	scale := func(c uint8) uint8 {
+		v := math.Round(float64(c) * keep)
+		if v < 0 {
+			v = 0
+		}
+		if v > 255 {
+			v = 255
+		}
+		return uint8(v)
+	}
+	return fmt.Sprintf("#%02x%02x%02x", scale(r), scale(g), scale(b))
+}

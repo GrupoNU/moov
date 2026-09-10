@@ -391,6 +391,47 @@ func TestBrandAdminPutPartialSemantics(t *testing.T) {
 	}
 }
 
+// TestBrandAdminDocReportsWhichColorsAreConfigured: `colors` is the EFFECTIVE
+// palette (a picker needs a color), so the panel cannot tell a value the
+// operator typed from one the server derived or defaulted. ColorsConfigured is
+// how it tells — and it is what lets the splash fields show the derived
+// gradient as a PLACEHOLDER instead of as text the operator seems to have
+// entered.
+func TestBrandAdminDocReportsWhichColorsAreConfigured(t *testing.T) {
+	s, _, _ := brandAdminServer(t, true, nil)
+
+	doc := decodeAdminDoc(t, adminReq(s, http.MethodGet, PathBrandingAdminBrand, nil, "", true))
+	if len(doc.ColorsConfigured) != 0 {
+		t.Fatalf("an unconfigured host reports %v as configured", doc.ColorsConfigured)
+	}
+
+	doc = decodeAdminDoc(t, putBrand(s, `{"colors":{"primary":"#b8faff"}}`))
+	if got := strings.Join(doc.ColorsConfigured, ","); got != "primary" {
+		t.Fatalf("configured = %q, want just the primary", got)
+	}
+	// The gradient the panel will PLACEHOLD is the derived one, and it is the
+	// one the public document serves.
+	wantFrom, wantTo := branding.DeriveSplashColors("#b8faff")
+	if doc.Colors.SplashFrom != wantFrom || doc.Colors.SplashTo != wantTo {
+		t.Fatalf("gradient = %q -> %q, want the derived %q -> %q",
+			doc.Colors.SplashFrom, doc.Colors.SplashTo, wantFrom, wantTo)
+	}
+
+	doc = decodeAdminDoc(t, putBrand(s, `{"colors":{"splashFrom":"#001122"}}`))
+	if got := strings.Join(doc.ColorsConfigured, ","); got != "primary,splashFrom" {
+		t.Fatalf("configured = %q, want the primary and the from stop", got)
+	}
+
+	// Clearing returns the field to automatic, in the list and in the value.
+	doc = decodeAdminDoc(t, putBrand(s, `{"colors":{"splashFrom":""}}`))
+	if got := strings.Join(doc.ColorsConfigured, ","); got != "primary" {
+		t.Fatalf("configured = %q after clearing the from stop", got)
+	}
+	if doc.Colors.SplashFrom != wantFrom {
+		t.Fatalf("splashFrom = %q after clearing, want the derived %q", doc.Colors.SplashFrom, wantFrom)
+	}
+}
+
 // --- assets ---------------------------------------------------------------------
 
 func testPNGBytes() []byte {

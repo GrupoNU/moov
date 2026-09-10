@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GrupoNU/moov/internal/branding"
 )
 
 // Tests for the public branding endpoint (W-A1). The security-relevant claims
@@ -978,5 +980,95 @@ func TestBrandingLegalURLsAbsentByDefault(t *testing.T) {
 	body := rec.Body.String()
 	if strings.Contains(body, "privacyUrl") || strings.Contains(body, "termsUrl") {
 		t.Errorf("unconfigured legal URLs appear in the document:\n%s", body)
+	}
+}
+
+// TestBrandingSplashFollowsPrimaryWhenUnset: a brand that configures a primary
+// and leaves the gradient alone gets a gradient DERIVED from that primary, not
+// Moov's violet.
+//
+// This is the bug an owner found on the first real use of the brand panel:
+// they set a pale cyan primary, had no opinion about the two splash stops, and
+// their login screen came out violet — a color belonging to a different
+// product entirely.
+func TestBrandingSplashFollowsPrimaryWhenUnset(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "cyan.test", map[string]any{
+		"name":   "Cyan",
+		"colors": map[string]string{"primary": "#b8faff"},
+	}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "cyan.test", nil))
+
+	wantFrom, wantTo := branding.DeriveSplashColors("#b8faff")
+	if doc.Colors.SplashFrom != wantFrom {
+		t.Errorf("splashFrom = %q, want the derived %q", doc.Colors.SplashFrom, wantFrom)
+	}
+	if doc.Colors.SplashTo != wantTo {
+		t.Errorf("splashTo = %q, want the derived %q", doc.Colors.SplashTo, wantTo)
+	}
+	def := DefaultBranding()
+	if doc.Colors.SplashFrom == def.Colors.SplashFrom || doc.Colors.SplashTo == def.Colors.SplashTo {
+		t.Error("the gradient is still Moov's violet; the derivation did not run")
+	}
+}
+
+// TestBrandingSplashOverrideWinsPerStop: the derivation fills only the stops
+// the brand left empty, so an operator can pin one end and let the other
+// follow.
+func TestBrandingSplashOverrideWinsPerStop(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "half.test", map[string]any{
+		"name":   "Half",
+		"colors": map[string]string{"primary": "#b8faff", "splashFrom": "#001122"},
+	}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "half.test", nil))
+
+	if doc.Colors.SplashFrom != "#001122" {
+		t.Errorf("splashFrom = %q, want the configured #001122", doc.Colors.SplashFrom)
+	}
+	_, wantTo := branding.DeriveSplashColors("#b8faff")
+	if doc.Colors.SplashTo != wantTo {
+		t.Errorf("splashTo = %q, want the derived %q", doc.Colors.SplashTo, wantTo)
+	}
+}
+
+// TestBrandingSplashKeepsMoovWithoutPrimary: with no primary configured there
+// is nothing to derive from, so Moov's own gradient is still the answer.
+func TestBrandingSplashKeepsMoovWithoutPrimary(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "noprimary.test", map[string]any{"name": "No Primary"}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "noprimary.test", nil))
+
+	def := DefaultBranding()
+	if doc.Colors.SplashFrom != def.Colors.SplashFrom || doc.Colors.SplashTo != def.Colors.SplashTo {
+		t.Errorf("gradient = %q -> %q, want Moov's %q -> %q",
+			doc.Colors.SplashFrom, doc.Colors.SplashTo,
+			def.Colors.SplashFrom, def.Colors.SplashTo)
+	}
+}
+
+// TestBrandingSplashIgnoresInvalidPrimary: a primary that is not a color
+// derives nothing — the document falls back to Moov's for BOTH the primary and
+// the gradient rather than deriving a gradient from a value it rejected.
+func TestBrandingSplashIgnoresInvalidPrimary(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "badprimary.test", map[string]any{
+		"name":   "Bad Primary",
+		"colors": map[string]string{"primary": "rebeccapurple"},
+	}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "badprimary.test", nil))
+
+	def := DefaultBranding()
+	if doc.Colors.SplashFrom != def.Colors.SplashFrom || doc.Colors.SplashTo != def.Colors.SplashTo {
+		t.Errorf("gradient = %q -> %q, want Moov's",
+			doc.Colors.SplashFrom, doc.Colors.SplashTo)
 	}
 }

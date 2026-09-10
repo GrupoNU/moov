@@ -392,3 +392,74 @@ func TestReadRejectsMalformedAndAcceptsAbsent(t *testing.T) {
 		t.Fatal("malformed JSON was accepted")
 	}
 }
+
+// TestDeriveSplashColorsTable pins the mix arithmetic. The expected values are
+// each channel scaled by (1-amount) and rounded half-up, computed by hand, so
+// the test fails if the constants or the rounding ever move rather than
+// re-deriving whatever the implementation does.
+func TestDeriveSplashColorsTable(t *testing.T) {
+	cases := []struct {
+		primary  string
+		wantFrom string
+		wantTo   string
+	}{
+		// The owner's pastel cyan, the color that found the bug: 0xb8=184,
+		// 0xfa=250, 0xff=255. 30% -> 55.2/75/76.5 -> #374b4d (76.5 rounds to
+		// 77 = 0x4d). 65% -> 119.6/162.5/165.75 -> #78a3a6.
+		{"#b8faff", "#374b4d", "#78a3a6"},
+		// Moov's own indigo, for a value anybody can check: 0x5b=91, 0xd6=214.
+		// 30% -> 27.3/27.3/64.2 -> #1b1b40. 65% -> 59.15/59.15/139.1 -> #3b3b8b.
+		{"#5b5bd6", "#1b1b40", "#3b3b8b"},
+		// Black stays black at every mix; white is the pure fraction.
+		{"#000000", "#000000", "#000000"},
+		{"#ffffff", "#4d4d4d", "#a6a6a6"},
+		// Three-digit form expands by DOUBLING the digit (#f00 is #ff0000, not
+		// #f00000), which is the one place a hand-rolled parser gets it wrong.
+		{"#f00", "#4d0000", "#a60000"},
+		// Case and surrounding space are normalized before the mix.
+		{"  #B8FAFF ", "#374b4d", "#78a3a6"},
+	}
+	for _, c := range cases {
+		from, to := DeriveSplashColors(c.primary)
+		if from != c.wantFrom || to != c.wantTo {
+			t.Errorf("DeriveSplashColors(%q) = %q, %q; want %q, %q",
+				c.primary, from, to, c.wantFrom, c.wantTo)
+		}
+	}
+}
+
+// TestDeriveSplashColorsRefusesNonColors: an unparseable primary derives
+// nothing, so the caller keeps its own fallback rather than emitting a
+// custom property built from garbage.
+func TestDeriveSplashColorsRefusesNonColors(t *testing.T) {
+	for _, bad := range []string{"", "rebeccapurple", "#12345", "#gggggg", "rgb(1,2,3)", "5b5bd6"} {
+		from, to := DeriveSplashColors(bad)
+		if from != "" || to != "" {
+			t.Errorf("DeriveSplashColors(%q) = %q, %q; want two empty strings", bad, from, to)
+		}
+	}
+}
+
+// TestDeriveSplashColorsIsDeterministicAndDark: whatever the primary, both
+// stops come back as valid lowercase hex, and `from` is never lighter than
+// `to` — the gradient the panel paints runs deep-to-mid, not the other way.
+func TestDeriveSplashColorsIsDeterministicAndDark(t *testing.T) {
+	for _, primary := range []string{"#b8faff", "#5b5bd6", "#0f766e", "#ffcc00", "#123", "#010203"} {
+		from, to := DeriveSplashColors(primary)
+		if NormalizeHexColor(from) != from || len(from) != 7 {
+			t.Errorf("from = %q for %q, want a lowercase #rrggbb", from, primary)
+		}
+		if NormalizeHexColor(to) != to || len(to) != 7 {
+			t.Errorf("to = %q for %q, want a lowercase #rrggbb", to, primary)
+		}
+		fr, fg, fb, _ := parseHexColor(from)
+		tr, tg, tb, _ := parseHexColor(to)
+		if int(fr)+int(fg)+int(fb) > int(tr)+int(tg)+int(tb) {
+			t.Errorf("for %q the from stop %q is lighter than the to stop %q", primary, from, to)
+		}
+		again1, again2 := DeriveSplashColors(primary)
+		if again1 != from || again2 != to {
+			t.Errorf("DeriveSplashColors(%q) is not deterministic", primary)
+		}
+	}
+}

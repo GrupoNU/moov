@@ -625,6 +625,18 @@ type BrandAdminDoc struct {
 
 	Colors BrandingColors `json:"colors"`
 
+	// ColorsConfigured names the color fields the FILE sets, so the panel can
+	// tell "the operator chose this" from "the server derived or defaulted it".
+	//
+	// Colors above are the EFFECTIVE values (a picker needs a color), which
+	// makes that distinction invisible: a derived splash stop and a typed one
+	// arrive as the same hex. The panel needs it to show the derived value as a
+	// PLACEHOLDER — "automatic, from the primary color" — instead of as text
+	// the operator appears to have entered and would have to delete to get back
+	// to automatic. Keys are the patch's own field names: "primary",
+	// "onPrimary", "splashFrom", "splashTo".
+	ColorsConfigured []string `json:"colorsConfigured"`
+
 	// Assets has one entry per kind, null when that kind is not configured
 	// or its file is missing or invalid (in which case Warnings says so).
 	Assets map[string]*BrandAdminAsset `json:"assets"`
@@ -664,6 +676,28 @@ type BrandAdminAsset struct {
 	Height int    `json:"height,omitempty"`
 }
 
+// configuredColorFields lists, in a stable order, the color fields the file
+// actually sets — a field holding an INVALID value counts as unset, because
+// that is what the server does with it.
+func configuredColorFields(c branding.Colors) []string {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"primary", c.Primary},
+		{"onPrimary", c.OnPrimary},
+		{"splashFrom", c.SplashFrom},
+		{"splashTo", c.SplashTo},
+	}
+	out := []string{}
+	for _, f := range fields {
+		if normalizeHexColor(f.value) != "" {
+			out = append(out, f.name)
+		}
+	}
+	return out
+}
+
 func (s *Server) writeBrandAdminDoc(w http.ResponseWriter, c brandAdminCall) {
 	doc, err := s.brandAdminDoc(c)
 	if err != nil {
@@ -684,24 +718,25 @@ func (s *Server) brandAdminDoc(c brandAdminCall) (BrandAdminDoc, error) {
 	entry := s.branding.resolveEntry(c.host)
 
 	doc := BrandAdminDoc{
-		Host:        c.host,
-		Default:     entry.doc.Default,
-		Name:        strings.TrimSpace(file.Name),
-		ShortName:   strings.TrimSpace(file.ShortName),
-		Tagline:     strings.TrimSpace(file.Tagline),
-		SupportURL:  strings.TrimSpace(file.SupportURL),
-		PrivacyURL:  strings.TrimSpace(file.PrivacyURL),
-		TermsURL:    strings.TrimSpace(file.TermsURL),
-		Colors:      entry.doc.Colors,
-		Assets:      make(map[string]*BrandAdminAsset, len(branding.AssetKinds)),
-		IconSource:  entry.iconSource,
-		IconIssue:   entry.iconIssue,
-		BrandAdmins: append([]string{}, entry.admins...),
-		Warnings:    []string{},
-		PublicURL:   PathBranding,
-		ManifestURL: PathBrandingManifest,
-		IconURLs:    make(map[string]string, len(brandingIconSpecs)),
-		Version:     strings.Trim(entry.etag, `"`),
+		Host:             c.host,
+		Default:          entry.doc.Default,
+		Name:             strings.TrimSpace(file.Name),
+		ShortName:        strings.TrimSpace(file.ShortName),
+		Tagline:          strings.TrimSpace(file.Tagline),
+		SupportURL:       strings.TrimSpace(file.SupportURL),
+		PrivacyURL:       strings.TrimSpace(file.PrivacyURL),
+		TermsURL:         strings.TrimSpace(file.TermsURL),
+		Colors:           entry.doc.Colors,
+		ColorsConfigured: configuredColorFields(file.Colors),
+		Assets:           make(map[string]*BrandAdminAsset, len(branding.AssetKinds)),
+		IconSource:       entry.iconSource,
+		IconIssue:        entry.iconIssue,
+		BrandAdmins:      append([]string{}, entry.admins...),
+		Warnings:         []string{},
+		PublicURL:        PathBranding,
+		ManifestURL:      PathBrandingManifest,
+		IconURLs:         make(map[string]string, len(brandingIconSpecs)),
+		Version:          strings.Trim(entry.etag, `"`),
 	}
 	if doc.IconSource == "" {
 		doc.IconSource = "default"
