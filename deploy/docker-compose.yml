@@ -203,12 +203,18 @@ services:
       # Content-addressed message blobs. A named volume, not a bind mount: this
       # is Moov's own data, and Dovecot must never see it.
       - blobs:/var/lib/moov/blobs
-      # Per-host branding, written on the HOST by `moovctl branding set` and
-      # read here. Read-only: the daemon serves it and never writes it. A
-      # missing host directory is created empty by Docker (root-owned, 0755,
-      # readable by the nonroot daemon), which serves Moov's defaults — a
-      # valid state, so a fresh install needs no manual mkdir.
-      - ${MOOV_BRANDING_HOST_DIR:-/etc/moov/branding}:/etc/moov/branding:ro
+      # Per-host branding: written by `moovctl branding set` AND by the
+      # Settings -> Marca panel (the brand admin API), read by the daemon.
+      # Writable on purpose: the panel writes branding.json and images here
+      # as the container's unprivileged user, so the HOST directory must be
+      # owned by uid 65532 (`chown -R 65532:65532 /etc/moov/branding`) or the
+      # panel answers 500 while reads keep working. A missing host directory
+      # is created by Docker root-owned: the daemon then serves Moov's
+      # defaults (valid) and the panel cannot write until the chown is done.
+      # Nothing here is secret: every byte is published to anonymous callers.
+      # To run CLI-only with a read-only mount, add `:ro` back and set
+      # MOOV_BRANDING_ADMIN=0.
+      - ${MOOV_BRANDING_HOST_DIR:-/etc/moov/branding}:/etc/moov/branding
 
     # No `ports:` — deliberately, and this is the VPN-only property. The JMAP
     # listener (8620) and the metrics listener (8080) are reachable ONLY from

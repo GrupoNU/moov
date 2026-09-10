@@ -362,7 +362,7 @@ Run a **fresh container from the same image** instead:
 
 ```bash
 IMG=$(docker inspect moovd --format '{{.Config.Image}}')
-docker run --rm --user root \
+docker run --rm --user 65532:65532 \
   -v /etc/moov/branding:/etc/moov/branding \
   -v /root/brand:/brand:ro \
   --entrypoint /usr/local/bin/moovctl "$IMG" \
@@ -376,7 +376,7 @@ Each piece earns its place:
 - **`IMG` from the running container** — the brand is written by exactly the
   binary that will serve it, whatever tag is deployed, with no second source of
   truth to drift.
-- **`--user root`** — the branding directory is root-owned on the host, and the
+- **`--user 65532:65532`** — the branding directory is root-owned on the host, and the
   image runs non-root. Without it the write fails on permissions.
 - **`-v /etc/moov/branding:/etc/moov/branding`** — writable, unlike the
   service's own bind, and at the same path both sides so `MOOV_BRANDING_DIR`
@@ -393,7 +393,7 @@ A full brand in one call — every flag `set` accepts, with the source images
 under the read-only `/brand` mount:
 
 ```bash
-docker run --rm --user root \
+docker run --rm --user 65532:65532 \
   -v /etc/moov/branding:/etc/moov/branding \
   -v /root/brand:/brand:ro \
   --entrypoint /usr/local/bin/moovctl "$IMG" \
@@ -430,14 +430,14 @@ from the sniffed type), never the source filename.
 
 ```bash
 # Read-only, so the branding mount can be :ro. RUN=... is the prefix from above.
-RUN="docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding:ro \
+RUN="docker run --rm --user 65532:65532 -v /etc/moov/branding:/etc/moov/branding:ro \
   --entrypoint /usr/local/bin/moovctl $IMG"
 
 $RUN branding show -host mail.acme.example   # every field, plus where the PWA icons come from
 $RUN branding list                           # every configured host
 
 # unset WRITES, so it needs the mount writable (drop the :ro):
-docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding \
+docker run --rm --user 65532:65532 -v /etc/moov/branding:/etc/moov/branding \
   --entrypoint /usr/local/bin/moovctl "$IMG" \
   branding unset -host mail.acme.example     # back to Moov's defaults
 ```
@@ -453,7 +453,7 @@ A domain's own administrator can edit their host's brand from the webmail
 shell access. Who may do that is **operator data**, granted here:
 
 ```bash
-docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding \
+docker run --rm --user 65532:65532 -v /etc/moov/branding:/etc/moov/branding \
   --entrypoint /usr/local/bin/moovctl "$IMG" \
   branding grant -host mail.acme.example -user ana@acme.example
 # ... revoke -host mail.acme.example -user ana@acme.example
@@ -486,16 +486,20 @@ built yet (`docs/specs/L2-brand-admin.md` §2).
   route answers the generic 404, indistinguishable from "no such route". The
   default is on whenever `MOOV_BRANDING_DIR` is set; with no branding directory
   the routes answer 404 regardless.
-- **The bind mount must be writable by the daemon for the API to write.**
-  `docker-compose.yml` mounts the branding root **read-only** (`:ro`) — correct
-  for a CLI-only deployment, and it makes every panel write fail with a `500`
-  ("writing the brand failed", cause in the daemon log) while reads keep
-  working. To enable the panel on a deployment, drop the `:ro` on that volume
-  line and make the host directory (and each host subdirectory) writable by the
-  container's unprivileged uid — e.g. `chown -R 65532:65532 /etc/moov/branding`
-  for the distroless `nonroot` user, or a group both the operator and the
-  daemon share. `moovctl` writes `0755`/`0644` and so does the API; nothing
-  here is secret. The pilot keeps `:ro` until the owner switches it on.
+- **The bind mount is writable, and the host directory must be owned by the
+  daemon's uid.** `docker-compose.yml` mounts the branding root read-write so
+  the panel can write `branding.json` and images. The container runs as the
+  distroless `nonroot` user (uid 65532), so once, on the host:
+
+  ```bash
+  mkdir -p /etc/moov/branding && chown -R 65532:65532 /etc/moov/branding
+  ```
+
+  Without it every panel write fails with a `500` ("writing the brand failed",
+  cause in the daemon log) while reads keep working. Both `moovctl` and the
+  API write `0755`/`0644`; nothing here is secret. For a CLI-only deployment
+  that prefers a read-only mount, add `:ro` back on that volume line and set
+  `MOOV_BRANDING_ADMIN=0`.
 
 ### Deploy wiring
 
