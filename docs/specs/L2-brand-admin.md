@@ -1,6 +1,9 @@
 # L2 — Brand administration panel ("Marca") with domain roles
 
-> Status: **DESIGN ONLY — approved direction (option A), not built.** Owner decision 2026-09-10.
+> Status: **BA-1 BUILT (2026-09-10) with one change to §2: the FIRST role source is an
+> operator-granted list (`moovctl branding grant`); Mailcow domain admins are a SECOND
+> provider behind the same interface, not built yet.** Design direction (option A) approved
+> by the owner 2026-09-10; BA-2 (web) in progress, BA-0 and the Mailcow provider pending.
 > Size: L (3 epics, ~2 weeks incl. a 1-day spike). Depends on the per-host branding
 > shipped 2026-09-09 (`internal/jmaphttp/branding*.go`, `web/src/branding/*`).
 
@@ -16,10 +19,28 @@ writes today; the CLI remains the operator's tool and the source of truth format
 Non-goals: per-user themes, per-mailbox branding, removing the "Powered by Moov"
 attribution (commercial licence topic, out of scope), SVG uploads (still refused).
 
-## 2. Who may administer a host — option A (chosen)
+## 2. Who may administer a host — option A (chosen), built as two providers
+
+**As built (BA-1):** authorization is a `BrandAdminSource` interface with one method,
+`IsBrandAdmin(ctx, host, mailbox)`, behind a composite that ORs its providers in order
+(first "yes" wins; the first error DENIES — a provider that cannot answer is never
+skipped to ask the next).
+
+- **Provider 1 (built): the operator-granted list.** `branding.json` gains
+  `brandAdmins: ["u@d", ...]` (lowercased mailboxes), written by
+  `moovctl branding grant -host H -user u@d` / `revoke`, shown by `show` (row BRAND
+  ADMINS) and `list`. It is read through the branding store, so it rides the same 60 s
+  cache as the document and is invalidated immediately by every write through the API.
+  The public `GET /branding` NEVER carries it (pinned by test): a stranger learns no
+  mailbox, a non-admin learns no admin.
+- **Provider 2 (designed, not built): Mailcow domain admins**, exactly as described
+  below. It slots in as `jmaphttp.Config.BrandAdminSources` without touching the routes;
+  a test already drives the composite with a fake second provider. Everything below
+  about the key, its scope and deny-on-unavailable still applies to it when it is built.
 
 **Mailcow is the source of truth for "who administers a domain", exactly as it is for
-mail.** Moov has no role table of its own.
+mail** — for provider 2. Moov has no role table of its own beyond the per-host grant
+list, which is operator data in the same file as the brand.
 
 - A user is a **brand admin of host H** when (a) they are logged into Moov with a
   mailbox `u@D`, and (b) Mailcow lists a *domain admin* whose username equals `u@D`
@@ -42,7 +63,10 @@ mail.** Moov has no role table of its own.
 Fallback when Mailcow cannot answer (timeout, 5xx): **deny**, with a clear message.
 A branding write is never urgent enough to guess.
 
-## 3. Host ↔ domain binding
+## 3. Host ↔ domain binding (provider 2 only)
+
+> Not needed by provider 1: a grant names the host directly. The binding below is what
+> the Mailcow provider will need to map the domain of a mailbox to the host it may edit.
 
 Branding is keyed by **host** (mail.acme.example); Mailcow roles are keyed by
 **domain** (acme.example). The binding is operator data, not a guess:
@@ -55,22 +79,45 @@ Written by `moovctl branding bind -host mail.acme.example -domain acme.example`.
 A host with no `adminDomains` has no brand admins (CLI only). This keeps the
 anti-enumeration property: the public document never exposes `adminDomains`.
 
-## 4. API (authenticated, same session as JMAP)
+## 4. API (authenticated, same session as JMAP) — as built
 
-All under `/branding/admin`, JSON, CSRF-safe (same-origin + custom header + the
-existing session cookie rules), rate-limited like uploads:
+All under `/branding/admin`, authenticated by the route table's default (the same
+`Authorization` header every JMAP call carries; there are no cookies in this server, so
+there is no CSRF surface and no token to carry), then authorized per host. **There is NO
+`{host}` in the URL** — the design's `/branding/admin/{host}` paths are superseded: an
+admin edits the brand of the host they are ON, resolved from the `Host` header exactly as
+`GET /branding` resolves it. That removes a whole class of cross-host bugs (a body for
+host A written under host B) and makes the authorization question a single one.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/branding/admin/{host}` | full file view (incl. asset names, `adminDomains`), 404 unless admin |
-| PUT | `/branding/admin/{host}` | text fields + colours; validated by the SAME functions the CLI uses (`normalizeHexColor`, `safeSupportURL`, short-name ≤12) |
-| PUT | `/branding/admin/{host}/assets/{logo\|logoDark\|icon\|splash}` | raw image body ≤ 2 MiB, sniffed; SVG refused; icon non-square → 200 with `warnings[]` |
-| DELETE | same | removes the asset |
-| GET | `/branding/admin/{host}/preview?primary=%23hex` | returns the derived palette (server-side port of `palette.ts` is NOT built: the client derives; this endpoint only exists if we later need parity for e-mail templates) |
+| GET | `/branding/admin` | `200 {"host","canEdit":true}` for an admin of this host; **404** (the generic problem body, identical to an unknown route) otherwise |
+| GET | `/branding/admin/brand` | `200 BrandAdminDoc`; 404 otherwise |
+| PUT | `/branding/admin/brand` | partial JSON `{name?, shortName?, tagline?, supportUrl?, privacyUrl?, termsUrl?, colors?: {primary?, onPrimary?, splashFrom?, splashTo?}}`; absent = unchanged, `""` = clear (a cleared colour is Moov's again); validated in full by the SAME rules the CLI applies (`NormalizeHexColor`, `SafeURL`, shortName ≤ 12, name ≤ 64, tagline ≤ 160, no control characters, unknown fields refused) — `400 {"field","reason"}` names the FIRST invalid field and nothing is written; `415` on a non-JSON Content-Type; `413` past 64 KiB; `200 BrandAdminDoc` |
+| PUT | `/branding/admin/assets/{logo\|logoDark\|icon\|splash}` | raw image body, `Content-Type: image/*` (else 415), ≤ 2 MiB (else 413), sniffed like the CLI — SVG → `415 {"reason"}` naming SVG, HTML-as-PNG → 415, empty → 400; stored under the CLI's names (`logo.png`, `logo-dark.jpg`, ...); `200 BrandAdminDoc` whose `warnings` carry the non-square-icon / not-renderable notes in the CLI's exact wording |
+| DELETE | same | file removed, field cleared; idempotent; `200 BrandAdminDoc` |
+| POST | `/branding/admin/reset` | back to Moov's brand like `moovctl branding unset`, **`brandAdmins` preserved** so the caller keeps access; `200 BrandAdminDoc` |
 
-Writes are **atomic per file** (temp + rename, as `moovctl` does) and invalidate the
-in-process branding cache for that host immediately (today's 60 s TTL is for the
-CLI path; the UI must see its own save on the next paint).
+The preview endpoint of the original table is not built (the client derives the palette).
+
+`BrandAdminDoc`: `host`, `default`, the six text fields **as configured** (empty when
+unset), `colors` as **effectively served**, `assets.{logo,logoDark,icon,splash}` as
+`{url, bytes, width?, height?}` or `null` — `url` carries `?v=<sha256 prefix>` as a
+cache-buster the public asset route ignores — `iconSource` (`icon`/`logo`/`default`),
+`iconIssue`, `brandAdmins`, `warnings[]`, `publicUrl`, `manifestUrl`,
+`iconUrls{name: path}` (with their own buster once a source exists) and `version` (the
+public document's ETag, unquoted).
+
+Writes: **rate-limited per actor** (token bucket, 10/min, `429` + `Retry-After`),
+**serialized per host** (a mutex around read-modify-write of `branding.json`), and
+**switched off wholesale** by `MOOV_BRANDING_ADMIN=0` (every route 404, indistinguishable;
+also 404 whenever `MOOV_BRANDING_DIR` is empty).
+
+Writes are **atomic per file** (temp + rename) through **one writer, `internal/branding`**,
+which `moovctl` now calls too — a test in `cmd/moovctl` runs the same scenario through
+both and diffs the two directories byte for byte. Every write invalidates the in-process
+document AND icon cache for that host immediately (the 60 s TTL is for the CLI path; the
+UI sees its own save on the next paint, and the icons re-render).
 
 Audit: every write logs `host, actor, field/asset, bytes, sha256` — the file
 directory is the state, the log is the history.
@@ -78,7 +125,7 @@ directory is the state, the log is the history.
 ## 5. UI (Settings → Marca)
 
 - Reuses the settings page chrome (E12 B3), one tab "Marca", visible only when
-  `GET /branding/admin/{host}` answers 200 for the current host.
+  `GET /branding/admin` answers 200 on the current host (404 = not an admin here, or the API is off).
 - **Live preview** without saving: the page applies `derivePalette(primary)` to a
   scoped preview container (a mini top bar + a list row + a primary button, light
   and dark side by side) using the existing seeds; the "adjusted for AA" note the
@@ -86,7 +133,7 @@ directory is the state, the log is the history.
   tema oscuro a #… para seguir legible").
 - Uploads show the generated icons (`/branding/icons/*` are re-fetched with a
   cache-busting query after save) and the login split panel thumbnail.
-- Danger zone: "Volver a la marca de Moov" = `unset`.
+- Danger zone: "Volver a la marca de Moov" = `POST /branding/admin/reset` (like `unset`, but the admin list survives so the panel stays reachable).
 - Everything keyboard-reachable; no layout change elsewhere (Gmail rule).
 
 ## 6. Epics and sizes
@@ -94,7 +141,7 @@ directory is the state, the log is the history.
 | # | Epic | Size | Notes |
 |---|---|---|---|
 | BA-0 | **Spike (1 day):** confirm on our Mailcow the domain-admin API shape, RO key support and IP allowlist, and the username↔mailbox convention (§2b). Deliverable: `docs/spikes/S5-mailcow-domain-admins.md`. | S | gates BA-1 |
-| BA-1 | Server: Mailcow RO client (one method), authorizer, `adminDomains` binding + `moovctl branding bind/unbind`, admin API with atomic writes, cache invalidation, audit log, tests (authz matrix, hostile uploads, anti-enumeration of the admin routes) | M | Fable (security boundary) |
+| BA-1 | **Built 2026-09-10.** Server: `BrandAdminSource` + composite, provider 1 = operator-granted list (`moovctl branding grant/revoke`), admin API (no `{host}` in the URL) with atomic writes through the shared `internal/branding` writer, cache invalidation, audit log, per-actor budget, per-host mutex, `MOOV_BRANDING_ADMIN` kill switch; tests for the whole AC list. **Not built:** the Mailcow provider (BA-0 spike + `adminDomains` binding), which slots into `Config.BrandAdminSources`. | M | Fable (security boundary) |
 | BA-2 | Web: Marca tab, live preview reusing `palette.ts`, uploads, warnings, unset; tests; live gate on the pilot with Areacorp's admin | M | Opus |
 | BA-3 | Docs: operator guide (bind, key scope), admin guide (what the panel does), SECURITY.md note on the new key | S | Opus |
 

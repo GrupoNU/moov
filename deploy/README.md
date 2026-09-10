@@ -446,11 +446,62 @@ docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding \
 their recorded names — never a blanket wipe of a directory an operator may have
 put something else in); `-keep-assets` leaves the images.
 
+### Granting brand admins (the Settings → Marca panel)
+
+A domain's own administrator can edit their host's brand from the webmail
+(Settings → Marca) through the authenticated **`/branding/admin` API**, without
+shell access. Who may do that is **operator data**, granted here:
+
+```bash
+docker run --rm --user root -v /etc/moov/branding:/etc/moov/branding \
+  --entrypoint /usr/local/bin/moovctl "$IMG" \
+  branding grant -host mail.acme.example -user ana@acme.example
+# ... revoke -host mail.acme.example -user ana@acme.example
+```
+
+`grant` records the mailbox (lowercased) in `brandAdmins` of that host's
+`branding.json` — creating the file, with nothing but that list in it, when the
+host has no brand yet (the host keeps serving Moov's brand until someone
+configures one). `show` prints the list as `BRAND ADMINS`, `list` has a column
+for it. The running server honours a grant or a revoke **within a minute**, no
+restart. The public `GET /branding` **never** carries the list.
+
+What the API enforces, so you do not have to: the admin edits **the host they
+are logged in on** (there is no host in the URL — the `Host` header decides,
+exactly as for `GET /branding`); a logged-in user who is *not* an admin of that
+host gets the same generic **404** an unknown route gets, so they learn neither
+that the host is configured nor that the feature exists; every write is
+validated by the same rules as `moovctl branding set`, written atomically
+through the same code, budgeted at **10 writes per minute per user**, and
+leaves one audit line in the daemon log (`branding admin: write` with host,
+actor, action, bytes and sha256 — never the image bytes, never a URL value).
+"Volver a la marca de Moov" in the panel is like `unset` **except the admin
+list survives**, so the panel stays reachable. A second role source — Mailcow's
+domain admins — is designed to slot in behind the same interface and is not
+built yet (`docs/specs/L2-brand-admin.md` §2).
+
+**Two switches:**
+
+- `MOOV_BRANDING_ADMIN=0` turns the whole API off: every `/branding/admin`
+  route answers the generic 404, indistinguishable from "no such route". The
+  default is on whenever `MOOV_BRANDING_DIR` is set; with no branding directory
+  the routes answer 404 regardless.
+- **The bind mount must be writable by the daemon for the API to write.**
+  `docker-compose.yml` mounts the branding root **read-only** (`:ro`) — correct
+  for a CLI-only deployment, and it makes every panel write fail with a `500`
+  ("writing the brand failed", cause in the daemon log) while reads keep
+  working. To enable the panel on a deployment, drop the `:ro` on that volume
+  line and make the host directory (and each host subdirectory) writable by the
+  container's unprivileged uid — e.g. `chown -R 65532:65532 /etc/moov/branding`
+  for the distroless `nonroot` user, or a group both the operator and the
+  daemon share. `moovctl` writes `0755`/`0644` and so does the API; nothing
+  here is secret. The pilot keeps `:ro` until the owner switches it on.
+
 ### Deploy wiring
 
 `MOOV_BRANDING_HOST_DIR` in `.env` is the **host** path; compose bind-mounts it
-**read-only** at `/etc/moov/branding` and sets `MOOV_BRANDING_DIR` to that
-container path for you. It defaults to `/etc/moov/branding` on both sides, so
+**read-only** at `/etc/moov/branding` (see the previous section for when to
+make it writable) and sets `MOOV_BRANDING_DIR` to that container path for you. It defaults to `/etc/moov/branding` on both sides, so
 the CLI and the daemon agree without configuration.
 
 A missing directory is a valid configuration: Docker creates it empty on first
