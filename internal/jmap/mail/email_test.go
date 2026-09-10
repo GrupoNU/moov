@@ -456,3 +456,84 @@ func partIndexes(nodes []*bodyPartNode) []int {
 	}
 	return out
 }
+
+// The shape that dominates a real migrated Outlook/Microsoft 365 mailbox, and
+// the reason it is pinned here rather than left to the generic cases above.
+//
+// In the pilot's own corpus (account 2, 26,869 messages) 14,667 image parts
+// sit under a multipart/related container, none of them as its FIRST child,
+// and the overwhelming majority carry `Content-Disposition: inline` with a
+// Content-ID the HTML references. The parser deliberately clears IsAttachment
+// for exactly those (resolveInlineReferences: a cid: reference wins, so a
+// logo is not listed as a phantom attachment) — so if this list were built
+// from IsAttachment, every inline image in every Outlook message would be
+// invisible to the client: not in a body list, not in attachments, nowhere.
+//
+// RFC 8621 §4.1.4 is what forbids that: attachments holds every part that is
+// not body content, and the related container's non-root children are exactly
+// that. The client decides what to HIDE (an image the body already renders
+// inline); the server's job is to not lose it.
+func TestBodyStructureOutlookRelatedInlineImages(t *testing.T) {
+	// mixed > related > alternative(text, html), the inline image as a later
+	// child of `related`, and a genuine attachment beside the container.
+	parts := []StructurePart{
+		{Index: 0, Parent: -1, Depth: 0, MediaType: "multipart/mixed", IsMultipart: true},
+		{Index: 1, Parent: 0, Depth: 1, MediaType: "multipart/related", IsMultipart: true},
+		{Index: 2, Parent: 1, Depth: 2, MediaType: "multipart/alternative", IsMultipart: true},
+		{Index: 3, Parent: 2, Depth: 3, MediaType: "text/plain", Size: 1836},
+		{Index: 4, Parent: 2, Depth: 3, MediaType: "text/html", Size: 5693},
+		// IsAttachment false ON PURPOSE: the parser cleared it because the
+		// HTML references this cid. It must still be reachable.
+		{Index: 5, Parent: 1, Depth: 2, MediaType: "image/png", Size: 71143,
+			Filename: "image.png", ContentID: "b700b481", Disposition: "inline"},
+		{Index: 6, Parent: 0, Depth: 1, MediaType: "image/svg+xml", Size: 2910,
+			Filename: "logo.svg", Disposition: "attachment", IsAttachment: true},
+	}
+	root := bodyPartTree(parts)
+	text, html, attachments := bodyStructureLists(root)
+
+	if len(text) != 1 || text[0].part.Index != 3 {
+		t.Errorf("textBody = %v, want the text/plain branch", partIndexes(text))
+	}
+	if len(html) != 1 || html[0].part.Index != 4 {
+		t.Errorf("htmlBody = %v, want the text/html branch", partIndexes(html))
+	}
+	// Both files, and the inline image FIRST — document order, so a client
+	// pairing cids against this list walks it in the order the body does.
+	got := partIndexes(attachments)
+	if len(got) != 2 || got[0] != 5 || got[1] != 6 {
+		t.Fatalf("attachments = %v, want [5 6]: the inline image AND the real attachment", got)
+	}
+}
+
+// The same message through the whole Email/get rendering, because the list
+// being right is not the same as the client being able to USE it: an inline
+// image with a null blobId is a picture nothing can fetch.
+func TestEmailGetOutlookInlineImageIsDownloadable(t *testing.T) {
+	blobID := strings.Repeat("a", 64)
+	parts := []StructurePart{
+		{Index: 0, Parent: -1, MediaType: "multipart/related", IsMultipart: true},
+		{Index: 1, Parent: 0, MediaType: "text/html", Size: 100},
+		{Index: 2, Parent: 0, MediaType: "image/png", Size: 71143,
+			Filename: "image.png", ContentID: "b700b481", Disposition: "inline"},
+	}
+	root := bodyPartTree(parts)
+	_, _, attachments := bodyStructureLists(root)
+	if len(attachments) != 1 {
+		t.Fatalf("attachments = %v, want the inline image", partIndexes(attachments))
+	}
+
+	rendered := renderBodyPart(attachments[0], blobID, defaultBodyProperties, false)
+
+	if got := rendered["cid"]; got != "b700b481" {
+		t.Errorf("cid = %v, want the content-id the HTML references", got)
+	}
+	if got := rendered["disposition"]; got != "inline" {
+		t.Errorf("disposition = %v, want inline preserved verbatim", got)
+	}
+	// The one that makes it a picture rather than a row in a list.
+	want := blobID + "-2"
+	if got := rendered["blobId"]; got != want {
+		t.Errorf("blobId = %v, want %q — an inline image must be fetchable", got, want)
+	}
+}
