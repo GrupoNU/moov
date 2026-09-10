@@ -661,9 +661,6 @@ export const en = {
   "settings.section.brand": "Brand",
   "settings.brand.description": (brand: BrandName): string =>
     `The name, colour and images this installation wears. Everyone who signs in here sees ${brand} exactly as you leave it.`,
-  "settings.brand.loading": "Loading the brand…",
-  "settings.brand.loadFailed": "The brand could not be loaded",
-  "settings.brand.retry": "Try again",
 
   "brand.identity.heading": "Name and text",
   "brand.name.label": "Name",
@@ -2166,9 +2163,6 @@ export const es: Strings = {
   "settings.section.brand": "Marca",
   "settings.brand.description": (brand: BrandName): string =>
     `El nombre, el color y las imágenes que lleva esta instalación. Todos los que inicien sesión acá ven ${brand} tal como lo dejes.`,
-  "settings.brand.loading": "Cargando la marca…",
-  "settings.brand.loadFailed": "No se pudo cargar la marca",
-  "settings.brand.retry": "Reintentar",
 
   "brand.identity.heading": "Nombre y textos",
   "brand.name.label": "Nombre",

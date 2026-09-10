@@ -45,16 +45,12 @@ import { useBrandingRefresh } from "./refreshContext";
 export interface BrandAdminState {
   /** `undefined` until the probe answers, or when this user is not an admin. */
   readonly doc: BrandAdminDoc | undefined;
-  /** True while the probe or the first read is in flight. */
-  readonly isLoading: boolean;
   /** The last failure, as a {@link BrandAdminError} kind, or undefined. */
   readonly error: BrandAdminError | undefined;
   readonly save: (patch: BrandPatch) => Promise<boolean>;
   readonly uploadAsset: (kind: AssetKind, file: File) => Promise<boolean>;
   readonly removeAsset: (kind: AssetKind) => Promise<boolean>;
   readonly reset: () => Promise<boolean>;
-  /** Re-reads the document — the retry after a failed load. */
-  readonly reload: () => Promise<void>;
 }
 
 export interface UseBrandAdminOptions {
@@ -74,7 +70,6 @@ export function useBrandAdmin({
   fetchImpl,
 }: UseBrandAdminOptions): BrandAdminState {
   const [doc, setDoc] = useState<BrandAdminDoc | undefined>(undefined);
-  const [isLoading, setLoading] = useState(false);
   const [error, setError] = useState<BrandAdminError | undefined>(undefined);
   const refreshBranding = useBrandingRefresh();
 
@@ -100,7 +95,6 @@ export function useBrandAdmin({
   const load = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
       if (client === undefined) return;
-      setLoading(true);
       try {
         const probe = await client.probe(signal);
         if (probe === undefined) {
@@ -120,8 +114,6 @@ export function useBrandAdmin({
             ? thrown
             : new BrandAdminError("network", "the brand could not be loaded"),
         );
-      } finally {
-        setLoading(false);
       }
     },
     [client],
@@ -188,9 +180,5 @@ export function useBrandAdmin({
     [client, run],
   );
 
-  const reload = useCallback(async (): Promise<void> => {
-    await load();
-  }, [load]);
-
-  return { doc, isLoading, error, save, uploadAsset, removeAsset, reset, reload };
+  return { doc, error, save, uploadAsset, removeAsset, reset };
 }
