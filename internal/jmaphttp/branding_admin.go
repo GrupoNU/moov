@@ -309,6 +309,11 @@ type brandAdminPatch struct {
 	SupportURL *string `json:"supportUrl"`
 	PrivacyURL *string `json:"privacyUrl"`
 	TermsURL   *string `json:"termsUrl"`
+	// SplashText is a POINTER like every other patch field: absent means
+	// unchanged. Unlike the strings there is no "" that means clear, so
+	// clearing it back to the default is done by sending true — which IS the
+	// default, so nothing is lost.
+	SplashText *bool `json:"splashText"`
 	Colors     *struct {
 		Primary    *string `json:"primary"`
 		OnPrimary  *string `json:"onPrimary"`
@@ -438,6 +443,20 @@ func applyBrandAdminPatch(file *branding.File, p brandAdminPatch) ([]string, *br
 		changed = append(changed, cf.name)
 	}
 
+	/*
+	 * SplashText is applied in PASS 2 with everything else, and that placement
+	 * is the point: this function validates the WHOLE patch before it writes
+	 * any of it, so a request with a good bool and a bad color must leave the
+	 * document untouched. Writing the bool where it is read would have made it
+	 * the one field a rejected request still changed.
+	 *
+	 * It needs no validation pass of its own — a JSON bool is already the whole
+	 * domain, and the decoder refused anything that is not one.
+	 */
+	if p.SplashText != nil {
+		changed = append(changed, "splashText")
+	}
+
 	// Pass 2: apply.
 	for _, f := range fields {
 		if v, ok := pending[f.name]; ok {
@@ -448,6 +467,10 @@ func applyBrandAdminPatch(file *branding.File, p brandAdminPatch) ([]string, *br
 		if v, ok := pending[cf.name]; ok {
 			*cf.target = v
 		}
+	}
+	if p.SplashText != nil {
+		v := *p.SplashText
+		file.SplashText = &v
 	}
 	return changed, nil
 }
@@ -623,6 +646,11 @@ type BrandAdminDoc struct {
 	PrivacyURL string `json:"privacyUrl"`
 	TermsURL   string `json:"termsUrl"`
 
+	// SplashText is whether the login panel draws its name, tagline and logo
+	// over the splash image. Effective value, like Colors: true unless the
+	// operator turned it off.
+	SplashText bool `json:"splashText"`
+
 	Colors BrandingColors `json:"colors"`
 
 	// ColorsConfigured names the color fields the FILE sets, so the panel can
@@ -726,6 +754,7 @@ func (s *Server) brandAdminDoc(c brandAdminCall) (BrandAdminDoc, error) {
 		SupportURL:       strings.TrimSpace(file.SupportURL),
 		PrivacyURL:       strings.TrimSpace(file.PrivacyURL),
 		TermsURL:         strings.TrimSpace(file.TermsURL),
+		SplashText:       entry.doc.SplashText,
 		Colors:           entry.doc.Colors,
 		ColorsConfigured: configuredColorFields(file.Colors),
 		Assets:           make(map[string]*BrandAdminAsset, len(branding.AssetKinds)),

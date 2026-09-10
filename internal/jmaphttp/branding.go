@@ -145,6 +145,20 @@ type Branding struct {
 	// the description rather than for a client to draw.
 	IconURL string `json:"iconUrl"`
 
+	// SplashText reports whether the login panel should draw the brand name,
+	// the tagline and the logo OVER the splash image. True unless the operator
+	// turned it off, and only meaningful when SplashURL is set.
+	//
+	// A real splash image often already carries the brand: the pilot owner's
+	// artwork has his logo and slogan painted into it, so the panel drew a
+	// second copy on top of the first. No amount of ink-choosing fixes text
+	// that should not be there, so this is the operator's switch for it.
+	//
+	// Always emitted (no omitempty): a client must be able to tell false from
+	// absent without knowing the default, and `false` would vanish under
+	// omitempty — which is the exact value that carries the instruction.
+	SplashText bool `json:"splashText"`
+
 	// Colors are the brand's design tokens. Every value is a validated CSS hex
 	// color (#rgb or #rrggbb); the client assigns them to custom properties
 	// without parsing.
@@ -222,6 +236,8 @@ func DefaultBranding() Branding {
 		SplashURL:   "",
 		IconURL:     "",
 		LogoDarkURL: "",
+		// The panel draws its text unless an operator says otherwise.
+		SplashText: true,
 		Colors: BrandingColors{
 			Primary:    "#5b5bd6",
 			OnPrimary:  "#ffffff",
@@ -572,6 +588,12 @@ func (b *brandingStore) load(host string) brandingEntry {
 			doc.LogoDarkURL = brandingAssetURL(host, name)
 		}
 	}
+	// Absent means true, which DefaultBranding already set; only an explicit
+	// value moves it.
+	if file.SplashText != nil {
+		doc.SplashText = *file.SplashText
+	}
+
 	if name := safeAssetName(file.Splash); name != "" {
 		if _, _, err := b.openAsset(host, name); err == nil {
 			doc.SplashURL = brandingAssetURL(host, name)
@@ -795,11 +817,12 @@ func truncateRunes(s string, maxRunes int) string { return branding.TruncateRune
 // cache kept serving the old link until it expired.
 func brandingETag(doc Branding) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t\x00%t",
 		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL, doc.IconURL, doc.LogoDarkURL,
 		doc.Colors.Primary, doc.Colors.OnPrimary,
 		doc.Colors.SplashFrom, doc.Colors.SplashTo,
-		doc.Tagline, doc.SupportURL, doc.PrivacyURL, doc.TermsURL, doc.Default)
+		doc.Tagline, doc.SupportURL, doc.PrivacyURL, doc.TermsURL, doc.Default,
+		doc.SplashText)
 	return `"` + hex.EncodeToString(h.Sum(nil))[:16] + `"`
 }
 

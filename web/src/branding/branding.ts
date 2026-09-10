@@ -60,6 +60,20 @@ export interface Branding {
    */
   readonly logoDarkUrl: string;
   readonly splashUrl: string;
+  /**
+   * Whether the login panel draws the name, the tagline and the logo OVER the
+   * splash image. Defaults to true; only meaningful when `splashUrl` is set.
+   *
+   * A real splash image often already carries the brand — the pilot owner's
+   * artwork has his logo and slogan painted into it, so the panel drew a second
+   * copy on top of the first, and no amount of ink-choosing fixes text that
+   * should not be there at all.
+   *
+   * Defaulted to TRUE on the merge rather than to false, because that is what
+   * every brand had before the field existed: a server that does not send it
+   * must keep behaving as it did.
+   */
+  readonly splashText: boolean;
   readonly colors: BrandingColors;
   readonly tagline: string;
   readonly supportUrl: string;
@@ -94,6 +108,7 @@ export const MOOV_DEFAULT_BRANDING: Branding = {
   logoUrl: "",
   logoDarkUrl: "",
   splashUrl: "",
+  splashText: true,
   colors: {
     primary: "#5b5bd6",
     onPrimary: "#ffffff",
@@ -215,6 +230,11 @@ export function mergeBranding(raw: unknown): Branding {
     logoUrl: isSafeAssetUrl(doc.logoUrl) ? doc.logoUrl : defaults.logoUrl,
     logoDarkUrl: isSafeAssetUrl(doc.logoDarkUrl) ? doc.logoDarkUrl : defaults.logoDarkUrl,
     splashUrl: isSafeAssetUrl(doc.splashUrl) ? doc.splashUrl : defaults.splashUrl,
+    // Only an explicit `false` turns it off. Absent, null, a string, a number
+    // — anything that is not the boolean false — leaves the text on, which is
+    // the behaviour every brand had before the field existed and the one a
+    // malformed document must not be able to take away.
+    splashText: doc.splashText !== false,
     colors: {
       primary: isHexColor(rawColors.primary)
         ? rawColors.primary.toLowerCase()

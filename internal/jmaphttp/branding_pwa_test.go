@@ -866,6 +866,7 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 		"PrivacyURL":        func(d *Branding) { d.PrivacyURL = "https://example.com/privacy" },
 		"TermsURL":          func(d *Branding) { d.TermsURL = "https://example.com/terms" },
 		"Default":           func(d *Branding) { d.Default = !d.Default },
+		"SplashText":        func(d *Branding) { d.SplashText = !d.SplashText },
 	}
 	for field, mutate := range mutations {
 		doc := base
@@ -906,7 +907,7 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 		"colors.splashFrom": "Colors.SplashFrom", "colors.splashTo": "Colors.SplashTo",
 		"tagline": "Tagline", "supportUrl": "SupportURL",
 		"privacyUrl": "PrivacyURL", "termsUrl": "TermsURL",
-		"default": "Default",
+		"default": "Default", "splashText": "SplashText",
 	}
 	for _, f := range fields {
 		goName, known := jsonToGo[f]

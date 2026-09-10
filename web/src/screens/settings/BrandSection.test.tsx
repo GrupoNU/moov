@@ -42,6 +42,7 @@ const DOC: BrandAdminDoc = {
   },
   // Every colour typed by the operator: the fixture is a fully configured
   // brand, so the gradient fields hold values rather than placeholders.
+  splashText: true,
   colorsConfigured: new Set(["primary", "splashFrom", "splashTo"] as const),
   assets: {
     logo: { url: "/branding/assets/logo.png?v=3", bytes: 4096, width: 320, height: 80 },
@@ -570,6 +571,50 @@ describe("the effective accents, beside the colour that was chosen", () => {
     renderSection();
     // The row itself is always there, adjustment or not.
     expect(screen.getByText("Lo que van a usar los botones y los enlaces")).toBeInTheDocument();
+  });
+});
+
+describe("the switch for artwork that already carries the brand", () => {
+  /**
+   * The owner's image has his logo AND his slogan painted into it, so the login
+   * panel drew a second copy on top of the first. That is not a contrast
+   * problem, so choosing ink for the text cannot fix it — the text should not
+   * be there, and this is the operator's switch for saying so.
+   */
+  it("saves immediately when toggled, because a checkbox has no 'done typing'", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderSection();
+
+    await user.click(screen.getByLabelText("Mostrar nombre y bajada sobre la imagen"));
+
+    expect(onSave).toHaveBeenCalledWith({ splashText: false });
+  });
+
+  it("shows the stored value, and turns back on", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderSection({}, { splashText: false });
+
+    const box = screen.getByLabelText("Mostrar nombre y bajada sobre la imagen");
+    expect(box).not.toBeChecked();
+
+    await user.click(box);
+    expect(onSave).toHaveBeenCalledWith({ splashText: true });
+  });
+
+  it("is checked by default, which is what every brand had before it existed", () => {
+    renderSection();
+    expect(screen.getByLabelText("Mostrar nombre y bajada sobre la imagen")).toBeChecked();
+  });
+
+  it("says WHEN to turn it off, not just what it does", () => {
+    // A switch whose label an operator has to guess the purpose of is a switch
+    // they will not touch — and this one only makes sense next to their image.
+    renderSection();
+    expect(
+      screen.getByText(
+        "Desactivalo cuando la imagen ya trae tu logo o tu eslogan — si no, la pantalla de inicio de sesión los muestra dos veces. Sin imagen, el nombre se muestra siempre.",
+      ),
+    ).toBeInTheDocument();
   });
 });
 

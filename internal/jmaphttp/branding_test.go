@@ -1072,3 +1072,70 @@ func TestBrandingSplashIgnoresInvalidPrimary(t *testing.T) {
 			doc.Colors.SplashFrom, doc.Colors.SplashTo)
 	}
 }
+
+// TestBrandingSplashTextDefaultsToTrue: a brand that says nothing about it
+// gets the panel text, which is what every existing brand had before the field
+// existed. The on-disk field is a POINTER precisely so that "absent" and
+// "false" are distinguishable; a plain bool would have silently turned the
+// text off for every brand on upgrade.
+func TestBrandingSplashTextDefaultsToTrue(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "quiet.test", map[string]any{"name": "Quiet"}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "quiet.test", nil))
+	if !doc.SplashText {
+		t.Error("splashText = false for a brand that never mentioned it")
+	}
+	if !DefaultBranding().SplashText {
+		t.Error("Moov's own brand must draw its panel text")
+	}
+}
+
+// TestBrandingSplashTextCanBeTurnedOff is the owner's case: artwork that
+// already carries the logo and the slogan, so the panel must not draw a second
+// copy over the first.
+func TestBrandingSplashTextCanBeTurnedOff(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "art.test", map[string]any{
+		"name": "Art", "splashText": false,
+	}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "art.test", nil))
+	if doc.SplashText {
+		t.Error("splashText = true after the operator turned it off")
+	}
+}
+
+// TestBrandingSplashTextIsAlwaysEmitted: `false` is the value that carries the
+// instruction, and omitempty would delete exactly that one from the wire. A
+// client must be able to read the field without knowing our default.
+func TestBrandingSplashTextIsAlwaysEmitted(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "art.test", map[string]any{"name": "Art", "splashText": false}, nil)
+
+	srv := brandingServer(t, root)
+	body := getBranding(t, srv, PathBranding, "art.test", nil).Body.String()
+	if !strings.Contains(body, `"splashText":false`) {
+		t.Errorf("the document does not carry splashText:false — %s", body)
+	}
+}
+
+// TestBrandingSplashTextIsBrandState: a document holding only this field IS a
+// configured brand, so it must not be flagged as Moov's default.
+//
+// HasBrand is what decides that, and the failure it guards is subtle: an
+// operator who turns the panel text off and configures nothing else would
+// otherwise be told they have no brand, and the reset path would treat their
+// choice as administrative leftovers.
+func TestBrandingSplashTextIsBrandState(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "only.test", map[string]any{"splashText": false}, nil)
+
+	srv := brandingServer(t, root)
+	doc := decodeBranding(t, getBranding(t, srv, PathBranding, "only.test", nil))
+	if doc.Default {
+		t.Error("a host that configured splashText is not on Moov's default brand")
+	}
+}

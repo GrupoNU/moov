@@ -1,5 +1,12 @@
+import { useCallback, useState } from "react";
+
 import type { Branding } from "../../branding/branding";
 import { BrandMark } from "../../components/BrandMark";
+import {
+  inkForLuminance,
+  sampleContentLuminance,
+  type SplashInk,
+} from "./splashInk";
 import styles from "./BrandPanel.module.css";
 
 /**
@@ -30,10 +37,51 @@ import styles from "./BrandPanel.module.css";
 
 export interface BrandPanelProps {
   readonly branding: Branding;
+  /**
+   * Measures the region behind the content block. Injected ONLY for tests:
+   * jsdom has no 2D context, so the real sampler always answers undefined
+   * there and the rule would be untestable through this component.
+   */
+  readonly sampleLuminance?: (image: HTMLImageElement) => number | undefined;
 }
 
-export function BrandPanel({ branding }: BrandPanelProps): React.JSX.Element {
+export function BrandPanel({
+  branding,
+  sampleLuminance = sampleContentLuminance,
+}: BrandPanelProps): React.JSX.Element {
   const hasImage = branding.splashUrl !== "";
+  /*
+   * The panel draws its name, tagline and logo over the image unless the
+   * operator turned that off — which they do when the artwork already carries
+   * the brand, as the pilot owner's does. Without an image the text is the
+   * only thing on the panel, so the switch does not apply: a gradient with
+   * nothing on it is not a brand panel, it is a coloured rectangle.
+   */
+  const showText = !hasImage || branding.splashText;
+
+  /*
+   * The ink is MEASURED from the photograph, because there is no longer an
+   * overlay to guarantee contrast — see splashInk.ts. It starts as "light",
+   * which is what every panel wore before this and what a gradient still
+   * wears, so nothing flashes on a dark image and the fallback for a
+   * measurement that never arrives is the previous behaviour.
+   */
+  const [ink, setInk] = useState<SplashInk>("light");
+  const measure = useCallback(
+    (image: HTMLImageElement | null) => {
+      if (image?.complete !== true) return;
+      const luminance = sampleLuminance(image);
+      if (luminance !== undefined) setInk(inkForLuminance(luminance));
+    },
+    [sampleLuminance],
+  );
+  const onImageLoad = useCallback(
+    (event: React.SyntheticEvent<HTMLImageElement>) => {
+      const luminance = sampleLuminance(event.currentTarget);
+      if (luminance !== undefined) setInk(inkForLuminance(luminance));
+    },
+    [sampleLuminance],
+  );
 
   return (
     <aside
@@ -49,6 +97,13 @@ export function BrandPanel({ branding }: BrandPanelProps): React.JSX.Element {
        * generated texture are hidden individually below.
        */
       data-has-image={hasImage ? "true" : "false"}
+      /*
+       * The ink is an ATTRIBUTE rather than a class so the stylesheet owns both
+       * treatments and the component owns only the measurement. It is written
+       * unconditionally — a gradient panel is "light" by construction — so a
+       * rule never has to ask whether the attribute exists.
+       */
+      data-ink={ink}
     >
       {/* The gradient is painted by CSS from the two brand seed colours. */}
       <div className={styles.gradient} aria-hidden="true" />
@@ -64,6 +119,11 @@ export function BrandPanel({ branding }: BrandPanelProps): React.JSX.Element {
            */
           alt=""
           aria-hidden="true"
+          /* A cached image can be `complete` before React attaches onLoad, so
+             the ref measures what is already there and the handler catches the
+             rest — the same pairing BrandMark uses to size a logo. */
+          ref={measure}
+          onLoad={onImageLoad}
           /* The largest element on the screen — it IS the LCP candidate, so it
            * is loaded eagerly with high priority rather than lazily. */
           loading="eager"
@@ -93,18 +153,26 @@ export function BrandPanel({ branding }: BrandPanelProps): React.JSX.Element {
       */}
       {!hasImage && <div className={styles.scrim} aria-hidden="true" />}
 
-      <div className={styles.content}>
-        {/*
-          `plated` is suppressed over a photograph. The plate is a light
-          rectangle the product puts behind a dark logo so it stays legible on
-          the gradient — useful when WE chose the background, wrong when the
-          operator did: they picked this photograph AND this logo and can see
-          whether the pair works, and a plate they did not ask for is chrome on
-          top of their composition.
-        */}
-        <BrandMark branding={branding} size="lg" onDark plated={!hasImage} />
-        {branding.tagline !== "" && <p className={styles.tagline}>{branding.tagline}</p>}
-      </div>
+      {/*
+        The whole content block goes when the artwork already carries the brand
+        — the LOGO included. Keeping the mark and dropping only the words would
+        still be a second logo on top of the one in the picture, which is the
+        complaint.
+      */}
+      {showText && (
+        <div className={styles.content}>
+          {/*
+            `plated` is suppressed over a photograph. The plate is a light
+            rectangle the product puts behind a dark logo so it stays legible on
+            the gradient — useful when WE chose the background, wrong when the
+            operator did: they picked this photograph AND this logo and can see
+            whether the pair works, and a plate they did not ask for is chrome on
+            top of their composition.
+          */}
+          <BrandMark branding={branding} size="lg" onDark plated={!hasImage} />
+          {branding.tagline !== "" && <p className={styles.tagline}>{branding.tagline}</p>}
+        </div>
+      )}
     </aside>
   );
 }

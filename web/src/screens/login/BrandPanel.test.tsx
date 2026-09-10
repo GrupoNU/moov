@@ -35,6 +35,7 @@ function branding(overrides: Partial<Branding> = {}): Branding {
     logoUrl: "",
     logoDarkUrl: "",
     splashUrl: "",
+    splashText: true,
     colors: {
       primary: "#b8faff",
       onPrimary: "#ffffff",
@@ -365,6 +366,119 @@ describe("a real brand name, at the width the panel actually has", () => {
     // And the column the width is a percentage OF.
     expect(ruleBody(css(), ".content")).toContain("max-width: min(72%, 760px)");
     expect(ruleBody(css(), ".content > :first-child")).toContain("max-width: 100%");
+  });
+});
+
+describe("the ink follows what is behind the text", () => {
+  /**
+   * The other half of "no overlay", and the failure the owner hit: with the
+   * scrim gone there is nothing left to darken a bright photograph, so white
+   * text on one is illegible. The remaining lever is the text itself.
+   *
+   * The sampler is injected because jsdom has no 2D context — the real one
+   * always answers undefined here, which would make the rule untestable
+   * through the component.
+   */
+  function renderWithLuminance(luminance: number | undefined): HTMLElement {
+    const { container } = render(
+      <BrandPanel
+        branding={branding({ splashUrl: SPLASH })}
+        sampleLuminance={() => luminance}
+      />,
+    );
+    const image = container.querySelector("img");
+    if (image !== null) fireEvent.load(image);
+    return container;
+  }
+
+  const inkOf = (container: HTMLElement): string | null =>
+    container.querySelector("[data-brand-panel]")?.getAttribute("data-ink") ?? null;
+
+  it("takes DARK ink over a light photograph", () => {
+    expect(inkOf(renderWithLuminance(0.9))).toBe("dark");
+  });
+
+  it("keeps LIGHT ink over a dark photograph", () => {
+    expect(inkOf(renderWithLuminance(0.05))).toBe("light");
+  });
+
+  it("falls back to light ink when the region cannot be measured", () => {
+    /*
+     * No canvas, a tainted one, an image that never decoded — all the same
+     * answer, and it is the treatment every panel wore before this existed.
+     */
+    expect(inkOf(renderWithLuminance(undefined))).toBe("light");
+  });
+
+  it("starts light before the image has loaded, so nothing flashes", () => {
+    const { container } = render(
+      <BrandPanel branding={branding({ splashUrl: SPLASH })} sampleLuminance={() => 0.9} />,
+    );
+    // No load event fired yet.
+    expect(inkOf(container)).toBe("light");
+  });
+
+  it("labels a gradient panel light too, so no rule has to ask", () => {
+    // Written unconditionally: a gradient is dark by construction, and an
+    // attribute that is sometimes absent is one every selector must guard.
+    const { container } = render(<BrandPanel branding={branding()} />);
+    expect(inkOf(container)).toBe("light");
+  });
+
+  it("inverts the halo with the ink, and re-points the mark's own colour", () => {
+    /*
+     * A dark glyph on a bright photograph needs separating from what is
+     * directly under it exactly as a light one does — in the other direction.
+     * And the mark and tagline set their colour from `--brand-on-primary`
+     * rather than inheriting, so the TOKEN is re-pointed for the subtree;
+     * otherwise the name would stay light while the shadow went light too.
+     */
+    const dark = ruleBody(css(), '.panel[data-has-image="true"][data-ink="dark"] .content');
+    expect(dark).toContain("0 1px 2px rgba(255, 255, 255, 0.7)");
+    expect(dark).toContain("0 0 12px rgba(255, 255, 255, 0.5)");
+    expect(dark).toContain("--brand-on-primary: #12141d");
+  });
+});
+
+describe("splashText: artwork that already carries the brand", () => {
+  /**
+   * The owner's image has his logo and his slogan painted into it, so the panel
+   * drew a second copy on top of the first. No ink choice fixes text that
+   * should not be there at all — this is the operator's switch for it.
+   */
+  it("hides the name, tagline AND logo when the operator turns it off", () => {
+    const { container } = render(
+      <BrandPanel
+        branding={branding({ splashUrl: SPLASH, logoUrl: LOGO, splashText: false })}
+      />,
+    );
+    expect(container.querySelector('[class*="content"]')).toBeNull();
+    expect(screen.queryByText("Correo de Acme")).not.toBeInTheDocument();
+    // The LOGO goes too: keeping the mark and dropping only the words would
+    // still be a second logo over the one in the picture.
+    expect(container.querySelector('[class*="mark"]')).toBeNull();
+    // The photograph itself is untouched and still the point of the panel.
+    expect(container.querySelector("img")).toHaveAttribute("src", SPLASH);
+  });
+
+  it("shows everything by default, which is what every brand had before", () => {
+    const { container } = render(
+      <BrandPanel branding={branding({ splashUrl: SPLASH, logoUrl: LOGO })} />,
+    );
+    expect(container.querySelector('[class*="content"]')).not.toBeNull();
+    expect(screen.getByText("Correo de Acme")).toBeInTheDocument();
+  });
+
+  it("IGNORES the switch when there is no image", () => {
+    /*
+     * Without a photograph the text is the only thing on the panel: honouring
+     * the switch there would leave a bare coloured rectangle, which is not a
+     * brand panel. The field is documented as meaningful only with an image,
+     * and this is that rule.
+     */
+    const { container } = render(<BrandPanel branding={branding({ splashText: false })} />);
+    expect(container.querySelector('[class*="content"]')).not.toBeNull();
+    expect(screen.getByText("Correo de Acme")).toBeInTheDocument();
   });
 });
 

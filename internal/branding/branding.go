@@ -73,6 +73,22 @@ type File struct {
 	Splash     string `json:"splash,omitempty"`
 	Colors     Colors `json:"colors,omitempty"`
 
+	// SplashText controls whether the login panel draws the brand name, the
+	// tagline and the logo OVER the splash image. Absent means true.
+	//
+	// A POINTER because the default is true and the zero value of a bool is
+	// false: a plain field could not tell "the operator turned this off" from
+	// "this document predates the field", and every existing brand would
+	// silently lose its panel text on upgrade.
+	//
+	// It exists because a real splash image often already carries the brand.
+	// The owner's artwork has his logo and slogan painted into it, so the
+	// panel drew a second copy on top of the first — and no amount of ink
+	// choosing fixes text that should not be there at all. Only meaningful
+	// with a splash image: without one the panel is a gradient, and the text
+	// is the only thing on it.
+	SplashText *bool `json:"splashText,omitempty"`
+
 	// BrandAdmins are the mailbox addresses (lowercased) allowed to edit this
 	// host's brand through the authenticated admin API. Granted by the
 	// operator with `moovctl branding grant`; the server's public document
@@ -97,6 +113,7 @@ func (f File) HasBrand() bool {
 	return f.Name != "" || f.ShortName != "" || f.Tagline != "" ||
 		f.SupportURL != "" || f.PrivacyURL != "" || f.TermsURL != "" ||
 		f.Logo != "" || f.LogoDark != "" || f.Icon != "" || f.Splash != "" ||
+		f.SplashText != nil ||
 		f.Colors != Colors{}
 }
 

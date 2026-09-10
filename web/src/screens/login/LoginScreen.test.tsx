@@ -353,6 +353,7 @@ describe("branding", () => {
     logoUrl: "/branding/assets/mail.acme.test/logo.png",
     logoDarkUrl: "",
     splashUrl: "/branding/assets/mail.acme.test/splash.jpg",
+    splashText: true,
     colors: {
       primary: "#c0ffee",
       onPrimary: "#000000",

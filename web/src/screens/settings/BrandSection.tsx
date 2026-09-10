@@ -124,7 +124,12 @@ export function BrandSection({
       {showRow("brandLinks") && <LinksGroup doc={doc} onSave={onSave} errorField={errorField} />}
       {showRow("brandColors") && <ColorGroup doc={doc} onSave={onSave} errorField={errorField} />}
       {showRow("brandImages") && (
-        <ImagesGroup doc={doc} onUploadAsset={onUploadAsset} onRemoveAsset={onRemoveAsset} />
+        <ImagesGroup
+          doc={doc}
+          onSave={onSave}
+          onUploadAsset={onUploadAsset}
+          onRemoveAsset={onRemoveAsset}
+        />
       )}
 
       {showRow("brandReset") && (
@@ -765,12 +770,68 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * The "draw the name and tagline over the image" switch.
+ *
+ * # Why an operator needs it at all
+ *
+ * A real splash image often already carries the brand. The pilot owner's
+ * artwork has his logo AND his slogan painted into it, so the panel drew a
+ * second copy on top of the first — and that is not a contrast problem, so no
+ * amount of choosing ink for the text fixes it. The text should not be there.
+ *
+ * # Why it saves immediately
+ *
+ * The same rule the rest of the page follows: the gesture IS the decision. A
+ * checkbox has no "finished typing" moment to wait for, so it writes on change
+ * exactly as the radio buttons above it do.
+ */
+function SplashTextRow({
+  doc,
+  onSave,
+}: {
+  readonly doc: BrandAdminDoc;
+  readonly onSave: (patch: BrandPatch) => Promise<boolean>;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  const { isSaved, report } = useSaveFeedback();
+  const id = useId();
+
+  return (
+    <div className={styles.row}>
+      <div className={styles.rowText}>
+        <label className={styles.rowLabel} htmlFor={id}>
+          {t("brand.splashText.label")}
+        </label>
+        <span className={styles.rowDescription}>{t("brand.splashText.description")}</span>
+      </div>
+      <div className={styles.rowControl}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={doc.splashText}
+          onChange={(event) => {
+            report(onSave({ splashText: event.target.checked }));
+          }}
+        />
+        {isSaved && (
+          <span className={styles.saved} role="status">
+            {t("settings.saved")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ImagesGroup({
   doc,
+  onSave,
   onUploadAsset,
   onRemoveAsset,
 }: {
   readonly doc: BrandAdminDoc;
+  readonly onSave: (patch: BrandPatch) => Promise<boolean>;
   readonly onUploadAsset: (kind: AssetKind, file: File) => Promise<boolean>;
   readonly onRemoveAsset: (kind: AssetKind) => Promise<boolean>;
 }): React.JSX.Element {
@@ -790,6 +851,13 @@ function ImagesGroup({
           onRemove={onRemoveAsset}
         />
       ))}
+
+      {/*
+        The switch belongs HERE, under the splash upload, because it is about
+        that image: an operator turns it off while looking at artwork that
+        already carries their logo and slogan.
+      */}
+      <SplashTextRow doc={doc} onSave={onSave} />
 
       {/*
         The generated icons, from the URLs the DOCUMENT gives — never rebuilt

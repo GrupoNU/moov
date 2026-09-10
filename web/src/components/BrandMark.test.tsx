@@ -33,6 +33,7 @@ function branding(overrides: Partial<Branding> = {}): Branding {
     logoUrl: "",
     logoDarkUrl: "",
     splashUrl: "",
+    splashText: true,
     colors: {
       primary: "#5b5bd6",
       onPrimary: "#ffffff",

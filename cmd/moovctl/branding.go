@@ -99,6 +99,8 @@ func brandingSet(e *env, args []string) error {
 	icon := fs.String("icon", "", "path to the SQUARE icon the installed app's icons and the "+
 		"favicon are rendered from (png, jpg or gif); defaults to the logo")
 	splash := fs.String("splash", "", "path to the login panel image (png, jpg, webp or gif)")
+	splashText := fs.Bool("splash-text", true, "draw the name, tagline and logo OVER the "+
+		"splash image; pass -splash-text=false when the artwork already carries them")
 	colorPrimary := fs.String("color-primary", "", "accent color as CSS hex, e.g. #5b5bd6")
 	colorOnPrimary := fs.String("color-on-primary", "", "text color drawn on the accent, e.g. #ffffff")
 	colorSplashFrom := fs.String("color-splash-from", "", "first stop of the login panel gradient")
@@ -180,6 +182,16 @@ func brandingSet(e *env, args []string) error {
 			return usageErrorf("-%s %q must start with https://, http:// or mailto:", link.flag, v)
 		}
 		*link.field = v
+		changed = true
+	}
+
+	// A bool flag has no "unset" value of its own, so the FlagSet is asked
+	// whether it was passed. Without that check every `set` of an unrelated
+	// field would write splashText:true and stamp the default into the file as
+	// if the operator had chosen it.
+	if isFlagPassed(fs, "splash-text") {
+		v := *splashText
+		doc.SplashText = &v
 		changed = true
 	}
 

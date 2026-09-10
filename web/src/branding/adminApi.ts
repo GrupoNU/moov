@@ -69,6 +69,12 @@ export interface BrandAdminDoc {
   readonly supportUrl: string;
   readonly privacyUrl: string;
   readonly termsUrl: string;
+  /**
+   * Whether the login panel draws the name, tagline and logo OVER the splash
+   * image. Effective value, like the colours: true unless the operator turned
+   * it off, and only meaningful when a splash image is configured.
+   */
+  readonly splashText: boolean;
   readonly colors: BrandAdminColors;
   /**
    * Which colour fields the operator actually SET, as opposed to the ones the
@@ -110,6 +116,7 @@ export interface BrandPatch {
   readonly supportUrl?: string;
   readonly privacyUrl?: string;
   readonly termsUrl?: string;
+  readonly splashText?: boolean;
   readonly colors?: {
     readonly primary?: string;
     readonly onPrimary?: string;
@@ -317,6 +324,10 @@ export function parseBrandAdminDoc(raw: unknown): BrandAdminDoc {
       splashFrom: hex(colors.splashFrom),
       splashTo: hex(colors.splashTo),
     },
+    // Only an explicit `false` turns it off — the same rule mergeBranding
+    // applies to the public document, for the same reason: absent must mean
+    // "on", which is what every brand had before the field existed.
+    splashText: raw.splashText !== false,
     colorsConfigured: parseColorsConfigured(raw.colorsConfigured),
     assets: {
       logo: parseAsset(assets.logo),

@@ -752,6 +752,9 @@ export const en = {
   "brand.icon.description":
     "The installed app icon and the favicon. Square, at least 512×512 — a non-square image is accepted and cropped, and we say so.",
   "brand.splash.label": "Sign-in image",
+  "brand.splashText.label": "Show name and tagline over the image",
+  "brand.splashText.description":
+    "Turn this off when the image already has your logo or slogan in it — otherwise the sign-in screen shows them twice. With no image the name always appears.",
   "brand.splash.description": "The picture beside the sign-in form. Wide images work best.",
   "brand.image.drop": "Drag an image here, or",
   "brand.image.choose": "choose a file",
@@ -2258,6 +2261,9 @@ export const es: Strings = {
   "brand.icon.description":
     "El icono de la app instalada y el favicon. Cuadrado, de 512×512 como mínimo — una imagen que no sea cuadrada se acepta y se recorta, y lo avisamos.",
   "brand.splash.label": "Imagen del inicio de sesión",
+  "brand.splashText.label": "Mostrar nombre y bajada sobre la imagen",
+  "brand.splashText.description":
+    "Desactivalo cuando la imagen ya trae tu logo o tu eslogan — si no, la pantalla de inicio de sesión los muestra dos veces. Sin imagen, el nombre se muestra siempre.",
   "brand.splash.description":
     "La imagen junto al formulario de inicio de sesión. Funcionan mejor las apaisadas.",
   "brand.image.drop": "Arrastrá una imagen acá, o",

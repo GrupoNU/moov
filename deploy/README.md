@@ -333,7 +333,13 @@ plate.
 `object-fit: cover`, so it is cropped to the panel, not letterboxed, and it is
 shown **exactly as you uploaded it**: no gradient tint, no blend, and no scrim
 over it. The name and tagline stay legible with a text-shadow instead, so the
-only pixels darkened are the ones directly behind the lettering. With no splash
+only pixels darkened are the ones directly behind the lettering — and the ink
+follows the picture: the panel measures the region behind the text and switches
+to **dark lettering with a light halo** over a bright image. **`splashText:
+false`** (or `moovctl branding set -splash-text=false`, or the switch in the
+Marca panel) hides the name, tagline and logo altogether, for artwork that
+already carries them; it is `true` by default and has no effect without an
+image. With no splash
 image the panel keeps its gradient and its scrim, which is where a plate behind
 a dark logo still applies.
 
