@@ -698,6 +698,21 @@ export const en = {
   "brand.splashTo.label": "Sign-in gradient, to",
   "brand.color.hexLabel": (field: string): string => `${field}, as a hex value`,
   "brand.color.invalid": "Enter a colour like #5b5bd6.",
+  "brand.splash.automatic":
+    "Left empty, it follows your primary colour. Type a colour to choose it yourself.",
+  /*
+   * The effective accents, beside the colour the administrator chose.
+   *
+   * A pastel primary is legal and common, and the palette will DARKEN it to
+   * keep text at 4.5:1 — so the buttons come out a different colour from the
+   * one in the picker. The sentence below explains it; these two swatches are
+   * what make it checkable, because "darkened" means nothing until you can see
+   * to what.
+   */
+  "brand.color.effective.heading": "What the buttons and links will use",
+  "brand.color.effective.chosen": "Chosen",
+  "brand.color.effective.light": "Light theme",
+  "brand.color.effective.dark": "Dark theme",
   /*
    * The "adjust it and DECLARE it" rule, made visible.
    *
@@ -2201,6 +2216,12 @@ export const es: Strings = {
   "brand.splashTo.label": "Degradado del inicio de sesión, hasta",
   "brand.color.hexLabel": (field: string): string => `${field}, en hexadecimal`,
   "brand.color.invalid": "Ingresá un color como #5b5bd6.",
+  "brand.splash.automatic":
+    "Si lo dejás vacío, sigue a tu color principal. Escribí un color para elegirlo vos.",
+  "brand.color.effective.heading": "Lo que van a usar los botones y los enlaces",
+  "brand.color.effective.chosen": "Elegido",
+  "brand.color.effective.light": "Tema claro",
+  "brand.color.effective.dark": "Tema oscuro",
   "brand.color.adjustedLight": (hex: string): string =>
     `Tu color se oscureció a ${hex} en el tema claro para seguir legible (4,5:1).`,
   "brand.color.adjustedDark": (hex: string): string =>

@@ -275,6 +275,15 @@ how a contrast failure gets shipped; `splashFrom`/`splashTo` are the two stops
 of the login panel's gradient, used when there is no splash image and as its
 backdrop while it loads.
 
+**Leave `splashFrom`/`splashTo` out and they follow your `primary`** — derived
+as the primary mixed 70% and 35% toward black, so a brand that configures one
+colour gets a gradient in its own hue instead of Moov's violet; set either one
+to pin it, and clear it (`""`) to go back to automatic. Without a `primary`
+there is nothing to derive from, so Moov's gradient stands. And **a splash
+image is shown exactly as you uploaded it**: the gradient sits behind it as the
+backdrop while it loads and as the fallback if it fails, never as a tint over
+it, with only a bottom scrim for the legibility of the mark and tagline.
+
 **An invalid field falls back to Moov's value for that field only** — never to
 an unstyled page, and never to a refusal to render. A malformed `#00ff0` gives
 you Moov's indigo with the rest of your brand intact; a `branding.json` that is

@@ -8,11 +8,14 @@ import { MOOV_DEFAULT_BRANDING } from "./branding";
 import {
   compositeOver,
   derivePalette,
+  deriveSplashColors,
   hexToOklch,
   normalizeHex,
   oklchToHex,
   ON_ACCENT_DARK,
   ON_ACCENT_LIGHT,
+  SPLASH_FROM_MIX_TOWARD_BLACK,
+  SPLASH_TO_MIX_TOWARD_BLACK,
   THEME_SURFACES,
   type BrandPalette,
   type ThemeName,
@@ -374,5 +377,78 @@ describe("the surfaces this module assumes match tokens.css", () => {
     expect(token(darkBlock, "--surface-default")).toBe(THEME_SURFACES.dark.surfaceDefault);
     expect(token(darkBlock, "--surface-canvas")).toBe(THEME_SURFACES.dark.surfaceCanvas);
     expect(token(darkBlock, "--text-default")).toBe(THEME_SURFACES.dark.textDefault);
+  });
+});
+
+
+describe("the login gradient derived from the primary", () => {
+  /**
+   * The owner's finding: they set a pale cyan primary, left the two gradient
+   * stops alone, and their login panel came out VIOLET — the stops still fell
+   * back to Moov's. A brand that configures a primary has already said what its
+   * gradient should be.
+   *
+   * The SERVER is the authority (`branding.DeriveSplashColors` in Go); this
+   * copy exists so the brand panel can show an administrator the result before
+   * they save, as the placeholder in a field they have not filled in. The two
+   * implementations must agree exactly, so the table below is the SAME table
+   * Go's `TestDeriveSplashColorsTable` asserts, computed by hand: each channel
+   * scaled by (1 - amount), rounded half-up.
+   */
+  const TABLE: readonly (readonly [string, string, string])[] = [
+    // The pastel cyan that found the bug. 0xb8=184, 0xfa=250, 0xff=255.
+    // 30% -> 55.2/75/76.5 -> #374b4d; 65% -> 119.6/162.5/165.75 -> #78a3a6.
+    ["#b8faff", "#374b4d", "#78a3a6"],
+    // Moov's own indigo: 0x5b=91, 0xd6=214.
+    ["#5b5bd6", "#1b1b40", "#3b3b8b"],
+    ["#000000", "#000000", "#000000"],
+    ["#ffffff", "#4d4d4d", "#a6a6a6"],
+    // The three-digit form expands by DOUBLING the digit, not zero-padding.
+    ["#f00", "#4d0000", "#a60000"],
+  ];
+
+  it("matches the server's table, byte for byte", () => {
+    for (const [primary, from, to] of TABLE) {
+      expect(deriveSplashColors(primary), primary).toEqual({ from, to });
+    }
+  });
+
+  it("uses the same two constants the server does", () => {
+    expect(SPLASH_FROM_MIX_TOWARD_BLACK).toBe(0.7);
+    expect(SPLASH_TO_MIX_TOWARD_BLACK).toBe(0.35);
+  });
+
+  it("derives a gradient that runs deep to mid, never the other way", () => {
+    // The panel paints `from` at the top-left corner; a `from` lighter than
+    // `to` would read as an inverted gradient on every brand at once.
+    for (const primary of ["#b8faff", "#5b5bd6", "#0f766e", "#ffcc00", "#123"]) {
+      const { from, to } = deriveSplashColors(primary);
+      const sum = (hex: string): number => (parseHex(hex) ?? [0, 0, 0]).reduce((a, b) => a + b, 0);
+      expect(sum(from), primary).toBeLessThanOrEqual(sum(to));
+      expect(from).toMatch(/^#[0-9a-f]{6}$/);
+      expect(to).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it("derives nothing from a value that is not a colour", () => {
+    // The caller then keeps its own fallback rather than writing a custom
+    // property built from garbage.
+    for (const bad of ["", "rebeccapurple", "#12345", "#gggggg", "5b5bd6"]) {
+      expect(deriveSplashColors(bad), bad).toEqual({ from: "", to: "" });
+    }
+  });
+
+  it("is not the accent derivation, and must not become it", () => {
+    /*
+     * Two different jobs with two different colour spaces. `derivePalette`
+     * moves lightness in OKLCH because its output must clear a contrast
+     * threshold while staying recognizably the customer's colour; these two are
+     * a decorative backdrop with no contrast constraint of their own (the
+     * panel's scrim owns legibility), and a straight sRGB mix is the operation
+     * an operator can check with a calculator — which matters when the value is
+     * offered to them as a placeholder.
+     */
+    const primary = "#b8faff";
+    expect(deriveSplashColors(primary).from).not.toBe(derivePalette(primary).light.accent);
   });
 });

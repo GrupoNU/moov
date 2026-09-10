@@ -35,6 +35,10 @@ export interface BrandAdminColors {
   readonly splashTo: string;
 }
 
+/** The four colour fields, as the API names them in patches and in the doc. */
+export const BRAND_COLOR_FIELDS = ["primary", "onPrimary", "splashFrom", "splashTo"] as const;
+export type BrandColorField = (typeof BRAND_COLOR_FIELDS)[number];
+
 /** One stored image, as the server describes it. */
 export interface BrandAsset {
   /** Already carries the server's `?v=` cache-buster. Rendered verbatim. */
@@ -66,6 +70,18 @@ export interface BrandAdminDoc {
   readonly privacyUrl: string;
   readonly termsUrl: string;
   readonly colors: BrandAdminColors;
+  /**
+   * Which colour fields the operator actually SET, as opposed to the ones the
+   * server derived or defaulted.
+   *
+   * `colors` above is the EFFECTIVE palette — a picker needs a colour, so the
+   * server resolves every field before sending it — which makes a derived
+   * gradient stop indistinguishable from a typed one. The panel needs the
+   * difference to show a derived value as a PLACEHOLDER (it is automatic, and
+   * clearing the field returns it to automatic) rather than as text the
+   * operator appears to have entered.
+   */
+  readonly colorsConfigured: ReadonlySet<BrandColorField>;
   readonly assets: Readonly<Record<AssetKind, BrandAsset | null>>;
   readonly iconSource: IconSource;
   /** Why the icons are not from the uploaded square icon, or "". */
@@ -251,6 +267,27 @@ function parseIconUrls(value: unknown): Readonly<Record<string, string>> {
 }
 
 /**
+ * The configured-colour set, admitting only the four names the API defines.
+ *
+ * An unknown string is DROPPED rather than kept: the set only ever gates a
+ * placeholder, so an unrecognised member could do nothing useful and a
+ * server that grew a fifth colour would otherwise reach a panel that cannot
+ * render it. An absent field yields the empty set — "nothing was configured" —
+ * which is also what an older server sends, and which degrades to showing the
+ * effective values as placeholders everywhere. That is the safe direction: it
+ * never puts a value in a field the operator did not type.
+ */
+function parseColorsConfigured(raw: unknown): ReadonlySet<BrandColorField> {
+  const out = new Set<BrandColorField>();
+  if (!Array.isArray(raw)) return out;
+  for (const entry of raw) {
+    const known = BRAND_COLOR_FIELDS.find((field) => field === entry);
+    if (known !== undefined) out.add(known);
+  }
+  return out;
+}
+
+/**
  * Turns an unknown body into a document, field by field.
  *
  * Throws only when the body is not an object at all — at that point there is
@@ -280,6 +317,7 @@ export function parseBrandAdminDoc(raw: unknown): BrandAdminDoc {
       splashFrom: hex(colors.splashFrom),
       splashTo: hex(colors.splashTo),
     },
+    colorsConfigured: parseColorsConfigured(raw.colorsConfigured),
     assets: {
       logo: parseAsset(assets.logo),
       logoDark: parseAsset(assets.logoDark),

@@ -48,6 +48,80 @@
   color: var(--color-info);
 }
 
+/*
+ * --- the effective accents ---
+ *
+ * The chosen colour and the two the app will actually paint, side by side.
+ * It sits between the colour fields and the AA notice on purpose: the notice
+ * explains an adjustment that only makes sense once you have seen it.
+ */
+
+.effective {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+}
+
+.effectiveHeading {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+}
+
+.effectiveList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.effectiveItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.effectiveChip {
+  flex: none;
+  width: 2rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  /* A border, because a chip whose colour is near the card's own background
+   * would otherwise have no edge and read as empty space rather than as a
+   * swatch — which is precisely the pastel case this block exists for. */
+  border: 1px solid var(--border-default);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.effectiveLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.effectiveHex {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-default);
+}
+
+.effectiveNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 /* --- groups and rows --- */
 
 .group {

@@ -5,8 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { BrandingProvider } from "../../branding/BrandingProvider";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { MOOV_DEFAULT_BRANDING } from "../../branding/branding";
-import { derivePalette } from "../../branding/palette";
-import type { BrandAdminDoc } from "../../branding/adminApi";
+import { derivePalette, deriveSplashColors } from "../../branding/palette";
+import type { BrandAdminDoc, BrandColorField } from "../../branding/adminApi";
 import { BrandSection, type BrandSectionProps } from "./BrandSection";
 
 /**
@@ -40,6 +40,9 @@ const DOC: BrandAdminDoc = {
     splashFrom: "#1e1b4b",
     splashTo: "#4c1d95",
   },
+  // Every colour typed by the operator: the fixture is a fully configured
+  // brand, so the gradient fields hold values rather than placeholders.
+  colorsConfigured: new Set(["primary", "splashFrom", "splashTo"] as const),
   assets: {
     logo: { url: "/branding/assets/logo.png?v=3", bytes: 4096, width: 320, height: 80 },
     logoDark: null,
@@ -325,6 +328,188 @@ describe("the colour picker, and the preview that must not escape its box", () =
     // Seeded with what the derivation chose: the administrator adjusts a good
     // value rather than fixing black.
     expect(field).toHaveValue(derivePalette(DOC.colors.primary).light.onAccent);
+  });
+});
+
+describe("the gradient follows the primary until somebody chooses otherwise", () => {
+  /**
+   * The owner's finding, panel side. The server now DERIVES the two gradient
+   * stops from the primary when they are not configured, so the panel has to
+   * say so: an unset field shows the derived value as a PLACEHOLDER, not as
+   * text the operator appears to have typed and would have to delete.
+   */
+  const cyan = (configured: readonly BrandColorField[] = []): Partial<BrandAdminDoc> => ({
+    colors: {
+      primary: "#b8faff",
+      onPrimary: "#ffffff",
+      // What the SERVER resolved — the derived values, since nothing is
+      // configured. The document always carries effective colours.
+      splashFrom: deriveSplashColors("#b8faff").from,
+      splashTo: deriveSplashColors("#b8faff").to,
+    },
+    colorsConfigured: new Set(configured),
+  });
+
+  it("leaves an unconfigured stop EMPTY, with the derived value as its placeholder", () => {
+    renderSection({}, cyan(["primary"]));
+    const derived = deriveSplashColors("#b8faff");
+
+    const from = screen.getByLabelText("Degradado del inicio de sesión, desde, en hexadecimal");
+    expect(from).toHaveValue("");
+    expect(from).toHaveAttribute("placeholder", derived.from);
+
+    const to = screen.getByLabelText("Degradado del inicio de sesión, hasta, en hexadecimal");
+    expect(to).toHaveValue("");
+    expect(to).toHaveAttribute("placeholder", derived.to);
+  });
+
+  it("shows a CONFIGURED stop as a value, not as a placeholder", () => {
+    renderSection({}, {
+      ...cyan(["primary", "splashFrom"]),
+      colors: { ...cyan().colors, splashFrom: "#001122" } as BrandAdminDoc["colors"],
+    });
+    expect(
+      screen.getByLabelText("Degradado del inicio de sesión, desde, en hexadecimal"),
+    ).toHaveValue("#001122");
+    // The other stop is still automatic.
+    expect(
+      screen.getByLabelText("Degradado del inicio de sesión, hasta, en hexadecimal"),
+    ).toHaveValue("");
+  });
+
+  it("says in words that an empty field follows the primary", () => {
+    renderSection({}, cyan(["primary"]));
+    expect(
+      screen.getByText(
+        "Si lo dejás vacío, sigue a tu color principal. Escribí un color para elegirlo vos.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("EMPTYING a chosen stop writes the clear, returning it to automatic", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderSection({}, {
+      ...cyan(["primary", "splashFrom"]),
+      colors: { ...cyan().colors, splashFrom: "#001122" } as BrandAdminDoc["colors"],
+    });
+
+    const from = screen.getByLabelText("Degradado del inicio de sesión, desde, en hexadecimal");
+    await user.clear(from);
+    await user.tab();
+
+    // "" is the API's clear. Without this the operator would have no way back
+    // to automatic once they had typed anything at all.
+    expect(onSave).toHaveBeenCalledWith({ colors: { splashFrom: "" } });
+  });
+
+  it("still refuses an empty PRIMARY, which has no automatic state", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderSection();
+
+    const primary = screen.getByLabelText("Color principal, en hexadecimal");
+    await user.clear(primary);
+    await user.tab();
+
+    // An empty primary is a half-typed hex, not an instruction — clearing it
+    // would silently hand the whole brand back to Moov's indigo.
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByText("Ingresá un color como #5b5bd6.")).toBeInTheDocument();
+  });
+
+  it("does not commit the automatic colour just because the well was touched", async () => {
+    /*
+     * The well cannot render "no colour", so it displays the derived one while
+     * the field is empty. Committing THAT on blur would turn "follow the
+     * primary" into a pinned copy of today's derived value because somebody
+     * tabbed through a control without changing it.
+     */
+    const user = userEvent.setup();
+    const { onSave } = renderSection({}, cyan(["primary"]));
+
+    await user.click(screen.getByLabelText("Degradado del inicio de sesión, desde"));
+    await user.tab();
+
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("the effective accents, beside the colour that was chosen", () => {
+  /**
+   * The owner set `#ffffff` on `#b8faff` — 1.3:1, unusable — and the palette
+   * correctly replaced both. From the picker that reads as the app ignoring
+   * them, so the panel shows what the buttons will ACTUALLY use.
+   */
+  it("shows the chosen colour and both themes' accents, with their hexes", () => {
+    renderSection({}, {
+      colors: {
+        primary: "#b8faff",
+        onPrimary: "#ffffff",
+        splashFrom: "#374b4d",
+        splashTo: "#78a3a6",
+      },
+      colorsConfigured: new Set(["primary", "onPrimary"] as const),
+    });
+
+    expect(screen.getByText("Lo que van a usar los botones y los enlaces")).toBeInTheDocument();
+
+    const palette = derivePalette("#b8faff", "#ffffff");
+    /*
+     * The hexes are TEXT, not a tooltip: the value is what an administrator
+     * takes back to a brand guideline, and a colour they can only point at is
+     * not one they can write down. They are read out of the row itself rather
+     * than off the page, because "#b8faff" is also the VALUE of the primary's
+     * hex field — and the whole point is that this row shows something the
+     * field does not.
+     */
+    const row = screen
+      .getByText("Lo que van a usar los botones y los enlaces")
+      .closest("div");
+    const hexes = [...(row?.querySelectorAll("code") ?? [])].map((el) => el.textContent);
+    expect(hexes).toEqual(["#b8faff", palette.light.accent, palette.dark.accent]);
+    // And the accent is genuinely NOT the pastel that was typed.
+    expect(palette.light.accent).not.toBe("#b8faff");
+  });
+
+  it("says so in words when the colour had to be adjusted", () => {
+    renderSection({}, {
+      colors: { ...DOC.colors, primary: "#b8faff" },
+      colorsConfigured: new Set(["primary"] as const),
+    });
+    const palette = derivePalette("#b8faff");
+    expect(
+      screen.getByText(
+        `Tu color se oscureció a ${palette.light.accent} en el tema claro para seguir legible (4,5:1).`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("has no unreachable 'used as-is' branch, because no colour reaches it", () => {
+    /*
+     * A FINDING, pinned so it cannot quietly become false.
+     *
+     * The obvious companion to the adjustment notice would be "your colour
+     * reads well on both themes, so it is used exactly as you set it". It can
+     * never render: the two themes pull in opposite directions — the accent
+     * must clear 4.5:1 against white AND against #151824 — and an exhaustive
+     * sweep of the sRGB cube at 17-step resolution found ZERO colours that
+     * satisfy both untouched. Moov's own #5b5bd6 reads at 3.29:1 on the dark
+     * surfaces and is raised to #6f73f0.
+     *
+     * So EVERY brand sees at least one adjustment sentence, which is why the
+     * swatch row is rendered unconditionally rather than only when something
+     * changed. The sweep is not repeated here (it is minutes of work); a
+     * corner and the default stand in for it.
+     */
+    for (const primary of ["#5b5bd6", "#ffffff", "#000000", "#b8faff", "#0f766e"]) {
+      const palette = derivePalette(primary);
+      const untouched =
+        palette.adjusted.light === undefined && palette.adjusted.dark === undefined;
+      expect(untouched, `${primary} would reach the removed branch`).toBe(false);
+    }
+
+    renderSection();
+    // The row itself is always there, adjustment or not.
+    expect(screen.getByText("Lo que van a usar los botones y los enlaces")).toBeInTheDocument();
   });
 });
 

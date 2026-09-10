@@ -4,7 +4,12 @@ import { BrandMark } from "../../components/BrandMark";
 import { useConfirm } from "../../components/useConfirm";
 import { useTranslation } from "../../i18n/I18nProvider";
 import { MOOV_DEFAULT_BRANDING, brandSeeds, type Branding } from "../../branding/branding";
-import { THEME_SURFACES, derivePalette, type ThemeName } from "../../branding/palette";
+import {
+  THEME_SURFACES,
+  derivePalette,
+  deriveSplashColors,
+  type ThemeName,
+} from "../../branding/palette";
 import {
   ACCEPTED_IMAGE_EXTENSIONS,
   ACCEPTED_IMAGE_TYPES,
@@ -329,8 +334,24 @@ function ColorGroup({
    * truth rather than leaving a stale draft on screen.
    */
   const [primary, setPrimary] = useState(doc.colors.primary);
-  const [splashFrom, setSplashFrom] = useState(doc.colors.splashFrom);
-  const [splashTo, setSplashTo] = useState(doc.colors.splashTo);
+  /*
+   * The two gradient stops hold "" when the operator has not chosen them, NOT
+   * the value the server resolved.
+   *
+   * `doc.colors` is the EFFECTIVE palette, so seeding these from it would put
+   * the derived gradient into the fields as text the operator appears to have
+   * typed — and they would then have to select and delete it to get back to
+   * automatic, without any reason to believe that would work. `colorsConfigured`
+   * is what tells the two apart; an unset field shows the derived value as a
+   * placeholder instead, which says "this is what you will get, and it follows
+   * your primary colour".
+   */
+  const [splashFrom, setSplashFrom] = useState(
+    doc.colorsConfigured.has("splashFrom") ? doc.colors.splashFrom : "",
+  );
+  const [splashTo, setSplashTo] = useState(
+    doc.colorsConfigured.has("splashTo") ? doc.colors.splashTo : "",
+  );
   /*
    * `onPrimary` is a HINT, not a setting, so its control is opt-in. Left
    * automatic, `derivePalette` picks whichever of near-black and white clears
@@ -345,11 +366,11 @@ function ColorGroup({
 
   useEffect(() => {
     setPrimary(doc.colors.primary);
-    setSplashFrom(doc.colors.splashFrom);
-    setSplashTo(doc.colors.splashTo);
+    setSplashFrom(doc.colorsConfigured.has("splashFrom") ? doc.colors.splashFrom : "");
+    setSplashTo(doc.colorsConfigured.has("splashTo") ? doc.colors.splashTo : "");
     setOnPrimary(doc.colors.onPrimary);
     setOnPrimaryOverride(doc.colors.onPrimary !== "");
-  }, [doc.colors]);
+  }, [doc.colors, doc.colorsConfigured]);
 
   const effectivePrimary = HEX_PATTERN.test(primary)
     ? primary
@@ -361,6 +382,18 @@ function ColorGroup({
     () => derivePalette(effectivePrimary, effectiveOnPrimary),
     [effectivePrimary, effectiveOnPrimary],
   );
+
+  /*
+   * The gradient the server WILL serve for the draft primary — the same
+   * arithmetic Go's `branding.DeriveSplashColors` runs, mirrored so the panel
+   * does not need a round trip per keystroke of the colour picker. It is both
+   * the placeholder in an unset field and what the preview paints, so what an
+   * administrator is promised and what they are shown cannot disagree.
+   */
+  const derivedSplash = useMemo(() => deriveSplashColors(effectivePrimary), [effectivePrimary]);
+
+  const effectiveSplashFrom = HEX_PATTERN.test(splashFrom) ? splashFrom : derivedSplash.from;
+  const effectiveSplashTo = HEX_PATTERN.test(splashTo) ? splashTo : derivedSplash.to;
 
   /*
    * The brand the PREVIEW wears: the draft colours over the saved everything
@@ -376,14 +409,20 @@ function ColorGroup({
       colors: {
         primary: effectivePrimary,
         onPrimary: palette.light.onAccent,
-        splashFrom: HEX_PATTERN.test(splashFrom)
-          ? splashFrom
-          : MOOV_DEFAULT_BRANDING.colors.splashFrom,
-        splashTo: HEX_PATTERN.test(splashTo) ? splashTo : MOOV_DEFAULT_BRANDING.colors.splashTo,
+        splashFrom: effectiveSplashFrom,
+        splashTo: effectiveSplashTo,
       },
       isDefault: false,
     }),
-    [doc.name, doc.assets.logo, doc.assets.logoDark, effectivePrimary, palette, splashFrom, splashTo],
+    [
+      doc.name,
+      doc.assets.logo,
+      doc.assets.logoDark,
+      effectivePrimary,
+      palette,
+      effectiveSplashFrom,
+      effectiveSplashTo,
+    ],
   );
 
   return (
@@ -453,10 +492,19 @@ function ColorGroup({
         </div>
       </div>
 
+      {/*
+        The two gradient stops are AUTOMATIC until somebody types in them.
+        `saved` is "" when the field is unconfigured, which is what makes
+        clearing the field a real write ("" clears on the server) rather than a
+        no-op against the derived value the document reports.
+      */}
       <ColorRow
         labelKey="brand.splashFrom.label"
+        descriptionKey="brand.splash.automatic"
         value={splashFrom}
-        saved={doc.colors.splashFrom}
+        saved={doc.colorsConfigured.has("splashFrom") ? doc.colors.splashFrom : ""}
+        placeholder={derivedSplash.from}
+        wellFallback={effectiveSplashFrom}
         invalid={errorField === "splashFrom"}
         onChangeValue={setSplashFrom}
         onCommit={(value) => onSave({ colors: { splashFrom: value } })}
@@ -464,11 +512,55 @@ function ColorGroup({
       <ColorRow
         labelKey="brand.splashTo.label"
         value={splashTo}
-        saved={doc.colors.splashTo}
+        saved={doc.colorsConfigured.has("splashTo") ? doc.colors.splashTo : ""}
+        placeholder={derivedSplash.to}
+        wellFallback={effectiveSplashTo}
         invalid={errorField === "splashTo"}
         onChangeValue={setSplashTo}
         onCommit={(value) => onSave({ colors: { splashTo: value } })}
       />
+
+      {/*
+        THE EFFECTIVE ACCENTS, beside the colour that was chosen.
+
+        The owner picked a pastel cyan with white text on it. Both were
+        unusable as sent — white on #b8faff is 1.3:1 — so the palette darkened
+        the accent and replaced the white, correctly. From the picker, though,
+        that reads as the app ignoring them: they set a pale colour and got
+        dark buttons.
+
+        The sentence below already SAYS so. These swatches are what make it
+        checkable: "darkened to #0e6b74" means nothing until the chosen colour
+        and the two results are on screen together, in the order the eye
+        compares them.
+      */}
+      <div className={styles.effective}>
+        <span className={styles.effectiveHeading}>{t("brand.color.effective.heading")}</span>
+        <ul className={styles.effectiveList}>
+          <EffectiveSwatch label={t("brand.color.effective.chosen")} color={effectivePrimary} />
+          <EffectiveSwatch
+            label={t("brand.color.effective.light")}
+            color={palette.light.accent}
+            onColor={palette.light.onAccent}
+          />
+          <EffectiveSwatch
+            label={t("brand.color.effective.dark")}
+            color={palette.dark.accent}
+            onColor={palette.dark.onAccent}
+          />
+        </ul>
+        {/*
+          There is deliberately NO "your colour was used as-is" branch here.
+
+          The two themes pull in opposite directions — the accent must clear
+          4.5:1 against white AND against #151824 — and an exhaustive sweep of
+          the sRGB cube found ZERO colours that satisfy both untouched (Moov's
+          own #5b5bd6 reads at 3.29:1 on the dark surfaces and is raised). A
+          branch that can never render is a claim nobody can check, so what an
+          administrator gets is the two swatches plus the sentence below, which
+          always has something to say.
+        */}
+      </div>
 
       {/*
         The AA notice, inline. `palette.adjusted` carries a prose reason per
@@ -495,6 +587,42 @@ function ColorGroup({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * One accent, as a chip carrying its own hex.
+ *
+ * The hex is TEXT rather than a tooltip: the value is the thing an
+ * administrator takes back to a brand guideline, and a colour they can only
+ * point at is not one they can write down. `onColor` paints the chip's label
+ * on the accent itself, so the pair is shown doing the job it will actually do
+ * — which is how a replaced `onPrimary` becomes visible rather than merely
+ * described.
+ */
+function EffectiveSwatch({
+  label,
+  color,
+  onColor,
+}: {
+  readonly label: string;
+  readonly color: string;
+  readonly onColor?: string;
+}): React.JSX.Element {
+  return (
+    <li className={styles.effectiveItem}>
+      <span
+        className={styles.effectiveChip}
+        style={{ background: color, color: onColor ?? "transparent" }}
+        /* Decorative: the hex beside it is the accessible content, and a
+           colour swatch has no name a screen reader could usefully read. */
+        aria-hidden="true"
+      >
+        {onColor === undefined ? "" : "Aa"}
+      </span>
+      <span className={styles.effectiveLabel}>{label}</span>
+      <code className={styles.effectiveHex}>{color}</code>
+    </li>
   );
 }
 
@@ -995,6 +1123,8 @@ function ColorRow({
   descriptionKey,
   value,
   saved,
+  placeholder,
+  wellFallback,
   invalid,
   onChangeValue,
   onCommit,
@@ -1003,6 +1133,8 @@ function ColorRow({
   readonly descriptionKey?: PlainStringKey;
   readonly value: string;
   readonly saved: string;
+  readonly placeholder?: string;
+  readonly wellFallback?: string;
   readonly invalid?: boolean;
   readonly onChangeValue: (value: string) => void;
   readonly onCommit: (value: string) => Promise<boolean>;
@@ -1021,6 +1153,8 @@ function ColorRow({
           label={t(labelKey)}
           value={value}
           saved={saved}
+          {...(placeholder !== undefined ? { placeholder } : {})}
+          {...(wellFallback !== undefined ? { wellFallback } : {})}
           {...(invalid !== undefined ? { invalid } : {})}
           onChangeValue={onChangeValue}
           onCommit={onCommit}
@@ -1045,6 +1179,8 @@ function ColorField({
   label,
   value,
   saved,
+  placeholder,
+  wellFallback,
   invalid,
   onChangeValue,
   onCommit,
@@ -1062,6 +1198,17 @@ function ColorField({
    * on every blur of an untouched field.
    */
   readonly saved: string;
+  /**
+   * What an EMPTY field will get, shown as the input's placeholder.
+   *
+   * Its presence is also what makes the field CLEARABLE: a field with a
+   * placeholder has a meaningful empty state ("automatic"), so "" commits as a
+   * clear. A field without one has no such state, and an empty value there is
+   * a half-typed hex that must not be written.
+   */
+  readonly placeholder?: string;
+  /** What the colour WELL shows while the text field is empty. */
+  readonly wellFallback?: string;
   readonly invalid?: boolean;
   readonly onChangeValue: (value: string) => void;
   readonly onCommit: (value: string) => Promise<boolean>;
@@ -1076,6 +1223,17 @@ function ColorField({
   const commit = (next: string): void => {
     const normalized = next.trim().toLowerCase();
     if (normalized === saved) return;
+    /*
+     * Emptying a field that HAS a placeholder is a real instruction — "go back
+     * to automatic" — and "" is exactly what the API's clear looks like. In a
+     * field with no automatic state the same keystroke is a half-typed hex, so
+     * it is refused as one.
+     */
+    if (normalized === "" && placeholder !== undefined) {
+      setProblem(undefined);
+      report(onCommit(""));
+      return;
+    }
     if (!HEX_PATTERN.test(normalized)) {
       setProblem(t("brand.color.invalid"));
       return;
@@ -1092,16 +1250,25 @@ function ColorField({
         type="color"
         /* The well cannot show "no colour", so it falls back to the stock
            primary while the hex field is empty or mid-edit. */
-        value={toColorInputValue(value, MOOV_DEFAULT_BRANDING.colors.primary)}
+        value={toColorInputValue(
+          value,
+          wellFallback ?? MOOV_DEFAULT_BRANDING.colors.primary,
+        )}
         aria-label={label}
         onChange={(event) => {
           onChangeValue(event.target.value);
         }}
         /* The well fires `change` on every drag step, so the SAVE waits for
            the interaction to end — otherwise dragging through a gradient
-           would be one PUT per pixel. */
-        onBlur={(event) => {
-          commit(event.target.value);
+           would be one PUT per pixel.
+         *
+         * It commits only what the DRAFT holds, never the well's own displayed
+         * value. The two differ exactly when the field is empty and the well is
+         * showing the automatic colour: committing that would turn "follow the
+         * primary" into a pinned copy of today's derived value, because the
+         * administrator tabbed through a control without touching it. */
+        onBlur={() => {
+          commit(value);
         }}
       />
       <input
@@ -1113,7 +1280,7 @@ function ColorField({
         inputMode="text"
         spellCheck={false}
         value={value}
-        placeholder="#5b5bd6"
+        placeholder={placeholder ?? "#5b5bd6"}
         aria-label={format("brand.color.hexLabel", label)}
         aria-invalid={invalid === true || problem !== undefined}
         {...(problem !== undefined ? { "aria-describedby": errorId } : {})}

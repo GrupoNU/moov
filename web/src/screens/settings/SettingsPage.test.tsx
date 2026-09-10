@@ -986,6 +986,7 @@ const BRAND_DOC: BrandAdminDoc = {
   privacyUrl: "",
   termsUrl: "",
   colors: { primary: "#5b5bd6", onPrimary: "", splashFrom: "#1e1b4b", splashTo: "#4c1d95" },
+  colorsConfigured: new Set(["primary", "splashFrom", "splashTo"] as const),
   assets: { logo: null, logoDark: null, icon: null, splash: null },
   iconSource: "default",
   iconIssue: "",

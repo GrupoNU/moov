@@ -398,3 +398,59 @@ export function compositeOver(topHex: string, alpha: number, groundHex: string):
   const mix = (i: 0 | 1 | 2): string => channelToHex(top[i] * alpha + ground[i] * (1 - alpha));
   return `#${mix(0)}${mix(1)}${mix(2)}`;
 }
+
+/**
+ * How far the derived login-panel gradient stops sit from the primary, as a
+ * fraction of the way to black. Mirrors Go's `branding.SplashFromMixToward` /
+ * `SplashToMixToward`; a test pins the two implementations to the same table.
+ */
+export const SPLASH_FROM_MIX_TOWARD_BLACK = 0.7;
+export const SPLASH_TO_MIX_TOWARD_BLACK = 0.35;
+
+/**
+ * The two login-panel gradient stops a brand gets when it configured a primary
+ * and no gradient of its own: the primary mixed toward black.
+ *
+ * # Why this exists in the client at all
+ *
+ * The SERVER is the authority — `GET /branding` already serves the derived
+ * values, so the login screen and the app never compute this. This copy is for
+ * the brand PANEL, which has to show an administrator what their gradient will
+ * become BEFORE they save, and as the placeholder in the two fields they have
+ * not filled in. Asking the server would mean a round trip per keystroke of a
+ * colour picker.
+ *
+ * # Why a straight sRGB mix rather than {@link derivePalette}'s OKLCH
+ *
+ * Different job. The accent derivation moves lightness in OKLCH because its
+ * output must stay recognizably the customer's colour while clearing a contrast
+ * threshold. These two are a decorative backdrop with no contrast constraint of
+ * their own (the panel's scrim owns legibility), and a channel mix is the
+ * operation an operator can check with a calculator — which matters when the
+ * value is offered to them as a placeholder they may override.
+ */
+export function deriveSplashColors(primary: string): {
+  readonly from: string;
+  readonly to: string;
+} {
+  /*
+   * The leading `#` is required HERE even though `parseHex` treats it as
+   * optional, because this function has to agree with Go's
+   * `branding.DeriveSplashColors` exactly and that one refuses a bare `5b5bd6`
+   * — the server's own `NormalizeHexColor` does. A client that accepted one
+   * more input than the server would show a placeholder for a value the server
+   * is about to reject.
+   */
+  const rgb = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(primary.trim())
+    ? parseHex(primary)
+    : undefined;
+  if (rgb === undefined) return { from: "", to: "" };
+  const mix = (amount: number): string => {
+    const keep = 1 - amount;
+    return `#${channelToHex(rgb[0] * keep)}${channelToHex(rgb[1] * keep)}${channelToHex(rgb[2] * keep)}`;
+  };
+  return {
+    from: mix(SPLASH_FROM_MIX_TOWARD_BLACK),
+    to: mix(SPLASH_TO_MIX_TOWARD_BLACK),
+  };
+}
