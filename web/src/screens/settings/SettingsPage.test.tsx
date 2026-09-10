@@ -7,7 +7,7 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import { en, es } from "../../i18n/strings";
 import { PrefsProvider } from "../../mail/PrefsProvider";
 import { DEFAULT_PREFS, type Prefs } from "../../mail/prefs";
-import type { Identity } from "../../mail/write";
+import { MAX_IDENTITY_NAME_LENGTH, type Identity } from "../../mail/write";
 import { DEFAULT_SETTINGS_TAB, type SettingsTab } from "../../router/routes";
 import { CAP_PREFS } from "../../mail/prefs";
 import { JmapClient, type JmapSession } from "../../api/jmap";
@@ -61,6 +61,7 @@ function Harness({
   initialPrefs = DEFAULT_PREFS,
   identity,
   onSaveSignature,
+  onSaveName,
   initialTab = DEFAULT_SETTINGS_TAB,
   onClose = () => undefined,
   onOpenQuickSettings,
@@ -69,6 +70,7 @@ function Harness({
   readonly initialPrefs?: Prefs;
   readonly identity?: Identity;
   readonly onSaveSignature?: (text: string) => Promise<boolean>;
+  readonly onSaveName?: (name: string) => Promise<boolean>;
   readonly initialTab?: SettingsTab;
   readonly onClose?: () => void;
   readonly onOpenQuickSettings?: () => void;
@@ -96,6 +98,7 @@ function Harness({
           onOpenQuickSettings={onOpenQuickSettings}
           identity={identity}
           onSaveSignature={onSaveSignature}
+          onSaveName={onSaveName}
           brand={brand}
         />
       </PrefsProvider>
@@ -568,13 +571,89 @@ describe("the preference controls", () => {
 });
 
 describe("the account section", () => {
-  it("shows the identity read-only", async () => {
+  it("shows the sender name in an EDITABLE field, with the address as a caption", async () => {
+    const user = userEvent.setup();
+    renderPage({ identity: IDENTITY, onSaveName: vi.fn().mockResolvedValue(true) });
+    await openAt(user, en["settings.section.account"]);
+
+    const field = screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] });
+    expect(field).toHaveValue(IDENTITY.name);
+    // The address stays TEXT: RFC 8621 §6 types `email` immutable, and an
+    // input the server would refuse is an invitation to a dead end.
+    expect(screen.getByText(IDENTITY.email)).toBeInTheDocument();
+    expect(screen.getByText(en["settings.identity.nameHelp"])).toBeInTheDocument();
+  });
+
+  it("saves the sender name on blur, trimmed, and confirms it", async () => {
+    const user = userEvent.setup();
+    const onSaveName = vi.fn().mockResolvedValue(true);
+    renderPage({ identity: IDENTITY, onSaveName });
+    await openAt(user, en["settings.section.account"]);
+
+    const field = screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] });
+    await user.clear(field);
+    await user.type(field, "  Diego Nannini  ");
+    expect(onSaveName).not.toHaveBeenCalled();
+
+    await user.tab();
+    expect(onSaveName).toHaveBeenCalledWith("Diego Nannini");
+    // What was STORED is what the input shows: keeping the spaces on screen
+    // would be the field claiming a value the server never got.
+    expect(field).toHaveValue("Diego Nannini");
+    expect(await screen.findByText(en["settings.saved"])).toBeInTheDocument();
+  });
+
+  it("saves the sender name on Enter", async () => {
+    const user = userEvent.setup();
+    const onSaveName = vi.fn().mockResolvedValue(true);
+    renderPage({ identity: IDENTITY, onSaveName });
+    await openAt(user, en["settings.section.account"]);
+
+    const field = screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] });
+    await user.clear(field);
+    await user.type(field, "Ana{Enter}");
+    expect(onSaveName).toHaveBeenCalledWith("Ana");
+  });
+
+  it("does not write when the name did not change", async () => {
+    const user = userEvent.setup();
+    const onSaveName = vi.fn().mockResolvedValue(true);
+    renderPage({ identity: IDENTITY, onSaveName });
+    await openAt(user, en["settings.section.account"]);
+
+    const field = screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] });
+    await user.click(field);
+    await user.tab();
+    expect(onSaveName).not.toHaveBeenCalled();
+  });
+
+  it("accepts an EMPTY name — the address is the fallback, not a refusal", async () => {
+    const user = userEvent.setup();
+    const onSaveName = vi.fn().mockResolvedValue(true);
+    renderPage({ identity: IDENTITY, onSaveName });
+    await openAt(user, en["settings.section.account"]);
+
+    const field = screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] });
+    await user.clear(field);
+    await user.tab();
+    expect(onSaveName).toHaveBeenCalledWith("");
+  });
+
+  it("caps what can be typed at the length the wire accepts", async () => {
+    const user = userEvent.setup();
+    renderPage({ identity: IDENTITY, onSaveName: vi.fn().mockResolvedValue(true) });
+    await openAt(user, en["settings.section.account"]);
+
+    const field = screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] });
+    expect(field).toHaveAttribute("maxlength", String(MAX_IDENTITY_NAME_LENGTH));
+  });
+
+  it("disables the field when nothing can save it", async () => {
     const user = userEvent.setup();
     renderPage({ identity: IDENTITY });
     await openAt(user, en["settings.section.account"]);
 
-    expect(screen.getByText(IDENTITY.name)).toBeInTheDocument();
-    expect(screen.getByText(IDENTITY.email)).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: en["settings.identity.nameLabel"] })).toBeDisabled();
   });
 
   it("says so honestly when there is no sending identity", async () => {

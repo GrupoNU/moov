@@ -484,6 +484,37 @@
   color: var(--text-muted);
 }
 
+/*
+ * The sender name, the one EDITABLE half of the identity row.
+ *
+ * A column rather than a row: the address sits under the input as a read-only
+ * caption, because RFC 8621 §6 makes `email` immutable — the two halves of
+ * "Sending address" have different powers and the layout says so.
+ */
+.identityField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(24rem, 100%);
+  align-items: flex-end;
+}
+
+.identityInput {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.identityInput:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
 .signatureField {
   display: flex;
   flex-direction: column;

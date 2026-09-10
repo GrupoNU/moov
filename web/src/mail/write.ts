@@ -906,6 +906,60 @@ export async function setIdentitySignature(
   return readSetResponse(responseFor(response.methodResponses, "i"));
 }
 
+/** The longest sender name this client will send (RFC 8621 §6 sets no cap). */
+export const MAX_IDENTITY_NAME_LENGTH = 128;
+
+/**
+ * Normalizes a typed sender name into the value `Identity/set` should carry.
+ *
+ * Trimmed, because leading or trailing whitespace in a display name is
+ * invisible in every input and produces `" Diego " <a@b>` on the wire; and
+ * capped, because the name rides in every outgoing From header and a
+ * pathological one would be an unbounded string in a message header.
+ *
+ * An empty result stays `""` rather than becoming `null`: §6 types `name` as
+ * "String" with a default of `""`, and `identity.go`'s `patchString` accepts a
+ * string — a `null` would be refused as a non-string. The FALLBACK to the
+ * address is a rendering rule (an identity whose name is empty shows its
+ * email), not a storage one.
+ */
+export function normalizeIdentityName(name: string): string {
+  return name.trim().slice(0, MAX_IDENTITY_NAME_LENGTH);
+}
+
+/**
+ * Updates an identity's display name — the name recipients see (RFC 8621 §6.3).
+ *
+ * Sibling of {@link setIdentitySignature}, and separate from it for the same
+ * reason each `/set` wrapper here names exactly one property: a PatchObject
+ * that carried both would make saving a name also rewrite the signature the
+ * user did not touch, and a single failure would then be ambiguous about which
+ * of the two the server refused.
+ *
+ * `name` is one of §6's MUTABLE properties, so the server accepts it as-is;
+ * `email` is not, which is why the address remains a read-only display.
+ */
+export async function setIdentityName(
+  client: JmapClient,
+  accountId: string,
+  identityId: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<SetOutcome> {
+  const response = await client.call(
+    [
+      [
+        "Identity/set",
+        { accountId, update: { [identityId]: { name: normalizeIdentityName(name) } } },
+        "i",
+      ],
+    ],
+    [CAP_CORE, CAP_SUBMISSION],
+    signal,
+  );
+  return readSetResponse(responseFor(response.methodResponses, "i"));
+}
+
 // ---------------------------------------------------------------------------
 // Mailbox/set — creating a folder from the move menu
 // ---------------------------------------------------------------------------

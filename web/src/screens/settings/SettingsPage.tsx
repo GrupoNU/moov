@@ -18,7 +18,11 @@ import {
   type SignatureItem,
 } from "../../mail/prefs";
 import { searchSettings, type SearchableRow } from "../../mail/settingsSearch";
-import type { Identity } from "../../mail/write";
+import {
+  MAX_IDENTITY_NAME_LENGTH,
+  normalizeIdentityName,
+  type Identity,
+} from "../../mail/write";
 import { BlockedSection, type BlockedSectionProps } from "./BlockedSection";
 import { BrandSection, type BrandSectionProps } from "./BrandSection";
 import { FiltersSection, type FiltersSectionProps } from "./FiltersSection";
@@ -137,6 +141,13 @@ export interface SettingsPageProps {
    */
   readonly onSaveSignature?: ((textSignature: string) => Promise<boolean>) | undefined;
   /**
+   * Saves the identity's display name via `Identity/set`.
+   *
+   * Separate from the signature saver rather than one "save the identity"
+   * callback: each writes exactly one §6 property, so a refusal names which.
+   */
+  readonly onSaveName?: ((name: string) => Promise<boolean>) | undefined;
+  /**
    * E8: everything the label manager needs, passed whole.
    *
    * Passed in for the same reason the signature saver is: the label operations
@@ -211,6 +222,7 @@ export function SettingsPage({
   onOpenQuickSettings,
   identity,
   onSaveSignature,
+  onSaveName,
   labels,
   addresses,
   filters,
@@ -480,6 +492,7 @@ export function SettingsPage({
               {sectionId === "account" && (
                 <AccountSection
                   identity={identity}
+                  onSaveName={onSaveName}
                   onSaveSignature={onSaveSignature}
                   showRow={showRow}
                   addresses={addresses}
@@ -1047,9 +1060,110 @@ function NotificationsRow({ prefs }: { readonly prefs: PrefsApi }): React.JSX.El
   );
 }
 
-/** Account: the identity, read-only, plus an editable text signature. */
+/**
+ * The sender name — the name recipients see in their From column.
+ *
+ * # Why this exists at all
+ *
+ * Provisioning creates the identity with `name` set to the ADDRESS
+ * (`internal/store/identities.go`), which is a safe default and a terrible
+ * one to be stuck with: every message the user sends goes out as a bare
+ * `diego@gruponu.com` with no human name, and until now nothing in the app
+ * could change it. `Identity/set` accepted `name` the whole time (RFC 8621 §6
+ * types it MUTABLE); the field was simply never built. Gmail puts the same
+ * control in Cuentas → "Enviar como" → nombre.
+ *
+ * # Why blur/Enter rather than a Save button
+ *
+ * The signature next door has an explicit Save, and its comment says why:
+ * prose in a textarea should not autosave mid-sentence. A name is not prose —
+ * it is one short value, and finishing it IS the gesture, exactly like every
+ * other single-value control on this page. So it commits on blur and on Enter,
+ * and confirms with the row's own "Guardado ✓" (F-38) rather than growing a
+ * second button beside the signature's.
+ *
+ * # Why the address is a caption and not an input
+ *
+ * §6 types `email` "(immutable)", and `identity.go` refuses an update naming it
+ * with `invalidProperties` and the citation. Rendering it as a disabled input
+ * would invite the user to try; rendering it as text states the truth.
+ */
+function IdentityNameField({
+  identity,
+  onSaveName,
+  save,
+}: {
+  readonly identity: Identity;
+  readonly onSaveName: ((name: string) => Promise<boolean>) | undefined;
+  readonly save: SaveReporter;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  const fieldId = useId();
+  const [draft, setDraft] = useState(identity.name);
+
+  /*
+   * The identity arrives asynchronously and can be refetched after a save, so
+   * the input adopts a NEW identity's name — but must never stomp on what the
+   * user has typed since. Same device, and same reason, as the signature's.
+   */
+  const loadedFor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (loadedFor.current === identity.id) return;
+    loadedFor.current = identity.id;
+    setDraft(identity.name);
+  }, [identity]);
+
+  const commit = (): void => {
+    if (onSaveName === undefined) return;
+    const next = normalizeIdentityName(draft);
+    // The normalized value goes back into the input, so the user SEES what was
+    // stored rather than keeping trailing spaces on screen that never left.
+    setDraft(next);
+    if (next === identity.name) return;
+    save(onSaveName(next));
+  };
+
+  return (
+    <div className={styles.identityField}>
+      <label className="visually-hidden" htmlFor={fieldId}>
+        {t("settings.identity.nameLabel")}
+      </label>
+      <input
+        id={fieldId}
+        type="text"
+        className={styles.identityInput}
+        value={draft}
+        maxLength={MAX_IDENTITY_NAME_LENGTH}
+        disabled={onSaveName === undefined}
+        placeholder={t("settings.identity.namePlaceholder")}
+        aria-describedby={`${fieldId}-help`}
+        onChange={(event) => {
+          setDraft(event.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          commit();
+        }}
+      />
+      <span className={styles.signatureNote} id={`${fieldId}-help`}>
+        {t("settings.identity.nameHelp")}
+      </span>
+      {/*
+        The address, immutable per §6, as the caption it is. It keeps the row
+        answering the question its label asks — "Sending address" — now that
+        the control above it is about the NAME.
+      */}
+      <span className={styles.identityEmail}>{identity.email}</span>
+    </div>
+  );
+}
+
+/** Account: the identity name and address, plus an editable text signature. */
 function AccountSection({
   identity,
+  onSaveName,
   onSaveSignature,
   showRow,
   addresses,
@@ -1057,6 +1171,7 @@ function AccountSection({
   prefs,
 }: {
   readonly identity: Identity | undefined;
+  readonly onSaveName: ((name: string) => Promise<boolean>) | undefined;
   readonly onSaveSignature: ((textSignature: string) => Promise<boolean>) | undefined;
   readonly showRow: (id: string) => boolean;
   readonly addresses: AddressSettings | undefined;
@@ -1085,16 +1200,13 @@ function AccountSection({
       {confirmDialog}
       {showRow("identity") && (
         <SettingRow labelKey="settings.identity.label" descriptionKey="settings.identity.description">
-          {identity === undefined ? (
-            <span className={styles.signatureNote}>{t("settings.identity.missing")}</span>
-          ) : (
-            <span className={styles.identity}>
-              {identity.name === "" ? identity.email : identity.name}
-              {identity.name !== "" && (
-                <span className={styles.identityEmail}>{identity.email}</span>
-              )}
-            </span>
-          )}
+          {(save) =>
+            identity === undefined ? (
+              <span className={styles.signatureNote}>{t("settings.identity.missing")}</span>
+            ) : (
+              <IdentityNameField identity={identity} onSaveName={onSaveName} save={save} />
+            )
+          }
         </SettingRow>
       )}
 

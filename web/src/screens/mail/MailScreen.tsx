@@ -111,13 +111,14 @@ import {
   hasFailures,
   sendDraft,
   sendScheduledNow,
+  setIdentityName,
   setIdentitySignature,
   type DraftSpec,
 } from "../../mail/write";
 import { makeChip } from "../../mail/addresses";
 import { groupByThread, type ThreadGroup } from "../../mail/threading";
 import { KEYWORD_FLAGGED, KEYWORD_SEEN, type Email, type Mailbox, type Thread } from "../../mail/types";
-import { fetchIdentities, type Identity } from "../../mail/write";
+import { fetchIdentities, normalizeIdentityName, type Identity } from "../../mail/write";
 import { encodeBasicCredentials } from "../../api/jmap";
 import { useRouter } from "../../router/RouterProvider";
 import {
@@ -1212,6 +1213,39 @@ export function MailScreen(): React.JSX.Element {
       } catch (error) {
         setToast(
           `${t("settings.signature.failed")}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return false;
+      }
+    },
+    [client, accountId, identity, t],
+  );
+
+  /**
+   * Saves the identity's display name — the name recipients see.
+   *
+   * The local identity is updated from the value we SENT rather than refetched,
+   * for the same reason the signature is: the composer reads `identity.name` to
+   * build the From line, and a stale one would send the next message under the
+   * previous name. `normalizeIdentityName` runs on both sides of the wire, so
+   * what is stored locally is byte-identical to what the server was given.
+   */
+  const saveIdentityName = useCallback(
+    async (name: string): Promise<boolean> => {
+      if (client === undefined || accountId === "" || identity === undefined) return false;
+      const next = normalizeIdentityName(name);
+      try {
+        const outcome = await setIdentityName(client, accountId, identity.id, next);
+        if (hasFailures(outcome)) {
+          setToast(
+            `${t("settings.identity.nameFailed")}: ${firstFailureMessage(outcome) ?? ""}`.trim(),
+          );
+          return false;
+        }
+        setIdentity((current) => (current === undefined ? current : { ...current, name: next }));
+        return true;
+      } catch (error) {
+        setToast(
+          `${t("settings.identity.nameFailed")}: ${error instanceof Error ? error.message : String(error)}`,
         );
         return false;
       }
@@ -4518,6 +4552,7 @@ export function MailScreen(): React.JSX.Element {
               }}
               identity={identity}
               onSaveSignature={saveSignature}
+              onSaveName={saveIdentityName}
               labels={labelSettings}
               /*
                * E7: the autocomplete row. Passed only when this browser

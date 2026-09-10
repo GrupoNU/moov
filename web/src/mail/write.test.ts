@@ -11,8 +11,11 @@ import {
   moveMessages,
   saveDraft,
   sendDraft,
+  setIdentityName,
   setKeyword,
   setKeywords,
+  normalizeIdentityName,
+  MAX_IDENTITY_NAME_LENGTH,
   uploadUrlFor,
   type DraftSpec,
 } from "./write";
@@ -595,5 +598,57 @@ describe("setKeywords — the atomic swap a rename needs", () => {
     await setKeywords(client, "a", [], { "$label:x": true });
     await setKeywords(client, "a", ["e1"], {});
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe("normalizeIdentityName", () => {
+  it("trims, because whitespace is invisible in an input and visible on the wire", () => {
+    expect(normalizeIdentityName("  Diego Nannini  ")).toBe("Diego Nannini");
+  });
+
+  it("caps the length, because the name rides in every From header", () => {
+    const long = "x".repeat(MAX_IDENTITY_NAME_LENGTH + 40);
+    expect(normalizeIdentityName(long)).toHaveLength(MAX_IDENTITY_NAME_LENGTH);
+  });
+
+  it("leaves an all-whitespace name EMPTY rather than null", () => {
+    /*
+     * §6 types `name` as "String" with a default of "", and the server's
+     * `patchString` refuses a non-string. Empty is how the client says
+     * "no name"; falling back to the address is a RENDERING rule, not a
+     * stored one.
+     */
+    expect(normalizeIdentityName("   ")).toBe("");
+  });
+});
+
+describe("setIdentityName", () => {
+  it("patches only `name`, so a save cannot rewrite the signature", async () => {
+    const { client, requests } = scriptedClient(
+      response(["Identity/set", { updated: { primary: null }, newState: "2" }, "i"]),
+    );
+    const outcome = await setIdentityName(client, "a", "primary", "  Diego Nannini ");
+
+    const call = (requests[0]?.methodCalls as [string, Record<string, unknown>, string][])[0];
+    expect(call?.[0]).toBe("Identity/set");
+    expect(call?.[1].update).toEqual({ primary: { name: "Diego Nannini" } });
+    expect(hasFailures(outcome)).toBe(false);
+  });
+
+  it("returns the server's own refusal rather than throwing", async () => {
+    const { client } = scriptedClient(
+      response([
+        "Identity/set",
+        {
+          notUpdated: {
+            primary: { type: "invalidProperties", description: "name must be a string" },
+          },
+        },
+        "i",
+      ]),
+    );
+    const outcome = await setIdentityName(client, "a", "primary", "x");
+    expect(hasFailures(outcome)).toBe(true);
+    expect(firstFailureMessage(outcome)).toBe("name must be a string");
   });
 });
