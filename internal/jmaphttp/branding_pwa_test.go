@@ -851,6 +851,8 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 		"Colors.SplashTo":   func(d *Branding) { d.Colors.SplashTo = "#000001" },
 		"Tagline":           func(d *Branding) { d.Tagline = "t" },
 		"SupportURL":        func(d *Branding) { d.SupportURL = "mailto:it@example.com" },
+		"PrivacyURL":        func(d *Branding) { d.PrivacyURL = "https://example.com/privacy" },
+		"TermsURL":          func(d *Branding) { d.TermsURL = "https://example.com/terms" },
 		"Default":           func(d *Branding) { d.Default = !d.Default },
 	}
 	for field, mutate := range mutations {
@@ -881,14 +883,18 @@ func TestBrandingETagCoversEveryField(t *testing.T) {
 		}
 	}
 	full := base
-	full.Tagline, full.SupportURL = "t", "u" // omitempty fields must be present to be seen
+	// omitempty fields must be present to be seen
+	full.Tagline, full.SupportURL = "t", "u"
+	full.PrivacyURL, full.TermsURL = "p", "q"
 	walk("", full)
 	jsonToGo := map[string]string{
 		"name": "Name", "shortName": "ShortName", "logoUrl": "LogoURL", "splashUrl": "SplashURL", "iconUrl": "IconURL",
 		"logoDarkUrl":    "LogoDarkURL",
 		"colors.primary": "Colors.Primary", "colors.onPrimary": "Colors.OnPrimary",
 		"colors.splashFrom": "Colors.SplashFrom", "colors.splashTo": "Colors.SplashTo",
-		"tagline": "Tagline", "supportUrl": "SupportURL", "default": "Default",
+		"tagline": "Tagline", "supportUrl": "SupportURL",
+		"privacyUrl": "PrivacyURL", "termsUrl": "TermsURL",
+		"default": "Default",
 	}
 	for _, f := range fields {
 		goName, known := jsonToGo[f]

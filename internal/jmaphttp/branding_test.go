@@ -917,3 +917,66 @@ func TestBrandingCORSPreflight(t *testing.T) {
 		t.Errorf("GET Allow-Origin = %q", origin)
 	}
 }
+
+// TestBrandingLegalURLSchemes: the operator's own footer links are held to the
+// same allow-list as supportUrl, because all three become an href on a page we
+// serve. A javascript: URL in any of them would be script execution on the
+// login screen.
+func TestBrandingLegalURLSchemes(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		kept bool
+	}{
+		{"https", "https://acme.test/privacy", true},
+		{"http", "http://intranet.acme.test/terms", true},
+		{"mailto", "mailto:legal@acme.test", true},
+		{"javascript", "javascript:alert(document.cookie)", false},
+		{"data", "data:text/html,<script>alert(1)</script>", false},
+		{"vbscript", "vbscript:msgbox(1)", false},
+		{"file", "file:///etc/passwd", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeBrand(t, root, "legal.test", map[string]any{
+				"name":       "Legal",
+				"privacyUrl": tc.url,
+				"termsUrl":   tc.url,
+			}, nil)
+			srv := brandingServer(t, root)
+			doc := decodeBranding(t, getBranding(t, srv, PathBranding, "legal.test", nil))
+			want := ""
+			if tc.kept {
+				want = tc.url
+			}
+			if doc.PrivacyURL != want {
+				t.Errorf("privacyUrl = %q, want %q", doc.PrivacyURL, want)
+			}
+			if doc.TermsURL != want {
+				t.Errorf("termsUrl = %q, want %q", doc.TermsURL, want)
+			}
+		})
+	}
+}
+
+// TestBrandingLegalURLsAbsentByDefault: an operator who configured neither gets
+// neither in the document, so the client renders no dead links. Moov's own
+// source and license links are NOT in the branding document at all — they are
+// an AGPL-3.0 obligation the client carries unconditionally.
+func TestBrandingLegalURLsAbsentByDefault(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "bare.test", map[string]any{"name": "Bare"}, nil)
+	srv := brandingServer(t, root)
+
+	rec := getBranding(t, srv, PathBranding, "bare.test", nil)
+	if doc := decodeBranding(t, rec); doc.PrivacyURL != "" || doc.TermsURL != "" {
+		t.Errorf("privacyUrl = %q, termsUrl = %q, want both empty", doc.PrivacyURL, doc.TermsURL)
+	}
+	// omitempty: the keys are not in the JSON at all, rather than present and
+	// empty. A client that checks for presence sees the truth.
+	body := rec.Body.String()
+	if strings.Contains(body, "privacyUrl") || strings.Contains(body, "termsUrl") {
+		t.Errorf("unconfigured legal URLs appear in the document:\n%s", body)
+	}
+}

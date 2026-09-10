@@ -93,6 +93,11 @@ func brandingSet(e *env, args []string) error {
 		"derived from -name when not set)")
 	tagline := fs.String("tagline", "", "an optional line under the product name on the login panel")
 	supportURL := fs.String("support-url", "", "where \"contact your administrator\" points (https:// or mailto:)")
+	// The operator's own legal links, shown in the footer beside Moov's
+	// non-removable source and license links. Same scheme allow-list as
+	// -support-url: all three end up as an href on a page we serve.
+	privacyURL := fs.String("privacy-url", "", "the operator's privacy policy, shown in the legal footer (https:// or mailto:)")
+	termsURL := fs.String("terms-url", "", "the operator's terms of service, shown in the legal footer (https:// or mailto:)")
 	logo := fs.String("logo", "", "path to the logo image (png, jpg, webp or gif)")
 	logoDark := fs.String("logo-dark", "", "path to the wordmark for DARK backgrounds "+
 		"(png, jpg, webp or gif): the login panel and the dark theme")
@@ -184,6 +189,24 @@ func brandingSet(e *env, args []string) error {
 			return usageErrorf("-support-url %q must start with https://, http:// or mailto:", v)
 		}
 		doc.SupportURL = v
+		changed = true
+	}
+	for _, link := range []struct {
+		flag  string
+		value *string
+		field *string
+	}{
+		{"privacy-url", privacyURL, &doc.PrivacyURL},
+		{"terms-url", termsURL, &doc.TermsURL},
+	} {
+		if !isFlagPassed(fs, link.flag) {
+			continue
+		}
+		v := strings.TrimSpace(*link.value)
+		if v != "" && !isSafeSupportURL(v) {
+			return usageErrorf("-%s %q must start with https://, http:// or mailto:", link.flag, v)
+		}
+		*link.field = v
 		changed = true
 	}
 
@@ -331,6 +354,8 @@ func brandingShow(e *env, args []string) error {
 	outf(w, "SHORT NAME\t%s\n", orDash(doc.ShortName))
 	outf(w, "TAGLINE\t%s\n", orDash(doc.Tagline))
 	outf(w, "SUPPORT URL\t%s\n", orDash(doc.SupportURL))
+	outf(w, "PRIVACY URL\t%s\n", orDash(doc.PrivacyURL))
+	outf(w, "TERMS URL\t%s\n", orDash(doc.TermsURL))
 	outf(w, "LOGO\t%s\n", orDash(doc.Logo))
 	outf(w, "LOGO DARK\t%s\n", orDash(doc.LogoDark))
 	outf(w, "ICON\t%s\n", orDash(doc.Icon))
@@ -535,6 +560,8 @@ type brandingDocument struct {
 	ShortName  string           `json:"shortName,omitempty"`
 	Tagline    string           `json:"tagline,omitempty"`
 	SupportURL string           `json:"supportUrl,omitempty"`
+	PrivacyURL string           `json:"privacyUrl,omitempty"`
+	TermsURL   string           `json:"termsUrl,omitempty"`
 	Logo       string           `json:"logo,omitempty"`
 	LogoDark   string           `json:"logoDark,omitempty"`
 	Icon       string           `json:"icon,omitempty"`

@@ -222,6 +222,10 @@ func TestBrandingSetRejectsBadInput(t *testing.T) {
 		{"bad color length", []string{"branding", "set", "-dir", root, "-host", "x.test", "-color-primary", "#12345"}},
 		{"javascript support url", []string{"branding", "set", "-dir", root, "-host", "x.test",
 			"-support-url", "javascript:alert(1)"}},
+		{"javascript privacy url", []string{"branding", "set", "-dir", root, "-host", "x.test",
+			"-privacy-url", "javascript:alert(1)"}},
+		{"data terms url", []string{"branding", "set", "-dir", root, "-host", "x.test",
+			"-terms-url", "data:text/html,<script>alert(1)</script>"}},
 		{"positional argument", []string{"branding", "set", "-dir", root, "-host", "x.test", "extra"}},
 		{"unknown subcommand", []string{"branding", "frobnicate"}},
 		{"no subcommand", []string{"branding"}},
@@ -599,5 +603,55 @@ func TestShortNameCapMatchesServer(t *testing.T) {
 	if maxShortNameRunes != jmaphttp.MaxBrandingShortNameRunesForTest {
 		t.Errorf("the CLI refuses past %d runes but the server truncates at %d",
 			maxShortNameRunes, jmaphttp.MaxBrandingShortNameRunesForTest)
+	}
+}
+
+// TestBrandingSetLegalURLs round-trips the operator's own footer links: set
+// writes them, show reports them, and a second set can clear one without
+// disturbing the other.
+func TestBrandingSetLegalURLs(t *testing.T) {
+	root := t.TempDir()
+
+	code, _, stderr := runCLI(t, "", "branding", "set",
+		"-dir", root,
+		"-host", "legal.test",
+		"-name", "Acme Mail",
+		"-privacy-url", "https://acme.test/privacy",
+		"-terms-url", "https://acme.test/terms",
+	)
+	if code != exitOK {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, stderr)
+	}
+
+	doc := readDoc(t, root, "legal.test")
+	if doc.PrivacyURL != "https://acme.test/privacy" {
+		t.Errorf("privacyUrl = %q", doc.PrivacyURL)
+	}
+	if doc.TermsURL != "https://acme.test/terms" {
+		t.Errorf("termsUrl = %q", doc.TermsURL)
+	}
+
+	code, stdout, stderr := runCLI(t, "", "branding", "show", "-dir", root, "-host", "legal.test")
+	if code != exitOK {
+		t.Fatalf("show exit = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "https://acme.test/privacy") ||
+		!strings.Contains(stdout, "https://acme.test/terms") {
+		t.Errorf("show does not report the legal URLs:\n%s", stdout)
+	}
+
+	// Clearing one leaves the other alone: an operator who retires their terms
+	// page must not silently lose their privacy policy too.
+	code, _, stderr = runCLI(t, "", "branding", "set",
+		"-dir", root, "-host", "legal.test", "-terms-url", "")
+	if code != exitOK {
+		t.Fatalf("clear exit = %d, want 0\nstderr: %s", code, stderr)
+	}
+	doc = readDoc(t, root, "legal.test")
+	if doc.TermsURL != "" {
+		t.Errorf("termsUrl = %q after clearing, want empty", doc.TermsURL)
+	}
+	if doc.PrivacyURL != "https://acme.test/privacy" {
+		t.Errorf("privacyUrl = %q after clearing terms, want it untouched", doc.PrivacyURL)
 	}
 }

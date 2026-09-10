@@ -157,6 +157,20 @@ type Branding struct {
 	// mailto: so it can never become a javascript: URL in the DOM.
 	SupportURL string `json:"supportUrl,omitempty"`
 
+	// PrivacyURL is the operator's own privacy policy, shown in the legal
+	// footer. Empty renders no link at all.
+	//
+	// Distinct from the source and license links the footer also carries:
+	// those are Moov's AGPL-3.0 section 13 obligation and are not
+	// configurable. This one is the OPERATOR's obligation to their own users,
+	// and only they can say where it lives. Restricted to the same schemes as
+	// SupportURL, for the same reason: it becomes an href.
+	PrivacyURL string `json:"privacyUrl,omitempty"`
+
+	// TermsURL is the operator's terms of service, under exactly the rules
+	// PrivacyURL documents.
+	TermsURL string `json:"termsUrl,omitempty"`
+
 	// Default reports whether this document is the built-in Moov branding
 	// (true) or a configured customer brand (false).
 	//
@@ -468,6 +482,12 @@ func (b *brandingStore) load(host string) brandingEntry {
 	if u := strings.TrimSpace(file.SupportURL); u != "" && safeSupportURL(u) {
 		doc.SupportURL = u
 	}
+	if u := strings.TrimSpace(file.PrivacyURL); u != "" && safeSupportURL(u) {
+		doc.PrivacyURL = u
+	}
+	if u := strings.TrimSpace(file.TermsURL); u != "" && safeSupportURL(u) {
+		doc.TermsURL = u
+	}
 
 	// A color is taken only if it is a valid CSS hex literal. An invalid one
 	// falls back to Moov's, so a typo produces a slightly-off brand rather
@@ -640,6 +660,8 @@ type brandingFile struct {
 	ShortName  string             `json:"shortName,omitempty"`
 	Tagline    string             `json:"tagline,omitempty"`
 	SupportURL string             `json:"supportUrl,omitempty"`
+	PrivacyURL string             `json:"privacyUrl,omitempty"`
+	TermsURL   string             `json:"termsUrl,omitempty"`
 	Logo       string             `json:"logo,omitempty"`
 	LogoDark   string             `json:"logoDark,omitempty"`
 	Icon       string             `json:"icon,omitempty"`
@@ -841,11 +863,11 @@ func truncateRunes(s string, maxRunes int) string {
 // cache kept serving the old link until it expired.
 func brandingETag(doc Branding) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t",
 		doc.Name, doc.ShortName, doc.LogoURL, doc.SplashURL, doc.IconURL, doc.LogoDarkURL,
 		doc.Colors.Primary, doc.Colors.OnPrimary,
 		doc.Colors.SplashFrom, doc.Colors.SplashTo,
-		doc.Tagline, doc.SupportURL, doc.Default)
+		doc.Tagline, doc.SupportURL, doc.PrivacyURL, doc.TermsURL, doc.Default)
 	return `"` + hex.EncodeToString(h.Sum(nil))[:16] + `"`
 }
 
