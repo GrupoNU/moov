@@ -90,6 +90,20 @@ export interface ConversationViewProps {
   /** Marks the given messages read (canon §2.1: only what was expanded). */
   readonly onMarkRead: (ids: readonly string[]) => void;
   /**
+   * The inline compose box, when a reply or a forward is open on this
+   * conversation (canon 07 §7).
+   *
+   * It takes the pills' place rather than sitting beside them, which is
+   * Gmail's behaviour and the honest one: the pills say "start writing", and
+   * once you are writing there is nothing left for them to start. They come
+   * back the moment the box is sent or discarded.
+   *
+   * A node rather than a flag because this component knows nothing about
+   * drafts, identities or the send path, and should not begin to — the reader
+   * is a reader. The host builds the composer and hands it down.
+   */
+  readonly inlineCompose?: React.ReactNode;
+  /**
    * Publishes the conversation's controls so the pane can drive them from the
    * keyboard (`;`, `:`, `p`, `n`). A ref-shaped callback rather than props
    * flowing down, because the keyboard lives at the top of the screen and the
@@ -139,6 +153,7 @@ export function ConversationView({
   onMarkRead,
   onControls,
   ownAddresses,
+  inlineCompose,
 }: ConversationViewProps): React.JSX.Element {
   const { t } = useTranslation();
   /*
@@ -487,7 +502,20 @@ export function ConversationView({
         E5 `defaultReplyBehavior` preference orders the two, exactly as the
         single-message reader's row does, so the key and the pill agree.
       */}
-      {newest !== undefined && members.size >= memberIds.length && (
+      {/*
+        The inline compose box, at the foot of the thread and IN PLACE OF the
+        pills (canon 07 §7).
+
+        Gmail's reply opens exactly here, under the last message, with the
+        conversation still readable above it. The pills are not merely hidden
+        while it is open — they have nothing left to do, because what they
+        start is already started — and they return unchanged when it closes.
+      */}
+      {inlineCompose}
+
+      {inlineCompose === undefined &&
+        newest !== undefined &&
+        members.size >= memberIds.length && (
         <div className={styles.replyRow} role="group" aria-label={t("action.reply")}>
           {(prefs.defaultReplyBehavior === "replyAll" && hasSeveralRecipients(newest)
             ? (["replyAll", "reply"] as const)

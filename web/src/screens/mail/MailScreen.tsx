@@ -135,6 +135,7 @@ import { parseComposeRequest, urlWithoutCompose } from "../../pwa/mailto";
 import { useAddressIndex } from "./useAddressIndex";
 import { useForwardAsAttachment } from "./useForwardAsAttachment";
 import { Composer } from "../compose/Composer";
+import type { ComposerHost } from "../compose/ComposerShell";
 import type { ComposerAttachment } from "../compose/AttachmentList";
 import {
   draftTo,
@@ -511,6 +512,33 @@ export function MailScreen(): React.JSX.Element {
   // --- P3 state ------------------------------------------------------------
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
   const [composerDraft, setComposerDraft] = useState<ComposerDraft | undefined>(undefined);
+  /**
+   * Which surface the open draft is written on (canon 07 §7).
+   *
+   * Gmail's rule, and the whole of it: a NEW message is the floating card, a
+   * reply or a forward is the inline box at the foot of the conversation it
+   * answers — but only when there IS a conversation on screen to put it under.
+   * Replying from a list row with no reader open has nowhere to be inline, so
+   * it falls back to the card rather than opening a box the user cannot see.
+   *
+   * State rather than something derived from the intent, because the pop-out
+   * moves a draft from one host to the other WITHOUT changing what it is: a
+   * reply popped out is still a reply.
+   *
+   * `openInlineIfPossible` below is the single place that decides, so no entry
+   * point can get the rule half-right.
+   */
+  const [composerHost, setComposerHost] = useState<ComposerHost>("floating");
+  /**
+   * Which message the open inline compose is answering.
+   *
+   * Kept so a SECOND reply intent on the same conversation can tell "the user
+   * pressed Reply again" (Gmail focuses the box that is already open) from
+   * "the user pressed Reply on a DIFFERENT message" (the quote has to change,
+   * and if they have already written something that is a question to ask, not
+   * a decision to make for them).
+   */
+  const [inlineReplyTo, setInlineReplyTo] = useState<string | undefined>(undefined);
   /**
    * E7: attachments a composer should open carrying — the forwarded `.eml`s.
    *
@@ -2870,6 +2898,28 @@ export function MailScreen(): React.JSX.Element {
   }, [navigate, route]);
 
   /*
+   * An inline compose does not outlive the conversation it was written in.
+   *
+   * The box is mounted INSIDE the reader, so closing the reader unmounts it
+   * whatever this state says — and leaving `composerDraft` set would leave the
+   * screen believing a composer is open that nobody can see: the reply pills
+   * of the next conversation would stay hidden, and Escape would be swallowed
+   * by a composer that is not there.
+   *
+   * Nothing is lost. The composer flushes its autosave on unmount (see its own
+   * effect), so what was written is in Borradores and one click from being
+   * finished — which is exactly what Gmail does when you navigate away from an
+   * inline reply.
+   */
+  useEffect(() => {
+    if (openMessageId !== undefined) return;
+    if (composerHost !== "inline") return;
+    setComposerDraft(undefined);
+    setInlineReplyTo(undefined);
+    setComposerHost("floating");
+  }, [openMessageId, composerHost]);
+
+  /*
    * E2 item 3: moving between messages WITH the reader open.
    *
    * `j`/`k` keep their list-only meaning when nothing is open (they move the
@@ -3628,6 +3678,14 @@ export function MailScreen(): React.JSX.Element {
   }, [detail.email, groups, selectedId]);
 
   const openCompose = useCallback((): void => {
+    /*
+     * "Redactar" is ALWAYS the floating card (canon 07 §7). A new message has
+     * no conversation to sit at the foot of, and inheriting a host left over
+     * from the reply before it would open a blank message inside a thread it
+     * has nothing to do with.
+     */
+    setComposerHost("floating");
+    setInlineReplyTo(undefined);
     setComposerDraft(newDraft(true));
   }, []);
 
@@ -3660,6 +3718,9 @@ export function MailScreen(): React.JSX.Element {
     if (request === undefined) return;
 
     const base = draftTo(request.to, true);
+    // A mailto is a NEW message: the floating card, never inline (canon 07 §7).
+    setComposerHost("floating");
+    setInlineReplyTo(undefined);
     setComposerDraft({
       ...base,
       subject: request.subject ?? base.subject,
@@ -3690,6 +3751,9 @@ export function MailScreen(): React.JSX.Element {
   const openUnsubscribeMail = useCallback(
     (to: string, subject: string | undefined, body: string | undefined): void => {
       const base = newDraft(false);
+      // A new message to the list owner — the floating card, like any other.
+      setComposerHost("floating");
+      setInlineReplyTo(undefined);
       setComposerDraft({
         ...base,
         to: [makeChip(to)],
@@ -3699,6 +3763,75 @@ export function MailScreen(): React.JSX.Element {
       });
     },
     [t],
+  );
+
+  /**
+   * Puts the caret back in the open inline box.
+   *
+   * A ref rather than a piece of state because it is an IMPERATIVE act with no
+   * value to render — the composer's body editor is the only thing that knows
+   * which of its two surfaces (rich or plain) currently exists, and lifting
+   * that would be state duplicated for the sake of one focus call. The default
+   * is a no-op, so a press with no box open does nothing rather than throwing.
+   */
+  const focusInlineCompose = useRef<() => void>(() => undefined);
+
+  /**
+   * Opens a reply or a forward on the surface Gmail would use (canon 07 §7).
+   *
+   * Every reply and forward entry point in this screen goes through here — the
+   * reader's icon bar, the per-message ↩ inside a conversation, the pills at
+   * the foot of the thread, and the `r` / `a` / `f` keys — so the rule is
+   * stated once and cannot be got half-right in one of the four.
+   *
+   * The rule:
+   *
+   *   - A conversation is open in the reader → the box goes INLINE, at the
+   *     foot of that conversation, with the thread still readable above it.
+   *   - Nothing is open → the floating card, because there is no foot to put a
+   *     box at and a box the user cannot see is worse than a card they can.
+   *   - A box is ALREADY open on this same message → focus it, do not open a
+   *     second. Gmail does exactly this, and it is the behaviour that stops a
+   *     double press from silently discarding the first sentence.
+   *   - A box is already open on a DIFFERENT message → the quote has to
+   *     change, so ask first. Not because anything would be lost (the composer
+   *     flushes its autosave, and the draft survives in Borradores either way)
+   *     but because replacing the message someone is answering, under their
+   *     caret, is not a decision to make on their behalf.
+   *
+   * "Redactar" does NOT come through here. A new message has nothing to be
+   * inline to, and it stays the floating card in every mode.
+   */
+  const openInlineIfPossible = useCallback(
+    (target: Email, build: () => ComposerDraft): void => {
+      const canBeInline = openMessageId !== undefined;
+      if (!canBeInline) {
+        setComposerHost("floating");
+        setInlineReplyTo(undefined);
+        setComposerDraft(build());
+        return;
+      }
+
+      if (composerDraft !== undefined && composerHost === "inline") {
+        if (inlineReplyTo === target.id) {
+          // Already writing to this message: put the caret back in the box
+          // rather than opening a second one over the first.
+          focusInlineCompose.current();
+          return;
+        }
+        void (async () => {
+          if (!(await confirm({ message: t("compose.replaceQuoteConfirm") }))) return;
+          setInlineReplyTo(target.id);
+          setComposerDraft(build());
+        })();
+        return;
+      }
+
+      setComposerHost("inline");
+      setInlineReplyTo(target.id);
+      setComposerDraft(build());
+    },
+    [openMessageId, composerDraft, composerHost, inlineReplyTo, confirm, t],
   );
 
   const openReply = useCallback(
@@ -3717,9 +3850,11 @@ export function MailScreen(): React.JSX.Element {
         navigate(withMessage(route, original.id));
         return;
       }
-      setComposerDraft(replyDraft(original, username, all, quotingStrings));
+      openInlineIfPossible(original, () =>
+        replyDraft(original, username, all, quotingStrings),
+      );
     },
-    [composeSubject, username, quotingStrings, navigate, route],
+    [composeSubject, username, quotingStrings, navigate, route, openInlineIfPossible],
   );
 
   /**
@@ -3740,17 +3875,19 @@ export function MailScreen(): React.JSX.Element {
   const replyToMessage = useCallback(
     (original: Email, all: boolean): void => {
       if (original.bodyValues === undefined) return;
-      setComposerDraft(replyDraft(original, username, all, quotingStrings));
+      openInlineIfPossible(original, () =>
+        replyDraft(original, username, all, quotingStrings),
+      );
     },
-    [username, quotingStrings],
+    [username, quotingStrings, openInlineIfPossible],
   );
 
   const forwardMessage = useCallback(
     (original: Email): void => {
       if (original.bodyValues === undefined) return;
-      setComposerDraft(forwardDraft(original, quotingStrings));
+      openInlineIfPossible(original, () => forwardDraft(original, quotingStrings));
     },
-    [quotingStrings],
+    [quotingStrings, openInlineIfPossible],
   );
 
   /**
@@ -3775,6 +3912,10 @@ export function MailScreen(): React.JSX.Element {
           setToast(t("forwardAttachment.failed"));
           return;
         }
+        /* Forward-as-attachment starts a NEW message carrying `.eml` files;
+           it quotes nothing and belongs to no thread, so it is the card. */
+        setComposerHost("floating");
+        setInlineReplyTo(undefined);
         setComposerDraft({
           // Matches the default "Compose" takes; the composer then applies
           // the remembered plain/rich preference on top (E7).
@@ -3799,8 +3940,8 @@ export function MailScreen(): React.JSX.Element {
       navigate(withMessage(route, original.id));
       return;
     }
-    setComposerDraft(forwardDraft(original, quotingStrings));
-  }, [composeSubject, quotingStrings, navigate, route]);
+    openInlineIfPossible(original, () => forwardDraft(original, quotingStrings));
+  }, [composeSubject, quotingStrings, navigate, route, openInlineIfPossible]);
 
   /**
    * Opening a message in Drafts RESUMES it rather than reading it.
@@ -3828,6 +3969,11 @@ export function MailScreen(): React.JSX.Element {
     const open = detail.email;
     if (open?.bodyValues === undefined) return;
     if (composerDraft !== undefined) return;
+    /* A resumed draft is a message being FINISHED, not a reply being started
+       — and the effect below closes the reader, so there would be no foot to
+       put a box at even if it were. */
+    setComposerHost("floating");
+    setInlineReplyTo(undefined);
     setComposerDraft(resumeDraft(open));
     // The reading pane must not stay open behind the composer.
     closeReadingPane.current();
@@ -4256,6 +4402,131 @@ export function MailScreen(): React.JSX.Element {
   /** E9: the Outbox appears only when it holds something (Gmail's shape). */
   const outboxVisible = showsOutbox(offline.outboxItems);
   const inOutbox = route.kind === "outbox";
+
+  /**
+   * The open composer, built once and rendered in ONE of two places.
+   *
+   * The floating card is a `<dialog>` in the top layer, so where in the tree
+   * it sits makes no difference and it stays at the end of the screen with
+   * the other overlays. The inline box is in the document FLOW, and has to be
+   * inside the reader, at the foot of the conversation it answers.
+   *
+   * One element rather than two, so there is no chance of the two hosts
+   * drifting apart in what they pass to the same component — and keyed by the
+   * draft's seed so switching from a reply to a forward mounts a FRESH
+   * composer rather than reusing one whose local state belongs to the
+   * previous message. The seed is deliberately UNCHANGED across a pop-out,
+   * which is what stops the move between hosts from re-seeding the body.
+   */
+  const composer =
+    composerDraft !== undefined && client !== undefined ? (
+      <Composer
+      /* Keyed by the draft's seed so switching from a reply to a forward
+         mounts a FRESH composer rather than reusing one whose local state
+         belongs to the previous message. */
+      key={composerDraft.seedKey}
+      draft={composerDraft}
+      client={client}
+      accountId={accountId}
+      identity={identity}
+      /* D-08: the caret on "De" appears only above one identity. */
+      identityCount={identityCount}
+      draftsMailboxId={roleMailboxId("drafts")}
+      sentMailboxId={roleMailboxId("sent")}
+      sessionCapabilities={session?.capabilities}
+      uploadUrlTemplate={session?.uploadUrl}
+      authorization={authorization}
+      onClose={() => {
+        setComposerDraft(undefined);
+        /* Whichever host it was on, the box is gone — so the reply pills at
+           the foot of the conversation come back, and the next reply intent
+           starts fresh rather than thinking a box is still open. */
+        setInlineReplyTo(undefined);
+        // E7: the forwarded `.eml`s belong to the composer that was
+        // carrying them, not to the next one.
+        setPendingAttachments(undefined);
+      }}
+      onNotify={setToast}
+      onChanged={refresh}
+      {...(pendingAttachments !== undefined
+        ? { initialAttachments: pendingAttachments }
+        : {})}
+      /*
+       * E7: recipient autocomplete (canon §2.3).
+       *
+       * Empty when the user opted out or nothing is indexed yet, which the
+       * field reads as "no combobox at all" rather than "an empty popup".
+       */
+      addressSuggestions={addressIndex.suggestions}
+      onRecordAddresses={addressIndex.recordSent}
+      /*
+       * E7: Send & Archive, offered only for a REPLY that has a
+       * conversation to archive and only when there is an Archive folder to
+       * archive into. Absent removes the button, per P4 — a control that
+       * cannot act must not be on screen.
+       *
+       * E5 v2 adds the fourth condition: `prefs.sendAndArchive`, which is
+       * Gmail's own "Show 'Send & Archive' button in reply" setting. It is
+       * the FIRST test rather than the last only for readability; all four
+       * are necessary. Note the three structural conditions still apply
+       * with the preference on — a preference that says "show it" cannot
+       * conjure an Archive folder, and the honest answer when there is
+       * nothing to archive into stays "no button".
+       */
+      {...(prefs.sendAndArchive &&
+      isReplyIntent(composerDraft.intent) &&
+      archiveTargetIds.length > 0 &&
+      roleMailboxId("archive") !== undefined
+        ? {
+            onSendAndArchive: () => archiveConversation(archiveTargetIds),
+            onUndoArchive: () => restoreConversation(archiveTargetIds),
+          }
+        : {})}
+      /*
+       * E9: where a send goes when there is no network.
+       *
+       * Passed only when the queue actually exists — a browser without
+       * usable storage gets `undefined`, and the composer then reports the
+       * send failure honestly rather than promising an Outbox that cannot
+       * hold anything.
+       */
+      {...(offline.outbox !== undefined ? { onQueueOffline: queueForLater } : {})}
+      isOnline={offline.isOnline}
+      /*
+       * E4: schedule send, offered only when the server advertises the
+       * triage capability that carries its horizon. `maxDelayedSend` was 0
+       * before E4 and is 30 days now, so a client that assumed a number
+       * would have been wrong in both directions — it is read, never
+       * guessed.
+       */
+      {...(hasTriage
+        ? { maxDelayedSendSeconds: limits.maxDelayedSendSeconds }
+        : {})}
+      /* Canon 07 §7: which surface this draft is written on. `openCompose`
+         forces "floating"; `openInlineIfPossible` is the only thing that
+         ever sets "inline", and only with a conversation open to host it. */
+      host={composerHost}
+      /* The pop-out, offered only from the inline box — the card has
+         nowhere further to go. It re-mounts the composer under the SAME
+         seedKey and the same draft id, which is what makes the move keep
+         both the words and the server-side draft. */
+      {...(composerHost === "inline"
+        ? {
+            onPopOut: (current: ComposerDraft) => {
+              setComposerHost("floating");
+              setInlineReplyTo(undefined);
+              setComposerDraft(current);
+            },
+            /* Gmail focuses the box that is already open rather than opening a
+               second — see `openInlineIfPossible`. Only the composer knows
+               which of its two body surfaces exists to be focused. */
+            onFocusHandle: (focus: (() => void) | undefined) => {
+              focusInlineCompose.current = focus ?? (() => undefined);
+            },
+          }
+        : {})}
+      />
+    ) : undefined;
 
   return (
     <div className={styles.shell}>
@@ -5320,6 +5591,13 @@ export function MailScreen(): React.JSX.Element {
               onForwardMessage={forwardMessage}
               onMarkMessagesRead={markMessagesRead}
               onConversationControls={setConversationControls}
+              /*
+                Canon 07 §7: the inline reply, at the foot of the conversation.
+                Passed only when the draft is actually on the inline host — on
+                the floating one the same element renders below, in the top
+                layer, and handing it to both would mount it twice.
+              */
+              {...(composerHost === "inline" ? { inlineCompose: composer } : {})}
             />
           </aside>
         )}
@@ -5373,87 +5651,15 @@ export function MailScreen(): React.JSX.Element {
       {/* E11: the confirm this screen's destructive actions await. */}
       {confirmDialog}
 
-      {composerDraft !== undefined && client !== undefined && (
-        <Composer
-          /* Keyed by the draft's seed so switching from a reply to a forward
-             mounts a FRESH composer rather than reusing one whose local state
-             belongs to the previous message. */
-          key={composerDraft.seedKey}
-          draft={composerDraft}
-          client={client}
-          accountId={accountId}
-          identity={identity}
-          /* D-08: the caret on "De" appears only above one identity. */
-          identityCount={identityCount}
-          draftsMailboxId={roleMailboxId("drafts")}
-          sentMailboxId={roleMailboxId("sent")}
-          sessionCapabilities={session?.capabilities}
-          uploadUrlTemplate={session?.uploadUrl}
-          authorization={authorization}
-          onClose={() => {
-            setComposerDraft(undefined);
-            // E7: the forwarded `.eml`s belong to the composer that was
-            // carrying them, not to the next one.
-            setPendingAttachments(undefined);
-          }}
-          onNotify={setToast}
-          onChanged={refresh}
-          {...(pendingAttachments !== undefined
-            ? { initialAttachments: pendingAttachments }
-            : {})}
-          /*
-           * E7: recipient autocomplete (canon §2.3).
-           *
-           * Empty when the user opted out or nothing is indexed yet, which the
-           * field reads as "no combobox at all" rather than "an empty popup".
-           */
-          addressSuggestions={addressIndex.suggestions}
-          onRecordAddresses={addressIndex.recordSent}
-          /*
-           * E7: Send & Archive, offered only for a REPLY that has a
-           * conversation to archive and only when there is an Archive folder to
-           * archive into. Absent removes the button, per P4 — a control that
-           * cannot act must not be on screen.
-           *
-           * E5 v2 adds the fourth condition: `prefs.sendAndArchive`, which is
-           * Gmail's own "Show 'Send & Archive' button in reply" setting. It is
-           * the FIRST test rather than the last only for readability; all four
-           * are necessary. Note the three structural conditions still apply
-           * with the preference on — a preference that says "show it" cannot
-           * conjure an Archive folder, and the honest answer when there is
-           * nothing to archive into stays "no button".
-           */
-          {...(prefs.sendAndArchive &&
-          isReplyIntent(composerDraft.intent) &&
-          archiveTargetIds.length > 0 &&
-          roleMailboxId("archive") !== undefined
-            ? {
-                onSendAndArchive: () => archiveConversation(archiveTargetIds),
-                onUndoArchive: () => restoreConversation(archiveTargetIds),
-              }
-            : {})}
-          /*
-           * E9: where a send goes when there is no network.
-           *
-           * Passed only when the queue actually exists — a browser without
-           * usable storage gets `undefined`, and the composer then reports the
-           * send failure honestly rather than promising an Outbox that cannot
-           * hold anything.
-           */
-          {...(offline.outbox !== undefined ? { onQueueOffline: queueForLater } : {})}
-          isOnline={offline.isOnline}
-          /*
-           * E4: schedule send, offered only when the server advertises the
-           * triage capability that carries its horizon. `maxDelayedSend` was 0
-           * before E4 and is 30 days now, so a client that assumed a number
-           * would have been wrong in both directions — it is read, never
-           * guessed.
-           */
-          {...(hasTriage
-            ? { maxDelayedSendSeconds: limits.maxDelayedSendSeconds }
-            : {})}
-        />
-      )}
+      {/*
+        The FLOATING composer. A `<dialog>` in the top layer, so it renders
+        here with the other overlays and its position in the tree is
+        immaterial. The inline host's copy is mounted by the reader instead —
+        see `ReadingPane`'s `inlineCompose` — and the guard is what keeps
+        exactly one of the two on screen.
+      */}
+      {composerHost === "floating" && composer}
+
 
       {/* A single always-present live region: messages announced when they
           appear, rather than a region inserted together with its own text.

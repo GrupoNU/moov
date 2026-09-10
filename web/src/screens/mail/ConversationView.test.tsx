@@ -96,6 +96,7 @@ function renderConversation(
     readonly bodies?: Record<string, Email>;
     readonly onMarkRead?: (ids: readonly string[]) => void;
     readonly onControls?: (c: ConversationControls | undefined) => void;
+    readonly inlineCompose?: React.ReactNode;
   } = {},
 ) {
   const openEmail = overrides.openEmail ?? withBody(M3, "the newest message");
@@ -122,6 +123,9 @@ function renderConversation(
     onForward: vi.fn(),
     onMarkRead: overrides.onMarkRead ?? vi.fn(),
     ...(overrides.onControls !== undefined ? { onControls: overrides.onControls } : {}),
+    ...(overrides.inlineCompose !== undefined
+      ? { inlineCompose: overrides.inlineCompose }
+      : {}),
   };
 
   render(
@@ -596,5 +600,48 @@ describe("degrading honestly", () => {
     await waitFor(() => {
       expect(screen.getByText(/no se pudo cargar el resto/i)).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * The inline compose box at the foot of the thread (canon 07 §7).
+ *
+ * Gmail's reply opens under the last message, with the conversation still
+ * readable above it — and it TAKES THE PILLS' PLACE rather than sitting beside
+ * them, because what they start is already started.
+ */
+describe("the inline compose box", () => {
+  const BOX = <div data-testid="inline-box">a reply in progress</div>;
+
+  it("renders at the foot of the conversation", async () => {
+    renderConversation({ inlineCompose: BOX });
+    await waitFor(() => {
+      expect(screen.getByTestId("inline-box")).toBeInTheDocument();
+    });
+  });
+
+  it("takes the reply pills' place rather than joining them", async () => {
+    renderConversation({ inlineCompose: BOX });
+    await waitFor(() => {
+      expect(screen.getByTestId("inline-box")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
+  });
+
+  it("leaves the pills alone when no box is open", async () => {
+    renderConversation();
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: /responder/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
+  });
+
+  it("comes after the last message, not before the thread", async () => {
+    renderConversation({ inlineCompose: BOX });
+    const box = await screen.findByTestId("inline-box");
+    const newest = screen.getByText("the newest message");
+    expect(
+      newest.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

@@ -821,3 +821,38 @@ describe("the back arrow (canon 07 §6)", () => {
     },
   );
 });
+
+/**
+ * The inline compose box, and what it replaces (canon 07 §7).
+ *
+ * Gmail's reply opens at the foot of the conversation, not in the corner card,
+ * and the controls that START a reply stand down while one is being written.
+ * This pane hosts the box in the single-message case; the thread's own foot is
+ * `ConversationView`'s (its suite covers that half).
+ */
+describe("the inline compose box", () => {
+  const BOX = <div data-testid="inline-box">a reply in progress</div>;
+
+  it("renders it under the body, in the single-message reader", () => {
+    renderPane({ inlineCompose: BOX });
+    expect(screen.getByTestId("inline-box")).toBeInTheDocument();
+  });
+
+  it("stands the Responder / Reenviar row down while it is open", () => {
+    renderPane({ inlineCompose: BOX });
+    expect(screen.queryByRole("button", { name: /^responder$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reenviar$/i })).not.toBeInTheDocument();
+  });
+
+  it("brings the row back when the box is gone", () => {
+    renderPane();
+    expect(screen.getByRole("button", { name: /^responder$/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
+  });
+
+  it("leaves the toolbar's verbs alone — they act on the conversation", () => {
+    renderPane({ inlineCompose: BOX });
+    const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+    expect(within(bar).getByRole("button", { name: /^archivar$/i })).toBeInTheDocument();
+  });
+});

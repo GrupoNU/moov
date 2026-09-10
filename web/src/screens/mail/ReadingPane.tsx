@@ -196,6 +196,20 @@ export interface ReadingPaneProps {
    */
   readonly onReplyToMessage: (email: Email, all: boolean) => void;
   readonly onForwardMessage: (email: Email) => void;
+  /**
+   * The inline compose box, when a reply or a forward is open on what this
+   * pane is showing (canon 07 §7).
+   *
+   * It lands at the foot of the conversation, taking the reply pills' place —
+   * or, with conversation view off, the place of this pane's own Responder /
+   * Responder a todos / Reenviar row. Either way the rule is the same: the
+   * controls that START writing stand down while writing is under way, and
+   * come back when it ends.
+   *
+   * A node rather than a flag: the reader knows nothing about drafts,
+   * identities or the send path, and this is what keeps it that way.
+   */
+  readonly inlineCompose?: React.ReactNode;
   /** Marks the messages that were EXPANDED read — never the whole thread. */
   readonly onMarkMessagesRead: (ids: readonly string[]) => void;
   /** Publishes the conversation's keyboard controls (`;`, `:`, `p`, `n`). */
@@ -247,6 +261,7 @@ export function ReadingPane({
   onForwardMessage,
   onMarkMessagesRead,
   onConversationControls,
+  inlineCompose,
 }: ReadingPaneProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   const [originalOpen, setOriginalOpen] = useState(false);
@@ -891,7 +906,13 @@ export function ReadingPane({
           question. The single-message reader keeps this row: it has no
           bottom, its body is the whole pane.
         */}
-        {!conversationView && (
+        {/*
+          …and the row stands down while an inline compose is open, for the
+          reason the conversation's pills do: what it starts is already
+          started. The box itself renders at the FOOT of the pane, below the
+          body, which is where it belongs — see the bottom of this file.
+        */}
+        {!conversationView && inlineCompose === undefined && (
         <div className={styles.actions} role="group" aria-label={t("action.reply")}>
           {prefs.defaultReplyBehavior === "replyAll" ? (
             <>
@@ -1059,6 +1080,9 @@ export function ReadingPane({
             onMarkRead={onMarkMessagesRead}
             onControls={publishControls}
             ownAddresses={ownAddresses}
+            /* The box goes at the foot of the THREAD, in the pills' place —
+               the conversation owns that end of the pane, so it mounts it. */
+            inlineCompose={inlineCompose}
           />
         ) : (
           /* Keyed by message id so per-message state — the remote-images
@@ -1078,6 +1102,17 @@ export function ReadingPane({
             {t("reader.spamImagesBlocked")}
           </p>
         )}
+
+        {/*
+          The single-message reader's inline box, under the body it answers.
+
+          In conversation view the box belongs to the thread and mounts inside
+          `ConversationView` above, in the pills' place. With conversation view
+          OFF there is no thread and no pills — this pane's body IS the whole
+          message — so the box lands here, directly beneath it, which is the
+          same relationship: you write under what you are answering.
+        */}
+        {!conversationView && inlineCompose}
       </div>
 
       <OriginalDialog
