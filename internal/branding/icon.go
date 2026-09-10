@@ -102,10 +102,132 @@ func IconSourceNotes(kind AssetKind, body []byte) []string {
 	// A launcher shows a SQUARE. A wide image is contained inside it with its
 	// aspect kept, so it ends up small with bands of plate above and below —
 	// legible, but not what an author supplying an "icon" expects to see.
+	var notes []string
 	if w, h, ok := ImageDimensions(body); ok && !IsRoughlySquare(w, h) {
-		return []string{fmt.Sprintf("the icon is %dx%d, which is not square; "+
+		notes = append(notes, fmt.Sprintf("the icon is %dx%d, which is not square; "+
 			"launchers show a square, so it will be contained inside one "+
-			"with bands of the primary color around it", w, h)}
+			"with bands of the plate color around it", w, h))
 	}
-	return nil
+	// The favicon and the "any" launcher icons are drawn on a TRANSPARENT
+	// canvas, so a light mark has nothing behind it on a light tab. Nothing
+	// here can fix that honestly (plating the favicon frames every brand's tab;
+	// recoloring wrecks any mark that is not a flat silhouette), so it is
+	// declared and the operator decides.
+	if IconOnTransparentMayVanish(body) {
+		notes = append(notes, LightIconOnTransparentNote)
+	}
+	return notes
 }
+
+// IconOnTransparentMayVanish reports whether an icon source's visible pixels
+// are mostly LIGHT — the case where the transparent-canvas icons (the favicon
+// and the "any" launcher sizes) can disappear against a light background.
+//
+// Decoding failures answer false: a source that cannot be decoded is already
+// declared by ValidateIconSource, and a second complaint about the same file
+// would be noise.
+func IconOnTransparentMayVanish(body []byte) bool {
+	img, _, err := image.Decode(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	return !IconIsDark(img)
+}
+
+// --- how dark is the mark? ----------------------------------------------------
+
+// DarkMarkLuminanceMax is the mean relative luminance below which an icon
+// counts as a DARK mark, and therefore needs a light plate behind it wherever
+// a plate is painted at all.
+//
+// 0.5 is the midpoint of the WCAG relative-luminance scale rather than a tuned
+// constant, and that is deliberate: the decision it drives is binary (white
+// plate or the brand's primary), the inputs are real logos rather than a
+// distribution anyone has measured, and a threshold nobody can justify is a
+// threshold the next person will move at random.
+const DarkMarkLuminanceMax = 0.5
+
+// MeanIconLuminance reports the alpha-weighted mean WCAG relative luminance of
+// an image's OPAQUE pixels, and whether there were any.
+//
+// # Why alpha-weighted, and why opaque pixels only
+//
+// A logo is mostly transparent. Averaging every pixel would measure the empty
+// canvas — a black glyph on a transparent square would come back as whatever
+// the encoder wrote into the invisible pixels, which for most PNGs is either
+// black (making every icon "dark") or white (making every icon "light"). Both
+// answers are about the file's padding rather than about the mark.
+//
+// So each pixel contributes in proportion to how visible it is: a fully opaque
+// pixel counts once, a half-transparent edge counts half, a fully transparent
+// one not at all. That is also what makes the answer stable under
+// anti-aliasing, which is most of the pixels in a small glyph.
+//
+// Returns (0, false) when the image has no visible pixels at all, so a caller
+// cannot mistake "entirely transparent" for "black".
+func MeanIconLuminance(img image.Image) (float64, bool) {
+	bounds := img.Bounds()
+	var sum, weight float64
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			// RGBA() returns alpha-PREMULTIPLIED values in 0..65535. Dividing
+			// by alpha recovers the pixel's own color, which is what has to be
+			// measured: the premultiplied value of a half-transparent white is
+			// a mid grey, and mid grey is not what the eye will see once the
+			// launcher composites it.
+			r16, g16, b16, a16 := img.At(x, y).RGBA()
+			if a16 == 0 {
+				continue
+			}
+			a := float64(a16) / 65535
+			r := float64(r16) / float64(a16)
+			g := float64(g16) / float64(a16)
+			b := float64(b16) / float64(a16)
+			sum += relativeLuminance(r, g, b) * a
+			weight += a
+		}
+	}
+	if weight == 0 {
+		return 0, false
+	}
+	return sum / weight, true
+}
+
+// relativeLuminance is WCAG 2.x relative luminance for channels already
+// normalized to 0..1. Written out rather than pulled from a color library so
+// the number this package decides on is the number the contrast rules in the
+// PWA are defined against.
+func relativeLuminance(r, g, b float64) float64 {
+	lin := func(c float64) float64 {
+		if c <= 0.04045 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
+}
+
+// IconIsDark reports whether an image's visible pixels are dark enough to need
+// a light plate. An image with nothing visible is treated as dark, which is the
+// safe default: a white plate shows an empty icon as empty rather than hiding
+// the fact behind the brand's own color.
+func IconIsDark(img image.Image) bool {
+	mean, ok := MeanIconLuminance(img)
+	if !ok {
+		return true
+	}
+	return mean < DarkMarkLuminanceMax
+}
+
+// LightIconOnTransparentNote is the warning an operator gets when their icon's
+// visible pixels are mostly LIGHT and the canvas it is drawn on is transparent
+// — the favicon and the "any" launcher icons.
+//
+// It is a warning rather than a fix because there is no honest fix available
+// here: plating the favicon is what this change just removed (it put a frame
+// around every brand's tab icon to rescue one), and recoloring somebody's mark
+// wrecks any logo that is not a flat silhouette. What the operator can do,
+// and we cannot, is supply a version with a dark outline.
+const LightIconOnTransparentNote = "the icon's visible pixels are mostly light, and the " +
+	"favicon and launcher icons are drawn on a transparent canvas: a light icon may vanish " +
+	"on light tabs; consider a version with a dark outline"

@@ -216,7 +216,7 @@ func TestIconSourceNotesWording(t *testing.T) {
 	}
 	notes = IconSourceNotes(AssetIcon, pngOfSize(t, 200, 40))
 	if len(notes) != 1 || notes[0] != "the icon is 200x40, which is not square; launchers show a square, "+
-		"so it will be contained inside one with bands of the primary color around it" {
+		"so it will be contained inside one with bands of the plate color around it" {
 		t.Fatalf("wide icon notes = %v", notes)
 	}
 	if notes := IconSourceNotes(AssetLogo, pngOfSize(t, 200, 40)); notes != nil {

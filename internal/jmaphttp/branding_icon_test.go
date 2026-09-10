@@ -2,12 +2,15 @@ package jmaphttp
 
 import (
 	"bytes"
+	"image"
 	"image/color"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GrupoNU/moov/internal/branding"
 )
 
 // Tests for the optional square icon.
@@ -24,6 +27,27 @@ import (
 func whiteIconPNG(t *testing.T) []byte {
 	t.Helper()
 	return encodePNG(t, solidImage(64, 64, color.NRGBA{R: 255, G: 255, B: 255, A: 255}))
+}
+
+// blackGlyphPNG is Areacorp's shape: a 64x64 BLACK mark on a transparent
+// canvas — the file a brand kit keeps for light backgrounds, and the one whose
+// plate must come out white rather than the brand's near-black primary.
+//
+// Transparent around the mark rather than a solid square, because that is what
+// makes it a real test of the luminance rule: an average over EVERY pixel
+// would be dominated by the empty canvas, and only the alpha-weighted mean of
+// the visible pixels answers "the mark is dark".
+func blackGlyphPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	// A centered 32x32 block: half the edge, so it survives the maskable safe
+	// zone and still leaves a transparent border to average over.
+	for y := 16; y < 48; y++ {
+		for x := 16; x < 48; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{A: 255})
+		}
+	}
+	return encodePNG(t, img)
 }
 
 // TestBrandingIconPreferredOverLogo is the customer case that motivated the
@@ -303,130 +327,169 @@ func TestBrandingIconDoesNotLeakExistence(t *testing.T) {
 	}
 }
 
-// TestBrandingIconIsPlatedAtEverySize is the rule found on the pilot with a
-// real brand kit: Areacorp's primary is #000000 and its icon is a white glyph
-// drawn for that plate. The maskable pair rendered correctly, and then the
-// glyph VANISHED on icon-192, icon-512 and favicon-32 — transparent canvases,
-// white mark, light desktop and light browser tab.
+// TestFaviconAndAnyIconsAreNeverPlated: the mark AS IT WAS UPLOADED, on a
+// transparent canvas — whichever file it came from.
 //
-// So when the source is the dedicated icon, every generated size is opaque on
-// the primary. When the source is the logo, nothing changed: a wordmark on a
-// transparent square is what a launcher and a tab have always been handed.
-func TestBrandingIconIsPlatedAtEverySize(t *testing.T) {
+// An earlier version plated a dedicated `icon` at EVERY size, to rescue a
+// white-on-dark glyph that vanished on the transparent ones. The cost was a
+// frame around every other brand's tab icon, and the owner caught it: a plate
+// in the tab is chrome the operator did not draw. The white glyph is handled
+// by the plate COLOR on the icons that are plated, plus a declared warning.
+func TestFaviconAndAnyIconsAreNeverPlated(t *testing.T) {
 	white := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-	black := color.NRGBA{A: 255}
 
-	withIcon := t.TempDir()
-	writeBrand(t, withIcon, "plated.test", map[string]any{
+	root := t.TempDir()
+	writeBrand(t, root, "flat.test", map[string]any{
 		"name": "Areacorp", "logo": "logo.png", "icon": "icon.png",
 		"colors": map[string]string{"primary": "#000000"},
 	}, map[string][]byte{
 		"logo.png": encodePNG(t, solidImage(200, 40, white)),
-		"icon.png": whiteIconPNG(t),
+		"icon.png": blackGlyphPNG(t),
 	})
-	logoOnly := t.TempDir()
-	writeBrand(t, logoOnly, "plated.test", map[string]any{
-		"name": "Areacorp", "logo": "logo.png",
-		"colors": map[string]string{"primary": "#000000"},
-	}, map[string][]byte{"logo.png": encodePNG(t, solidImage(200, 40, white))})
-
-	iconSrv := brandingServer(t, withIcon)
-	logoSrv := brandingServer(t, logoOnly)
+	srv := brandingServer(t, root)
 
 	for _, spec := range brandingIconSpecs {
+		if spec.opaque {
+			continue
+		}
 		t.Run(spec.name, func(t *testing.T) {
-			// Source = icon: the corner is the primary, opaque, at EVERY size —
-			// including the two that used to be transparent and favicon-32,
-			// which has no padding at all and so is plate only where the glyph
-			// does not reach.
-			img := decodePNG(t, getIcon(t, iconSrv, "plated.test", spec.name))
-			if c := nrgbaAt(img, 0, 0); c != black {
-				t.Errorf("source=icon: corner of %s = %v, want the opaque primary %v",
-					spec.name, c, black)
-			}
-			// Opaque EVERYWHERE, not just in the corner: a hole is what a
-			// masking launcher and iOS both render badly.
-			for y := 0; y < spec.size; y += 7 {
-				for x := 0; x < spec.size; x += 7 {
-					if a := nrgbaAt(img, x, y).A; a != 255 {
-						t.Fatalf("source=icon: pixel (%d,%d) of %s has alpha %d",
-							x, y, spec.name, a)
-					}
-				}
-			}
-			// And the mark is still there, in the middle, legible against it.
-			if c := nrgbaAt(img, spec.size/2, spec.size/2); c != white {
-				t.Errorf("source=icon: center of %s = %v, want the white glyph", spec.name, c)
-			}
-
-			// Source = logo: today's behavior, untouched. Transparent where
-			// the spec says transparent, plated where it says plated.
-			logoImg := decodePNG(t, getIcon(t, logoSrv, "plated.test", spec.name))
-			corner := nrgbaAt(logoImg, 0, 0)
-			if spec.opaque {
-				if corner != black {
-					t.Errorf("source=logo: corner of %s = %v, want the plate", spec.name, corner)
-				}
-			} else if corner.A != 0 {
-				t.Errorf("source=logo: corner of %s = %v, want it still transparent", spec.name, corner)
+			img := decodePNG(t, getIcon(t, srv, "flat.test", spec.name))
+			if a := nrgbaAt(img, 0, 0).A; a != 0 {
+				t.Errorf("corner of %s has alpha %d, want a transparent canvas", spec.name, a)
 			}
 		})
 	}
 
-	// The two sizes the pilot caught are worth naming, so a future change that
-	// quietly un-plates them fails with the symptom rather than with a corner.
-	for _, name := range []string{"icon-192", "favicon-32"} {
-		img := decodePNG(t, getIcon(t, iconSrv, "plated.test", name))
-		if nrgbaAt(img, 0, 0).A != 255 {
-			t.Errorf("%s went back to a transparent canvas: a white glyph is invisible on it", name)
-		}
-	}
-
-	// favicon-32 needs the padding floor as well as the plate: its own spec has
-	// none, so a SQUARE mark would cover the plate edge to edge and a white
-	// glyph would be a white square on a light tab all over again.
-	fav := decodePNG(t, getIcon(t, iconSrv, "plated.test", "favicon-32"))
-	if c := nrgbaAt(fav, 0, 0); c != black {
-		t.Errorf("favicon-32 corner = %v, want the plate framing the glyph", c)
-	}
-	if c := nrgbaAt(fav, 16, 16); c != white {
-		t.Errorf("favicon-32 center = %v, want the glyph", c)
-	}
-	// And the logo's favicon-32 keeps its every-pixel-counts zero padding.
-	favLogo := decodePNG(t, getIcon(t, logoSrv, "plated.test", "favicon-32"))
-	if a := nrgbaAt(favLogo, 0, 0).A; a != 0 {
-		t.Errorf("source=logo: favicon-32 corner alpha = %d, want it transparent as before", a)
+	// favicon-32 keeps pad 0 now that it is never plated: at 32 px every pixel
+	// counts, and the padding floor existed only to frame a plate.
+	fav, ok := iconSpecByName("favicon-32")
+	if !ok || fav.pad != 0 || fav.opaque {
+		t.Fatalf("favicon-32 spec = %+v, want transparent with no padding", fav)
 	}
 }
 
-// TestSpecForSource pins the rule itself, away from any rendering.
-func TestSpecForSource(t *testing.T) {
-	for _, spec := range brandingIconSpecs {
-		got := specForSource(spec, brandingSourceIcon)
-		if !got.opaque {
-			t.Errorf("%s: a dedicated icon must be plated", spec.name)
-		}
-		// A plated icon never has less padding than the floor, and never MORE
-		// than its own spec asked for: the maskable 20% survives.
-		if got.pad < minPlatedIconPad {
-			t.Errorf("%s: plated padding = %v, want at least %v", spec.name, got.pad, minPlatedIconPad)
-		}
-		if spec.pad > minPlatedIconPad && got.pad != spec.pad {
-			t.Errorf("%s: padding moved from %v to %v", spec.name, spec.pad, got.pad)
-		}
-		// Nothing else about the spec moves.
-		if got.name != spec.name || got.size != spec.size {
-			t.Errorf("%s: specForSource changed more than the plate: %+v", spec.name, got)
-		}
+// TestPlateColorFollowsTheMark: white behind a dark mark, the primary behind a
+// light one.
+//
+// The failure it prevents is the one that made `icon` exist in the first place
+// and then outlived it: a brand whose primary is near-black and whose glyph is
+// black rendered a black mark on a black plate. Painting the primary is right
+// only when the mark contrasts with it, and the only thing we know about the
+// mark is its pixels.
+func TestPlateColorFollowsTheMark(t *testing.T) {
+	white := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	black := color.NRGBA{A: 255}
+	teal := color.NRGBA{R: 0x0f, G: 0x76, B: 0x6e, A: 255}
 
-		// The logo's spec is returned untouched, in every field.
-		if got := specForSource(spec, brandingSourceLogo); got != spec {
-			t.Errorf("%s: the logo's spec changed: %+v", spec.name, got)
+	// Areacorp's case: a BLACK glyph on a brand whose primary is black.
+	darkRoot := t.TempDir()
+	writeBrand(t, darkRoot, "dark.test", map[string]any{
+		"name": "Areacorp", "icon": "icon.png",
+		"colors": map[string]string{"primary": "#000000"},
+	}, map[string][]byte{"icon.png": blackGlyphPNG(t)})
+
+	// A LIGHT glyph, on a brand with a real primary: the plate is that primary,
+	// which is what the glyph was drawn for.
+	lightRoot := t.TempDir()
+	writeBrand(t, lightRoot, "light.test", map[string]any{
+		"name": "Lightcorp", "icon": "icon.png",
+		"colors": map[string]string{"primary": "#0f766e"},
+	}, map[string][]byte{"icon.png": whiteIconPNG(t)})
+
+	darkSrv := brandingServer(t, darkRoot)
+	lightSrv := brandingServer(t, lightRoot)
+
+	for _, spec := range brandingIconSpecs {
+		if !spec.opaque {
+			continue
 		}
-		// So is an absent source (Moov's own icons never reach here anyway).
-		if got := specForSource(spec, ""); got != spec {
-			t.Errorf("%s: an empty source changed the spec: %+v", spec.name, got)
+		t.Run(spec.name, func(t *testing.T) {
+			// A dark mark gets a WHITE plate — the ground almost every dark
+			// logo was drawn against, and the one that keeps it visible.
+			darkImg := decodePNG(t, getIcon(t, darkSrv, "dark.test", spec.name))
+			if c := nrgbaAt(darkImg, 0, 0); c != white {
+				t.Errorf("dark mark: corner of %s = %v, want the white plate", spec.name, c)
+			}
+			if c := nrgbaAt(darkImg, spec.size/2, spec.size/2); c != black {
+				t.Errorf("dark mark: center of %s = %v, want the black glyph", spec.name, c)
+			}
+
+			// A light mark gets the brand's primary.
+			lightImg := decodePNG(t, getIcon(t, lightSrv, "light.test", spec.name))
+			if c := nrgbaAt(lightImg, 0, 0); c != teal {
+				t.Errorf("light mark: corner of %s = %v, want the primary %v", spec.name, c, teal)
+			}
+			if c := nrgbaAt(lightImg, spec.size/2, spec.size/2); c != white {
+				t.Errorf("light mark: center of %s = %v, want the white glyph", spec.name, c)
+			}
+
+			// Opaque EVERYWHERE, either way: a hole is what a masking launcher
+			// and iOS both render badly.
+			for _, img := range []image.Image{darkImg, lightImg} {
+				for y := 0; y < spec.size; y += 7 {
+					for x := 0; x < spec.size; x += 7 {
+						if a := nrgbaAt(img, x, y).A; a != 255 {
+							t.Fatalf("pixel (%d,%d) of %s has alpha %d", x, y, spec.name, a)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestBlackGlyphIsVisibleOnBothTheTabAndTheLauncher is the owner's case stated
+// as the outcome rather than as the mechanism: Areacorp's black mark must be
+// visible in a browser tab AND on a home screen, which the single-color plate
+// could not deliver at the same time.
+func TestBlackGlyphIsVisibleOnBothTheTabAndTheLauncher(t *testing.T) {
+	root := t.TempDir()
+	writeBrand(t, root, "areacorp.test", map[string]any{
+		"name": "Areacorp", "icon": "icon.png",
+		"colors": map[string]string{"primary": "#000000"},
+	}, map[string][]byte{"icon.png": blackGlyphPNG(t)})
+	srv := brandingServer(t, root)
+
+	// The tab: transparent canvas, and the glyph's own dark pixels present.
+	fav := decodePNG(t, getIcon(t, srv, "areacorp.test", "favicon-32"))
+	if a := nrgbaAt(fav, 0, 0).A; a != 0 {
+		t.Errorf("favicon corner alpha = %d, want transparent", a)
+	}
+	center := nrgbaAt(fav, 16, 16)
+	if center.A != 255 || center.R > 32 || center.G > 32 || center.B > 32 {
+		t.Errorf("favicon center = %v, want the opaque dark glyph", center)
+	}
+
+	// The launcher: a white plate, so the same black glyph reads on it.
+	mask := decodePNG(t, getIcon(t, srv, "areacorp.test", "icon-maskable-192"))
+	if c := nrgbaAt(mask, 0, 0); c != (color.NRGBA{R: 255, G: 255, B: 255, A: 255}) {
+		t.Errorf("maskable corner = %v, want the white plate", c)
+	}
+}
+
+// TestLightIconOnTransparentIsDeclared: the case nothing can fix honestly is
+// declared instead.
+//
+// Plating the favicon is what this change removed; recoloring somebody's mark
+// wrecks any logo that is not a flat silhouette. What the operator can do, and
+// we cannot, is supply a version with a dark outline — so they are told.
+func TestLightIconOnTransparentIsDeclared(t *testing.T) {
+	if !branding.IconOnTransparentMayVanish(whiteIconPNG(t)) {
+		t.Error("a white glyph must be declared as possibly vanishing on a light tab")
+	}
+	if branding.IconOnTransparentMayVanish(blackGlyphPNG(t)) {
+		t.Error("a black glyph has no such problem and must not be warned about")
+	}
+
+	notes := branding.IconSourceNotes(branding.AssetIcon, whiteIconPNG(t))
+	found := false
+	for _, n := range notes {
+		if n == branding.LightIconOnTransparentNote {
+			found = true
 		}
+	}
+	if !found {
+		t.Errorf("IconSourceNotes = %v, want it to carry the light-icon note", notes)
 	}
 }
 

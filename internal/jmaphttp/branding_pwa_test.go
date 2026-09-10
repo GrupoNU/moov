@@ -391,7 +391,14 @@ func TestBrandingIconsRenderFromLogo(t *testing.T) {
 		"colors": map[string]string{"primary": "#123456"},
 	}, map[string][]byte{"logo.png": redLogoPNG(t)})
 	srv := brandingServer(t, root)
-	primary := color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 255}
+	/*
+	 * The plate follows the MARK, not the primary. Pure red has a WCAG
+	 * relative luminance of 0.2126 — a dark mark — so its plate is white,
+	 * and the deep-blue primary #123456 is deliberately never painted here.
+	 * That is the point of the rule: a dark mark on a dark primary was the
+	 * invisible-icon bug.
+	 */
+	plate := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 
 	for _, spec := range brandingIconSpecs {
 		t.Run(spec.name, func(t *testing.T) {
@@ -413,11 +420,11 @@ func TestBrandingIconsRenderFromLogo(t *testing.T) {
 			}
 
 			// The corner is outside the contained logo: transparent on an
-			// "any" icon, the accent color on an opaque one.
+			// "any" icon, the plate on an opaque one.
 			corner := nrgbaAt(img, 1, 1)
 			if spec.opaque {
-				if corner != primary {
-					t.Errorf("corner = %v, want the opaque accent %v", corner, primary)
+				if corner != plate {
+					t.Errorf("corner = %v, want the opaque plate %v", corner, plate)
 				}
 			} else if corner.A != 0 {
 				t.Errorf("corner = %v, want transparent", corner)
@@ -441,8 +448,8 @@ func TestBrandingIconsRenderFromLogo(t *testing.T) {
 			pad := int(float64(spec.size)*spec.pad + 0.5)
 			if spec.size >= 180 {
 				top := nrgbaAt(img, spec.size/2, pad+1)
-				if spec.opaque && top != primary {
-					t.Errorf("above the letterboxed logo = %v, want the accent", top)
+				if spec.opaque && top != plate {
+					t.Errorf("above the letterboxed logo = %v, want the plate", top)
 				}
 				if !spec.opaque && top.A != 0 {
 					t.Errorf("above the letterboxed logo = %v, want transparent", top)
@@ -677,9 +684,14 @@ func TestBrandingPWARoutesHostileHost(t *testing.T) {
 // renders fresh icons at the next TTL, and the key tells the inputs apart.
 func TestBrandingIconCacheFollowsLogoAndColour(t *testing.T) {
 	root := t.TempDir()
+	/*
+	 * A LIGHT mark on purpose: the plate follows the primary only behind one
+	 * (a dark mark gets white whatever the brand color), and this test is
+	 * about the plate tracking a color CHANGE across the cache TTL.
+	 */
 	writeBrand(t, root, "cache.test", map[string]any{
 		"logo": "logo.png", "colors": map[string]string{"primary": "#ff0000"},
-	}, map[string][]byte{"logo.png": redLogoPNG(t)})
+	}, map[string][]byte{"logo.png": whiteIconPNG(t)})
 
 	now := time.Now()
 	store := newBrandingStore(root, nil, func() time.Time { return now })

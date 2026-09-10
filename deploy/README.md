@@ -258,7 +258,7 @@ ground. `logoDark` takes **no part in generating the PWA icons** — that chain 
 `icon`, then `logo`, then Moov's own, and a second wordmark would only give the
 home screen a way to disagree with the top bar. `icon` is the **optional square mark the installed app's icons and the
 favicon are rendered from**, and it exists because those are not the same
-picture: the maskable and Apple icons sit on an **opaque plate of `primary`**,
+picture: the maskable and Apple icons sit on an **opaque plate**,
 so a brand whose primary is `#000000` and whose logo is a black wordmark ships
 a black glyph on a black plate — invisible on a home screen. Most brand kits
 already have the square glyph drawn for dark backgrounds; that file goes here.
@@ -321,43 +321,65 @@ Sanitising SVG correctly is a project in itself. Export to PNG.
 
 **Recommended logo:** PNG with an alpha channel, at least 512 px on the long
 side. A wide wordmark is exactly right in the top bar and on the login panel.
-**Recommended icon:** **square, at least 512 px, PNG with alpha** — and **use
-the glyph your kit draws for dark backgrounds if your primary is dark**, since
-the maskable and Apple icons sit on a plate of the primary color. `moovctl`
-warns when an `-icon` is further than 10% from 1:1, because a launcher shows a
-square and a wide image ends up small between bands of that plate.
+**Recommended icon:** **square, at least 512 px, PNG with alpha**, and prefer
+a mark with **some dark in it** — the favicon and the launcher "any" icons are
+drawn on a transparent canvas, so an all-light glyph can vanish on a light tab
+(you get a warning if yours is). You no longer need a special dark-background
+variant for the plated icons: the plate turns **white** behind a dark mark by
+itself. `moovctl` warns when an `-icon` is further than 10% from 1:1, because a
+launcher shows a square and a wide image ends up small between bands of the
+plate.
 **Recommended splash:** a photograph at least 1600 px wide — it is rendered
-`object-fit: cover`, so it is cropped to the panel, not letterboxed.
+`object-fit: cover`, so it is cropped to the panel, not letterboxed, and it is
+shown **exactly as you uploaded it**: no gradient tint, no blend, and no scrim
+over it. The name and tagline stay legible with a text-shadow instead, so the
+only pixels darkened are the ones directly behind the lettering. With no splash
+image the panel keeps its gradient and its scrim, which is where a plate behind
+a dark logo still applies.
 
 What the icon generator does, on demand and cached. Its source is `icon` when
 there is a usable one, `logo` otherwise, and Moov's own mark when neither can
 be rendered:
 
-| Icon | Size | Padding each side | Plate, from `logo` | Plate, from `icon` |
-|---|---|---|---|---|
-| `icon-192`, `icon-512` | 192, 512 | 10% | transparent | **opaque, the primary** |
-| `icon-maskable-192`, `icon-maskable-512` | 192, 512 | 20% | opaque, the primary | opaque, the primary |
-| `apple-touch-icon` | 180 | 10% | opaque, the primary | opaque, the primary |
-| `favicon-32` | 32 | none (10% when plated) | transparent | **opaque, the primary** |
+| Icon | Size | Padding each side | Plate |
+|---|---|---|---|
+| `icon-192`, `icon-512` | 192, 512 | 10% | **transparent** |
+| `icon-maskable-192`, `icon-maskable-512` | 192, 512 | 20% | opaque, **chosen from the mark** |
+| `apple-touch-icon` | 180 | 10% | opaque, **chosen from the mark** |
+| `favicon-32` | 32 | none | **transparent** |
 
-**When the source is a dedicated `icon`, every size is plated.** An operator
-who supplies one supplies a mark drawn *for* that plate — and the alternative
-was found live on the pilot: Areacorp's white glyph rendered correctly on the
-maskable pair and then **vanished** on `icon-192`, `icon-512` and `favicon-32`,
-which were transparent, on a light desktop launcher and a light browser tab.
-`favicon-32` also picks up a 10% padding floor when plated, because its own
-spec has none and a square mark would otherwise cover the plate edge to edge —
-the same white-square-on-a-light-tab failure. **When the source is the `logo`,
-nothing changed:** the transparent column is exactly what it always was.
+**The favicon and the "any" icons are the mark exactly as you uploaded it** —
+transparent canvas, never plated, never tinted, whichever file they came from.
+An earlier version plated a dedicated `icon` at every size to rescue a
+white-on-dark glyph, and the cost was a frame around every other brand's tab
+icon; a plate in the tab is chrome the operator did not draw. `favicon-32`
+therefore keeps **no padding**: at 32 px every pixel counts, and the padding
+floor existed only to frame a plate.
+
+**Where there IS a plate, its colour comes from the mark, not from `primary`:**
+the mean WCAG relative luminance of the icon's opaque pixels is measured
+(alpha-weighted, so anti-aliased edges count in proportion and the transparent
+canvas does not count at all); below 0.5 the mark is dark and the plate is
+**white**, otherwise the plate is your **`primary`**. That is what lets a black
+glyph be visible on a maskable icon *and* on the tab at the same time — which
+the old single-colour plate could not do, because on a near-black `primary` it
+painted a black mark onto a black plate.
+
+The one case nothing here can fix honestly is a **light mark on the transparent
+canvas**: plating the favicon is what this removed, and recolouring your mark
+would wreck anything that is not a flat silhouette. So it is **declared**
+instead — `moovctl branding show` and the Marca panel's warnings say *"a light
+icon may vanish on light tabs; consider a version with a dark outline"*, and
+you decide.
 
 The source image is contained inside the padded square with its aspect ratio
 preserved and centred — which is why a square `icon` fills it and a wide `logo`
 does not. The maskable pair pads to 20% because Android adaptive icons keep
 only the inner 80% circle, and paints the plate because a transparent one would
 be masked onto whatever the launcher picks (usually white). `apple-touch-icon`
-is opaque because iOS discards alpha and composites onto **black**. **Those
-three plates are the reason `icon` exists:** on a dark primary, a dark mark
-disappears into them.
+is opaque because iOS discards alpha and composites onto **black**. **Those two
+plates are the reason `icon` exists:** a wordmark drawn for a light page needs
+a square glyph when it has to sit on a plate.
 
 ### The `moovctl` workflow
 

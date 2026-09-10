@@ -53,14 +53,28 @@ import (
 // The icons are rendered from the brand's optional SQUARE `icon` when it has
 // one, and from its `logo` otherwise — a chain of icon, then logo, then Moov's
 // own. The two exist separately because the maskable and Apple icons sit on an
-// opaque plate of the primary color, so a black wordmark on a brand whose
-// primary is black renders invisible; the square glyph a brand kit keeps for
-// dark backgrounds goes in `icon`.
+// opaque plate, so a wordmark that assumes a light page behind it needs a
+// square glyph drawn for a plate; that glyph goes in `icon`.
 //
-// A dedicated icon is also plated at EVERY size, where a logo is plated only
-// on the maskable and Apple icons: a mark drawn for a dark plate is invisible
-// on the transparent canvas a desktop launcher and a browser tab put behind
-// it. See specForSource.
+// # What is plated, and in what color
+//
+// The favicon and the "any" launcher icons are the mark AS IT WAS UPLOADED, on
+// a TRANSPARENT canvas — never plated, never tinted, whichever file they came
+// from. An earlier version plated a dedicated `icon` at every size to rescue a
+// white-on-dark glyph, and the cost was a frame around every other brand's tab
+// icon: a plate in the tab is chrome the operator did not draw.
+//
+// Maskable and Apple DO need an opaque plate (a launcher masks onto its own
+// background; iOS discards alpha and composites onto black), and its color is
+// chosen from the MARK rather than fixed: white behind a dark mark, the brand's
+// primary behind a light one. That is what keeps a black glyph visible on a
+// maskable icon AND on the tab, which the single-color plate could not do.
+// See iconPlateColor.
+//
+// A light mark on the transparent canvas is the case nothing here can fix —
+// plating the favicon is what was just removed, and recoloring somebody's mark
+// wrecks any logo that is not a flat silhouette. It is DECLARED instead, in the
+// admin document's warnings and in `moovctl branding show`.
 //
 // The chosen source (PNG, JPEG or GIF; dimensions capped before decoding) is
 // rendered into every icon size on demand and cached by host, source digest,
@@ -114,8 +128,8 @@ type iconSpec struct {
 // manifest's icon entries and the shell's <link>s must name only these; a
 // test walks the embedded manifest and checks.
 //
-// The plate column below describes the LOGO as the source. A dedicated `icon`
-// is plated at every size instead — see specForSource.
+// The plate column below applies to whichever file the icons are rendered
+// from: the source no longer changes how the same bytes are drawn.
 //
 //   - icon-*: the "any" purpose icons — the logo on a transparent square with
 //     a little breathing room, as a desktop or Android launcher shows them.
@@ -305,8 +319,6 @@ func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 	if e.iconFile == "" {
 		return defaultIcon(spec)
 	}
-	spec = specForSource(spec, e.iconSource)
-
 	key := iconCacheKey(host, e.iconSum, e.iconSource, e.doc.Colors.Primary, spec.name)
 	now := b.now()
 	b.mu.Lock()
@@ -338,51 +350,17 @@ func (b *brandingStore) icon(host string, spec iconSpec) ([]byte, string) {
 	return body, etag
 }
 
-// specForSource adjusts a spec for WHERE the mark came from.
-//
-// When the source is the dedicated square icon, EVERY size is painted on an
-// opaque plate of the primary color — not just the maskable and Apple ones.
-// An operator who supplies an `icon` supplies a mark drawn FOR that plate, and
-// found on the pilot with a real brand kit: a white glyph for dark backgrounds
-// rendered correctly on the maskable pair and then vanished on icon-192,
-// icon-512 and favicon-32, which were transparent, on a light desktop and a
-// light browser tab. The plate is what makes such a mark legible everywhere.
-//
-// When the source is the LOGO, nothing changes: a wordmark on a transparent
-// square is what a launcher and a tab have always been given, and quietly
-// painting plates behind every existing customer's logo would be a visible
-// change nobody asked for.
-//
-// favicon-32 needs one more thing than the plate. Its spec has NO padding, on
-// the reasoning that at 32 px every pixel counts — but a SQUARE mark then
-// covers the plate edge to edge, and Areacorp's white glyph is a white square
-// on a light tab all over again. So a plated source gets a small padding floor
-// there, which is what actually makes the plate visible around the mark. Only
-// favicon-32 is affected: every other spec already pads.
-func specForSource(spec iconSpec, source string) iconSpec {
-	if source != brandingSourceIcon {
-		return spec
-	}
-	spec.opaque = true
-	if spec.pad < minPlatedIconPad {
-		spec.pad = minPlatedIconPad
-	}
-	return spec
-}
-
-// minPlatedIconPad is the padding a plated icon gets at minimum. At 32 px it
-// is 3 px on each side: enough for the plate to read as a frame, small enough
-// that the mark keeps 26 of the 32 pixels.
-const minPlatedIconPad = 0.10
-
 // iconCacheKey joins the inputs an icon depends on. NUL-separated: none of the
 // parts can contain one (host, source and name come from fixed alphabets, the
 // digest is hex, the color is a validated hex literal).
 //
 // sourceSum is the digest of whichever file the icons are rendered FROM, and
-// source says which of the two it was — the same bytes render DIFFERENTLY as
-// an icon (always plated) and as a logo (plated only where the purpose demands
-// it), so the digest alone would not separate them.
+// source says which of the two it was. The same bytes now render IDENTICALLY
+// either way, so `source` is no longer load-bearing for correctness — it is
+// kept in the key because a host that switches from logo to icon with the same
+// file should not serve a stale entry keyed only on the digest, and because a
+// cache key that names its inputs is cheaper to reason about than one that
+// silently dropped one.
 func iconCacheKey(host, sourceSum, source, primary, name string) string {
 	return host + "\x00" + sourceSum + "\x00" + source + "\x00" + primary + "\x00" + name
 }
@@ -471,11 +449,8 @@ func renderBrandingIcon(logo *image.RGBA, spec iconSpec, primaryHex string) ([]b
 	size := spec.size
 	canvas := image.NewRGBA(image.Rect(0, 0, size, size))
 	if spec.opaque {
-		plate, ok := parseHexColor(primaryHex)
-		if !ok {
-			plate, _ = parseHexColor(DefaultBranding().Colors.Primary)
-		}
-		draw.Draw(canvas, canvas.Bounds(), image.NewUniform(plate), image.Point{}, draw.Src)
+		draw.Draw(canvas, canvas.Bounds(), image.NewUniform(iconPlateColor(logo, primaryHex)),
+			image.Point{}, draw.Src)
 	}
 
 	pad := int(math.Round(float64(size) * spec.pad))
@@ -500,6 +475,36 @@ func renderBrandingIcon(logo *image.RGBA, spec iconSpec, primaryHex string) ([]b
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// iconPlateColor picks the plate a plated icon is painted on: WHITE behind a
+// dark mark, the brand's primary behind a light one.
+//
+// # Why the plate cannot just be the primary
+//
+// It was, and it produced the failure this function exists to prevent: a brand
+// whose primary is near-black and whose glyph is black rendered a black mark on
+// a black plate — invisible on a home screen. Painting the primary is right
+// only when the mark contrasts with it, and the one thing we know about the
+// mark is its pixels, so they are what decides.
+//
+// White rather than "the primary, lightened": a lightened primary is still a
+// color chosen to sit BEHIND text, and behind a logo it produces a tinted
+// square nobody designed. White is the ground almost every dark logo was drawn
+// against, and it is the ground the light plate on the login panel already uses
+// for exactly this reason.
+//
+// A malformed primary falls back to Moov's, so a typo produces a slightly-off
+// icon rather than a black one.
+func iconPlateColor(logo *image.RGBA, primaryHex string) color.NRGBA {
+	if branding.IconIsDark(logo) {
+		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	}
+	plate, ok := parseHexColor(primaryHex)
+	if !ok {
+		plate, _ = parseHexColor(DefaultBranding().Colors.Primary)
+	}
+	return plate
 }
 
 // parseHexColor turns a validated #rgb or #rrggbb literal into an opaque

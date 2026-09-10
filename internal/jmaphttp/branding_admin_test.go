@@ -547,7 +547,7 @@ func TestBrandAdminNonSquareIconWarnsLikeTheCLI(t *testing.T) {
 	s, _, _ := brandAdminServer(t, true, nil)
 	wide := encodePNG(t, image.NewNRGBA(image.Rect(0, 0, 200, 40)))
 	doc := decodeAdminDoc(t, putAsset(s, "icon", wide, "image/png"))
-	want := "the icon is 200x40, which is not square; launchers show a square, so it will be contained inside one with bands of the primary color around it"
+	want := "the icon is 200x40, which is not square; launchers show a square, so it will be contained inside one with bands of the plate color around it"
 	if len(doc.Warnings) != 1 || doc.Warnings[0] != want {
 		t.Fatalf("warnings = %v, want exactly [%s]", doc.Warnings, want)
 	}
