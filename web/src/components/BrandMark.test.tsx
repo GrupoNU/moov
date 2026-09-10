@@ -143,45 +143,86 @@ describe("a customer logo", () => {
     expect(css()).toMatch(/\.name \{[^}]*min-width: 0/);
   });
 
-  it("WRAPS the name on the login panel instead of abbreviating the brand", () => {
+  it("STACKS the square lockup on the login panel, name under the mark", () => {
     /*
-     * The regression the owner caught on the live panel: "NU Desarrollos
-     * Conscientes" rendered as "NU Desa…" — the inherited single-line ellipsis
-     * applied inside the panel's 44ch content column, so the product
-     * introduced itself by an abbreviation nobody chose. A heading with half a
-     * screen under it has no reason to truncate.
+     * Measured on the live panel: the content column is 380px, and a square
+     * mark beside its name leaves the name a 176px box. "NU Desarrollos
+     * Conscientes" needs three-plus lines in 176px at a heading size, so the
+     * previous side-by-side wrap rendered "NU / Desarroll…" — the same
+     * abbreviation it was written to remove, reached by a different route.
+     *
+     * Wrapping cannot fix a box that narrow. Giving the name the whole column
+     * can, which is where a real lockup puts a name that does not fit beside
+     * the mark.
      */
-    const lgName = ruleBody(css(), ".lg .name");
+    expect(ruleBody(css(), ".lg.square")).toContain("flex-direction: column");
 
-    expect(lgName).toContain("white-space: normal");
-    expect(lgName).toContain("text-overflow: clip");
-    expect(lgName).not.toContain("text-overflow: ellipsis");
+    const name = ruleBody(css(), ".lg.square .name");
+    // The whole column, not the 176px remainder beside an 80px logo.
+    expect(name).toContain("width: 100%");
+    /*
+     * A step down from the row's --text-3xl: with the full width the name no
+     * longer needs the heading size to carry presence, and the smaller step is
+     * what lets a 26-character brand land in two lines instead of three.
+     */
+    expect(name).toContain("font-size: var(--text-2xl)");
+    expect(name).not.toContain("--text-3xl");
+  });
+
+  it("keeps the stacked name wrapping, clipped, and capped at two lines", () => {
+    const name = ruleBody(css(), ".lg.square .name");
+
+    expect(name).toContain("white-space: normal");
+    // Clip, not an ellipsis: a name that still overruns is CUT rather than
+    // decorated with a "…" that falsely implies the rest was fetched.
+    expect(name).toContain("text-overflow: clip");
+    expect(name).not.toContain("ellipsis");
     // The guarantee for a name that is one unbroken token longer than the
-    // column: without it the panel overflows horizontally rather than wrapping.
-    expect(lgName).toContain("overflow-wrap: anywhere");
-    // Two lines, not unbounded: past that the lockup becomes a paragraph.
-    expect(lgName).toContain("line-clamp: 2");
-    // It is still the panel's heading size, not a label's.
-    expect(lgName).toContain("font-size: var(--text-3xl)");
+    // column: without it the panel overflows sideways rather than wrapping.
+    expect(name).toContain("overflow-wrap: anywhere");
+    // Two lines. Past that a lockup becomes a paragraph, and the tagline below
+    // is where prose belongs.
+    expect(name).toContain("line-clamp: 2");
+  });
+
+  it("leaves a WIDE mark on the panel exactly as it was", () => {
+    /*
+     * A wordmark already says the name graphically, so it renders alone and
+     * has nothing to stack. Only the square case changed, and this says so —
+     * the stacking must not leak into the shape that never had the problem.
+     */
+    const sheet = css();
+    expect(ruleBody(sheet, ".lg.wide")).not.toContain("flex-direction");
+    expect(sheet).not.toContain(".lg.wide .name");
+
+    const { container } = render(
+      <BrandMark branding={branding({ logoUrl: LOGO })} size="lg" onDark />,
+    );
+    loadWith(container.querySelector("img"), 320, 80);
+    // The name is not rendered at all beside a wordmark.
+    expect(screen.queryByText("ACME Mail")).not.toBeInTheDocument();
+    expect(container.firstElementChild?.className).toContain("wide");
   });
 
   it("keeps the ellipsis OUT of the login panel and IN the top bar", () => {
     /*
      * The two rules must not converge. Stated as a single assertion because
      * the failure mode is a later edit "simplifying" one of them into the
-     * other — and either direction is a bug: an ellipsised heading, or a top
-     * bar whose brand name wraps and grows the bar.
+     * other — and either direction is a bug: an abbreviated brand on the
+     * panel, or a top bar whose name wraps and grows the bar.
      */
     expect(ruleBody(css(), ".name")).toContain("text-overflow: ellipsis");
-    expect(ruleBody(css(), ".lg .name")).not.toContain("ellipsis");
+    expect(ruleBody(css(), ".lg.square .name")).not.toContain("ellipsis");
   });
 
-  it("tops-aligns the lg lockup so an 80px mark does not hang off a wrapped name", () => {
-    // Centring is right for a row of single-line things and wrong the moment
-    // the name takes two lines.
+  it("left-aligns the stacked lockup rather than centring the mark over it", () => {
+    // In a column `align-items` is the CROSS axis, so this is what puts the
+    // logo flush with the left edge of the name below it instead of centring
+    // an 80px mark over a 380px block.
     expect(ruleBody(css(), ".mark")).toContain("align-items: center");
     expect(ruleBody(css(), ".lg")).toContain("align-items: flex-start");
   });
+
 
   it("still names the brand for a screen reader beside a wordmark, iconOnly or not", () => {
     // `iconOnly` is about the TEXT label. Beside a wordmark the name is always

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -180,6 +180,106 @@ describe("the name and the tagline share the panel without colliding", () => {
     const sheet = css();
     const collapsed = sheet.slice(sheet.indexOf("@media (max-width: 900px)"));
     expect(ruleBody(collapsed, ".tagline")).toContain("display: none");
+  });
+});
+
+describe("a real brand name, at the width the panel actually has", () => {
+  /**
+   * The live measurement that forced the stacked lockup: the content column is
+   * 380px, and a square mark beside its name left the name a 176px box. The
+   * owner's own brand — 26 characters — needs three-plus lines in 176px at a
+   * heading size, so it rendered "NU / Desarroll…".
+   *
+   * jsdom measures nothing (every box is 0x0), so none of this can be asserted
+   * by rendering and reading a width. What CAN be asserted is that the name
+   * element is present, unabbreviated in the DOM, and governed by the rules
+   * that give it the full column — which is what these tests do.
+   */
+  const NAME = "NU Desarrollos Conscientes";
+  const SQUARE_LOGO = "/branding/assets/nu/logo.png";
+
+  /** Renders the panel and reports the square logo as loaded. */
+  function renderWithSquareLogo(): HTMLElement {
+    const { container } = render(
+      <BrandPanel branding={branding({ name: NAME, logoUrl: SQUARE_LOGO })} />,
+    );
+    const image = container.querySelector("img");
+    expect(image).not.toBeNull();
+    if (image !== null) {
+      Object.defineProperty(image, "naturalWidth", { value: 512, configurable: true });
+      Object.defineProperty(image, "naturalHeight", { value: 512, configurable: true });
+      fireEvent.load(image);
+    }
+    return container;
+  }
+
+  it("puts the whole name in the DOM, unabbreviated", () => {
+    renderWithSquareLogo();
+    /*
+     * The DOM carries the full string in every version of this bug — the
+     * abbreviation was always visual (an ellipsis, then a line clamp). So this
+     * is the floor, not the proof: it fails only if the name stops being
+     * rendered at all, and the CSS assertions below are what cover the rest.
+     */
+    expect(screen.getByText(NAME)).toBeInTheDocument();
+  });
+
+  it("renders the name INSIDE the mark, under the logo, above the tagline", () => {
+    const container = renderWithSquareLogo();
+    const mark = container.querySelector('[class*="mark"]');
+    const name = screen.getByText(NAME);
+
+    // Inside the mark, so the stacked lockup's own gap separates it from the
+    // logo — not the content column's larger one.
+    expect(mark).toContainElement(name);
+    // And the logo comes first: the stack is mark-then-name, top to bottom.
+    const marked = [...(mark?.children ?? [])];
+    expect(marked[0]?.tagName).toBe("IMG");
+    expect(marked[1]).toBe(name);
+
+    // The tagline is still a sibling of the whole mark, below it.
+    const content = container.querySelector('[class*="content"]');
+    const children = [...(content?.children ?? [])];
+    expect(children[0]).toBe(mark);
+    expect(children[1]?.tagName).toBe("P");
+  });
+
+  it("carries the class the stacked rules are written against", () => {
+    /*
+     * The bridge between this file and BrandMark.module.css. The CSS tests
+     * pin what `.lg.square` DOES; this pins that a square logo on the login
+     * panel actually gets that class — without which those rules are correct
+     * and unreachable.
+     */
+    const container = renderWithSquareLogo();
+    const className = container.querySelector('[class*="mark"]')?.className ?? "";
+    expect(className).toContain("lg");
+    expect(className).toContain("square");
+  });
+
+  it("gives that name the full content column, not the remainder beside a logo", () => {
+    /*
+     * The rules themselves, since jsdom cannot measure. `width: 100%` inside a
+     * mark that BrandPanel bounds to the 44ch column is what makes the name's
+     * box the whole 380px rather than the 176px left over beside an 80px mark.
+     */
+    const markCss = readFileSync(
+      resolve(here, "../../components/BrandMark.module.css"),
+      "utf8",
+    );
+    const name = ruleBody(markCss, ".lg.square .name");
+    expect(name).toContain("width: 100%");
+    expect(name).toContain("font-size: var(--text-2xl)");
+    expect(name).toContain("overflow-wrap: anywhere");
+    expect(name).toContain("text-overflow: clip");
+    expect(name).not.toContain("ellipsis");
+    // Two lines is the cap, and 26 characters across 380px at --text-2xl fits
+    // inside it — which is the whole point of the step down from --text-3xl.
+    expect(name).toContain("line-clamp: 2");
+
+    // And the column the width is a percentage OF.
+    expect(ruleBody(css(), ".content")).toContain("max-width: 44ch");
+    expect(ruleBody(css(), ".content > :first-child")).toContain("max-width: 100%");
   });
 });
 

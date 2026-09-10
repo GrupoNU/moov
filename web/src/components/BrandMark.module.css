@@ -267,9 +267,22 @@
   --brandmark-max-width: 280px;
 }
 
+/*
+ * The panel's square lockup: 80px mark, and STACKED — see the block above the
+ * `.lg.square .name` rule for the measurement that forced it.
+ *
+ * The size and the direction live in ONE rule rather than two with the same
+ * selector, because two would mean `.lg.square` matching in two places and a
+ * reader (or a test reading the stylesheet) having to know which one holds
+ * what.
+ */
 .lg.square {
   --brandmark-height: 80px;
   --brandmark-max-width: 120px;
+  flex-direction: column;
+  /* Tighter than the row's gap: stacked, this is the space between a mark and
+     its own name rather than between two things standing side by side. */
+  gap: var(--space-2);
 }
 
 .lg .glyph {
@@ -278,38 +291,41 @@
 }
 
 /*
- * The name beside a square mark on the login panel takes the PANEL's heading
- * size, not a label's: there it is the product's name at the top of the
- * screen, which is what a heading is. The panel's own tagline sits under it at
- * --text-lg, so the two read as a pair rather than as two labels.
+ * --- THE LOGIN PANEL'S SQUARE LOCKUP IS STACKED, NOT SIDE BY SIDE ---
  *
- * And it WRAPS. The owner's brand is "NU Desarrollos Conscientes"; inside the
- * panel's 44ch content column the inherited single-line ellipsis rendered it as
- * "NU Desa…", which is the product introducing itself by an abbreviation
- * nobody chose. A heading with a half-screen under it has no reason to
- * truncate.
+ * Measured on the live panel: the content column is 380px, and a square mark
+ * beside its name leaves the name a 176px box. "NU Desarrollos Conscientes"
+ * needs three or more lines in 176px at a heading size, so a two-line clamp
+ * rendered "NU / Desarroll…" — the same abbreviation the previous fix was
+ * meant to remove, arrived at by a different route.
  *
- * Every part of the reset is load-bearing, which is why none of it is folded
- * into a shorthand:
+ * Wrapping cannot fix a box that narrow. What fixes it is giving the name the
+ * WHOLE column: the logo goes on its own line and the name spans all 380px
+ * underneath it, which is where a real brand lockup puts a name that does not
+ * fit beside the mark anyway.
  *
- *   - `white-space: normal` is what permits a second line at all.
- *   - `text-overflow: clip` and `overflow: visible` retire the ellipsis, so a
- *     name that still overruns is CUT rather than decorated with a "…" that
- *     falsely implies the rest was fetched and hidden.
- *   - `overflow-wrap: anywhere` is the guarantee: a brand whose name is one
- *     unbroken token longer than the column (a domain, a compound) would
- *     otherwise overflow the panel horizontally rather than wrap.
- *   - Two lines is the ceiling. Past that the mark stops being a lockup and
- *     starts being a paragraph, and it would push the tagline out of a
- *     collapsed panel — so a longer name is clamped, and the tagline below is
- *     where the prose belongs.
+ * Only `lg.square` changes. A WIDE mark in the panel is a wordmark that
+ * already says the name — it renders alone, with nothing to stack — and `sm`
+ * is a fixed 244px track where a stacked name would grow the top bar.
  */
-.lg .name {
-  font-size: var(--text-3xl);
+/*
+ * The name gets the column, and the column is the panel's 44ch content width
+ * (BrandPanel.module.css bounds the mark to it).
+ *
+ * `--text-2xl` rather than the row's `--text-3xl`: with the full width to work
+ * in, the name no longer needs the heading size to carry presence, and the
+ * smaller step is what lets a 26-character brand land in two lines instead of
+ * three. The mark above it is doing the shouting.
+ */
+.lg.square .name {
+  width: 100%;
+  font-size: var(--text-2xl);
   line-height: var(--leading-tight);
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
+  /* The guarantee for a brand whose name is one unbroken token longer than the
+     column (a domain, a compound): without it the panel overflows sideways. */
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -321,10 +337,13 @@
 }
 
 /*
- * With a wrapping name the mark is no longer a row of single-line things, so
- * centring it vertically would hang an 80px logo halfway down a two-line
- * heading. Aligning to the top puts the logo's cap height beside the name's
- * first line, which is how a lockup reads.
+ * Left-aligned rather than centred.
+ *
+ * In the stacked square lockup this is the CROSS axis, so it is what puts the
+ * logo flush with the left edge of the name below it instead of centring an
+ * 80px mark over a 380px block. For a wide mark the row is still a row and
+ * this is the vertical alignment, which is correct there too: its name is not
+ * rendered at all, so there is nothing to centre against.
  */
 .lg {
   align-items: flex-start;
