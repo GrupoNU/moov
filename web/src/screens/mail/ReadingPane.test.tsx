@@ -761,3 +761,63 @@ describe("C-07: chips beside the subject", () => {
     expect(folder.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+/**
+ * The back arrow, and the fact that it and the ✕ are EXCLUSIVE.
+ *
+ * Canon 07 §6 lists a ← first in the reader's toolbar. Gmail's reader always
+ * replaces the list, so it always has one; ours runs in three modes, and the
+ * two split modes keep the list on screen with a ✕ beside the prev/next
+ * arrows. Rendering both would put two controls named "Volver a la lista"
+ * within a few centimetres of each other, which is not parity.
+ *
+ * So there is exactly one way out at a time, and these cases pin which.
+ */
+describe("the back arrow (canon 07 §6)", () => {
+  function withReadingPane(mode: Prefs["readingPane"]): Prefs {
+    return { ...DEFAULT_PREFS, readingPane: mode };
+  }
+
+  it("leads the toolbar with ← when the reader replaced the list", () => {
+    renderPane({}, withReadingPane("none"));
+    const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+    const buttons = within(bar).getAllByRole("button");
+    expect(buttons[0]).toHaveAccessibleName(/volver a la lista/i);
+  });
+
+  it("puts it BEFORE archive, not merely somewhere in the row", () => {
+    renderPane({}, withReadingPane("none"));
+    const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+    const back = within(bar).getByRole("button", { name: /volver a la lista/i });
+    const archive = within(bar).getByRole("button", { name: /^archivar$/i });
+    expect(
+      back.compareDocumentPosition(archive) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("takes the same path as `u` — the host's close handler", async () => {
+    const user = userEvent.setup();
+    const props = renderPane({}, withReadingPane("none"));
+    const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+    await user.click(within(bar).getByRole("button", { name: /volver a la lista/i }));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("stands the header ✕ down in that mode — one way out, not two", () => {
+    renderPane({}, withReadingPane("none"));
+    expect(screen.getAllByRole("button", { name: /volver a la lista/i })).toHaveLength(1);
+  });
+
+  it.each(["right", "bottom"] as const)(
+    "is absent in the %s split, where the ✕ is the way out",
+    (mode) => {
+      renderPane({}, withReadingPane(mode));
+      const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+      expect(
+        within(bar).queryByRole("button", { name: /volver a la lista/i }),
+      ).not.toBeInTheDocument();
+      // The ✕ is still there, outside the toolbar, and still the only one.
+      expect(screen.getAllByRole("button", { name: /volver a la lista/i })).toHaveLength(1);
+    },
+  );
+});

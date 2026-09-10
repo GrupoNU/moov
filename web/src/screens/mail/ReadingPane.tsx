@@ -270,6 +270,19 @@ export function ReadingPane({
    */
   const { prefs } = usePrefs();
 
+  /**
+   * Whether the reader REPLACES the list ("Sin división") rather than sitting
+   * beside or below it.
+   *
+   * It decides one thing only, and it is the thing canon 07 §6 asks for: the
+   * back arrow. In the split modes the list is on screen and the ✕ next to the
+   * prev/next arrows is the way out; with no split the list is gone, and
+   * Gmail's ← is then the ONLY way back — so it leads the toolbar, and the ✕
+   * stands down rather than offering a second answer to one question. See the
+   * comment at the head of the icon bar.
+   */
+  const noSplit = prefs.readingPane === "none";
+
   /*
    * C-06: the conversation's controls, kept HERE as well as forwarded to the
    * host. The host needs them for `;`/`:`/`p`/`n`; this pane needs
@@ -533,18 +546,29 @@ export function ReadingPane({
                 <path d="M7 4.5l6 5.5-6 5.5" />
               </svg>
             </button>
-            <button
-              type="button"
-              className={styles.close}
-              onClick={onClose}
-              /* The accessible name says where it goes, not what it looks like. */
-              aria-label={t("reader.close")}
-              title={t("reader.close")}
-            >
-              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
-              </svg>
-            </button>
+            {/*
+              The ✕ belongs to the SPLIT modes only.
+
+              With no split the toolbar below leads with Gmail's ← and it
+              carries the same accessible name and the same handler. Rendering
+              both would put two controls named "Volver a la lista" within
+              three centimetres of each other — the exact defect the icon bar's
+              old comment named, only mirrored.
+            */}
+            {!noSplit && (
+              <button
+                type="button"
+                className={styles.close}
+                onClick={onClose}
+                /* The accessible name says where it goes, not what it looks like. */
+                aria-label={t("reader.close")}
+                title={t("reader.close")}
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                  <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -616,19 +640,33 @@ export function ReadingPane({
         */}
         <div className={styles.iconBar} role="toolbar" aria-label={t("action.more")}>
           {/*
-            No back arrow HERE, even though canon 07 §6 lists one first.
+            The back arrow, FIRST, and only when the reader replaced the list
+            (canon 07 §6; owner's decision, 2026-09-10).
 
-            Gmail's reader replaces the list, so its ← is the only way back.
-            This pane also runs BESIDE the list (the "right" split), where the
-            header already carries a close ✕ next to the prev/next arrows —
-            and a second control with the same accessible name, three
-            centimetres away, is not parity: it is two answers to "how do I get
-            out of here", one of which will be the one a user does not press.
+            This used to be absent on the argument that the header ✕ already
+            said "get out of here", and that a second control with the same
+            name three centimetres away is two answers to one question. That
+            argument was right about the SPLIT modes and wrong about the third:
+            with "Sin división" the list is not on screen at all, and Gmail's
+            reader — which is always that mode — leads its toolbar with ←. A
+            user who knows Gmail with their eyes closed reaches for the top
+            left, and finding nothing there is exactly the manual this epic
+            exists to avoid.
 
-            So the canon's ← is the header's ✕, which was already there and
-            already keyboard-reachable. The divider below still opens the row,
-            because the verbs still start after the navigation cluster.
+            So the pair is now exclusive, not additive: no split → ← here and
+            no ✕ above; split → ✕ above and no ← here. Both call `onClose`,
+            which is the same path `u` takes (MailScreen's `case "back"`), so
+            the key and the button can never disagree.
           */}
+          {noSplit && (
+            <>
+              <IconAction label={t("reader.close")} onClick={onClose}>
+                <path d="M16.4 10H4.2M9 4.8L3.8 10l5.2 5.2" />
+              </IconAction>
+              <span className={styles.iconDivider} aria-hidden="true" />
+            </>
+          )}
+
           <IconAction label={t("action.archive")} onClick={onArchive}>
             <rect x="2.6" y="3.6" width="14.8" height="3.6" rx="1" />
             <path d="M4 7.2v8a1.4 1.4 0 0 0 1.4 1.4h9.2a1.4 1.4 0 0 0 1.4-1.4v-8M8 10.4h4" />
