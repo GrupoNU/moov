@@ -147,6 +147,20 @@ type Config struct {
 	// is a complete and supported configuration — it is what the pilot runs.
 	BrandingDir string
 
+	// DisableBrandingAdmin turns off the authenticated brand administration
+	// API (branding_admin.go; MOOV_BRANDING_ADMIN=0): every /branding/admin
+	// route answers the generic 404. The zero value keeps it ON whenever
+	// BrandingDir is set — with no directory there is nothing to administer
+	// and the routes answer 404 regardless.
+	DisableBrandingAdmin bool
+
+	// BrandAdminSources are ADDITIONAL authorizers for the brand admin API,
+	// consulted after the operator-granted list in each host's branding.json
+	// (the composite ORs them; an error from any denies). Mailcow's domain
+	// admins are the planned second source (L2-brand-admin §2). nil is the
+	// file list alone.
+	BrandAdminSources []BrandAdminSource
+
 	// Sieve, when non-nil, advertises urn:ietf:params:jmap:sieve with the
 	// probed live values (E6). It must be set exactly when
 	// RegisterSieveMethods was called — the same advertised == registered
@@ -242,8 +256,9 @@ type Server struct {
 	state            StateSource
 	maxSSEPerAccount int
 
-	// Branding (W-A1).
-	branding *brandingStore
+	// Branding (W-A1) and its authenticated administration (BA-1).
+	branding   *brandingStore
+	brandAdmin *brandAdminAPI
 
 	// Remote-image proxy (ADR §5, the PWA's W-A4 epic). See imgproxy.go.
 	imgproxy *imageProxy
@@ -305,6 +320,8 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		return nil, err
 	}
 
+	brandingStore := newBrandingStore(cfg.BrandingDir, cfg.Logger, nil)
+
 	return &Server{
 		cfg:              cfg,
 		auth:             auth,
@@ -320,7 +337,8 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		notifier:         cfg.Notifier,
 		state:            cfg.State,
 		maxSSEPerAccount: maxSSE,
-		branding:         newBrandingStore(cfg.BrandingDir, cfg.Logger, nil),
+		branding:         brandingStore,
+		brandAdmin:       newBrandAdminAPI(&cfg, brandingStore, cfg.Logger),
 		imgproxy:         imgproxy,
 		tokens:           tokens,
 	}, nil

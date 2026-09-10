@@ -92,6 +92,17 @@ func (s *Server) routes() []route {
 		{method: http.MethodGet, pattern: PathBrandingManifest, handler: s.handleBrandingManifest, public: true},
 		{method: http.MethodGet, pattern: PathBrandingIcon, handler: s.handleBrandingIcon, public: true},
 
+		// Brand administration (BA-1, branding_admin.go). Authenticated by the
+		// table's default, then authorized per host by brandAdminRoute; the
+		// writes additionally pass the per-actor budget and the per-host lock
+		// (brandAdminWrite). A non-admin gets the generic 404.
+		{method: http.MethodGet, pattern: PathBrandingAdmin, handler: s.brandAdminRoute(s.handleBrandAdminProbe)},
+		{method: http.MethodGet, pattern: PathBrandingAdminBrand, handler: s.brandAdminRoute(s.handleBrandAdminGet)},
+		{method: http.MethodPut, pattern: PathBrandingAdminBrand, handler: s.brandAdminWrite(s.handleBrandAdminPut)},
+		{method: http.MethodPut, pattern: PathBrandingAdminAsset, handler: s.brandAdminWrite(s.handleBrandAdminPutAsset)},
+		{method: http.MethodDelete, pattern: PathBrandingAdminAsset, handler: s.brandAdminWrite(s.handleBrandAdminDeleteAsset)},
+		{method: http.MethodPost, pattern: PathBrandingAdminReset, handler: s.brandAdminWrite(s.handleBrandAdminReset)},
+
 		// The remote-image proxy (ADR §5). Signing requires auth; serving a
 		// signed image CANNOT (the requester is an <img> in a sandboxed
 		// iframe, which can attach no header), so the GET route is public in

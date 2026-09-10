@@ -25,6 +25,14 @@ var corsRoutes = []struct{ method, path string }{
 	// two above and fetched by the browser itself on any origin it is told.
 	{http.MethodGet, "/branding/manifest.webmanifest"},
 	{http.MethodGet, "/branding/icons/icon-192.png"},
+	// Brand administration (BA-1, branding_admin.go): authenticated fetches
+	// from the settings screen, so they preflight like /jmap/api.
+	{http.MethodGet, "/branding/admin"},
+	{http.MethodGet, "/branding/admin/brand"},
+	{http.MethodPut, "/branding/admin/brand"},
+	{http.MethodPut, "/branding/admin/assets/logo"},
+	{http.MethodDelete, "/branding/admin/assets/logo"},
+	{http.MethodPost, "/branding/admin/reset"},
 	// The remote-image proxy (W-A4). The sign route is a normal authenticated
 	// POST; the serve route is fetched by an <img> in the message iframe, so
 	// it too gets a preflight like any endpoint the app calls cross-origin.
