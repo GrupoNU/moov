@@ -402,3 +402,89 @@ describe("§4.3: the unread dot is removed", () => {
     expect(rowFor("Subject a").textContent).not.toMatch(/Sin leer/);
   });
 });
+
+/**
+ * Gmail's Sent/Drafts rule: those rows name the RECIPIENTS, never the sender.
+ *
+ * The list is rendered in Spanish by the harness, so the prefix asserted here
+ * is "Para: " — the exact string Gmail uses in that locale.
+ */
+describe("the recipients rule for Sent and Drafts", () => {
+  const sent = (id: string, overrides: Partial<Email> = {}): Email =>
+    email(id, {
+      from: [{ name: "Yo", email: "yo@example.com" }],
+      to: [{ name: "Hernán", email: "hernan@example.com" }],
+      ...overrides,
+    });
+
+  it("shows the recipients with Gmail's prefix when the folder says so", () => {
+    renderList({
+      groups: groupByThread([sent("a", { to: [
+        { name: "Hernán", email: "hernan@example.com" },
+        { name: "Pablo", email: "pablo@example.com" },
+      ] })]),
+      showRecipients: true,
+    });
+    expect(screen.getByText("Para: Hernán, Pablo")).toBeInTheDocument();
+    // The sender must be GONE: a column of the user's own name distinguishes
+    // nothing, which is the whole reason for the rule.
+    expect(screen.queryByText("Yo")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the ADDRESS when a recipient has no name", () => {
+    renderList({
+      groups: groupByThread([sent("a", { to: [{ name: null, email: "pablo@example.com" }] })]),
+      showRecipients: true,
+    });
+    expect(screen.getByText("Para: pablo@example.com")).toBeInTheDocument();
+  });
+
+  it("unions a thread's recipients", () => {
+    renderList({
+      groups: groupByThread([
+        sent("a", { threadId: "t", to: [{ name: "Pablo", email: "pablo@example.com" }] }),
+        sent("b", { threadId: "t", to: [{ name: "Hernán", email: "hernan@example.com" }] }),
+      ]),
+      showRecipients: true,
+    });
+    expect(screen.getByText("Para: Pablo, Hernán")).toBeInTheDocument();
+  });
+
+  it("says so honestly for a draft addressed to nobody", () => {
+    renderList({
+      groups: groupByThread([sent("a", { to: [] })]),
+      showRecipients: true,
+    });
+    // NOT the sender: falling back would make an addressed and an unaddressed
+    // draft look identical in the one column meant to tell them apart.
+    expect(screen.getByText("(sin destinatarios)")).toBeInTheDocument();
+  });
+
+  it("leaves the inbox alone — rows there still name the SENDER", () => {
+    renderList({ groups: groupByThread([sent("a")]) });
+    expect(screen.getByText("Yo")).toBeInTheDocument();
+    expect(screen.queryByText(/^Para: /)).not.toBeInTheDocument();
+  });
+
+  it("applies the rule per message in a mixed list, by the account's own address", () => {
+    /*
+     * Gmail shows "Para: …" for a message the user sent even in a search
+     * result that mixes folders — the reason the rule exists does not stop
+     * applying when the row moves.
+     */
+    renderList({
+      groups: groupByThread([
+        sent("a"),
+        email("b", { from: [{ name: "Ana", email: "ana@example.com" }] }),
+      ]),
+      ownAddresses: ["YO@example.com"],
+    });
+    expect(screen.getByText("Para: Hernán")).toBeInTheDocument();
+    expect(screen.getByText("Ana")).toBeInTheDocument();
+  });
+
+  it("does not claim a message is the user's own without a matching address", () => {
+    renderList({ groups: groupByThread([sent("a")]), ownAddresses: ["otro@example.com"] });
+    expect(screen.getByText("Yo")).toBeInTheDocument();
+  });
+});

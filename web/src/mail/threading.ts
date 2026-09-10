@@ -176,6 +176,87 @@ export function senderLabel(email: Email): string | undefined {
 }
 
 /**
+ * The names to show for a message's RECIPIENTS.
+ *
+ * Names when the sender gave them, addresses otherwise — the same rule
+ * {@link senderLabel} applies for the same reason: a bare local part is
+ * ambiguous across domains, and a list where two different people both read as
+ * "info" is a list that misleads.
+ *
+ * To and Cc, in that order, deduplicated by address. Bcc is deliberately NOT
+ * included: it is not in `LIST_PROPERTIES` (a row does not fetch it), and
+ * printing a blind copy in a list that a colleague can read over the shoulder
+ * would defeat the header's entire purpose.
+ */
+export function recipientLabels(email: Email): readonly string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const address of [...(email.to ?? []), ...(email.cc ?? [])]) {
+    const key = address.email.trim().toLowerCase();
+    if (key === "" || seen.has(key)) continue;
+    seen.add(key);
+    const name = address.name?.trim();
+    names.push(name !== undefined && name !== "" ? name : address.email);
+  }
+  return names;
+}
+
+/**
+ * The recipients a Sent or Drafts ROW shows, as one line — Gmail's rule.
+ *
+ * Gmail's Sent and Drafts lists do not show who SENT the message: the user
+ * sent it, and a column of one's own name repeated down the screen carries no
+ * information. It shows who it went TO, prefixed — "Para: Hernán, Pablo" in
+ * Spanish, "To: …" in English — which is the one thing that distinguishes one
+ * sent message from another at a glance.
+ *
+ * For a conversation it is the UNION of the recipients across its messages, in
+ * first-seen order (the group's messages are newest-first, so the most recent
+ * correspondents lead). A thread that grew from one recipient to three reads as
+ * all three, which is what the user is looking for when scanning Sent.
+ *
+ * @param prefix the localized "Para: " / "To: ", already carrying its separator
+ * @returns undefined when the group has no recipients at all — an empty draft
+ *   addressed to nobody — so the caller can fall back rather than render a
+ *   bare prefix pointing at nothing.
+ */
+export function recipientRowLabel(
+  group: Pick<ThreadGroup, "messages" | "latest">,
+  prefix: string,
+): string | undefined {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  const messages = group.messages.length > 0 ? group.messages : [group.latest];
+  for (const message of messages) {
+    for (const name of recipientLabels(message)) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(name);
+    }
+  }
+  return names.length === 0 ? undefined : `${prefix}${names.join(", ")}`;
+}
+
+/**
+ * True when a message was sent BY the account holder.
+ *
+ * Gmail applies the "Para: …" rule per message, not per folder: a message the
+ * user sent shows its recipients even in a search result that mixes folders,
+ * because the reason the rule exists — "your own name tells you nothing" —
+ * does not stop applying when the row moves. This is the per-message half of
+ * that rule; the folder-role half is in the list.
+ *
+ * Compared case-insensitively: a mailbox local part is case-preserving but not
+ * case-sensitive, so `Diego@x` and `diego@x` are the same sender.
+ */
+export function isFromSelf(email: Email, ownAddresses: readonly string[]): boolean {
+  const from = email.from?.[0]?.email.trim().toLowerCase();
+  if (from === undefined || from === "") return false;
+  return ownAddresses.some((address) => address.trim().toLowerCase() === from);
+}
+
+/**
  * The subject to show for a group, with reply/forward prefixes stripped.
  *
  * A conversation is one subject; repeating "Re: Re: Fwd:" on the row wastes

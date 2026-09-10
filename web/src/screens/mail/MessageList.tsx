@@ -6,7 +6,14 @@ import { usePrefs } from "../../mail/PrefsProvider";
 import { labelsFor, type Label } from "../../mail/labelStore";
 import { previewText } from "../../mail/previewText";
 import { rowHeightFor } from "../../mail/prefs";
-import { displaySubject, senderLabel, type ThreadGroup } from "../../mail/threading";
+import {
+  displaySubject,
+  isFromSelf,
+  recipientLabels,
+  recipientRowLabel,
+  senderLabel,
+  type ThreadGroup,
+} from "../../mail/threading";
 import { computeWindow, scrollOffsetToReveal, totalHeight } from "../../mail/windowing";
 import type { SearchSnippet } from "../../mail/snippet";
 import { LabelChips } from "./LabelChips";
@@ -157,10 +164,38 @@ export interface MessageListProps {
    * the ordinary list path costs nothing for this.
    */
   readonly snippets?: ReadonlyMap<string, SearchSnippet>;
+
+  /**
+   * True when this list is Sent or Drafts, so rows name the RECIPIENTS.
+   *
+   * Gmail's rule, and the reason for it: in a folder of the user's own
+   * outgoing mail, the sender column is the user's own name repeated down the
+   * screen, which distinguishes nothing. What tells one sent message from
+   * another is who it went to.
+   *
+   * A boolean rather than the mailbox role itself: the list does not otherwise
+   * know or care what folder it is showing, and handing it a role would invite
+   * the next feature to branch on `"junk"` here instead of in the screen that
+   * owns the routing.
+   */
+  readonly showRecipients?: boolean;
+
+  /**
+   * The account's own addresses, for the per-message half of the same rule.
+   *
+   * Gmail shows "Para: …" for a message the USER sent even in a search result
+   * that mixes folders — the reason the rule exists does not stop applying
+   * when the row moves. Empty (the default) simply means no message is ever
+   * recognised as the user's own, which degrades to today's behaviour.
+   */
+  readonly ownAddresses?: readonly string[];
 }
 
 /** A stable empty map, for the same reason `EMPTY_LABELS` exists. */
 const EMPTY_SNIPPETS: ReadonlyMap<string, SearchSnippet> = new Map();
+
+/** A stable empty list, for the same reason `EMPTY_LABELS` exists. */
+const EMPTY_ADDRESSES: readonly string[] = [];
 
 /** E4: stable empties for the mute set and the snooze times. */
 const EMPTY_MUTED: ReadonlySet<string> = new Set();
@@ -188,6 +223,8 @@ export function MessageList({
   labels,
   onSelectLabel,
   snippets,
+  showRecipients = false,
+  ownAddresses,
 }: MessageListProps): React.JSX.Element {
   const { t, locale } = useTranslation();
   const { prefs } = usePrefs();
@@ -358,6 +395,8 @@ export function MessageList({
                   showSnippet={prefs.showSnippets}
                   labels={labels ?? EMPTY_LABELS}
                   onSelectLabel={onSelectLabel}
+                  showRecipients={showRecipients}
+                  ownAddresses={ownAddresses ?? EMPTY_ADDRESSES}
                   snippet={(snippets ?? EMPTY_SNIPPETS).get(group.latest.id)}
                 />
               );
@@ -409,6 +448,10 @@ interface MessageRowProps {
   readonly onSelectLabel: ((label: Label) => void) | undefined;
   /** E3: this row's search snippet, when the search produced one. */
   readonly snippet: SearchSnippet | undefined;
+  /** True when this list is Sent or Drafts (Gmail's "Para: …" rule). */
+  readonly showRecipients: boolean;
+  /** The account's own addresses, for the per-message half of that rule. */
+  readonly ownAddresses: readonly string[];
 }
 
 function MessageRow({
@@ -435,16 +478,36 @@ function MessageRow({
   labels,
   onSelectLabel,
   snippet,
+  showRecipients,
+  ownAddresses,
 }: MessageRowProps): React.JSX.Element {
   const { t, format } = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
   const { latest } = group;
 
-  // A thread shows its participants; a single message shows its sender.
-  const sender =
-    group.size > 1 && group.participants.length > 1
+  /*
+   * The name column.
+   *
+   * Ordinarily: a thread shows its participants, a single message its sender.
+   *
+   * In Sent and Drafts — and, in a mixed search result, for any message the
+   * user THEMSELVES sent — it shows the RECIPIENTS instead, prefixed
+   * "Para: " / "To: " exactly as Gmail writes it. The user's own name repeated
+   * down a folder of their own outgoing mail distinguishes nothing; who it
+   * went to is the whole answer to "which sent message is this".
+   *
+   * The fallback chain is deliberate rather than accidental: a message with no
+   * recipients at all (an empty draft) says so with `list.noRecipients` rather
+   * than falling back to the sender, because falling back would make an
+   * addressed and an unaddressed draft look identical in the one column that
+   * was supposed to tell them apart.
+   */
+  const showsRecipients = showRecipients || isFromSelf(latest, ownAddresses);
+  const sender = showsRecipients
+    ? (recipientRowLabel(group, t("list.toPrefix")) ?? t("list.noRecipients"))
+    : group.size > 1 && group.participants.length > 1
       ? group.participants.join(", ")
-      : senderLabel(latest) ?? t("list.unknownSender");
+      : (senderLabel(latest) ?? t("list.unknownSender"));
   const subject = displaySubject(latest.subject) ?? t("list.noSubject");
   // E5: the snippet is dropped from the DOM when the preference is off, not
   // hidden — a screen reader must not read a preview the sighted user turned
@@ -612,7 +675,13 @@ function MessageRow({
       ) : null}
 
       <span className={styles.avatar} aria-hidden="true">
-        {initialsFor(senderLabel(latest))}
+        {/*
+          The initials follow the NAME COLUMN. On a Sent row the column reads
+          "Para: Hernán", so an avatar stamped with the user's own initial
+          would be a second, contradicting answer to the same question — the
+          first recipient is who the row is about.
+        */}
+        {initialsFor(showsRecipients ? recipientLabels(latest)[0] : senderLabel(latest))}
       </span>
 
       <span role="gridcell" className={styles.sender}>

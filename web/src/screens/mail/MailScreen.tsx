@@ -4929,6 +4929,20 @@ export function MailScreen(): React.JSX.Element {
             </div>
           ) : (
           <MessageList
+            /*
+             * Gmail's Sent/Drafts rule: those two folders name the RECIPIENTS,
+             * not the sender. Read off the mailbox ROLE rather than its name,
+             * so a localized or renamed folder still gets it — the role is what
+             * RFC 8621 §4.1.4 makes stable.
+             *
+             * `ownAddresses` carries the per-message half of the same rule for
+             * search results, which mix folders and therefore have no single
+             * role to branch on.
+             */
+            showRecipients={
+              activeMailbox?.role === "sent" || activeMailbox?.role === "drafts"
+            }
+            ownAddresses={ownAddresses}
             labels={labelsApi.labels}
             onSelectLabel={goToLabel}
             /* E3: the result highlighting, empty outside a search. */

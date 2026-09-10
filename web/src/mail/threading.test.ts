@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { displaySubject, groupByThread, senderLabel } from "./threading";
+import {
+  displaySubject,
+  groupByThread,
+  isFromSelf,
+  recipientLabels,
+  recipientRowLabel,
+  senderLabel,
+} from "./threading";
 import type { Email } from "./types";
 
 function email(
@@ -236,5 +243,109 @@ describe("displaySubject", () => {
   it("returns undefined for an absent subject", () => {
     expect(displaySubject(null)).toBeUndefined();
     expect(displaySubject(undefined)).toBeUndefined();
+  });
+});
+
+/** A message with recipients, for the Sent/Drafts rules. */
+function addressed(
+  id: string,
+  to: readonly { name: string | null; email: string }[],
+  options: {
+    cc?: readonly { name: string | null; email: string }[];
+    threadId?: string;
+    from?: { name: string | null; email: string };
+  } = {},
+): Email {
+  return {
+    ...email(id, {
+      ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
+      ...(options.from !== undefined ? { from: options.from } : {}),
+    }),
+    to: [...to],
+    ...(options.cc !== undefined ? { cc: [...options.cc] } : {}),
+  };
+}
+
+describe("recipientLabels", () => {
+  it("prefers the name and falls back to the address", () => {
+    const message = addressed("m", [
+      { name: "Hernán", email: "hernan@example.com" },
+      { name: null, email: "pablo@example.com" },
+    ]);
+    expect(recipientLabels(message)).toEqual(["Hernán", "pablo@example.com"]);
+  });
+
+  it("reads To then Cc, deduplicated by ADDRESS", () => {
+    const message = addressed("m", [{ name: "Hernán", email: "hernan@example.com" }], {
+      cc: [
+        { name: "Hernán H", email: "HERNAN@example.com" },
+        { name: "Ana", email: "ana@example.com" },
+      ],
+    });
+    // The Cc repeat of the same mailbox collapses, keeping the To spelling.
+    expect(recipientLabels(message)).toEqual(["Hernán", "Ana"]);
+  });
+
+  it("never reads Bcc — a blind copy must not be printed in a list", () => {
+    const message: Email = {
+      ...addressed("m", [{ name: "Hernán", email: "hernan@example.com" }]),
+      bcc: [{ name: "Secreto", email: "secreto@example.com" }],
+    };
+    expect(recipientLabels(message)).toEqual(["Hernán"]);
+  });
+
+  it("is empty for a message addressed to nobody", () => {
+    expect(recipientLabels(email("m"))).toEqual([]);
+  });
+});
+
+describe("recipientRowLabel", () => {
+  it("prefixes the recipients, Gmail's shape", () => {
+    const [group] = groupByThread([
+      addressed("m", [
+        { name: "Hernán", email: "hernan@example.com" },
+        { name: "Pablo", email: "pablo@example.com" },
+      ]),
+    ]);
+    expect(recipientRowLabel(group!, "Para: ")).toBe("Para: Hernán, Pablo");
+  });
+
+  it("unions a thread's recipients in first-seen (newest-first) order", () => {
+    const groups = groupByThread([
+      addressed("m2", [{ name: "Pablo", email: "pablo@example.com" }], { threadId: "t" }),
+      addressed("m1", [{ name: "Hernán", email: "hernan@example.com" }], { threadId: "t" }),
+    ]);
+    expect(recipientRowLabel(groups[0]!, "To: ")).toBe("To: Pablo, Hernán");
+  });
+
+  it("collapses a recipient repeated across the thread", () => {
+    const groups = groupByThread([
+      addressed("m2", [{ name: "Hernán", email: "hernan@example.com" }], { threadId: "t" }),
+      addressed("m1", [{ name: "Hernán", email: "hernan@example.com" }], { threadId: "t" }),
+    ]);
+    expect(recipientRowLabel(groups[0]!, "To: ")).toBe("To: Hernán");
+  });
+
+  it("is undefined with no recipients, so the caller can fall back", () => {
+    const [group] = groupByThread([email("m")]);
+    // A bare "Para: " pointing at nothing is worse than the sender.
+    expect(recipientRowLabel(group!, "Para: ")).toBeUndefined();
+  });
+});
+
+describe("isFromSelf", () => {
+  it("matches the account's own address, case-insensitively", () => {
+    const mine = email("m", { from: { name: "Yo", email: "Diego@Example.com" } });
+    expect(isFromSelf(mine, ["diego@example.com"])).toBe(true);
+  });
+
+  it("is false for anybody else, and for a message with no From", () => {
+    expect(isFromSelf(email("m"), ["diego@example.com"])).toBe(false);
+    expect(isFromSelf({ id: "m", keywords: {} }, ["diego@example.com"])).toBe(false);
+  });
+
+  it("is false when the account has no known address", () => {
+    const mine = email("m", { from: { name: "Yo", email: "diego@example.com" } });
+    expect(isFromSelf(mine, [])).toBe(false);
   });
 });

@@ -880,6 +880,13 @@ export const en = {
     `${count} messages from this conversation in these results`,
   "list.noSubject": "(no subject)",
   "list.unknownSender": "(unknown sender)",
+  /*
+   * Gmail's Sent/Drafts prefix. It carries its own separator so the caller
+   * concatenates rather than assembling punctuation the two locales might
+   * want differently.
+   */
+  "list.toPrefix": "To: ",
+  "list.noRecipients": "(no recipients)",
   // The honest ceiling message. The server answers at most 200 rows and has no
   // working offset, so a longer folder genuinely cannot be paged through yet.
   //
@@ -1193,6 +1200,9 @@ export const en = {
   "compose.expand": "Expand",
   "compose.maximize": "Full screen",
   "compose.restore": "Exit full screen",
+  // The inline reply at the foot of a conversation (canon 07 §7).
+  "compose.inlineTo": (recipients: string): string => `Reply to ${recipients}`,
+  "compose.popOut": "Open in a separate window",
   "compose.attach": "Attach a file",
   "compose.attachments": (count: number): string =>
     count === 1 ? "1 attachment" : `${count} attachments`,
@@ -2375,6 +2385,8 @@ export const es: Strings = {
     `${count} mensajes de esta conversación en estos resultados`,
   "list.noSubject": "(sin asunto)",
   "list.unknownSender": "(remitente desconocido)",
+  "list.toPrefix": "Para: ",
+  "list.noRecipients": "(sin destinatarios)",
   "list.truncated": (shown: number): string =>
     `Se muestran las ${shown} conversaciones más recientes. Este servidor todavía no puede paginar más allá: usá la búsqueda para encontrar correo más viejo.`,
   "list.truncatedSearch": (shown: number): string =>
@@ -2626,6 +2638,8 @@ export const es: Strings = {
   "compose.expand": "Expandir",
   "compose.maximize": "Pantalla completa",
   "compose.restore": "Salir de pantalla completa",
+  "compose.inlineTo": (recipients: string): string => `Responder a ${recipients}`,
+  "compose.popOut": "Abrir en una ventana aparte",
   "compose.attach": "Adjuntar un archivo",
   "compose.attachments": (count: number): string =>
     count === 1 ? "1 adjunto" : `${count} adjuntos`,
