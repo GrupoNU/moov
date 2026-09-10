@@ -133,14 +133,42 @@
   );
 }
 
+/*
+ * The mark and the tagline, stacked.
+ *
+ * A flex COLUMN with a real gap, so the tagline can never collide with the
+ * mark however many lines the brand name wraps to: they are siblings in normal
+ * flow, and the gap is the separation. (An absolutely positioned mark, or a
+ * mark the tagline had to flow around, is where that guarantee gets lost.)
+ */
 .content {
   position: relative;
   z-index: 1;
   padding: var(--space-7);
   display: flex;
   flex-direction: column;
+  /* Deliberately explicit rather than a shorthand: this gap IS the "the
+     tagline does not touch the name" rule, and a test names it. */
   gap: var(--space-4);
   max-width: 44ch;
+  /* The 44ch cap is on the COLUMN; without this the mark inside it — an
+     inline-flex whose name now wraps — would size to its content and hand the
+     name an unbounded line box, so it would never wrap at all and would run
+     off the panel instead. */
+  min-width: 0;
+}
+
+/*
+ * The mark is given the column's width to wrap INSIDE.
+ *
+ * `BrandMark` is an inline-flex, so on its own it is as wide as its contents
+ * want to be; a wrapping name needs a bound or it simply does not wrap. The
+ * bound is the content column, which is already the 44ch the panel's
+ * typography is designed around.
+ */
+.content > :first-child {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tagline {

@@ -79,6 +79,22 @@ function maxWidthOf(sheet: string, size: string, shape: string): number {
   return Number(block?.[1] ?? 0);
 }
 
+/**
+ * The body of a rule whose selector list is EXACTLY `selector`.
+ *
+ * A bare `.name {` search would also hit `.lg .name {` and `.onDark .name {`,
+ * and the point of these assertions is precisely to tell those apart — the bug
+ * being pinned is one rule inheriting the other's treatment. So the match
+ * requires the selector to START a rule (following a closing brace or a
+ * comment) rather than merely start a line.
+ */
+function ruleBody(sheet: string, selector: string): string {
+  const escaped = selector.replace(/[.[\]"=]/g, (c) => "\\" + c);
+  const match = new RegExp(String.raw`(?:\}|\*/)\s*${escaped}\s*\{([^}]*)\}`).exec(sheet);
+  expect(match, `the ${selector} rule`).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
 describe("a customer logo", () => {
   it("lets a WIDE mark replace the text name rather than accompany it", () => {
     const { container } = render(<BrandMark branding={branding({ logoUrl: LOGO })} />);
@@ -119,10 +135,52 @@ describe("a customer logo", () => {
     expect(screen.queryByText("ACME Mail")).not.toBeInTheDocument();
   });
 
-  it("truncates a long name beside a square mark rather than pushing the layout", () => {
-    // The 244px track's guarantee only holds while the name can give way.
+  it("truncates a long name in the TOP BAR, where the track cannot grow", () => {
+    // The 244px track's guarantee only holds while the name can give way, so
+    // the default treatment is one line, ellipsised.
     expect(css()).toMatch(/\.name \{[^}]*text-overflow: ellipsis/);
+    expect(css()).toMatch(/\.name \{[^}]*white-space: nowrap/);
     expect(css()).toMatch(/\.name \{[^}]*min-width: 0/);
+  });
+
+  it("WRAPS the name on the login panel instead of abbreviating the brand", () => {
+    /*
+     * The regression the owner caught on the live panel: "NU Desarrollos
+     * Conscientes" rendered as "NU Desa…" — the inherited single-line ellipsis
+     * applied inside the panel's 44ch content column, so the product
+     * introduced itself by an abbreviation nobody chose. A heading with half a
+     * screen under it has no reason to truncate.
+     */
+    const lgName = ruleBody(css(), ".lg .name");
+
+    expect(lgName).toContain("white-space: normal");
+    expect(lgName).toContain("text-overflow: clip");
+    expect(lgName).not.toContain("text-overflow: ellipsis");
+    // The guarantee for a name that is one unbroken token longer than the
+    // column: without it the panel overflows horizontally rather than wrapping.
+    expect(lgName).toContain("overflow-wrap: anywhere");
+    // Two lines, not unbounded: past that the lockup becomes a paragraph.
+    expect(lgName).toContain("line-clamp: 2");
+    // It is still the panel's heading size, not a label's.
+    expect(lgName).toContain("font-size: var(--text-3xl)");
+  });
+
+  it("keeps the ellipsis OUT of the login panel and IN the top bar", () => {
+    /*
+     * The two rules must not converge. Stated as a single assertion because
+     * the failure mode is a later edit "simplifying" one of them into the
+     * other — and either direction is a bug: an ellipsised heading, or a top
+     * bar whose brand name wraps and grows the bar.
+     */
+    expect(ruleBody(css(), ".name")).toContain("text-overflow: ellipsis");
+    expect(ruleBody(css(), ".lg .name")).not.toContain("ellipsis");
+  });
+
+  it("tops-aligns the lg lockup so an 80px mark does not hang off a wrapped name", () => {
+    // Centring is right for a row of single-line things and wrong the moment
+    // the name takes two lines.
+    expect(ruleBody(css(), ".mark")).toContain("align-items: center");
+    expect(ruleBody(css(), ".lg")).toContain("align-items: flex-start");
   });
 
   it("still names the brand for a screen reader beside a wordmark, iconOnly or not", () => {

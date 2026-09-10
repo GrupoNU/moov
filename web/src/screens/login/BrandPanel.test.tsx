@@ -137,6 +137,52 @@ describe("a customer's splash image", () => {
   });
 });
 
+describe("the name and the tagline share the panel without colliding", () => {
+  it("stacks them as flex siblings with a real gap", () => {
+    /*
+     * The guarantee is structural rather than a measurement: the mark and the
+     * tagline are siblings in a flex COLUMN with a gap, so the tagline sits
+     * below the mark however many lines the brand name wraps to. Overlap would
+     * need one of them out of normal flow, which is what this pins against.
+     */
+    const content = ruleBody(css(), ".content");
+    expect(content).toContain("flex-direction: column");
+    expect(content).toContain("gap: var(--space-4)");
+  });
+
+  it("gives the mark the content column to wrap INSIDE", () => {
+    /*
+     * BrandMark is an inline-flex, so on its own it is as wide as its contents
+     * want to be — and a name with nothing to wrap against does not wrap, it
+     * runs off the panel. The 44ch column is the bound, and `min-width: 0` is
+     * what stops the flex item from refusing to shrink to it.
+     */
+    const sheet = css();
+    expect(ruleBody(sheet, ".content")).toContain("max-width: 44ch");
+    expect(ruleBody(sheet, ".content")).toContain("min-width: 0");
+    expect(ruleBody(sheet, ".content > :first-child")).toContain("max-width: 100%");
+  });
+
+  it("renders both, in that order, with the tagline as its own paragraph", () => {
+    const { container } = render(<BrandPanel branding={branding()} />);
+    const content = container.querySelector('[class*="content"]');
+    const children = [...(content?.children ?? [])];
+    // The mark first, the tagline second — and the tagline is a <p>, not text
+    // inside the mark, which is what keeps the gap between them real.
+    expect(children).toHaveLength(2);
+    expect(children[1]?.tagName).toBe("P");
+    expect(children[1]).toHaveTextContent("Correo de Acme");
+  });
+
+  it("drops the tagline where there is no room for it, rather than squeezing it", () => {
+    // On the collapsed band and on a short viewport the form must keep the
+    // rest of the screen, so the tagline goes rather than the mark shrinking.
+    const sheet = css();
+    const collapsed = sheet.slice(sheet.indexOf("@media (max-width: 900px)"));
+    expect(ruleBody(collapsed, ".tagline")).toContain("display: none");
+  });
+});
+
 describe("what the panel renders", () => {
   it("marks itself as having an image, and renders the photograph", () => {
     const { container } = render(<BrandPanel branding={branding({ splashUrl: SPLASH })} />);

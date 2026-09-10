@@ -67,12 +67,24 @@
   stroke: color-mix(in srgb, currentColor 42%, transparent);
 }
 
+/*
+ * THE NAME TRUNCATES IN A TRACK AND WRAPS ON A PANEL.
+ *
+ * The default is the tight case: one line, ellipsised. That is what the top bar
+ * needs, because its brand track is a FIXED 244px grid column and the name is
+ * the only thing in it allowed to give way — a name that wrapped there would
+ * grow the bar's height, and one that refused to shrink would push the centred
+ * search pill.
+ *
+ * `lg` (the login brand panel) is the opposite situation and overrides it
+ * below: there the name is a HEADING with half a screen under it, and
+ * ellipsising it produced "NU Desa…" on the owner's own panel — the product
+ * introducing itself by an abbreviation nobody chose.
+ */
 .name {
   font-weight: var(--weight-semibold);
   letter-spacing: -0.015em;
   color: var(--text-strong);
-  /* A long customer product name truncates rather than wrapping into the
-   * layout or overflowing it. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -270,8 +282,50 @@
  * size, not a label's: there it is the product's name at the top of the
  * screen, which is what a heading is. The panel's own tagline sits under it at
  * --text-lg, so the two read as a pair rather than as two labels.
+ *
+ * And it WRAPS. The owner's brand is "NU Desarrollos Conscientes"; inside the
+ * panel's 44ch content column the inherited single-line ellipsis rendered it as
+ * "NU Desa…", which is the product introducing itself by an abbreviation
+ * nobody chose. A heading with a half-screen under it has no reason to
+ * truncate.
+ *
+ * Every part of the reset is load-bearing, which is why none of it is folded
+ * into a shorthand:
+ *
+ *   - `white-space: normal` is what permits a second line at all.
+ *   - `text-overflow: clip` and `overflow: visible` retire the ellipsis, so a
+ *     name that still overruns is CUT rather than decorated with a "…" that
+ *     falsely implies the rest was fetched and hidden.
+ *   - `overflow-wrap: anywhere` is the guarantee: a brand whose name is one
+ *     unbroken token longer than the column (a domain, a compound) would
+ *     otherwise overflow the panel horizontally rather than wrap.
+ *   - Two lines is the ceiling. Past that the mark stops being a lockup and
+ *     starts being a paragraph, and it would push the tagline out of a
+ *     collapsed panel — so a longer name is clamped, and the tagline below is
+ *     where the prose belongs.
  */
 .lg .name {
   font-size: var(--text-3xl);
   line-height: var(--leading-tight);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  /* The clamp needs its own overflow to cut at the second line. `hidden` clips
+     silently, because `text-overflow: clip` above is what decides how. */
+  overflow-y: hidden;
+}
+
+/*
+ * With a wrapping name the mark is no longer a row of single-line things, so
+ * centring it vertically would hang an 80px logo halfway down a two-line
+ * heading. Aligning to the top puts the logo's cap height beside the name's
+ * first line, which is how a lockup reads.
+ */
+.lg {
+  align-items: flex-start;
 }
