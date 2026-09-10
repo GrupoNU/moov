@@ -160,6 +160,47 @@
 }
 
 /*
+ * --- DARK INK, over a LIGHT photograph ---
+ *
+ * The other half of "no overlay". Light text with a dark halo reads on a dark
+ * picture and is illegible on a bright one, and with the scrim gone there is
+ * nothing left to darken the picture — so the TEXT changes instead. Which one
+ * is chosen is measured from the pixels behind the content block; the rule and
+ * its threshold live in splashInk.ts.
+ *
+ * The halo inverts with the ink. A dark glyph on a bright photograph still
+ * needs separating from whatever is directly under it, and a light halo does
+ * for it exactly what the dark one does in the other direction.
+ *
+ * `--brandmark-plate` is re-pointed too: the BrandMark's `onDark` colouring
+ * follows `--brand-on-primary`, which is a light value here, so the mark and
+ * the name are both overridden explicitly rather than left to inherit a
+ * treatment chosen for the opposite background.
+ */
+.panel[data-has-image="true"][data-ink="dark"] {
+  color: #12141d;
+}
+
+/*
+ * ONE rule, not two with the same selector: a duplicate selector is a reader
+ * (and a test reading the stylesheet) having to know which copy holds what.
+ *
+ * The token re-point is the load-bearing line. The mark and the tagline set
+ * their own colours from `--brand-on-primary` (BrandMark.module.css `.onDark`,
+ * and `.tagline` below), so inheriting `color` is not enough — the token itself
+ * has to change for this subtree. Doing it here keeps the override in one place
+ * instead of restating it per element, and a new element added to the panel
+ * gets the right ink for free.
+ */
+.panel[data-has-image="true"][data-ink="dark"] .content {
+  color: #12141d;
+  --brand-on-primary: #12141d;
+  text-shadow:
+    0 1px 2px rgba(255, 255, 255, 0.7),
+    0 0 12px rgba(255, 255, 255, 0.5);
+}
+
+/*
  * The mark and the tagline, stacked.
  *
  * A flex COLUMN with a real gap, so the tagline can never collide with the
