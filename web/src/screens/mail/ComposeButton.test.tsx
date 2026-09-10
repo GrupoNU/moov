@@ -123,16 +123,47 @@ describe("A-10: the pill is at Gmail's scale", () => {
      * things shout in one colour, and the eye could not tell which said
      * "where you are". Gmail resolves it the same way: light pill, filled row.
      */
-    expect(compose).toMatch(/background:\s*color-mix\([^)]*var\(--color-accent\)[^)]*\)/);
-    expect(compose).toMatch(/color:\s*var\(--text-strong\)/);
+    expect(compose).toMatch(/background:\s*var\(--color-accent-container\)/);
+    expect(compose).toMatch(/color:\s*var\(--color-on-accent-container\)/);
     expect(compose).not.toMatch(/background:\s*var\(--color-accent\)\s*;/);
   });
 
-  it("mixes the fill against a SURFACE, so it is opaque", () => {
-    // `--color-accent-tint` is 10% alpha over *transparent*. Using it here
-    // would let the folder list scroll visibly under a control that must read
-    // as solid, and its contrast would depend on whatever was behind it.
-    expect(compose).toMatch(/color-mix\(in srgb,\s*var\(--color-accent\)\s*18%,\s*var\(--surface-default\)\)/);
+  it("takes the OPAQUE tonal container, not a mix of the ink accent", () => {
+    /*
+     * Two properties in one token, and both were bugs before it existed.
+     *
+     * Opaque: `--color-accent-tint` is 10% alpha over *transparent*, so the
+     * folder list would scroll visibly under a control that must read as solid
+     * and the button's contrast would depend on what was behind it.
+     *
+     * And derived from the brand's ORIGINAL hue: `--color-accent` is the
+     * accent as INK, lightness-adjusted until it clears 4.5:1 as text. Mixing
+     * it — which is what this rule used to do — painted a pastel brand's
+     * button in the deep tone its links had to become. The container comes
+     * from the primary itself (palette.ts), so the customer's colour survives.
+     */
+    expect(compose).not.toMatch(/color-mix/);
+    expect(compose).not.toMatch(/var\(--color-accent-tint/);
+  });
+
+  it("deepens on hover in light and BRIGHTENS in dark, in both dark blocks", () => {
+    /*
+     * A single "mix 8% toward black" hover would be right in the light theme
+     * and wrong in the dark one, where the container is already a deep tone
+     * and black moves it toward the surface it must stand out from — the
+     * hover would read as the button switching OFF.
+     *
+     * And the dark rule has to appear TWICE: `prefers-color-scheme` covers the
+     * system default, `[data-theme="dark"]` covers the explicit choice, and a
+     * rule written only inside the media query makes a theme toggle work in
+     * one direction and not the other (tokens.css documents the same trap).
+     */
+    expect(css).toMatch(/\.compose:hover \{[^}]*color-mix\(in srgb,\s*#000 8%,\s*var\(--color-accent-container\)\)/);
+    const darkHover =
+      css.match(/color-mix\(in srgb,\s*#fff 8%,\s*var\(--color-accent-container\)\)/g) ?? [];
+    expect(darkHover).toHaveLength(2);
+    expect(css).toMatch(/@media \(prefers-color-scheme: dark\)/);
+    expect(css).toMatch(/:root\[data-theme="dark"\] \.compose:hover/);
   });
 
   it("releases the min-width when collapsed, or the FAB blows the rail open", () => {

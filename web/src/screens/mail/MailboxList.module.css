@@ -111,26 +111,47 @@ button.row {
  * louder than a hovered one. Gmail's is unmistakable: a filled light-accent
  * pill with bold text, the single strongest mark in the rail.
  *
- * `color-mix` against `--surface-default` rather than the tint token, for the
- * same reason `ComposeButton` does it: an opaque fill has the contrast it
- * appears to have, instead of one that depends on what scrolls behind it.
- * 16% sits deliberately just UNDER the compose pill's 18%: the two are
- * neighbours in the same column, and the row that says "where you are" must
- * not out-shout the button that is the rail's primary action.
+ * The fill is `--color-active-pill`, one of the three tonal containers
+ * palette.ts derives from the brand's ORIGINAL hue (the compose button takes
+ * the strongest of them, the message row the faintest). It is opaque, so it
+ * has the contrast it appears to have instead of one that depends on what
+ * scrolls behind it — the reason the old `--color-accent-tint` had to go — and
+ * it sits deliberately UNDER the compose button's tone: the two are neighbours
+ * in the same column, and the row that says "where you are" must not out-shout
+ * the button that is the rail's primary action. `--text-strong` on it is
+ * pinned at AA by palette.test.ts for every brand hue.
+ *
+ * Deriving it from the primary rather than mixing `--color-accent` is what
+ * keeps a pastel brand's pill the customer's colour: the accent is
+ * lightness-adjusted for TEXT legibility, so mixing it painted the rail in a
+ * deep tone the customer never chose.
  *
  * `--radius-full` makes it a pill rather than the rounded rectangle `.row`
  * gives every other row, which is what Gmail's shape actually is and what
  * keeps the state legible when the tint is the only thing carrying it.
  */
 .selected {
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--surface-default));
+  background: var(--color-active-pill);
   color: var(--text-strong);
   font-weight: var(--weight-semibold);
   border-radius: var(--radius-full);
 }
 
+/* Hover deepens the pill by the same 8% the compose button uses, and flips
+ * toward white in the dark theme for the same reason: the dark container is
+ * already a deep tone and black would move it toward the surface. */
 .selected:hover {
-  background: color-mix(in srgb, var(--color-accent) 24%, var(--surface-default));
+  background: color-mix(in srgb, #000 8%, var(--color-active-pill));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .selected:hover {
+    background: color-mix(in srgb, #fff 8%, var(--color-active-pill));
+  }
+}
+
+:root[data-theme="dark"] .selected:hover {
+  background: color-mix(in srgb, #fff 8%, var(--color-active-pill));
 }
 
 /* A selected row gets an accent spine, so the state survives forced-colors

@@ -122,3 +122,54 @@ describe("the message row's state layer", () => {
     );
   });
 });
+
+/**
+ * The selected row's TONE (Gmail's tonal trio).
+ *
+ * The owner's finding, comparing side by side: Gmail's accent appears in three
+ * related tones — a very light tint on the selected row, a slightly stronger
+ * one on the active folder pill, a tonal container on the compose button — and
+ * ours came from `--color-accent-tint`, an alpha of the accent as INK. Two
+ * consequences, both visible: a translucent row composited unpredictably over
+ * whatever surface it happened to sit on, and a brand that configured a pastel
+ * saw its rows in the deep tone its LINKS had to become for AA, never in the
+ * colour it picked.
+ *
+ * The token is `--color-selected-row`, opaque and derived from the original
+ * primary. jsdom resolves neither `var()` nor a cascade, so the stylesheet is
+ * what is asserted — the same reasoning as the block above.
+ */
+describe("the selected row takes the faintest tonal container", () => {
+  const css = readFileSync(
+    resolve(process.cwd(), "src/screens/mail/MessageList.module.css"),
+    "utf8",
+  );
+  const rule = (selector: string): string => {
+    const escaped = selector.replace(/[.:]/g, "\\$&");
+    const match = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^{}]*)\\}`).exec(css);
+    expect(match, `no rule for ${selector}`).not.toBeNull();
+    return match?.[1] ?? "";
+  };
+
+  it("paints selected and checked with the opaque row tone", () => {
+    expect(rule(".selected")).toMatch(/background:\s*var\(--color-selected-row\)/);
+    // A checked row is a DIFFERENT state from the focused one, but it is the
+    // same accent tone: the two are told apart by the checkbox and the spine,
+    // not by two unrelated colours.
+    expect(rule(".checked")).toMatch(/background:\s*var\(--color-selected-row\)/);
+  });
+
+  it("steps hover up to the NEXT tone rather than inventing a fourth", () => {
+    // `--color-active-pill` is the rail's tone. A hovered selected row and the
+    // active folder then agree, which is what makes the three read as one
+    // family instead of as three separate decisions.
+    expect(rule(".selected:hover")).toMatch(/background:\s*var\(--color-active-pill\)/);
+    expect(rule(".checked:hover")).toMatch(/background:\s*var\(--color-active-pill\)/);
+  });
+
+  it("leaves no alpha tint on the row states", () => {
+    for (const selector of [".selected", ".selected:hover", ".checked", ".checked:hover"]) {
+      expect(rule(selector), selector).not.toMatch(/var\(--color-accent-tint/);
+    }
+  });
+});

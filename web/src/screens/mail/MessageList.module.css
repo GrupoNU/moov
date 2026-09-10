@@ -137,12 +137,28 @@
   z-index: 2;
 }
 
+/*
+ * The selected row is `--color-selected-row`: the FAINTEST of the three tonal
+ * containers palette.ts derives from the brand's original hue (the active
+ * folder pill is the middle one, the compose button the strongest). Gmail's
+ * arrangement exactly — a very light tint here, a slightly stronger one in the
+ * rail, a tonal container on the button, all recognizably one colour.
+ *
+ * It replaces `--color-accent-tint`, which had two defects at once: it was
+ * alpha over TRANSPARENT (so a row's contrast depended on whatever was behind
+ * it, and it stacked unpredictably with the hover surface), and it was an
+ * alpha of the ADJUSTED accent, so a pastel brand's rows came out in the deep
+ * tone its links had to become rather than in the colour the customer picked.
+ * The opaque token has neither: body text on it is pinned at AA for every hue.
+ */
 .selected {
-  background: var(--color-accent-tint);
+  background: var(--color-selected-row);
 }
 
+/* Hover-selected is the next tone up — the rail's pill — rather than a second
+ * mix, so a hovered selected row and the active folder agree. */
 .selected:hover {
-  background: var(--color-accent-tint-strong);
+  background: var(--color-active-pill);
 }
 
 /*
@@ -152,11 +168,11 @@
  * must be able to see both facts at once.
  */
 .checked {
-  background: var(--color-accent-tint);
+  background: var(--color-selected-row);
 }
 
 .checked:hover {
-  background: var(--color-accent-tint-strong);
+  background: var(--color-active-pill);
 }
 
 .checkboxCell {

@@ -527,13 +527,18 @@ describe("A-04: the active row", () => {
 
   it("draws the selected row as a filled, opaque pill", () => {
     const selected = /\.selected \{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
-    // Mixed against a SURFACE, so the fill is opaque and its contrast does not
-    // depend on what happens to scroll behind it — the same reason the compose
-    // pill does it. The old `--color-accent-tint` was alpha over transparent.
-    expect(selected).toMatch(
-      /background:\s*color-mix\(in srgb,\s*var\(--color-accent\)\s*16%,\s*var\(--surface-default\)\)/,
-    );
+    /*
+     * `--color-active-pill` is the middle of the three tonal containers
+     * palette.ts derives from the brand's ORIGINAL hue. Opaque, so the fill's
+     * contrast does not depend on what happens to scroll behind it — which is
+     * why `--color-accent-tint` (alpha over transparent) had to go. And from
+     * the PRIMARY rather than from `--color-accent`, which is lightness-
+     * adjusted for text: mixing that painted a pastel brand's rail in a deep
+     * tone the customer never chose.
+     */
+    expect(selected).toMatch(/background:\s*var\(--color-active-pill\)/);
     expect(selected).not.toMatch(/var\(--color-accent-tint\)/);
+    expect(selected).not.toMatch(/color-mix/);
     // A pill, not the rounded rectangle every other row gets — Gmail's shape,
     // and a second signal beyond the fill.
     expect(selected).toMatch(/border-radius:\s*var\(--radius-full\)/);

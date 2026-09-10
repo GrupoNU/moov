@@ -32,13 +32,20 @@
  * "where you are". Gmail's arrangement resolves this exactly: the compose pill
  * is a light wash of the accent, the active row is the filled one.
  *
- * The fill is mixed against `--surface-default` (the rail's own background)
- * rather than using `--color-accent-tint`, which is 10% alpha over
- * *transparent*: a translucent fill would let the list scroll visibly under a
- * control that must read as solid, and its contrast would depend on whatever
- * happened to be behind it. Mixing produces an opaque colour with the same
- * appearance and none of that. It follows the theme in both directions because
- * both operands are theme tokens.
+ * ## Why a TOKEN and not a mix of the accent
+ *
+ * The fill used to be `color-mix(--color-accent 18%, --surface-default)`. That
+ * was already opaque, which was the point at the time — a translucent fill
+ * would let the folder list scroll visibly under a control that must read as
+ * solid. What it got wrong is which colour it mixed: `--color-accent` is the
+ * accent as INK, lightness-adjusted until it clears 4.5:1 as TEXT, so a brand
+ * that configured a pastel got a button washed with the deep tone its links
+ * had to become, and the pastel they picked appeared nowhere.
+ *
+ * `--color-accent-container` is the same idea done from the brand's ORIGINAL
+ * hue (palette.ts, the tonal family): opaque, at a fixed light target, with
+ * its own ink in `--color-on-accent-container` guaranteed at AA against it.
+ * Gmail's own pair — `#c2e7ff` on `#001d35` — is exactly this shape.
  */
 .compose {
   display: inline-flex;
@@ -56,8 +63,8 @@
   border: 0;
   /* A pill, not a rounded rectangle — the radius is half the height. */
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-accent) 18%, var(--surface-default));
-  color: var(--text-strong);
+  background: var(--color-accent-container);
+  color: var(--color-on-accent-container);
   /* The subtle lift Gmail gives it: enough to sit ABOVE the rail rather than
    * in it, not enough to read as a floating dialog. */
   box-shadow: var(--shadow-sm);
@@ -71,11 +78,26 @@
     box-shadow var(--duration-fast) var(--ease-out);
 }
 
-/* Hover deepens the wash and raises the shadow one step — the same pair Gmail
- * animates, and the reason the transition above lists both. */
+/* Hover deepens the container and raises the shadow one step — the same pair
+ * Gmail animates, and the reason the transition above lists both.
+ *
+ * 8% toward BLACK, which is "deeper" in the light theme where the container is
+ * a pale tone. The dark theme's container is already a deep tone and black
+ * would move it toward invisible, so the dark blocks below flip the mix toward
+ * white. Both stay well inside the AA margin the token is derived with. */
 .compose:hover {
-  background: color-mix(in srgb, var(--color-accent) 28%, var(--surface-default));
+  background: color-mix(in srgb, #000 8%, var(--color-accent-container));
   box-shadow: var(--shadow-md, var(--shadow-sm));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .compose:hover {
+    background: color-mix(in srgb, #fff 8%, var(--color-accent-container));
+  }
+}
+
+:root[data-theme="dark"] .compose:hover {
+  background: color-mix(in srgb, #fff 8%, var(--color-accent-container));
 }
 
 /*
