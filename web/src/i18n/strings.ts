@@ -1427,6 +1427,21 @@ export const en = {
   "shortcuts.snooze": "Snooze",
   "shortcuts.mute": "Mute or unmute the conversation",
   "shortcuts.goSnoozed": "Go to Snoozed",
+
+  // --- the legal footer (AGPL-3.0 §13) ---
+  //
+  // The source-code link is a LICENCE OBLIGATION, not a credit: AGPL §13
+  // requires that a user interacting with the program over a network be
+  // offered the corresponding source. It is therefore not removable by a
+  // customer's branding, and it points at the exact commit that built the
+  // bundle so the offer is honest about what is running.
+  "legal.poweredBy": "Powered by Moov · NU Desarrollos Conscientes",
+  "legal.sourceCode": "Source code",
+  "legal.sourceCommit": (commit: string): string => `Build ${commit}`,
+  "legal.license": "AGPL-3.0 licence",
+  "legal.privacy": "Privacy",
+  "legal.terms": "Terms",
+  "legal.label": "Legal and licence",
 } as const;
 
 /**
@@ -2574,6 +2589,15 @@ export const es: Strings = {
   "shortcuts.snooze": "Posponer",
   "shortcuts.mute": "Silenciar o dejar de silenciar la conversación",
   "shortcuts.goSnoozed": "Ir a Pospuestos",
+
+  // --- the legal footer (AGPL-3.0 §13) ---
+  "legal.poweredBy": "Con tecnología de Moov · NU Desarrollos Conscientes",
+  "legal.sourceCode": "Código fuente",
+  "legal.sourceCommit": (commit: string): string => `Build ${commit}`,
+  "legal.license": "Licencia AGPL-3.0",
+  "legal.privacy": "Privacidad",
+  "legal.terms": "Términos",
+  "legal.label": "Legal y licencia",
 };
 
 /** The locales the app ships with. */
