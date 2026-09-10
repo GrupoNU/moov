@@ -492,3 +492,35 @@ export class BrandAdminClient {
     return response;
   }
 }
+
+/**
+ * Turns a client error into the sentence the panel shows.
+ *
+ * Lives here rather than beside the section for one reason: the SERVER's own
+ * message is the right sentence for three of the five kinds. A 400 named the
+ * field and why ("use 12 characters at most"), a 415 named the type it refused,
+ * a 413 named the ceiling — no generic string this app could write would
+ * improve on any of them, and replacing them with one would throw away the only
+ * part of a refusal a user can act on.
+ *
+ * The two that DO need our own words are the ones with nothing to say: a
+ * transport failure has no message worth showing, and a 404 is deliberately
+ * indistinguishable from "no such route", so its sentence has to be written
+ * here rather than read off the wire.
+ */
+export function brandErrorMessage(
+  error: unknown,
+  strings: { readonly network: string; readonly notAdmin: string },
+): string {
+  if (!(error instanceof BrandAdminError)) return strings.network;
+  switch (error.kind) {
+    case "notAdmin":
+      return strings.notAdmin;
+    case "invalidField":
+    case "unsupportedType":
+    case "tooLarge":
+      return error.message;
+    default:
+      return strings.network;
+  }
+}

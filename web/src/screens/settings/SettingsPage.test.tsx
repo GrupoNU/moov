@@ -12,6 +12,8 @@ import { DEFAULT_SETTINGS_TAB, type SettingsTab } from "../../router/routes";
 import { CAP_PREFS } from "../../mail/prefs";
 import { JmapClient, type JmapSession } from "../../api/jmap";
 import { applyTheme } from "../../theme/theme";
+import type { BrandSectionProps } from "./BrandSection";
+import type { BrandAdminDoc } from "../../branding/adminApi";
 import { SettingsPage } from "./SettingsPage";
 
 /**
@@ -62,6 +64,7 @@ function Harness({
   initialTab = DEFAULT_SETTINGS_TAB,
   onClose = () => undefined,
   onOpenQuickSettings,
+  brand,
 }: {
   readonly initialPrefs?: Prefs;
   readonly identity?: Identity;
@@ -69,6 +72,8 @@ function Harness({
   readonly initialTab?: SettingsTab;
   readonly onClose?: () => void;
   readonly onOpenQuickSettings?: () => void;
+  /** L2-brand-admin: present only for an administrator of this host. */
+  readonly brand?: BrandSectionProps;
 } = {}): React.JSX.Element {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   return (
@@ -91,6 +96,7 @@ function Harness({
           onOpenQuickSettings={onOpenQuickSettings}
           identity={identity}
           onSaveSignature={onSaveSignature}
+          brand={brand}
         />
       </PrefsProvider>
     </I18nProvider>
@@ -958,5 +964,113 @@ describe("save feedback (F-38)", () => {
   it("shows nothing on a row nobody touched", () => {
     renderSaving();
     expect(screen.queryByText(en["settings.saved"])).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * L2-brand-admin: the Marca tab exists only for an administrator of this host.
+ *
+ * "Exists" is meant literally, and that is the property under test. Almost
+ * nobody administers a brand, so almost every user must see a settings page
+ * with no trace of the panel at all — not a disabled tab, not a skeleton
+ * naming an absent capability. A skeleton saying "there is a brand panel you
+ * may not use" would be precisely the enumeration the API's own 404 avoids.
+ */
+const BRAND_DOC: BrandAdminDoc = {
+  host: "mail.acme.example",
+  isDefault: false,
+  name: "Acme Mail",
+  shortName: "Acme",
+  tagline: "",
+  supportUrl: "",
+  privacyUrl: "",
+  termsUrl: "",
+  colors: { primary: "#5b5bd6", onPrimary: "", splashFrom: "#1e1b4b", splashTo: "#4c1d95" },
+  assets: { logo: null, logoDark: null, icon: null, splash: null },
+  iconSource: "default",
+  iconIssue: "",
+  brandAdmins: [],
+  warnings: [],
+  publicUrl: "/branding",
+  manifestUrl: "/manifest.webmanifest",
+  iconUrls: {},
+  version: 1,
+};
+
+const BRAND_PROPS: BrandSectionProps = {
+  doc: BRAND_DOC,
+  onSave: () => Promise.resolve(true),
+  onUploadAsset: () => Promise.resolve(true),
+  onRemoveAsset: () => Promise.resolve(true),
+  onReset: () => Promise.resolve(true),
+};
+
+describe("the Marca tab (L2-brand-admin)", () => {
+  it("is ABSENT when the probe answered 404 — for almost every user", () => {
+    renderPage();
+    expect(
+      screen.queryByRole("tab", { name: en["settings.section.brand"] }),
+    ).not.toBeInTheDocument();
+    // Not a skeleton either. There is nothing to see, which is the point.
+    expect(screen.queryByText(en["brand.identity.heading"])).not.toBeInTheDocument();
+  });
+
+  it("appears, and opens, when the probe answered 200", async () => {
+    const user = userEvent.setup();
+    renderPage({ brand: BRAND_PROPS });
+    const tab = screen.getByRole("tab", { name: en["settings.section.brand"] });
+    expect(tab).toBeInTheDocument();
+    await user.click(tab);
+    expect(screen.getByText(en["brand.identity.heading"])).toBeInTheDocument();
+    expect(screen.getByText(en["brand.colors.heading"])).toBeInTheDocument();
+  });
+
+  it("falls back to General when the ROUTE names it and the user may not see it", () => {
+    /*
+     * A bookmarked `/settings/brand` reaching somebody who is not an
+     * administrator — or an administrator whose access was revoked. It lands on
+     * a real tab rather than on an empty panel, and says nothing about why.
+     */
+    renderPage({ initialTab: "brand" });
+    expect(
+      screen.getByRole("heading", { name: en["settings.section.general"] }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(en["brand.identity.heading"])).not.toBeInTheDocument();
+  });
+
+  it("opens straight onto the deep link for an administrator", () => {
+    renderPage({ initialTab: "brand", brand: BRAND_PROPS });
+    expect(screen.getByText(en["brand.identity.heading"])).toBeInTheDocument();
+  });
+
+  it("keeps its rows out of a SEARCH for a non-administrator", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    // D-5's search suspends the tabs and renders every matching section
+    // wherever it lives — which would have been the back door into a panel the
+    // tab row correctly hid.
+    await user.type(screen.getByRole("searchbox"), "logo");
+    expect(screen.queryByText(en["brand.images.heading"])).not.toBeInTheDocument();
+  });
+
+  it("finds them for an administrator, by a word an administrator would type", async () => {
+    const user = userEvent.setup();
+    renderPage({ brand: BRAND_PROPS });
+    await user.type(screen.getByRole("searchbox"), "logo");
+    expect(screen.getByText(en["brand.images.heading"])).toBeInTheDocument();
+    // …and only that group, which is what D-5 buys on a five-group tab.
+    expect(screen.queryByText(en["brand.colors.heading"])).not.toBeInTheDocument();
+  });
+
+  it("keeps the arrow keys walking the tabs that EXIST", async () => {
+    const user = userEvent.setup();
+    renderPage({ initialTab: "offline" });
+    // "offline" is last for a non-administrator, so ArrowRight must wrap to
+    // "general" rather than land on a tab that is not rendered.
+    await user.click(screen.getByRole("tab", { name: en["settings.section.offline"] }));
+    await user.keyboard("{ArrowRight}");
+    expect(
+      screen.getByRole("tab", { name: en["settings.section.general"] }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 });

@@ -8,8 +8,6 @@ import { THEME_SURFACES, derivePalette, type ThemeName } from "../../branding/pa
 import {
   ACCEPTED_IMAGE_EXTENSIONS,
   ASSET_KINDS,
-  BrandAdminError,
-  MAX_ASSET_BYTES,
   checkImageFile,
   type AssetKind,
   type BrandAdminDoc,
@@ -180,13 +178,6 @@ function IdentityGroup({
   readonly errorField: string | undefined;
 }): React.JSX.Element {
   const { t, format } = useTranslation();
-  const [shortName, setShortName] = useState(doc.shortName);
-
-  // The counter needs the live value; the other two fields do not, so they
-  // stay uncontrolled and read their own DOM on blur.
-  useEffect(() => {
-    setShortName(doc.shortName);
-  }, [doc.shortName]);
 
   return (
     <div className={styles.group}>
@@ -204,17 +195,18 @@ function IdentityGroup({
       <TextRow
         labelKey="brand.shortName.label"
         descriptionKey="brand.shortName.description"
-        value={shortName}
+        value={doc.shortName}
         maxLength={SHORT_NAME_MAX}
         invalid={errorField === "shortName"}
-        onChangeValue={setShortName}
         /*
          * A LIVE counter rather than a message after the fact. Twelve
          * characters is a hard server rule with a visible consequence (the
-         * text under an installed icon), and a field that silently truncates
-         * on save is the version of this control that gets reported as a bug.
+         * text under an installed icon), and it counts CODE POINTS rather than
+         * UTF-16 units, so a name with an emoji is not counted as two.
          */
-        hint={format("brand.shortName.counter", Array.from(shortName).length, SHORT_NAME_MAX)}
+        counter={(draft) =>
+          format("brand.shortName.counter", Array.from(draft).length, SHORT_NAME_MAX)
+        }
         onCommit={(value) => onSave({ shortName: value })}
       />
 
@@ -401,6 +393,7 @@ function ColorGroup({
         labelKey="brand.primary.label"
         descriptionKey="brand.primary.description"
         value={primary}
+        saved={doc.colors.primary}
         invalid={errorField === "primary"}
         onChangeValue={setPrimary}
         onCommit={(value) => onSave({ colors: { primary: value } })}
@@ -450,6 +443,7 @@ function ColorGroup({
             <ColorField
               label={t("brand.onPrimary.label")}
               value={onPrimary}
+              saved={doc.colors.onPrimary}
               invalid={errorField === "onPrimary"}
               onChangeValue={setOnPrimary}
               onCommit={(value) => onSave({ colors: { onPrimary: value } })}
@@ -461,6 +455,7 @@ function ColorGroup({
       <ColorRow
         labelKey="brand.splashFrom.label"
         value={splashFrom}
+        saved={doc.colors.splashFrom}
         invalid={errorField === "splashFrom"}
         onChangeValue={setSplashFrom}
         onCommit={(value) => onSave({ colors: { splashFrom: value } })}
@@ -468,6 +463,7 @@ function ColorGroup({
       <ColorRow
         labelKey="brand.splashTo.label"
         value={splashTo}
+        saved={doc.colors.splashTo}
         invalid={errorField === "splashTo"}
         onChangeValue={setSplashTo}
         onCommit={(value) => onSave({ colors: { splashTo: value } })}
@@ -764,6 +760,7 @@ function AssetRow({
             <input
               ref={inputRef}
               type="file"
+              data-testid={`brand-file-${kind}`}
               className="visually-hidden"
               accept={ACCEPTED_IMAGE_EXTENSIONS.join(",")}
               tabIndex={-1}
@@ -866,11 +863,17 @@ function AssetPreview({
 /**
  * A text row that saves on blur or Enter, with this page's own "Guardado ✓".
  *
- * UNCONTROLLED unless the caller asks otherwise (`onChangeValue`): a controlled
- * input whose value comes from the last saved document fights the typist every
- * time a save resolves mid-keystroke. `defaultValue` plus a `key` on the saved
- * value gives the correct behaviour on both ends — the field keeps what is
- * being typed, and settles onto the truth when the truth changes.
+ * # Why the row owns the DRAFT rather than reading the document
+ *
+ * The value on screen and the value on the server are two different things
+ * between a keystroke and a blur, and conflating them breaks in both
+ * directions. Binding the input straight to the document fights the typist
+ * every time a save resolves mid-keystroke; leaving it uncontrolled makes a
+ * live counter impossible, because nothing above the DOM knows what was typed.
+ *
+ * So the row holds the draft, re-seeds it when the SAVED value changes (a
+ * successful save, a reset, a document reloaded from elsewhere), and hands it
+ * to an optional `counter` render prop. One state, two readers, no drift.
  */
 function TextRow({
   labelKey,
@@ -878,10 +881,9 @@ function TextRow({
   value,
   type = "text",
   maxLength,
-  hint,
+  counter,
   invalid,
   validate,
-  onChangeValue,
   onCommit,
 }: {
   readonly labelKey: PlainStringKey;
@@ -889,18 +891,23 @@ function TextRow({
   readonly value: string;
   readonly type?: "text" | "url";
   readonly maxLength?: number;
-  readonly hint?: string;
+  /** Renders a live hint from the DRAFT — the short name's "n de 12". */
+  readonly counter?: (draft: string) => string;
   readonly invalid?: boolean;
   readonly validate?: (value: string) => string | undefined;
-  readonly onChangeValue?: (value: string) => void;
   readonly onCommit: (value: string) => Promise<boolean>;
 }): React.JSX.Element {
   const { t } = useTranslation();
   const { isSaved, report } = useSaveFeedback();
+  const [draft, setDraft] = useState(value);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const inputId = useId();
   const hintId = useId();
   const errorId = useId();
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
 
   const commit = useCallback(
     (next: string): void => {
@@ -916,7 +923,7 @@ function TextRow({
     [onCommit, report, validate, value],
   );
 
-  const describedBy = [hint !== undefined || descriptionKey !== undefined ? hintId : "", problem !== undefined ? errorId : ""]
+  const describedBy = [descriptionKey !== undefined ? hintId : "", problem !== undefined ? errorId : ""]
     .filter(Boolean)
     .join(" ");
 
@@ -939,13 +946,12 @@ function TextRow({
             .filter(Boolean)
             .join(" ")}
           type={type}
-          key={value}
-          defaultValue={value}
+          value={draft}
           {...(maxLength !== undefined ? { maxLength } : {})}
           {...(describedBy !== "" ? { "aria-describedby": describedBy } : {})}
           aria-invalid={invalid === true || problem !== undefined}
           onChange={(event) => {
-            onChangeValue?.(event.target.value);
+            setDraft(event.target.value);
             if (problem !== undefined) setProblem(undefined);
           }}
           onBlur={(event) => {
@@ -957,7 +963,7 @@ function TextRow({
             commit(event.currentTarget.value);
           }}
         />
-        {hint !== undefined && <span className={styles.counter}>{hint}</span>}
+        {counter !== undefined && <span className={styles.counter}>{counter(draft)}</span>}
         {problem !== undefined && (
           <p className={styles.fieldError} id={errorId} role="alert">
             {problem}
@@ -978,6 +984,7 @@ function ColorRow({
   labelKey,
   descriptionKey,
   value,
+  saved,
   invalid,
   onChangeValue,
   onCommit,
@@ -985,6 +992,7 @@ function ColorRow({
   readonly labelKey: PlainStringKey;
   readonly descriptionKey?: PlainStringKey;
   readonly value: string;
+  readonly saved: string;
   readonly invalid?: boolean;
   readonly onChangeValue: (value: string) => void;
   readonly onCommit: (value: string) => Promise<boolean>;
@@ -1002,6 +1010,7 @@ function ColorRow({
         <ColorField
           label={t(labelKey)}
           value={value}
+          saved={saved}
           {...(invalid !== undefined ? { invalid } : {})}
           onChangeValue={onChangeValue}
           onCommit={onCommit}
@@ -1025,12 +1034,24 @@ function ColorRow({
 function ColorField({
   label,
   value,
+  saved,
   invalid,
   onChangeValue,
   onCommit,
 }: {
   readonly label: string;
+  /** The DRAFT — what is on screen and what the preview is painted from. */
   readonly value: string;
+  /**
+   * The SAVED value, so "nothing changed, do not write" can be decided.
+   *
+   * The draft is lifted (the preview above reads it), which means this field
+   * cannot tell "unchanged" from "typed back to the same thing" on its own —
+   * `value` has already moved. Passing the server's copy separately is the
+   * only honest way to answer the question, and getting it wrong means a PUT
+   * on every blur of an untouched field.
+   */
+  readonly saved: string;
   readonly invalid?: boolean;
   readonly onChangeValue: (value: string) => void;
   readonly onCommit: (value: string) => Promise<boolean>;
@@ -1044,7 +1065,7 @@ function ColorField({
 
   const commit = (next: string): void => {
     const normalized = next.trim().toLowerCase();
-    if (normalized === value) return;
+    if (normalized === saved) return;
     if (!HEX_PATTERN.test(normalized)) {
       setProblem(t("brand.color.invalid"));
       return;
@@ -1113,28 +1134,3 @@ function ColorField({
   );
 }
 
-/** Turns a client error into the sentence the section shows. Exported for the host. */
-export function brandErrorMessage(
-  error: unknown,
-  strings: { readonly network: string; readonly notAdmin: string },
-): string {
-  if (error instanceof BrandAdminError) {
-    switch (error.kind) {
-      case "notAdmin":
-        return strings.notAdmin;
-      case "invalidField":
-      case "unsupportedType":
-        // The server's own reason is the precise sentence; it named the field
-        // and why, which no generic message can improve on.
-        return error.message;
-      case "tooLarge":
-        return error.message;
-      default:
-        return strings.network;
-    }
-  }
-  return strings.network;
-}
-
-/** The ceiling, re-exported so the host can state it without a second constant. */
-export { MAX_ASSET_BYTES };

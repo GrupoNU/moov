@@ -389,3 +389,51 @@ describe("the section → tab mapping (E12)", () => {
     }
   });
 });
+
+/**
+ * L2-brand-admin: the Marca tab's registration.
+ *
+ * The section is registered UNCONDITIONALLY — the registry describes what the
+ * app can render, not what this session may see — and the page hides it on a
+ * 404. What is pinned here is the half a compiler cannot see: that its rows are
+ * findable by the words an administrator would actually type. Almost nobody has
+ * this tab, so almost nobody will find it by browsing; if the search misses it,
+ * the panel is effectively invisible to the people it was built for.
+ */
+describe("the brand section (L2-brand-admin)", () => {
+  const brandRows = SETTINGS_ROWS.filter((row) => row.sectionId === "brand");
+
+  it("is its own TAB, last, because it administers the installation not the account", () => {
+    expect(SECTION_TAB.brand).toBe("brand");
+    expect(SETTINGS_TABS[SETTINGS_TABS.length - 1]).toBe("brand");
+  });
+
+  it("registers a row per JOB, not one row for the whole panel", () => {
+    // Somebody swapping a logo types "logo", not "marca". A single row would be
+    // findable only by people who already knew the tab existed.
+    expect(brandRows.map((row) => row.id).sort()).toEqual([
+      "brandColors",
+      "brandIdentity",
+      "brandImages",
+      "brandLinks",
+      "brandReset",
+    ]);
+  });
+
+  it.each([
+    ["logo", "brandImages"],
+    ["icono", "brandImages"],
+    ["favicon", "brandImages"],
+    ["color", "brandColors"],
+    ["hex", "brandColors"],
+    ["nombre corto", "brandIdentity"],
+    ["soporte", "brandLinks"],
+    ["restablecer", "brandReset"],
+  ])("finds %s", (term, expected) => {
+    const folded = foldForSearch(term);
+    const hit = brandRows.find((row) =>
+      row.keywords.some((keyword) => keyword.includes(folded) || folded.includes(keyword)),
+    );
+    expect(hit?.id, `"${term}" finds no brand row`).toBe(expected);
+  });
+});
