@@ -242,6 +242,12 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		// Branding (W-A1): the public, Host-resolved brand document the PWA
 		// reads before anyone has logged in. Empty serves Moov's own brand.
 		BrandingDir: cfg.JMAP.BrandingDir,
+		// BA-1: the authenticated brand administration API, on by default
+		// whenever a branding directory exists; MOOV_BRANDING_ADMIN=0 turns it
+		// off (every route then answers the generic 404). Provider 1 is the
+		// operator-granted list in each host's branding.json; a Mailcow
+		// domain-admin provider is designed to slot in as BrandAdminSources.
+		DisableBrandingAdmin: !cfg.JMAP.BrandingAdmin,
 		// E6: advertised == registered, per capability (the J1 rule). All
 		// four flags key off the same probe result the registrations below
 		// key off, so they cannot disagree.

@@ -86,6 +86,12 @@ type JMAPConfig struct {
 	// answered with Moov's own brand, which is what the pilot serves and what
 	// most installations will ever need.
 	BrandingDir string
+
+	// BrandingAdmin enables the authenticated brand administration API
+	// (MOOV_BRANDING_ADMIN, default true). It only has an effect when
+	// BrandingDir is set; false makes every /branding/admin route answer the
+	// same 404 an unknown route gets.
+	BrandingAdmin bool
 }
 
 // DefaultJMAPAddr is the default JMAP listen address.
@@ -150,6 +156,9 @@ func loadJMAP() (JMAPConfig, error) {
 	// falls back to the Moov defaults, so a mistyped path degrades the brand
 	// rather than refusing to start the mail server.
 	j.BrandingDir = strings.TrimSpace(os.Getenv("MOOV_BRANDING_DIR"))
+	if j.BrandingAdmin, err = ParseBool("MOOV_BRANDING_ADMIN", true); err != nil {
+		return JMAPConfig{}, err
+	}
 
 	if j.SieveEnabled, err = ParseBool("MOOV_SIEVE_ENABLED", true); err != nil {
 		return JMAPConfig{}, err
@@ -192,9 +201,9 @@ func (j JMAPConfig) String() string {
 	return fmt.Sprintf(
 		"jmap_enabled=%t jmap_addr=%s jmap_external_url=%s jmap_cors_origins=%s "+
 			"jmap_imap_host=%s jmap_imap_port=%d jmap_imap_server_name=%s jmap_auth_cache_ttl=%s "+
-			"sse_max_conn_per_account=%d branding_dir=%s sieve_enabled=%t sieve_host=%s sieve_port=%d",
+			"sse_max_conn_per_account=%d branding_dir=%s branding_admin=%t sieve_enabled=%t sieve_host=%s sieve_port=%d",
 		j.Enabled, j.Addr, orUnset(j.ExternalURL), orUnset(strings.Join(j.CORSOrigins, ",")),
 		orUnset(j.IMAPHost), j.IMAPPort, orUnset(j.IMAPServerName), orDefault(j.AuthCacheTTL),
-		j.MaxSSEPerAccount, orUnset(j.BrandingDir), j.SieveEnabled, orUnset(j.SieveHost), j.SievePort,
+		j.MaxSSEPerAccount, orUnset(j.BrandingDir), j.BrandingAdmin, j.SieveEnabled, orUnset(j.SieveHost), j.SievePort,
 	)
 }
