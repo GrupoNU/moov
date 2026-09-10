@@ -616,3 +616,93 @@
     height: 100vh;
   }
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * The INLINE host: the reply box at the foot of a conversation (canon 07 §7).
+ * ---------------------------------------------------------------------------
+ *
+ * Gmail writes a new message in the corner card above and a REPLY here, inside
+ * the conversation it answers, with the thread still on screen. So this is a
+ * plain block in the document flow — no `position`, no top layer, no shadow
+ * competing with the card's. A light border and the raised surface are the
+ * whole of it: enough to read as a box you write in rather than another
+ * message you read, and not so much that it looks like it is floating over the
+ * thread it belongs to.
+ */
+.inline {
+  margin: var(--space-4) 0 var(--space-6);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--text-default);
+  /* A shadow smaller than the card's, because this one is IN the page rather
+   * than over it — the card's `--shadow-xl` here would read as a second
+   * floating surface inside the reader. */
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/*
+ * The form's height rules are the CARD's — a fixed 40rem so a long message
+ * scrolls inside a box pinned to a corner. In the flow that would be wrong in
+ * both directions: a short reply would leave 30rem of empty box, and a long
+ * one would scroll internally inside a page that already scrolls. So the
+ * inline form is sized by its content and the READER scrolls, which is what
+ * Gmail does.
+ */
+.inline .form {
+  height: auto;
+  max-height: none;
+}
+
+/*
+ * The collapsed recipient line — "Responder a Ana Pérez ▾".
+ *
+ * It replaces the card's title bar, and it is a different KIND of header on
+ * purpose: the question a person asks of an inline reply is "who is this going
+ * to", not "what is this window". No `--surface-sunken` behind it either — the
+ * card's darker strip exists to read as a thing you grab and collapse, and
+ * this one is neither.
+ */
+.inlineHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.inlineRecipients {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.inlineRecipients > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inlineRecipients:hover,
+.inlineRecipients:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+}
+
+.inlineCaret {
+  flex: none;
+  font-size: var(--text-xs);
+}

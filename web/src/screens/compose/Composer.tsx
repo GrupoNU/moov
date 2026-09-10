@@ -34,13 +34,26 @@ import { AttachmentList, type ComposerAttachment } from "./AttachmentList";
 import { BodyEditor } from "./BodyEditor";
 import { EmojiPicker } from "./EmojiPicker";
 import type { ComposerDraft } from "./composerState";
+import { ComposerShell, type ComposerHost } from "./ComposerShell";
 import { PopupMenu } from "../mail/PopupMenu";
 import { ScheduleMenu } from "./ScheduleMenu";
 import styles from "./Composer.module.css";
 
 /**
- * The composer: a floating card, bottom-right, that writes, saves and sends a
- * message (canon 07 §7).
+ * The composer: the form that writes, saves and sends a message (canon 07 §7).
+ *
+ * # Two hosts, one form
+ *
+ * Gmail writes a NEW message in a floating card, bottom-right, and a REPLY at
+ * the foot of the conversation it answers, with the thread still visible
+ * above. Everything below is identical in both: the fields, the editor, the
+ * toolbar, the autosave, the undo window, the send path. Only the box differs,
+ * and the box lives in {@link ComposerShell} — see that file for why the
+ * chrome was extracted rather than the form.
+ *
+ * `host` selects between them. It changes nothing about what this component
+ * DOES; a reply sent from the inline box takes the identical path a reply sent
+ * from the card takes, which is the property that makes the split safe.
  *
  * # It was a centred modal until E12, and the reversal is the point
  *
@@ -169,6 +182,25 @@ export interface ComposerProps {
   readonly onUndoArchive?: () => Promise<void>;
   /** E7: attachments the composer opens with — a forwarded `.eml`, say. */
   readonly initialAttachments?: readonly ComposerAttachment[];
+  /**
+   * Which surface this draft is written on (canon 07 §7).
+   *
+   * `"floating"` — the default, and what every existing caller gets — is the
+   * bottom-right card. `"inline"` is the box at the foot of a conversation,
+   * which the reader mounts for a reply or a forward.
+   */
+  readonly host?: ComposerHost;
+  /**
+   * Inline only: hand this draft to the floating card, content intact.
+   *
+   * The host does the move by re-mounting the composer with the SAME
+   * `ComposerDraft` — including its `existingDraftId`, which is what makes the
+   * pop-out keep the server-side draft rather than orphan one and start
+   * another. This composer's job is to flush the autosave first and then report
+   * its current content, so nothing typed since the last save is lost in the
+   * handover.
+   */
+  readonly onPopOut?: ((current: ComposerDraft) => void) | undefined;
 }
 
 export function Composer({
@@ -193,6 +225,8 @@ export function Composer({
   onSendAndArchive,
   onUndoArchive,
   initialAttachments,
+  host = "floating",
+  onPopOut,
 }: ComposerProps): React.JSX.Element {
   const { t, format, locale } = useTranslation();
   /*
@@ -203,7 +237,6 @@ export function Composer({
    * unchanged and gets the Identity signature it always got.
    */
   const { prefs } = usePrefs();
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   /** D-03: the image button's own picker, filtered to images. */
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -225,6 +258,26 @@ export function Composer({
    */
   const [cardSize, setCardSize] = useState<"normal" | "minimized" | "maximized">(
     "normal",
+  );
+
+  /**
+   * Inline only: whether the address fields are showing (canon 07 §7).
+   *
+   * Gmail's inline reply opens with the recipients COLLAPSED into one header
+   * line, because a reply's recipients are already right — the user pressed
+   * Reply, not Compose — and three address rows above the caret would push the
+   * one thing they came to do off the fold. Pressing the header line expands
+   * them, for the case where the reply does need a different address.
+   *
+   * A forward is the exception and opens EXPANDED: it starts with no
+   * recipient at all, so collapsing an empty "Para" would hide the one field
+   * that must be filled before the message can go anywhere.
+   *
+   * The floating card ignores this entirely — its fields are always shown, as
+   * they always were.
+   */
+  const [fieldsExpanded, setFieldsExpanded] = useState(
+    host !== "inline" || draft.intent === "forward",
   );
 
   /** E11: the app's own confirm, replacing `window.confirm` for discard. */
@@ -321,30 +374,6 @@ export function Composer({
     () => maxAttachmentsSize(sessionCapabilities),
     [sessionCapabilities],
   );
-
-  // --- the dialog ----------------------------------------------------------
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog === null) return undefined;
-    /*
-     * E12: `show()`, not `showModal()` (canon 07 §7).
-     *
-     * The card is NON-MODAL — the mail behind it stays live, which is what
-     * lets someone look up an address or re-read the message they are
-     * answering without abandoning the draft. It stays a `<dialog>` for the
-     * TOP LAYER, which is the one property of the pair worth keeping: a
-     * hand-rolled overlay eventually loses a `z-index` argument with a menu.
-     *
-     * `show()` does not focus anything by itself, so the composer's own
-     * autofocus on the first empty field is what puts the caret where the user
-     * expects it — the same behaviour `showModal()` produced, now explicit.
-     */
-    if (!dialog.open) dialog.show();
-    return () => {
-      if (dialog.open) dialog.close();
-    };
-  }, []);
 
   // --- the message the server will receive ---------------------------------
 
@@ -1123,6 +1152,43 @@ export function Composer({
     onClose();
   }, [scheduler, onClose]);
 
+  /**
+   * The pop-out: this draft, in the floating card, with everything intact.
+   *
+   * The host re-mounts the composer, so the handover is a `ComposerDraft` and
+   * not a promise that state survives. What goes into it is what is on screen
+   * RIGHT NOW — the current chips, subject and body, not `draft`'s originals —
+   * plus `draftIdRef`, which is what keeps the server-side draft the same one
+   * instead of orphaning it and starting a second.
+   *
+   * `seedKey` is deliberately carried through UNCHANGED. The host keys the
+   * composer by it, so an unchanged key across a host change is what tells
+   * React this is the same composition moving, and what stops the body editor
+   * from re-seeding over words typed since it opened.
+   *
+   * Attachments do NOT travel: they are `blobId`s the server already holds,
+   * and the re-mounted composer picks them up from the draft it resumes. The
+   * flush before the handover is what makes that true — without it, a file
+   * attached in the last two seconds would exist only in this component.
+   */
+  const popOut = useCallback((): void => {
+    if (onPopOut === undefined) return;
+    scheduler.flush();
+    onPopOut({
+      ...draft,
+      to,
+      cc,
+      bcc,
+      subject,
+      text,
+      html: isRich ? html : undefined,
+      existingDraftId: draftIdRef.current,
+      // The card opens on the body: the recipients came with the reply and the
+      // user was already writing when they pressed pop-out.
+      focusField: "body",
+    });
+  }, [onPopOut, scheduler, draft, to, cc, bcc, subject, text, html, isRich]);
+
   // Escape is intercepted so the flush happens; letting the dialog close
   // natively would discard whatever had not been saved yet.
   const onDialogCancel = useCallback(
@@ -1191,22 +1257,13 @@ export function Composer({
    * there, and focusing before React commits would hit nothing.
    */
   /*
-   * Bound to the <dialog> element, not to the <form>.
-   *
-   * A `<form>` is not an interactive element, so a React `onKeyDown` on it is
-   * a jsx-a11y error and the rule is right: the handler would be describing
-   * behaviour on a node that cannot be focused. The dialog is the composer's
-   * actual boundary — every key pressed inside it bubbles here, and nothing
-   * outside it can reach this listener.
+   * The listener is bound by the SHELL, to its boundary element, not to the
+   * <form>. A `<form>` is not an interactive element, so a React `onKeyDown`
+   * on it is a jsx-a11y error and the rule is right: the handler would be
+   * describing behaviour on a node that cannot be focused. The shell's outer
+   * element is the composer's actual boundary in both hosts — every key
+   * pressed inside bubbles there, and nothing outside can reach it.
    */
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog === null) return undefined;
-    dialog.addEventListener("keydown", onComposerKeyDown);
-    return () => {
-      dialog.removeEventListener("keydown", onComposerKeyDown);
-    };
-  }, [onComposerKeyDown]);
 
   const [focusField, setFocusField] = useState<"cc" | "bcc" | undefined>(undefined);
   const ccInputRef = useRef<HTMLInputElement | null>(null);
@@ -1228,105 +1285,25 @@ export function Composer({
           : t("compose.title");
 
   return (
-    <dialog
-      ref={dialogRef}
-      className={[
-        styles.dialog,
-        cardSize === "minimized" ? styles.minimized : "",
-        cardSize === "maximized" ? styles.maximized : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      aria-label={title}
+    <ComposerShell
+      host={host}
+      title={title}
+      recipients={to}
+      fieldsExpanded={fieldsExpanded}
+      onToggleFields={() => {
+        setFieldsExpanded((shown) => !shown);
+      }}
+      cardSize={cardSize}
+      onCardSize={setCardSize}
+      onClose={closeWithSave}
+      {...(host === "inline" && onPopOut !== undefined ? { onPopOut: popOut } : {})}
+      onKeyDown={onComposerKeyDown}
       onCancel={onDialogCancel}
+      onSubmit={() => {
+        void send(false);
+      }}
+      trailing={confirmDialog}
     >
-      <form
-        className={styles.form}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send(false);
-        }}
-      >
-        {/*
-          E12 (canon 07 §7): the card's title bar — the name on the left, then
-          minimise / maximise / close on the right, in Gmail's order.
-
-          The BAR itself toggles minimise on click, which is what makes a
-          collapsed strip expand again by clicking anywhere on it rather than
-          by finding a 2rem button. It is a <button> for that reason and not a
-          div with a handler: it is genuinely a control, and making it one gives
-          it keyboard operation and a role for free.
-        */}
-        <header className={styles.header}>
-          <button
-            type="button"
-            className={styles.titleBar}
-            onClick={() => {
-              setCardSize((size) => (size === "minimized" ? "normal" : "minimized"));
-            }}
-            /* The heading's text is the accessible name; what the press DOES is
-               the label, so the two together read as "Mensaje nuevo, minimise". */
-            aria-label={`${title} — ${
-              cardSize === "minimized" ? t("compose.expand") : t("compose.minimize")
-            }`}
-            aria-expanded={cardSize !== "minimized"}
-          >
-            <span className={styles.title}>{title}</span>
-          </button>
-
-          <div className={styles.headerActions}>
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={() => {
-                setCardSize((size) => (size === "minimized" ? "normal" : "minimized"));
-              }}
-              aria-label={
-                cardSize === "minimized" ? t("compose.expand") : t("compose.minimize")
-              }
-              title={cardSize === "minimized" ? t("compose.expand") : t("compose.minimize")}
-            >
-              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                <path d="M5 14h10" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={() => {
-                setCardSize((size) => (size === "maximized" ? "normal" : "maximized"));
-              }}
-              aria-label={
-                cardSize === "maximized" ? t("compose.restore") : t("compose.maximize")
-              }
-              title={cardSize === "maximized" ? t("compose.restore") : t("compose.maximize")}
-              aria-pressed={cardSize === "maximized"}
-            >
-              {cardSize === "maximized" ? (
-                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  {/* Arrows pointing IN: this collapses back to the card. */}
-                  <path d="M9 4v5H4M11 16v-5h5" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  {/* Arrows pointing OUT: this grows to the full panel. */}
-                  <path d="M12 4h4v4M8 16H4v-4" />
-                </svg>
-              )}
-            </button>
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={closeWithSave}
-              aria-label={t("compose.close")}
-              title={t("compose.close")}
-            >
-              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />
-              </svg>
-            </button>
-          </div>
-        </header>
 
         {/*
           D-08: "De" says the address once, and carries a caret only when there
@@ -1346,127 +1323,145 @@ export function Composer({
           is deliberately NOT rendered as a dead menu button; when the picker
           lands it goes here, and until then the collapse is the whole fix.
         */}
-        {identity !== undefined && (
-          <p className={styles.fromLine}>
-            <span className={styles.fromLabel}>{t("compose.from")}</span>
-            <span>{fromLineText(identity)}</span>
-            {identityCount > 1 && (
-              <span className={styles.fromCaret} aria-hidden="true">
-                ▾
-              </span>
-            )}
-          </p>
-        )}
+        {/*
+          The header rows — De, Para, Cc, Cco, Asunto — which the INLINE host
+          collapses behind its recipient line (canon 07 §7).
 
-        <AddressField
-          label={t("compose.to")}
-          chips={to}
-          onChange={(next) => {
-            setTo(next);
-            touched();
-          }}
-          {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
-          autoFocusField={draft.focusField === "to"}
-          trailing={
-            /*
-              D-05: "Cc  Cco" — two quiet words, as Gmail writes them.
+          Gmail hides all five in an inline reply, and the reason is the one
+          this box exists for: the recipients and the subject of a reply are
+          already correct, and five rows above the caret would push what the
+          user actually came to do below the fold of a box that is already
+          sharing the screen with the thread it answers. Pressing the header
+          line brings them back, unchanged.
 
-              The visible text is the FIELD NAME alone; the verb lives in the
-              accessible name, because "Cc" on screen is what a person scans for
-              and "Add Cc" is what a screen reader has to hear to know it is a
-              control rather than a heading. Splitting them is not a compromise
-              between the two — it is what each surface actually needs.
-            */
-            <div className={styles.ccToggles}>
-              {!showCc && (
-                <button
-                  type="button"
-                  className={styles.linkButton}
-                  aria-label={t("compose.showCc")}
-                  onClick={() => {
-                    setShowCc(true);
-                  }}
-                >
-                  {t("compose.cc")}
-                </button>
+          The floating card is unaffected — `fieldsExpanded` starts true there
+          and nothing ever sets it false, so this renders exactly as before.
+        */}
+        {fieldsExpanded && (
+          <>
+          {identity !== undefined && (
+            <p className={styles.fromLine}>
+              <span className={styles.fromLabel}>{t("compose.from")}</span>
+              <span>{fromLineText(identity)}</span>
+              {identityCount > 1 && (
+                <span className={styles.fromCaret} aria-hidden="true">
+                  ▾
+                </span>
               )}
-              {!showBcc && (
-                <button
-                  type="button"
-                  className={styles.linkButton}
-                  aria-label={t("compose.showBcc")}
-                  onClick={() => {
-                    setShowBcc(true);
-                  }}
-                >
-                  {t("compose.bcc")}
-                </button>
-              )}
-            </div>
-          }
-        />
+            </p>
+          )}
 
-        {showCc && (
           <AddressField
-            label={t("compose.cc")}
-            chips={cc}
-            inputRef={ccInputRef}
+            label={t("compose.to")}
+            chips={to}
             onChange={(next) => {
-              setCc(next);
+              setTo(next);
               touched();
             }}
             {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
-          />
-        )}
-        {showBcc && (
-          <AddressField
-            label={t("compose.bcc")}
-            chips={bcc}
-            inputRef={bccInputRef}
-            onChange={(next) => {
-              setBcc(next);
-              touched();
-            }}
-            /* Bcc completes from the index like the others: the index is never
-               FED from Bcc (that would surface a hidden recipient), but
-               completing INTO it is just the user picking someone they already
-               know — the asymmetry is deliberate. */
-            {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
-          />
-        )}
+            autoFocusField={draft.focusField === "to"}
+            trailing={
+              /*
+                D-05: "Cc  Cco" — two quiet words, as Gmail writes them.
 
-        <div className={styles.subjectRow}>
-          {/*
-            D-07: the label is VISUALLY hidden, and the placeholder is the one
-            visible "Asunto".
-
-            The row read "Asunto  Asunto" — a label and a placeholder saying the
-            same word, side by side, which is what a reviewer notices in the
-            first second. Gmail has one. The label survives in the accessibility
-            tree rather than being deleted, because a placeholder is not a label:
-            it vanishes the moment you type and is announced inconsistently, so
-            deleting the <label> would trade a cosmetic defect for a real one.
-          */}
-          <label className="visually-hidden" htmlFor="composer-subject">
-            {t("compose.subject")}
-          </label>
-          <input
-            id="composer-subject"
-            className={styles.subjectInput}
-            type="text"
-            value={subject}
-            placeholder={t("compose.subjectPlaceholder")}
-            /* See AddressField: a modal dialog must place focus inside itself
-               (WAI-ARIA APG), which is the opposite of the load-time focus
-               theft this rule exists to prevent. */
-            // eslint-disable-next-line jsx-a11y/no-autofocus
-            autoFocus={draft.focusField === "subject"}
-            onChange={(event) => {
-              setSubject(event.target.value);
-              touched();
-            }}
+                The visible text is the FIELD NAME alone; the verb lives in the
+                accessible name, because "Cc" on screen is what a person scans for
+                and "Add Cc" is what a screen reader has to hear to know it is a
+                control rather than a heading. Splitting them is not a compromise
+                between the two — it is what each surface actually needs.
+              */
+              <div className={styles.ccToggles}>
+                {!showCc && (
+                  <button
+                    type="button"
+                    className={styles.linkButton}
+                    aria-label={t("compose.showCc")}
+                    onClick={() => {
+                      setShowCc(true);
+                    }}
+                  >
+                    {t("compose.cc")}
+                  </button>
+                )}
+                {!showBcc && (
+                  <button
+                    type="button"
+                    className={styles.linkButton}
+                    aria-label={t("compose.showBcc")}
+                    onClick={() => {
+                      setShowBcc(true);
+                    }}
+                  >
+                    {t("compose.bcc")}
+                  </button>
+                )}
+              </div>
+            }
           />
-        </div>
+
+          {showCc && (
+            <AddressField
+              label={t("compose.cc")}
+              chips={cc}
+              inputRef={ccInputRef}
+              onChange={(next) => {
+                setCc(next);
+                touched();
+              }}
+              {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
+            />
+          )}
+          {showBcc && (
+            <AddressField
+              label={t("compose.bcc")}
+              chips={bcc}
+              inputRef={bccInputRef}
+              onChange={(next) => {
+                setBcc(next);
+                touched();
+              }}
+              /* Bcc completes from the index like the others: the index is never
+                 FED from Bcc (that would surface a hidden recipient), but
+                 completing INTO it is just the user picking someone they already
+                 know — the asymmetry is deliberate. */
+              {...(addressSuggestions !== undefined ? { suggestions: addressSuggestions } : {})}
+            />
+          )}
+
+          <div className={styles.subjectRow}>
+            {/*
+              D-07: the label is VISUALLY hidden, and the placeholder is the one
+              visible "Asunto".
+
+              The row read "Asunto  Asunto" — a label and a placeholder saying the
+              same word, side by side, which is what a reviewer notices in the
+              first second. Gmail has one. The label survives in the accessibility
+              tree rather than being deleted, because a placeholder is not a label:
+              it vanishes the moment you type and is announced inconsistently, so
+              deleting the <label> would trade a cosmetic defect for a real one.
+            */}
+            <label className="visually-hidden" htmlFor="composer-subject">
+              {t("compose.subject")}
+            </label>
+            <input
+              id="composer-subject"
+              className={styles.subjectInput}
+              type="text"
+              value={subject}
+              placeholder={t("compose.subjectPlaceholder")}
+              /* See AddressField: a modal dialog must place focus inside itself
+                 (WAI-ARIA APG), which is the opposite of the load-time focus
+                 theft this rule exists to prevent. */
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus={draft.focusField === "subject"}
+              onChange={(event) => {
+                setSubject(event.target.value);
+                touched();
+              }}
+            />
+          </div>
+          </>
+        )}
 
         <BodyEditor
           isRich={isRich}
@@ -1882,14 +1877,7 @@ export function Composer({
             ? formatFullDate(draft.reference, locale)
             : ""}
         </p>
-      </form>
-      {/*
-        E11: the discard confirmation. Inside the composer's own <dialog>, and
-        correct there: a nested `showModal()` goes into the top layer ABOVE its
-        parent, so it is not covered by the composer it is asking about.
-      */}
-      {confirmDialog}
-    </dialog>
+    </ComposerShell>
   );
 }
 
