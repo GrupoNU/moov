@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Email, EmailBodyPart } from "../../mail/types";
@@ -75,6 +76,13 @@ function outlookEmail(): Email {
 
 function srcDoc(): string {
   return document.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+}
+
+/** The frame document's BODY. The CSP in the head names the proxy path
+ * whatever the image policy is, so an assertion about what actually renders
+ * has to look past it. */
+function srcDocBody(): string {
+  return srcDoc().split("<body>")[1] ?? "";
 }
 
 describe("inline cid: images from real Outlook mail", () => {
@@ -202,5 +210,55 @@ describe("signing survives a re-render in flight", () => {
     // And it was signed exactly once — the guard must not let the re-render
     // start a second request either.
     expect(signImageUrls).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The owner's second symptom — "there is nothing that lets me view them".
+ *
+ * The offer was always rendered; what it did was nothing, because the signed
+ * map never survived (see above). Clicking it hid the banner and left the
+ * gaps, which reads exactly like an affordance that does not work. This
+ * covers the whole gesture: blocked, offered, clicked, loaded.
+ */
+describe("the show-images offer", () => {
+  it("states the count, and the click actually loads them", async () => {
+    const user = userEvent.setup();
+    const remote = "https://cdn.example.com/banner.png";
+    const signImageUrls = vi
+      .fn()
+      .mockResolvedValue(new Map([[remote, "/jmap/imgproxy?u=ban&e=1&s=sig"]]));
+
+    const email: Email = {
+      id: "m4",
+      attachments: [],
+      htmlBody: [HTML_PART],
+      textBody: [],
+      bodyValues: {
+        "4": {
+          value: `<p>Boletin</p><img src="${remote}">`,
+          isEncodingProblem: false,
+          isTruncated: false,
+        },
+      },
+    };
+
+    render(
+      <I18nProvider locale="es">
+        {/* The default posture: blocked, with the offer. */}
+        <MessageBody email={email} signImageUrls={signImageUrls} />
+      </I18nProvider>,
+    );
+
+    // Blocked first, and the reader SAYS so rather than showing silent gaps.
+    expect(await screen.findByText(/1 imagen/i)).toBeInTheDocument();
+    // The BODY, not the CSP header — which names the proxy either way.
+    expect(srcDocBody()).not.toContain("/jmap/imgproxy");
+
+    await user.click(screen.getByRole("button", { name: /mostrar imágenes/i }));
+
+    await waitFor(() => {
+      expect(srcDocBody()).toContain("/jmap/imgproxy?u=ban");
+    });
   });
 });
