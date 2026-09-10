@@ -38,15 +38,52 @@
   );
 }
 
+/*
+ * With a photograph the gradient is a BACKDROP, not a treatment: it is what the
+ * panel looks like for the moments before the image decodes and for as long as
+ * a failed fetch lasts, and it is painted UNDER an opaque `object-fit: cover`
+ * image, so it contributes nothing to the pixels once the picture arrives.
+ *
+ * The z-index is written down rather than left to DOM order because DOM order
+ * is exactly what a later edit reorders without meaning to, and the failure —
+ * a brand gradient painted OVER the customer's photograph — is the one this
+ * whole block exists to prevent.
+ */
+.panel[data-has-image="true"] .gradient {
+  z-index: 0;
+}
+
+.panel[data-has-image="true"] .image {
+  z-index: 0;
+}
+
+/*
+ * THE PHOTOGRAPH IS SHOWN AS IT WAS UPLOADED.
+ *
+ * This used to be `mix-blend-mode: overlay` at 85% opacity over the gradient,
+ * on the theory that blending the customer's photograph with their brand hue
+ * would make an arbitrary stock image "belong". The first owner to actually
+ * configure one proved it wrong in one screenshot: their photograph came out
+ * violet — the gradient's colour, because the gradient stops still defaulted to
+ * Moov's — and so washed out it was barely visible under the wash.
+ *
+ * The theory was wrong even with the right gradient. An operator who uploads a
+ * picture has ALREADY made the visual decision; tinting it is the product
+ * overriding them with an effect they cannot see in advance, turn off, or
+ * predict, because the result depends on the pixels. `object-fit: cover` and
+ * nothing else.
+ *
+ * The gradient stays behind it as the backdrop while the image loads and as the
+ * fallback if it never does, so a failed fetch is a branded panel rather than a
+ * black one — but it is BEHIND an opaque photograph, never through it.
+ *
+ * Legibility of the mark and tagline is the scrim's job, and only the scrim's:
+ * see `.scrim`.
+ */
 .image {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* Blended rather than laid flat: the customer's photograph keeps the brand
-   * gradient's hue, so an arbitrary stock image still looks like it belongs to
-   * this brand instead of like a sticker on top of it. */
-  mix-blend-mode: overlay;
-  opacity: 0.85;
 }
 
 /*
@@ -78,10 +115,14 @@
 }
 
 /*
- * The scrim. This is the element that makes the contrast of the panel's text a
- * FIXED value rather than a property of the customer's image: whatever is
- * behind it, the bottom of the panel — where the mark and tagline sit — is
- * darkened to a known floor.
+ * The scrim, and with an image behind it the ONLY overlay there is.
+ *
+ * This is the element that makes the contrast of the panel's text a FIXED value
+ * rather than a property of the customer's image: whatever is behind it, the
+ * bottom of the panel — where the mark and tagline sit — is darkened to a known
+ * floor. It is a bottom-weighted gradient rather than a flat wash precisely so
+ * it buys that legibility without dimming the picture: the top two-thirds of the
+ * photograph are untouched.
  */
 .scrim {
   background: linear-gradient(
@@ -142,11 +183,6 @@
 
   .grid {
     background-size: 32px 32px;
-  }
-
-  /* On a short band the image adds noise rather than atmosphere. */
-  .image {
-    opacity: 0.55;
   }
 }
 
