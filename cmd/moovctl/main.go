@@ -168,6 +168,8 @@ Commands:
   branding show           print a host's branding
   branding list           list the hosts with branding configured
   branding unset          remove a host's branding (back to Moov's defaults)
+  branding grant          let a mailbox edit a host's brand from Settings (the admin API)
+  branding revoke         take that permission away
 
 Flags:
   -v          log at debug level
