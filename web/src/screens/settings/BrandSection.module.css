@@ -361,12 +361,46 @@
   color: var(--color-accent);
 }
 
+/*
+ * The tonal trio, as the app wears it: the compose container and the active
+ * folder pill side by side, with the selected row directly below them. Three
+ * tones of one accent, in descending strength, which is what makes the family
+ * legible as a family rather than as three unrelated fills.
+ */
+.paneTones {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-default);
+}
+
+.paneCompose {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-container);
+  color: var(--color-on-accent-container);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.panePill {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-active-pill);
+  color: var(--text-strong);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* The faintest of the three. `--color-accent` for the spine on purpose: the
+ * row's accent MARK is ink, not a container, exactly as MessageList draws it. */
 .paneRow {
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: var(--space-2) var(--space-3);
-  background: var(--color-accent-tint-strong);
+  background: var(--color-selected-row);
   border-left: 3px solid var(--color-accent);
 }
 

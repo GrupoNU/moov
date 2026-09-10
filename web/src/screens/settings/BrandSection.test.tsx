@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { BrandingProvider } from "../../branding/BrandingProvider";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { MOOV_DEFAULT_BRANDING } from "../../branding/branding";
-import { derivePalette, deriveSplashColors } from "../../branding/palette";
+import { derivePalette, deriveSplashColors, hexToOklch } from "../../branding/palette";
 import type { BrandAdminDoc, BrandColorField } from "../../branding/adminApi";
 import { BrandSection, type BrandSectionProps } from "./BrandSection";
 
@@ -250,6 +250,49 @@ describe("the colour picker, and the preview that must not escape its box", () =
     );
   });
 
+  it("shows the TRIO of tones, per theme, so the family is visible as a family", async () => {
+    /*
+     * One accent produces three related tones — a container for the compose
+     * button, a pill for the active folder, the faintest tint for the selected
+     * row. An administrator who saw only one of them could not tell whether
+     * they were choosing one colour or three, and (the defect this whole
+     * change fixes) could not see that the chrome keeps their hue while the
+     * links go deep. So all three are on screen, in both themes.
+     */
+    const user = userEvent.setup();
+    renderSection();
+    const hex = screen.getByLabelText("Color principal, en hexadecimal");
+    await user.clear(hex);
+    await user.type(hex, "#b8faff");
+
+    const expected = derivePalette("#b8faff");
+    for (const theme of ["light", "dark"] as const) {
+      const pane = document.querySelector<HTMLElement>(`[data-theme-preview="${theme}"]`);
+      expect(pane, theme).not.toBeNull();
+      const prop = (name: string): string => pane?.style.getPropertyValue(name) ?? "";
+      expect(prop("--color-accent-container"), theme).toBe(expected[theme].accentContainer);
+      expect(prop("--color-on-accent-container"), theme).toBe(
+        expected[theme].onAccentContainer,
+      );
+      expect(prop("--color-active-pill"), theme).toBe(expected[theme].activePill);
+      expect(prop("--color-selected-row"), theme).toBe(expected[theme].selectedRow);
+      // The three tones are DISTINCT, or the preview shows one swatch three
+      // times and tells the administrator nothing.
+      expect(
+        new Set([
+          expected[theme].accentContainer,
+          expected[theme].activePill,
+          expected[theme].selectedRow,
+        ]).size,
+        theme,
+      ).toBe(3);
+    }
+    // And the mini-UI actually renders the two new marks, not just the
+    // variables that would paint them.
+    expect(screen.getAllByText("Redactar").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Recibidos").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("shows the AA notice for a colour that cannot clear 4.5:1 — and names the hex used", async () => {
     const user = userEvent.setup();
     renderSection();
@@ -465,9 +508,26 @@ describe("the effective accents, beside the colour that was chosen", () => {
       .getByText("Lo que van a usar los botones y los enlaces")
       .closest("div");
     const hexes = [...(row?.querySelectorAll("code") ?? [])].map((el) => el.textContent);
-    expect(hexes).toEqual(["#b8faff", palette.light.accent, palette.dark.accent]);
+    expect(hexes).toEqual([
+      "#b8faff",
+      palette.light.accent,
+      palette.dark.accent,
+      palette.light.accentContainer,
+      palette.dark.accentContainer,
+    ]);
     // And the accent is genuinely NOT the pastel that was typed.
     expect(palette.light.accent).not.toBe("#b8faff");
+    /*
+     * The containers are the OTHER half of the answer, and for this input the
+     * more important one. The accent is a deep teal because it has to carry
+     * 4.5:1 as text; the chrome stays in the hue that was actually chosen, and
+     * an administrator who saw only the two dark swatches above would conclude
+     * the product had discarded their colour. Pinned by its LIGHTNESS rather
+     * than by a literal, so the assertion says what it means.
+     */
+    expect(hexToOklch(palette.light.accentContainer).l).toBeGreaterThan(
+      hexToOklch(palette.light.accent).l + 0.2,
+    );
   });
 
   it("says so in words when the colour had to be adjusted", () => {

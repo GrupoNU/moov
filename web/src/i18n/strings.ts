@@ -713,6 +713,8 @@ export const en = {
   "brand.color.effective.chosen": "Chosen",
   "brand.color.effective.light": "Light theme",
   "brand.color.effective.dark": "Dark theme",
+  "brand.color.effective.containerLight": "Buttons and rows, light",
+  "brand.color.effective.containerDark": "Buttons and rows, dark",
   /*
    * The "adjust it and DECLARE it" rule, made visible.
    *
@@ -730,6 +732,8 @@ export const en = {
     "How the colour looks before you save it. Nothing on this page changes until you do.",
   "brand.preview.light": "Light theme",
   "brand.preview.dark": "Dark theme",
+  "brand.preview.compose": "Compose",
+  "brand.preview.pill": "Inbox",
   "brand.preview.rowSubject": "A selected conversation",
   "brand.preview.rowSnippet": "The row that is open, in the accent colour.",
   "brand.preview.button": "Primary button",
@@ -2222,6 +2226,8 @@ export const es: Strings = {
   "brand.color.effective.chosen": "Elegido",
   "brand.color.effective.light": "Tema claro",
   "brand.color.effective.dark": "Tema oscuro",
+  "brand.color.effective.containerLight": "Botones y filas, claro",
+  "brand.color.effective.containerDark": "Botones y filas, oscuro",
   "brand.color.adjustedLight": (hex: string): string =>
     `Tu color se oscureció a ${hex} en el tema claro para seguir legible (4,5:1).`,
   "brand.color.adjustedDark": (hex: string): string =>
@@ -2232,6 +2238,8 @@ export const es: Strings = {
     "Cómo queda el color antes de guardarlo. Nada de esta página cambia hasta que lo hagas.",
   "brand.preview.light": "Tema claro",
   "brand.preview.dark": "Tema oscuro",
+  "brand.preview.compose": "Redactar",
+  "brand.preview.pill": "Recibidos",
   "brand.preview.rowSubject": "Una conversación seleccionada",
   "brand.preview.rowSnippet": "La fila abierta, en el color de acento.",
   "brand.preview.button": "Botón principal",

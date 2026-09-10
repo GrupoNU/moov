@@ -548,6 +548,23 @@ function ColorGroup({
             color={palette.dark.accent}
             onColor={palette.dark.onAccent}
           />
+          {/*
+            The container is a SEPARATE answer to "what will my colour look
+            like", and for a pastel brand it is the more surprising one: the
+            two swatches above are deep because they have to carry text, while
+            the chrome stays in the hue that was chosen. Showing only the ink
+            made the derivation look like it had thrown the colour away.
+          */}
+          <EffectiveSwatch
+            label={t("brand.color.effective.containerLight")}
+            color={palette.light.accentContainer}
+            onColor={palette.light.onAccentContainer}
+          />
+          <EffectiveSwatch
+            label={t("brand.color.effective.containerDark")}
+            color={palette.dark.accentContainer}
+            onColor={palette.dark.onAccentContainer}
+          />
         </ul>
         {/*
           There is deliberately NO "your colour was used as-is" branch here.
@@ -664,7 +681,14 @@ function PreviewPane({
     "--color-on-accent": themed.onAccent,
     "--color-accent-tint": themed.accentTint,
     "--color-accent-tint-strong": themed.accentTintStrong,
+    // The tonal trio, for the same reason as the line above: this pane shows
+    // the OTHER theme from the page's, and tokens.css routes these per theme.
+    "--color-accent-container": themed.accentContainer,
+    "--color-on-accent-container": themed.onAccentContainer,
+    "--color-selected-row": themed.selectedRow,
+    "--color-active-pill": themed.activePill,
     "--surface-default": surfaces.surfaceDefault,
+    "--text-strong": surfaces.textStrong,
     "--surface-canvas": surfaces.surfaceCanvas,
     "--text-default": surfaces.textDefault,
     /*
@@ -683,6 +707,20 @@ function PreviewPane({
       <div className={styles.paneBody}>
         <div className={styles.paneBar}>
           <BrandMark branding={branding} size="sm" />
+        </div>
+        {/*
+          The three TONES, in the places the app wears them, so the trio is
+          visible as a trio.
+
+          One accent produces three related tones — a light container for the
+          compose button, a slightly fainter pill for the active folder, the
+          faintest tint for the selected row — and an administrator who only
+          saw the button could not tell whether they were choosing one colour
+          or three. Shown together, the family is the thing on screen.
+        */}
+        <div className={styles.paneTones}>
+          <span className={styles.paneCompose}>{t("brand.preview.compose")}</span>
+          <span className={styles.panePill}>{t("brand.preview.pill")}</span>
         </div>
         <div className={styles.paneRow}>
           <span className={styles.paneRowSubject}>{t("brand.preview.rowSubject")}</span>
