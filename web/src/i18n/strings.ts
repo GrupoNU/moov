@@ -648,6 +648,124 @@ export const en = {
   "settings.offlineDepth.attachments":
     "Attachments are never saved offline, at any setting.",
 
+  // ------------------------------------------------------------------
+  // L2-brand-admin: the "Brand" tab
+  //
+  // The reader here is a DOMAIN ADMINISTRATOR looking at their own
+  // installation, so every string names the thing they are changing — "the
+  // sign-in screen", "the installed icon" — rather than the file it lands in.
+  // Where a rule of the server would otherwise look arbitrary (SVG refused,
+  // 2 MiB, a short name of twelve), the reason is on screen BEFORE the attempt,
+  // which is the same principle the label budget follows.
+  // ------------------------------------------------------------------
+  "settings.section.brand": "Brand",
+  "settings.brand.description": (brand: BrandName): string =>
+    `The name, colour and images this installation wears. Everyone who signs in here sees ${brand} exactly as you leave it.`,
+  "settings.brand.loading": "Loading the brand…",
+  "settings.brand.loadFailed": "The brand could not be loaded",
+  "settings.brand.retry": "Try again",
+
+  "brand.identity.heading": "Name and text",
+  "brand.name.label": "Name",
+  "brand.name.description":
+    "The full name of this installation. It titles the browser tab and names the sign-in screen.",
+  "brand.shortName.label": "Short name",
+  "brand.shortName.description": "Appears under the installed icon. Twelve characters at most.",
+  "brand.shortName.counter": (used: number, max: number): string =>
+    `${String(used)} of ${String(max)} characters`,
+  "brand.tagline.label": "Tagline",
+  "brand.tagline.description":
+    "One line under the name on the sign-in screen. Leave it empty for none.",
+
+  "brand.links.heading": "Links",
+  "brand.supportUrl.label": "Support",
+  "brand.supportUrl.description":
+    "Where “Need help?” goes. A web address or a mailto: link. Empty shows no link at all.",
+  "brand.privacyUrl.label": "Privacy policy",
+  "brand.privacyUrl.description":
+    "Your own privacy policy, in the footer. Separate from the licence and source links, which are ours and stay.",
+  "brand.termsUrl.label": "Terms of service",
+  "brand.termsUrl.description": "Your own terms, in the footer. Empty shows no link.",
+  "brand.url.invalid": "Enter a web address starting with https:// or http://, or a mailto: link.",
+
+  "brand.colors.heading": "Colour",
+  "brand.primary.label": "Primary colour",
+  "brand.primary.description":
+    "Buttons, links and the selected row. Everything else is derived from it.",
+  "brand.onPrimary.label": "Text on the primary colour",
+  "brand.onPrimary.description":
+    "Left automatic, a legible one is chosen for you. Override it only if you have to.",
+  "brand.onPrimary.auto": "Automatic",
+  "brand.onPrimary.custom": "Choose it myself",
+  "brand.splashFrom.label": "Sign-in gradient, from",
+  "brand.splashTo.label": "Sign-in gradient, to",
+  "brand.color.hexLabel": (field: string): string => `${field}, as a hex value`,
+  "brand.color.invalid": "Enter a colour like #5b5bd6.",
+  /*
+   * The "adjust it and DECLARE it" rule, made visible.
+   *
+   * The provider already prints this to the console; an administrator who
+   * typed a pale mint and got a deeper one deserves to read WHY on the screen
+   * where they typed it, not in devtools.
+   */
+  "brand.color.adjustedLight": (hex: string): string =>
+    `Your colour was darkened to ${hex} in the light theme so text stays legible (4.5:1).`,
+  "brand.color.adjustedDark": (hex: string): string =>
+    `Your colour was lightened to ${hex} in the dark theme so text stays legible (4.5:1).`,
+
+  "brand.preview.heading": "Preview",
+  "brand.preview.description":
+    "How the colour looks before you save it. Nothing on this page changes until you do.",
+  "brand.preview.light": "Light theme",
+  "brand.preview.dark": "Dark theme",
+  "brand.preview.rowSubject": "A selected conversation",
+  "brand.preview.rowSnippet": "The row that is open, in the accent colour.",
+  "brand.preview.button": "Primary button",
+  "brand.preview.link": "A link",
+
+  "brand.images.heading": "Images",
+  "brand.images.description":
+    "PNG, JPEG, WebP or GIF, up to 2 MB each. SVG is refused: it is a document that can carry script, and these images are shown before anyone has signed in.",
+  "brand.logo.label": "Logo",
+  "brand.logo.description":
+    "Your wordmark, in the top bar and on the sign-in screen. Any shape; it is sized by height.",
+  "brand.logoDark.label": "Logo for dark backgrounds",
+  "brand.logoDark.description":
+    "A variant for the dark theme and the sign-in panel. Without one, a dark logo is drawn on a light plate instead.",
+  "brand.icon.label": "Square icon",
+  "brand.icon.description":
+    "The installed app icon and the favicon. Square, at least 512×512 — a non-square image is accepted and cropped, and we say so.",
+  "brand.splash.label": "Sign-in image",
+  "brand.splash.description": "The picture beside the sign-in form. Wide images work best.",
+  "brand.image.drop": "Drag an image here, or",
+  "brand.image.choose": "choose a file",
+  "brand.image.chooseFor": (field: string): string => `Choose an image for ${field}`,
+  "brand.image.remove": "Remove",
+  "brand.image.removeFor": (field: string): string => `Remove the image for ${field}`,
+  "brand.image.uploading": "Uploading…",
+  "brand.image.none": "None yet",
+  "brand.image.dimensions": (width: number, height: number, bytes: string): string =>
+    `${String(width)}×${String(height)}, ${bytes}`,
+  "brand.image.onLight": "On light",
+  "brand.image.onDark": "On dark",
+  "brand.image.tooLarge": "That image is over 2 MB. Save it smaller and try again.",
+  "brand.image.unsupported": "That file is not a PNG, JPEG, WebP or GIF.",
+  "brand.icons.heading": "Generated icons",
+  "brand.icons.fromLogo":
+    "These were made from your logo because no square icon is set.",
+  "brand.icons.fromDefault": "These are the stock icons: upload a square icon to replace them.",
+  "brand.warnings.heading": "Worth knowing",
+
+  "brand.danger.heading": "Reset",
+  "brand.reset.label": "Back to the stock brand",
+  "brand.reset.description":
+    "Clears the name, colours and every image. You keep your access and can set it up again.",
+  "brand.reset.button": "Reset the brand",
+  "brand.reset.confirm":
+    "Reset this installation to the stock brand? The name, colours and images are cleared for everyone who signs in here.",
+  "brand.error.network": "That could not be saved. Check the connection and try again.",
+  "brand.error.notAdmin": "You no longer administer this installation.",
+
   // --- E7: Send & Archive, the reply default, and named signatures (v2) ---
   "settings.sendAndArchive.label": "Show “Send & Archive” in replies",
   "settings.sendAndArchive.description":
@@ -2043,6 +2161,110 @@ export const es: Strings = {
     `Ingresá un número entero entre ${String(min)} y ${String(max)}`,
   "settings.offlineDepth.attachments":
     "Los adjuntos nunca se guardan sin conexión, con ninguna configuración.",
+
+  // --- L2-brand-admin: la pestaña «Marca» ---
+  "settings.section.brand": "Marca",
+  "settings.brand.description": (brand: BrandName): string =>
+    `El nombre, el color y las imágenes que lleva esta instalación. Todos los que inicien sesión acá ven ${brand} tal como lo dejes.`,
+  "settings.brand.loading": "Cargando la marca…",
+  "settings.brand.loadFailed": "No se pudo cargar la marca",
+  "settings.brand.retry": "Reintentar",
+
+  "brand.identity.heading": "Nombre y textos",
+  "brand.name.label": "Nombre",
+  "brand.name.description":
+    "El nombre completo de esta instalación. Titula la pestaña del navegador y nombra la pantalla de inicio de sesión.",
+  "brand.shortName.label": "Nombre corto",
+  "brand.shortName.description": "Aparece bajo el icono instalado. Doce caracteres como máximo.",
+  "brand.shortName.counter": (used: number, max: number): string =>
+    `${String(used)} de ${String(max)} caracteres`,
+  "brand.tagline.label": "Bajada",
+  "brand.tagline.description":
+    "Una línea debajo del nombre en la pantalla de inicio de sesión. Vacía no muestra ninguna.",
+
+  "brand.links.heading": "Enlaces",
+  "brand.supportUrl.label": "Soporte",
+  "brand.supportUrl.description":
+    "A dónde lleva «¿Necesitás ayuda?». Una dirección web o un enlace mailto:. Vacío no muestra ningún enlace.",
+  "brand.privacyUrl.label": "Política de privacidad",
+  "brand.privacyUrl.description":
+    "Tu propia política de privacidad, en el pie. Va aparte de los enlaces de licencia y código fuente, que son nuestros y se quedan.",
+  "brand.termsUrl.label": "Términos del servicio",
+  "brand.termsUrl.description": "Tus propios términos, en el pie. Vacío no muestra enlace.",
+  "brand.url.invalid":
+    "Ingresá una dirección web que empiece con https:// o http://, o un enlace mailto:.",
+
+  "brand.colors.heading": "Color",
+  "brand.primary.label": "Color principal",
+  "brand.primary.description":
+    "Los botones, los enlaces y la fila seleccionada. Todo lo demás se deriva de él.",
+  "brand.onPrimary.label": "Texto sobre el color principal",
+  "brand.onPrimary.description":
+    "Si lo dejás automático, se elige uno legible por vos. Cambialo solo si hace falta.",
+  "brand.onPrimary.auto": "Automático",
+  "brand.onPrimary.custom": "Elegirlo yo",
+  "brand.splashFrom.label": "Degradado del inicio de sesión, desde",
+  "brand.splashTo.label": "Degradado del inicio de sesión, hasta",
+  "brand.color.hexLabel": (field: string): string => `${field}, en hexadecimal`,
+  "brand.color.invalid": "Ingresá un color como #5b5bd6.",
+  "brand.color.adjustedLight": (hex: string): string =>
+    `Tu color se oscureció a ${hex} en el tema claro para seguir legible (4,5:1).`,
+  "brand.color.adjustedDark": (hex: string): string =>
+    `Tu color se aclaró a ${hex} en el tema oscuro para seguir legible (4,5:1).`,
+
+  "brand.preview.heading": "Vista previa",
+  "brand.preview.description":
+    "Cómo queda el color antes de guardarlo. Nada de esta página cambia hasta que lo hagas.",
+  "brand.preview.light": "Tema claro",
+  "brand.preview.dark": "Tema oscuro",
+  "brand.preview.rowSubject": "Una conversación seleccionada",
+  "brand.preview.rowSnippet": "La fila abierta, en el color de acento.",
+  "brand.preview.button": "Botón principal",
+  "brand.preview.link": "Un enlace",
+
+  "brand.images.heading": "Imágenes",
+  "brand.images.description":
+    "PNG, JPEG, WebP o GIF, hasta 2 MB cada una. SVG se rechaza: es un documento que puede llevar scripts, y estas imágenes se muestran antes de que nadie haya iniciado sesión.",
+  "brand.logo.label": "Logo",
+  "brand.logo.description":
+    "Tu logotipo, en la barra superior y en la pantalla de inicio de sesión. Cualquier forma; se ajusta por altura.",
+  "brand.logoDark.label": "Logo para fondos oscuros",
+  "brand.logoDark.description":
+    "Una variante para el tema oscuro y el panel de inicio de sesión. Sin ella, un logo oscuro se dibuja sobre una placa clara.",
+  "brand.icon.label": "Icono cuadrado",
+  "brand.icon.description":
+    "El icono de la app instalada y el favicon. Cuadrado, de 512×512 como mínimo — una imagen que no sea cuadrada se acepta y se recorta, y lo avisamos.",
+  "brand.splash.label": "Imagen del inicio de sesión",
+  "brand.splash.description":
+    "La imagen junto al formulario de inicio de sesión. Funcionan mejor las apaisadas.",
+  "brand.image.drop": "Arrastrá una imagen acá, o",
+  "brand.image.choose": "elegí un archivo",
+  "brand.image.chooseFor": (field: string): string => `Elegir una imagen para ${field}`,
+  "brand.image.remove": "Quitar",
+  "brand.image.removeFor": (field: string): string => `Quitar la imagen de ${field}`,
+  "brand.image.uploading": "Subiendo…",
+  "brand.image.none": "Todavía ninguna",
+  "brand.image.dimensions": (width: number, height: number, bytes: string): string =>
+    `${String(width)}×${String(height)}, ${bytes}`,
+  "brand.image.onLight": "Sobre claro",
+  "brand.image.onDark": "Sobre oscuro",
+  "brand.image.tooLarge": "Esa imagen pesa más de 2 MB. Guardala más chica y probá de nuevo.",
+  "brand.image.unsupported": "Ese archivo no es PNG, JPEG, WebP ni GIF.",
+  "brand.icons.heading": "Iconos generados",
+  "brand.icons.fromLogo": "Se hicieron con tu logo porque no hay un icono cuadrado cargado.",
+  "brand.icons.fromDefault":
+    "Estos son los iconos de fábrica: subí un icono cuadrado para reemplazarlos.",
+  "brand.warnings.heading": "Para tener en cuenta",
+
+  "brand.danger.heading": "Restablecer",
+  "brand.reset.label": "Volver a la marca de fábrica",
+  "brand.reset.description":
+    "Borra el nombre, los colores y todas las imágenes. Conservás tu acceso y podés configurarla de nuevo.",
+  "brand.reset.button": "Restablecer la marca",
+  "brand.reset.confirm":
+    "¿Restablecer esta instalación a la marca de fábrica? Se borran el nombre, los colores y las imágenes para todos los que inicien sesión acá.",
+  "brand.error.network": "Eso no se pudo guardar. Revisá la conexión y probá de nuevo.",
+  "brand.error.notAdmin": "Ya no administrás esta instalación.",
 
   "settings.sendAndArchive.label": "Mostrar «Enviar y archivar» en las respuestas",
   "settings.sendAndArchive.description":

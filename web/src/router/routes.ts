@@ -198,6 +198,20 @@ export const SETTINGS_TABS = [
   "filters",
   "forwarding",
   "offline",
+  /*
+   * L2-brand-admin: LAST, and conditional at render time.
+   *
+   * It is in this list — and therefore has a URL, `/settings/brand` — because
+   * an administrator has to be able to bookmark it and land on it; a tab that
+   * exists only as a click from another tab is not a destination. What is
+   * conditional is whether the ROW is drawn: `GET /branding/admin` answers 404
+   * for everyone who is not an administrator of this host, and the page hides
+   * the tab (and refuses the route) on that answer.
+   *
+   * Last rather than beside "Cuenta" because it administers the INSTALLATION
+   * rather than the account, and almost nobody who opens Settings has it.
+   */
+  "brand",
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number];

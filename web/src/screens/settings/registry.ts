@@ -83,6 +83,18 @@ export const SECTION_IDS = [
   "forwarding",
   "vacation",
   "offline",
+  /*
+   * L2-brand-admin. The one section whose objects are neither preferences nor
+   * mail: it edits the INSTALLATION's identity, which everyone signing in to
+   * this host sees.
+   *
+   * It is registered unconditionally — the registry describes what the app can
+   * render, not what this session may see — and the page hides both the tab and
+   * its search hits when `GET /branding/admin` answered 404. Registering it
+   * conditionally would have made the search table depend on a network probe,
+   * which is exactly the kind of coupling `registry.ts` exists to avoid.
+   */
+  "brand",
 ] as const;
 
 export type SectionId = (typeof SECTION_IDS)[number];
@@ -97,6 +109,7 @@ export const SECTION_TITLES: Readonly<Record<SectionId, PlainStringKey>> = {
   forwarding: "settings.section.forwarding",
   vacation: "settings.section.vacation",
   offline: "settings.section.offline",
+  brand: "settings.section.brand",
 };
 
 /**
@@ -119,6 +132,7 @@ export const SECTION_TAB: Readonly<Record<SectionId, SettingsTab>> = {
   // a vacation responder alone does not earn a tab of its own.
   vacation: "forwarding",
   offline: "offline",
+  brand: "brand",
 };
 
 /** The sections a tab renders, in order. Derived, never a second hand-kept list. */
@@ -142,6 +156,7 @@ export const TAB_TITLES: Readonly<Record<SettingsTab, PlainStringKey>> = {
   filters: "settings.tab.filters",
   forwarding: "settings.section.forwarding",
   offline: "settings.section.offline",
+  brand: "settings.section.brand",
 };
 
 /**
@@ -661,6 +676,113 @@ export const SETTINGS_ROWS: readonly RowSpec[] = [
       "profundidad",
       "attachments",
       "adjuntos",
+    ],
+  },
+
+  /*
+   * --- L2-brand-admin: the Marca tab ---
+   *
+   * FIVE rows for one section, not one, because the search has to find each
+   * job by the word an administrator would type. Somebody who wants to swap a
+   * logo types "logo", not "marca"; somebody who wants the accent types
+   * "color". A single "brand" row would be findable only by people who already
+   * knew the tab existed — and almost nobody has this tab, so almost nobody
+   * does.
+   */
+  {
+    id: "brandIdentity",
+    sectionId: "brand",
+    labelKey: "brand.identity.heading",
+    descriptionKey: "brand.name.description",
+    keywords: [
+      "brand",
+      "marca",
+      "name",
+      "nombre",
+      "short name",
+      "nombre corto",
+      "tagline",
+      "bajada",
+      "title",
+      "titulo",
+    ],
+  },
+  {
+    id: "brandLinks",
+    sectionId: "brand",
+    labelKey: "brand.links.heading",
+    descriptionKey: "brand.supportUrl.description",
+    keywords: [
+      "support",
+      "soporte",
+      "ayuda",
+      "help",
+      "privacy",
+      "privacidad",
+      "terms",
+      "terminos",
+      "links",
+      "enlaces",
+      "url",
+    ],
+  },
+  {
+    id: "brandColors",
+    sectionId: "brand",
+    labelKey: "brand.colors.heading",
+    descriptionKey: "brand.primary.description",
+    keywords: [
+      "color",
+      "colour",
+      "colores",
+      "primary",
+      "principal",
+      "accent",
+      "acento",
+      "palette",
+      "paleta",
+      "hex",
+      "gradient",
+      "degradado",
+      "brand",
+      "marca",
+    ],
+  },
+  {
+    id: "brandImages",
+    sectionId: "brand",
+    labelKey: "brand.images.heading",
+    descriptionKey: "brand.logo.description",
+    keywords: [
+      "logo",
+      "logotipo",
+      "icon",
+      "icono",
+      "favicon",
+      "image",
+      "imagen",
+      "imagenes",
+      "splash",
+      "upload",
+      "subir",
+      "marca",
+    ],
+  },
+  {
+    id: "brandReset",
+    sectionId: "brand",
+    labelKey: "brand.danger.heading",
+    descriptionKey: "brand.reset.description",
+    keywords: [
+      "reset",
+      "restablecer",
+      "restaurar",
+      "default",
+      "fabrica",
+      "clear",
+      "borrar",
+      "brand",
+      "marca",
     ],
   },
 ];

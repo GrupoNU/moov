@@ -52,6 +52,9 @@ const dialogSource = [
   "src/screens/settings/ForwardingSection.tsx",
   "src/screens/settings/VacationSection.tsx",
   "src/screens/settings/QuotaRow.tsx",
+  // L2-brand-admin: the same reason as the five above — a stateful surface over
+  // server objects, with its own uploads and its own live preview.
+  "src/screens/settings/BrandSection.tsx",
 ]
   .map((path) => readFileSync(resolve(process.cwd(), path), "utf8"))
   .join("\n");

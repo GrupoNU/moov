@@ -177,6 +177,8 @@ import { ReadingPane } from "./ReadingPane";
 import { SearchBar, type SearchPreviewRow } from "./SearchBar";
 import { TopBar } from "./TopBar";
 import { QuickSettingsPanel } from "../settings/QuickSettingsPanel";
+import { brandErrorMessage, type BrandSectionProps } from "../settings/BrandSection";
+import { useBrandAdmin } from "../../branding/useBrandAdmin";
 import { SettingsPage } from "../settings/SettingsPage";
 import type { LabelsSectionProps } from "../settings/LabelsSection";
 import type { FiltersSectionProps } from "../settings/FiltersSection";
@@ -2420,6 +2422,40 @@ export function MailScreen(): React.JSX.Element {
     ],
   );
 
+  /*
+   * L2-brand-admin: the Marca tab.
+   *
+   * The hook probes ONCE per credential and answers `undefined` for everyone
+   * who is not a brand administrator of this host, which is what removes the
+   * tab rather than disabling it. Mounted here rather than inside the settings
+   * page so the probe is not re-issued every time somebody opens Settings.
+   */
+  const brandAdmin = useBrandAdmin({ authorization });
+  const brandSettings = useMemo<BrandSectionProps | undefined>(
+    () =>
+      brandAdmin.doc === undefined
+        ? undefined
+        : {
+            doc: brandAdmin.doc,
+            onSave: brandAdmin.save,
+            onUploadAsset: brandAdmin.uploadAsset,
+            onRemoveAsset: brandAdmin.removeAsset,
+            onReset: brandAdmin.reset,
+            ...(brandAdmin.error !== undefined
+              ? {
+                  error: brandErrorMessage(brandAdmin.error, {
+                    network: t("brand.error.network"),
+                    notAdmin: t("brand.error.notAdmin"),
+                  }),
+                  ...(brandAdmin.error.field !== undefined
+                    ? { errorField: brandAdmin.error.field }
+                    : {}),
+                }
+              : {}),
+          },
+    [brandAdmin, t],
+  );
+
   /**
    * The four E6 settings sections, each present only when its capability is.
    *
@@ -4508,6 +4544,7 @@ export function MailScreen(): React.JSX.Element {
               forwarding={forwardingSettings}
               vacation={vacationSettings}
               quota={quotaSettings}
+              brand={brandSettings}
             />
           </main>
         ) : (

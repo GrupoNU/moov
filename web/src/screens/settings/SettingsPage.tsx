@@ -20,6 +20,7 @@ import {
 import { searchSettings, type SearchableRow } from "../../mail/settingsSearch";
 import type { Identity } from "../../mail/write";
 import { BlockedSection, type BlockedSectionProps } from "./BlockedSection";
+import { BrandSection, type BrandSectionProps } from "./BrandSection";
 import { FiltersSection, type FiltersSectionProps } from "./FiltersSection";
 import { ForwardingSection, type ForwardingSectionProps } from "./ForwardingSection";
 import { LabelsSection, type LabelsSectionProps } from "./LabelsSection";
@@ -42,9 +43,10 @@ import {
 import { InboxTypeThumb, ReadingPaneThumb } from "./QuickThumbnails";
 import { QuotaRow, type QuotaRowProps } from "./QuotaRow";
 import { VacationSection, type VacationSectionProps } from "./VacationSection";
-import { SETTINGS_TABS, type SettingsTab } from "../../router/routes";
+import { DEFAULT_SETTINGS_TAB, SETTINGS_TABS, type SettingsTab } from "../../router/routes";
 import {
   SECTION_IDS,
+  SECTION_TAB,
   SECTION_TITLES,
   SETTINGS_ROWS,
   TAB_TITLES,
@@ -169,6 +171,21 @@ export interface SettingsPageProps {
   readonly forwarding?: ForwardingSectionProps | undefined;
   readonly vacation?: VacationSectionProps | undefined;
   readonly quota?: QuotaRowProps | undefined;
+  /**
+   * L2-brand-admin: the Marca tab, present ONLY for a brand administrator.
+   *
+   * Absent is the normal case and removes the tab from the row, removes its
+   * sections from a search, and makes `/settings/brand` fall back to General.
+   * That is the anti-enumeration property stated as UI: a user who is not an
+   * administrator cannot tell the difference between "this installation has no
+   * brand panel" and "you may not use it", because there is nothing to see
+   * either way.
+   *
+   * `undefined` while the probe is still in flight as well as when it answered
+   * 404 — a tab that appears a beat after the page does is worse than one that
+   * appears with it, and the probe is a single cached request per session.
+   */
+  readonly brand?: BrandSectionProps | undefined;
 }
 
 /**
@@ -201,6 +218,7 @@ export function SettingsPage({
   forwarding,
   vacation,
   quota,
+  brand,
 }: SettingsPageProps): React.JSX.Element {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -240,9 +258,29 @@ export function SettingsPage({
    * one clears the query, because the two are competing ways to choose what is
    * on screen.
    */
-  const visibleSections = search.isFiltering
-    ? SECTION_IDS.filter((id) => search.sectionIds.has(id))
-    : sectionsOfTab(tab);
+  /*
+   * L2-brand-admin: the Marca tab exists only for an administrator of this
+   * host, and "exists" is meant literally — it is filtered out of the tab row,
+   * out of a search's results, and out of the route.
+   *
+   * One predicate rather than three checks, so the three surfaces cannot
+   * disagree about who may see it. Sections whose props are absent are hidden
+   * here rather than rendered as a skeleton (the shape the four Sieve sections
+   * take) because "you may not administer this brand" is not a capability the
+   * server lacks — it is a fact about this user, and naming it on screen would
+   * be exactly the enumeration §2 of the spec is careful not to give away.
+   */
+  const canSeeTab = useCallback(
+    (id: SettingsTab): boolean => id !== "brand" || brand !== undefined,
+    [brand],
+  );
+  const visibleTabs = useMemo(() => SETTINGS_TABS.filter(canSeeTab), [canSeeTab]);
+
+  const visibleSections = (
+    search.isFiltering
+      ? SECTION_IDS.filter((id) => search.sectionIds.has(id))
+      : sectionsOfTab(canSeeTab(tab) ? tab : DEFAULT_SETTINGS_TAB)
+  ).filter((id) => canSeeTab(SECTION_TAB[id]));
 
   const showRow = useCallback(
     (id: string): boolean => !search.isFiltering || search.rowIds.has(id),
@@ -323,7 +361,7 @@ export function SettingsPage({
           to show a different heading.
         */}
         <div className={styles.tabs} role="tablist" aria-label={t("settings.tabs.label")}>
-          {SETTINGS_TABS.map((id) => {
+          {visibleTabs.map((id) => {
             const isActive = !search.isFiltering && id === tab;
             return (
               <button
@@ -352,12 +390,12 @@ export function SettingsPage({
                     event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
                   if (step === 0) return;
                   event.preventDefault();
-                  const index = SETTINGS_TABS.indexOf(id);
+                  const index = visibleTabs.indexOf(id);
                   // Wraps at both ends, which APG lists as the expected
                   // behaviour and which saves the row from a dead end.
                   const next =
-                    SETTINGS_TABS[
-                      (index + step + SETTINGS_TABS.length) % SETTINGS_TABS.length
+                    visibleTabs[
+                      (index + step + visibleTabs.length) % visibleTabs.length
                     ];
                   if (next === undefined) return;
                   setQuery("");
@@ -403,7 +441,9 @@ export function SettingsPage({
          * tab that is not selected would name the panel after a heading that
          * is not what it contains.
          */
-        {...(search.isFiltering ? {} : { "aria-labelledby": `settings-tab-${tab}` })}
+        {...(search.isFiltering || !canSeeTab(tab)
+          ? {}
+          : { "aria-labelledby": `settings-tab-${tab}` })}
         /* Focusable so a keyboard user can reach the panel's content directly
            from its tab, which is the APG tabpanel contract for a panel whose
            first child is not itself focusable. */
@@ -498,6 +538,15 @@ export function SettingsPage({
                 ))}
               {sectionId === "offline" && (
                 <OfflineSection prefs={prefs} showRow={showRow} />
+              )}
+              {/*
+                L2-brand-admin. No skeleton branch: `visibleSections` has
+                already removed this section when `brand` is absent, and a
+                skeleton saying "this installation has a brand panel you may not
+                use" is precisely the enumeration the API's own 404 avoids.
+              */}
+              {sectionId === "brand" && brand !== undefined && (
+                <BrandSection {...brand} showRow={showRow} />
               )}
             </SettingsSection>
           ))
