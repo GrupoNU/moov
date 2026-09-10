@@ -272,6 +272,10 @@ export function brandSeeds(
     "--brand-on-accent-light": palette.light.onAccent,
     "--brand-accent-tint-light": palette.light.accentTint,
     "--brand-accent-tint-strong-light": palette.light.accentTintStrong,
+    "--brand-accent-container-light": palette.light.accentContainer,
+    "--brand-on-accent-container-light": palette.light.onAccentContainer,
+    "--brand-selected-row-light": palette.light.selectedRow,
+    "--brand-active-pill-light": palette.light.activePill,
 
     "--brand-accent-dark": palette.dark.accent,
     "--brand-accent-hover-dark": palette.dark.accentHover,
@@ -279,6 +283,10 @@ export function brandSeeds(
     "--brand-on-accent-dark": palette.dark.onAccent,
     "--brand-accent-tint-dark": palette.dark.accentTint,
     "--brand-accent-tint-strong-dark": palette.dark.accentTintStrong,
+    "--brand-accent-container-dark": palette.dark.accentContainer,
+    "--brand-on-accent-container-dark": palette.dark.onAccentContainer,
+    "--brand-selected-row-dark": palette.dark.selectedRow,
+    "--brand-active-pill-dark": palette.dark.activePill,
   };
 }
 

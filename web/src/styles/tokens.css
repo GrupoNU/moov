@@ -72,19 +72,33 @@
   /* The accent family, per theme — derivePalette("#5b5bd6", "#ffffff").
    * Do not hand-edit: change the primary above and let the test tell you
    * the new values. The dark accent is the primary LIFTED toward white:
-   * #5b5bd6 reads at 3.3:1 on #151824, below AA for text. */
+   * #5b5bd6 reads at 3.3:1 on #151824, below AA for text.
+   *
+   * The container / selected-row / active-pill trio is Gmail's tonal family:
+   * three related tones of the brand hue, OPAQUE, derived from the ORIGINAL
+   * primary rather than from the AA-adjusted accent — which is what keeps a
+   * pastel brand's own hue in the chrome instead of replacing it with the deep
+   * tone its links had to become. */
   --brand-accent-light: #5b5bd6;
   --brand-accent-hover-light: #4945be;
   --brand-accent-active-light: #392ea7;
   --brand-on-accent-light: #ffffff;
   --brand-accent-tint-light: rgba(91, 91, 214, 0.1);
   --brand-accent-tint-strong-light: rgba(91, 91, 214, 0.18);
+  --brand-accent-container-light: #d6dcff;
+  --brand-on-accent-container-light: #1b1c42;
+  --brand-selected-row-light: #eef1ff;
+  --brand-active-pill-light: #dee3ff;
   --brand-accent-dark: #6f73f0;
   --brand-accent-hover-dark: #848cff;
   --brand-accent-active-dark: #9da7ff;
   --brand-on-accent-dark: #0d0f17;
   --brand-accent-tint-dark: rgba(111, 115, 240, 0.22);
   --brand-accent-tint-strong-dark: rgba(111, 115, 240, 0.32);
+  --brand-accent-container-dark: #2c2f51;
+  --brand-on-accent-container-dark: #dee3ff;
+  --brand-selected-row-dark: #151636;
+  --brand-active-pill-dark: #222546;
 
   /* ---------------------------------------------------------------------
    * Layer 3 — the product's scales. Not brandable.
@@ -203,6 +217,12 @@
   /* A tint for selected rows and subtle accent backgrounds. */
   --color-accent-tint: var(--brand-accent-tint-light);
   --color-accent-tint-strong: var(--brand-accent-tint-strong-light);
+  /* The tonal trio: an opaque container for the compose button (with its own
+   * dark ink), the selected message row, and the rail's active folder pill. */
+  --color-accent-container: var(--brand-accent-container-light);
+  --color-on-accent-container: var(--brand-on-accent-container-light);
+  --color-selected-row: var(--brand-selected-row-light);
+  --color-active-pill: var(--brand-active-pill-light);
 
   /* Status colours. Deliberately NOT brandable: a customer whose brand colour
    * is red must still get a red error and a green success, because those
@@ -264,6 +284,10 @@
     --color-accent-active: var(--brand-accent-active-dark);
     --color-accent-tint: var(--brand-accent-tint-dark);
     --color-accent-tint-strong: var(--brand-accent-tint-strong-dark);
+    --color-accent-container: var(--brand-accent-container-dark);
+    --color-on-accent-container: var(--brand-on-accent-container-dark);
+    --color-selected-row: var(--brand-selected-row-dark);
+    --color-active-pill: var(--brand-active-pill-dark);
 
     --color-danger: #ff8a95;
     --color-danger-tint: #2a1418;
@@ -324,6 +348,10 @@
   --color-accent-active: var(--brand-accent-active-dark);
   --color-accent-tint: var(--brand-accent-tint-dark);
   --color-accent-tint-strong: var(--brand-accent-tint-strong-dark);
+  --color-accent-container: var(--brand-accent-container-dark);
+  --color-on-accent-container: var(--brand-on-accent-container-dark);
+  --color-selected-row: var(--brand-selected-row-dark);
+  --color-active-pill: var(--brand-active-pill-dark);
 
   --color-danger: #ff8a95;
   --color-danger-tint: #2a1418;

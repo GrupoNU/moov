@@ -30,6 +30,14 @@
  *     it does not.
  *   - A primary that already passes is returned EXACTLY, so Moov's own
  *     `#5b5bd6` never shifts.
+ *   - The TONAL family — `accentContainer` / `onAccentContainer` /
+ *     `selectedRow` / `activePill`, Gmail's three related tones of one accent
+ *     — is derived from the ORIGINAL primary's hue and chroma at fixed
+ *     lightness targets, never from the adjusted accent. That is the fix for
+ *     the defect that motivated it: a pastel `#b8faff` is adjusted to a deep
+ *     teal for TEXT, and containers derived from the teal erased the brand's
+ *     own hue from the chrome. Text on each of these clears 4.5:1, and the
+ *     chroma is reduced toward neutral until it does.
  *   - Deterministic: same input, same output, no randomness, no environment.
  *
  * # Why OKLCH and not "mix with black"
@@ -63,6 +71,28 @@ export interface ThemePalette {
   readonly accentTintStrong: string;
   /** The keyboard focus ring. Follows the accent. */
   readonly focusRing: string;
+
+  /*
+   * The TONAL family (Gmail's arrangement).
+   *
+   * The values above are the accent as INK: lightness-adjusted until they
+   * clear 4.5:1 as TEXT, which is why a pastel brand becomes a deep teal. The
+   * four below are the accent as CONTAINER, and a container carries no such
+   * constraint — what sits on it does. So they are derived from the ORIGINAL
+   * primary's hue and chroma at fixed lightness targets, which is what keeps a
+   * light-cyan brand looking like light cyan in the chrome while its links
+   * stay legible. They are OPAQUE, so their contrast is the contrast they
+   * appear to have rather than one that depends on what scrolls behind.
+   */
+
+  /** The compose button's fill: a light tonal container of the brand hue. */
+  readonly accentContainer: string;
+  /** Text and icons ON {@link accentContainer}, at 4.5:1 or better. */
+  readonly onAccentContainer: string;
+  /** The selected message row: the faintest of the three tones. */
+  readonly selectedRow: string;
+  /** The active folder pill in the rail: between the other two. */
+  readonly activePill: string;
 }
 
 /** Which theme a value belongs to. */
@@ -89,6 +119,13 @@ export interface ThemeSurfaces {
   readonly surfaceCanvas: string;
   /** `--text-default` of the theme: the body text that sits on a tinted row. */
   readonly textDefault: string;
+  /** `--text-strong` of the theme: the weight the active pill's label uses. */
+  readonly textStrong: string;
+  /** OKLCH lightness targets for the three opaque tonal containers. */
+  readonly containerL: number;
+  readonly onContainerL: number;
+  readonly selectedRowL: number;
+  readonly activePillL: number;
   /** Alpha of the light tint and of the strong tint. */
   readonly tintAlpha: number;
   readonly tintStrongAlpha: number;
@@ -101,16 +138,26 @@ export const THEME_SURFACES: Readonly<Record<ThemeName, ThemeSurfaces>> = {
     surfaceDefault: "#ffffff",
     surfaceCanvas: "#f6f7fb",
     textDefault: "#2b2f3d",
+    textStrong: "#12141d",
     tintAlpha: 0.1,
     tintStrongAlpha: 0.18,
+    containerL: 0.9,
+    onContainerL: 0.25,
+    selectedRowL: 0.96,
+    activePillL: 0.92,
     direction: -1,
   },
   dark: {
     surfaceDefault: "#151824",
     surfaceCanvas: "#0d0f17",
     textDefault: "#dfe3ee",
+    textStrong: "#f4f6fb",
     tintAlpha: 0.22,
     tintStrongAlpha: 0.32,
+    containerL: 0.32,
+    onContainerL: 0.92,
+    selectedRowL: 0.22,
+    activePillL: 0.28,
     direction: 1,
   },
 };
@@ -287,6 +334,61 @@ function stepped(accent: Oklch, step: number, direction: -1 | 1): string {
   return oklchToHex({ ...accent, l: from + sign * step });
 }
 
+// ---------------------------------------------------------------------------
+// the tonal containers
+// ---------------------------------------------------------------------------
+
+/**
+ * The most chroma a tonal container may carry, per theme.
+ *
+ * A container is a large flat field behind text; at full brand chroma a light
+ * one glows and a dark one turns into a colour block that fights the message
+ * it holds. Gmail's own containers sit far below its accent's chroma. These
+ * ceilings are what make the three tones read as tones of one colour rather
+ * than three saturated fills.
+ */
+const CONTAINER_CHROMA_MAX = 0.06;
+const ON_CONTAINER_CHROMA_MAX = 0.07;
+/** How far a tone's chroma is pulled toward neutral on each retry. */
+const CHROMA_DECAY = 0.75;
+
+/**
+ * A tonal container: the ORIGINAL primary's hue and chroma at a fixed OKLCH
+ * lightness, with chroma capped and then reduced toward neutral until every
+ * `passes` predicate holds.
+ *
+ * # Why the ORIGINAL primary and not the adjusted accent
+ *
+ * This is the whole point of the family. A pastel like `#b8faff` cannot be
+ * used as text on white, so `accent` is lightness-dropped into a deep teal —
+ * and if the containers derived from THAT, the customer's own hue would
+ * vanish from the chrome, which is exactly the defect this fixes. Lightness is
+ * the axis the AA constraint steers, and a container's lightness is already
+ * pinned by its target; only its chroma is free, so chroma is what gives.
+ *
+ * Reducing chroma (rather than moving lightness) also keeps the three tones at
+ * their designed distances from each other: the row stays fainter than the
+ * pill, the pill fainter than the button, whatever the brand hue is.
+ */
+function tonal(
+  base: Oklch,
+  lightness: number,
+  chromaMax: number,
+  passes: (hex: string) => boolean,
+): string {
+  let chroma = Math.min(base.c, chromaMax);
+  // 24 decays at 0.75 take any chroma below 1e-3, i.e. to a neutral grey of
+  // the target lightness — which always passes, because the targets were
+  // chosen against the theme's surfaces. So this loop terminates on a value
+  // that satisfies the predicate rather than on an exhausted budget.
+  for (let i = 0; i < 24; i++) {
+    const hex = oklchToHex({ ...base, l: lightness, c: chroma });
+    if (passes(hex)) return hex;
+    chroma *= CHROMA_DECAY;
+  }
+  return oklchToHex({ ...base, l: lightness, c: 0 });
+}
+
 function rgba(hex: string, alpha: number): string {
   const [r, g, b] = parseHex(hex) ?? [0, 0, 0];
   return `rgba(${String(r)}, ${String(g)}, ${String(b)}, ${String(alpha)})`;
@@ -348,6 +450,46 @@ function deriveTheme(
     }
   }
 
+  // 4. The tonal containers, from the ORIGINAL primary's hue and chroma.
+  //
+  //    `selectedRow` and `activePill` must hold BODY text (a message row's
+  //    sender and subject, a folder's name) and the pill also holds
+  //    `--text-strong`; both are pinned at AA here rather than hoped for.
+  //    `accentContainer` carries `onAccentContainer`, which is derived from
+  //    the same hue and falls back to the theme's strong text when the hue
+  //    cannot reach 4.5:1 on it — a brand never buys an unreadable button.
+  const primaryLch = hexToOklch(primary);
+  const selectedRow = tonal(primaryLch, surfaces.selectedRowL, CONTAINER_CHROMA_MAX, (hex) =>
+    contrastRatio(surfaces.textDefault, hex) >= AA_NORMAL_TEXT,
+  );
+  const activePill = tonal(
+    primaryLch,
+    surfaces.activePillL,
+    CONTAINER_CHROMA_MAX,
+    (hex) =>
+      contrastRatio(surfaces.textDefault, hex) >= AA_NORMAL_TEXT &&
+      contrastRatio(surfaces.textStrong, hex) >= AA_NORMAL_TEXT,
+  );
+  const accentContainer = tonal(
+    primaryLch,
+    surfaces.containerL,
+    CONTAINER_CHROMA_MAX,
+    // The container itself only has to be able to CARRY text: the fallback ink
+    // below is the theme's strong text, so the ceiling this checks is the one
+    // that guarantees the button is never unreadable.
+    (hex) => contrastRatio(surfaces.textStrong, hex) >= AA_NORMAL_TEXT,
+  );
+  const tintedInk = tonal(
+    primaryLch,
+    surfaces.onContainerL,
+    ON_CONTAINER_CHROMA_MAX,
+    (hex) => contrastRatio(hex, accentContainer) >= AA_NORMAL_TEXT,
+  );
+  const onAccentContainer =
+    contrastRatio(tintedInk, accentContainer) >= AA_NORMAL_TEXT
+      ? tintedInk
+      : surfaces.textStrong;
+
   return {
     palette: {
       accent,
@@ -357,6 +499,10 @@ function deriveTheme(
       accentTint: rgba(accent, surfaces.tintAlpha),
       accentTintStrong: rgba(accent, surfaces.tintStrongAlpha),
       focusRing: accent,
+      accentContainer,
+      onAccentContainer,
+      selectedRow,
+      activePill,
     },
     reason: reasons.length > 0 ? reasons.join(" ") : undefined,
   };

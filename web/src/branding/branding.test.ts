@@ -193,7 +193,7 @@ describe("applyBranding", () => {
     // unreadable on white, so the light accent is NOT the primary — that is
     // the whole reason the family exists.
     const seeds = brandSeeds(brand, palette);
-    expect(Object.keys(seeds)).toHaveLength(16);
+    expect(Object.keys(seeds)).toHaveLength(24);
     for (const [name, value] of Object.entries(seeds)) {
       expect(root.style.getPropertyValue(name), name).toBe(value);
     }
@@ -201,12 +201,28 @@ describe("applyBranding", () => {
     expect(palette.light.accent).not.toBe("#c0ffee");
     expect(root.style.getPropertyValue("--brand-accent-dark")).toBe("#c0ffee");
     expect(root.style.getPropertyValue("--brand-accent-tint-light")).toMatch(/^rgba\(/);
+    /*
+     * The tonal trio is derived from the ORIGINAL primary, not from the
+     * adjusted accent — which is the whole reason it exists. #c0ffee is a
+     * pale mint whose light accent is a deep green; if the container came
+     * from that, the brand's hue would be gone from the chrome. Assert it is
+     * still a LIGHT colour, i.e. that it came from the mint.
+     */
+    for (const name of [
+      "--brand-accent-container-light",
+      "--brand-selected-row-light",
+      "--brand-active-pill-light",
+    ]) {
+      const value = root.style.getPropertyValue(name);
+      expect(value, name).toMatch(/^#[0-9a-f]{6}$/);
+      expect(Number.parseInt(value.slice(1, 3), 16), name).toBeGreaterThan(0x90);
+    }
 
     // The contract of W-A2, sharpened: JavaScript writes SEEDS, CSS derives
     // the rest. A semantic token written from here would win over BOTH theme
     // blocks (an inline value on :root beats every stylesheet rule) and
     // freeze the accent in one theme.
-    expect(root.style.length).toBe(16);
+    expect(root.style.length).toBe(24);
     expect(root.style.getPropertyValue("--color-accent")).toBe("");
     expect(root.style.getPropertyValue("--color-on-accent")).toBe("");
     expect(root.style.getPropertyValue("--surface-canvas")).toBe("");
@@ -220,7 +236,7 @@ describe("applyBranding", () => {
     applyBranding(MOOV_DEFAULT_BRANDING, root);
     expect(root.style.getPropertyValue("--brand-accent-light")).toBe("#5b5bd6");
     expect(root.style.getPropertyValue("--brand-on-accent-light")).toBe("#ffffff");
-    expect(root.style.length).toBe(16);
+    expect(root.style.length).toBe(24);
   });
 });
 
@@ -363,8 +379,9 @@ describe("the default brand", () => {
   /**
    * The accent family in tokens.css is derivePalette()'s OUTPUT for the Moov
    * primary, copied by hand so the first paint is right before any script
-   * runs. This is the pin that makes the copy safe: every one of the twelve
-   * per-theme seeds must equal what the function computes today.
+   * runs. This is the pin that makes the copy safe: every one of the twenty
+   * per-theme seeds — the accent family and the tonal trio — must equal what
+   * the function computes today.
    */
   it("has the per-theme accent seeds equal to derivePalette() of the defaults", async () => {
     const { readFile } = await import("node:fs/promises");
@@ -407,6 +424,10 @@ describe("the default brand", () => {
       ["--color-accent-active", "--brand-accent-active"],
       ["--color-accent-tint", "--brand-accent-tint"],
       ["--color-accent-tint-strong", "--brand-accent-tint-strong"],
+      ["--color-accent-container", "--brand-accent-container"],
+      ["--color-on-accent-container", "--brand-on-accent-container"],
+      ["--color-selected-row", "--brand-selected-row"],
+      ["--color-active-pill", "--brand-active-pill"],
     ] as const;
     for (const [semantic, seed] of tokens) {
       expect(lightBlock).toMatch(new RegExp(`${semantic}:\\s*var\\(${seed}-light\\);`));
