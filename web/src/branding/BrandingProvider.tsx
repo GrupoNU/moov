@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   applyBranding,
@@ -9,6 +18,7 @@ import {
 } from "./branding";
 import { derivePalette } from "./palette";
 import { PaletteContext } from "./paletteContext";
+import { BrandingRefreshContext, type BrandingRefresh } from "./refreshContext";
 
 /**
  * Supplies the brand to the tree and writes its seeds into CSS.
@@ -35,6 +45,20 @@ export function BrandingProvider({
 }: BrandingProviderProps): React.JSX.Element {
   const [resolved, setResolved] = useState<Branding>(branding ?? MOOV_DEFAULT_BRANDING);
 
+  /*
+   * Guards a `setState` after unmount for the REFRESH path only. The boot
+   * fetch has its own `cancelled` flag scoped to its effect; a refresh is
+   * triggered by a user gesture and can outlive the screen that asked for it,
+   * so it needs a flag that lives as long as the provider.
+   */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (branding !== undefined) {
       setResolved(branding);
@@ -47,6 +71,21 @@ export function BrandingProvider({
     return () => {
       cancelled = true;
     };
+  }, [branding, fetchImpl]);
+
+  /*
+   * Re-reads the document after the brand-admin panel saved something
+   * (L2-brand-admin §5): the app repaints with the new brand without a reload.
+   *
+   * A provider given an EXPLICIT `branding` prop refuses to refresh, and that
+   * is the correct reading of the prop rather than a limitation: a caller that
+   * passes the brand OWNS it, and letting a nested screen swap it out from
+   * under them would quietly redefine the prop as "the initial brand".
+   */
+  const refresh = useCallback<BrandingRefresh>(async () => {
+    if (branding !== undefined) return;
+    const document = await fetchBranding(fetchImpl !== undefined ? { fetchImpl } : {});
+    if (alive.current) setResolved(document);
   }, [branding, fetchImpl]);
 
   // The palette is derived ONCE per resolved brand. derivePalette bisects in
@@ -86,7 +125,11 @@ export function BrandingProvider({
 
   return (
     <BrandingContext.Provider value={resolved}>
-      <PaletteContext.Provider value={palette}>{children}</PaletteContext.Provider>
+      <PaletteContext.Provider value={palette}>
+        <BrandingRefreshContext.Provider value={refresh}>
+          {children}
+        </BrandingRefreshContext.Provider>
+      </PaletteContext.Provider>
     </BrandingContext.Provider>
   );
 }
