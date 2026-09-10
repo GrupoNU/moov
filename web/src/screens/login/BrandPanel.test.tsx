@@ -26,6 +26,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const css = (): string => readFileSync(resolve(here, "BrandPanel.module.css"), "utf8");
 
 const SPLASH = "/branding/assets/acme/splash.jpg";
+/** A logo with NO dark variant — the case the plate exists for. */
+const LOGO = "/branding/assets/acme/logo.png";
 
 function branding(overrides: Partial<Branding> = {}): Branding {
   return {
@@ -118,22 +120,105 @@ describe("a customer's splash image", () => {
     expect(sheet).toContain('.panel[data-has-image="true"] .image');
   });
 
-  it("keeps the scrim, because legibility is its job and only its job", () => {
+  it("paints NOTHING over the photograph — not even a scrim", () => {
     /*
-     * With the wash gone the scrim is the ONLY overlay, and it has to stay: the
-     * mark and the tagline sit on whatever the customer uploaded, and their
-     * contrast must be a fixed value rather than a property of a photograph.
-     * It is bottom-weighted precisely so it buys that without dimming the
-     * picture — the top two-thirds are untouched.
+     * The second half of the same finding. Removing the blend and keeping the
+     * scrim was half a fix: the owner read the bottom darkening as a tint on
+     * their own picture, which is exactly what it is. With an image the panel
+     * paints nothing over it at all.
      */
     const { container } = render(<BrandPanel branding={branding({ splashUrl: SPLASH })} />);
-    const scrim = container.querySelector('[class*="scrim"]');
-    expect(scrim).not.toBeNull();
+    expect(container.querySelector('[class*="scrim"]')).toBeNull();
+    expect(container.querySelector('[class*="aurora"]')).toBeNull();
+    expect(container.querySelector('[class*="grid"]')).toBeNull();
+    /*
+     * Stated as the WHOLE decorative stack rather than as a count, so the
+     * assertion names what may be there: the gradient (the backdrop, fully
+     * covered once the photograph decodes) and the photograph. Any third layer
+     * is by definition something painted over the customer's picture.
+     */
+    const panel = container.querySelector("[data-brand-panel]");
+    // Direct children only: the brand mark's own glyph is aria-hidden too, but
+    // it lives INSIDE the content and is the brand, not a layer over it.
+    const layers = [...(panel?.children ?? [])].filter(
+      (el) => el.getAttribute("aria-hidden") === "true",
+    );
+    expect(layers.map((el) => el.tagName)).toEqual(["DIV", "IMG"]);
+    expect(layers[0]?.className).toContain("gradient");
+  });
 
-    const scrimRules = ruleBody(css(), ".scrim");
-    expect(scrimRules).toContain("linear-gradient(");
-    // Transparent at the top: a flat wash would dim the whole photograph.
-    expect(scrimRules).toContain("rgba(6, 8, 18, 0)");
+  it("buys legibility with a text-shadow instead, on the content", () => {
+    /*
+     * The honest trade, stated where it can be read: a scrim makes contrast a
+     * FIXED value regardless of the image and a shadow does not. It is right
+     * here because the operator chose the photograph, can see the result, and
+     * can change it — what they could not do was turn off an effect the
+     * product applied without asking.
+     *
+     * On the CONTENT rather than on each text node, so it covers the mark's
+     * name and the tagline together and inherits to anything added later.
+     */
+    const shadow = ruleBody(css(), '.panel[data-has-image="true"] .content');
+    expect(shadow).toContain("text-shadow");
+    // Two layers: a tight offset that separates a glyph from what is directly
+    // under it, and a wider halo that lifts it off a busy region.
+    expect(shadow).toContain("0 1px 2px rgba(0, 0, 0, 0.6)");
+    expect(shadow).toContain("0 0 12px rgba(0, 0, 0, 0.35)");
+  });
+
+  it("KEEPS the scrim when there is no photograph to protect", () => {
+    // Nothing of the customer's to preserve there, the two stops are the
+    // brand's own colours, and the scrim is what keeps the mark legible
+    // against a light gradient.
+    const { container } = render(<BrandPanel branding={branding()} />);
+    expect(container.querySelector('[class*="scrim"]')).not.toBeNull();
+    expect(ruleBody(css(), ".scrim")).toContain("linear-gradient(");
+  });
+
+  it("drops the light PLATE behind the logo when there is an image", () => {
+    /*
+     * The plate is a light rectangle the product puts behind a dark logo so it
+     * stays legible — right wherever WE chose the ground, wrong when the
+     * operator did. They picked this photograph AND this logo and can see
+     * whether the pair works.
+     */
+    const withImage = render(
+      <BrandPanel branding={branding({ splashUrl: SPLASH, logoUrl: LOGO })} />,
+    );
+    expect(withImage.container.querySelector('[class*="mark"]')?.className ?? "").not.toContain(
+      "plated",
+    );
+    withImage.unmount();
+
+    // And keeps it on the gradient, where the plate is the product's own fix
+    // for a background the product chose.
+    const gradientOnly = render(<BrandPanel branding={branding({ logoUrl: LOGO })} />);
+    expect(
+      gradientOnly.container.querySelector('[class*="mark"]')?.className ?? "",
+    ).toContain("plated");
+  });
+
+  it("never composites the photograph over anything at less than full opacity", () => {
+    /*
+     * The whole chain, not just `.image`: an opacity or a blend ANYWHERE
+     * between the photograph and the viewer would let the gradient behind it
+     * show through and tint it, which is the bug in its original form. The
+     * image is `object-fit: cover` and fully opaque, so the gradient it sits on
+     * contributes nothing once the bytes arrive.
+     */
+    const sheet = css();
+    for (const [, body] of sheet.matchAll(/\.image\s*\{([^}]*)\}/g)) {
+      expect(body).not.toContain("opacity");
+      expect(body).not.toContain("mix-blend-mode");
+      expect(body).not.toContain("filter");
+    }
+    // The panel and the content must not dim the layers under them either.
+    for (const selector of [".panel", ".content"]) {
+      expect(ruleBody(sheet, selector)).not.toContain("opacity:");
+    }
+    // `cover` is what guarantees the gradient is fully covered rather than
+    // letterboxed with the backdrop showing at the edges.
+    expect(ruleBody(sheet, ".image")).toContain("object-fit: cover");
   });
 });
 
@@ -154,11 +239,11 @@ describe("the name and the tagline share the panel without colliding", () => {
     /*
      * BrandMark is an inline-flex, so on its own it is as wide as its contents
      * want to be — and a name with nothing to wrap against does not wrap, it
-     * runs off the panel. The 44ch column is the bound, and `min-width: 0` is
+     * runs off the panel. The content column is the bound, and `min-width: 0` is
      * what stops the flex item from refusing to shrink to it.
      */
     const sheet = css();
-    expect(ruleBody(sheet, ".content")).toContain("max-width: 44ch");
+    expect(ruleBody(sheet, ".content")).toContain("max-width: min(72%, 760px)");
     expect(ruleBody(sheet, ".content")).toContain("min-width: 0");
     expect(ruleBody(sheet, ".content > :first-child")).toContain("max-width: 100%");
   });
@@ -260,7 +345,7 @@ describe("a real brand name, at the width the panel actually has", () => {
   it("gives that name the full content column, not the remainder beside a logo", () => {
     /*
      * The rules themselves, since jsdom cannot measure. `width: 100%` inside a
-     * mark that BrandPanel bounds to the 44ch column is what makes the name's
+     * mark that BrandPanel bounds to the content column is what makes the name's
      * box the whole 380px rather than the 176px left over beside an 80px mark.
      */
     const markCss = readFileSync(
@@ -278,7 +363,7 @@ describe("a real brand name, at the width the panel actually has", () => {
     expect(name).toContain("line-clamp: 2");
 
     // And the column the width is a percentage OF.
-    expect(ruleBody(css(), ".content")).toContain("max-width: 44ch");
+    expect(ruleBody(css(), ".content")).toContain("max-width: min(72%, 760px)");
     expect(ruleBody(css(), ".content > :first-child")).toContain("max-width: 100%");
   });
 });

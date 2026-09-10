@@ -29,8 +29,8 @@ import styles from "./BrandMark.module.css";
  *
  * When a customer's logo is a wordmark, it IS their name — it already says it,
  * graphically. Rendering the text name beside a wordmark printed the brand
- * twice, and on the login panel (where the content column is capped at 44ch)
- * the duplicate then ellipsised, so a real pilot brand's panel read
+ * twice, and on the login panel (where the content column is capped) the
+ * duplicate then ellipsised, so a real pilot brand's panel read
  * "[LOGO] Área …".
  *
  * A SQUARE mark is the opposite case, and it is the one the first owner of the
@@ -88,6 +88,17 @@ export interface BrandMarkProps {
    * dark logo variant, because that gradient is dark in every theme.
    */
   readonly onDark?: boolean;
+  /**
+   * Whether the no-dark-variant PLATE may be drawn. Defaults to true.
+   *
+   * The plate is a light rectangle behind a dark logo so it stays legible on a
+   * dark ground, and it is right wherever WE chose that ground. The login
+   * panel with a customer's SPLASH PHOTOGRAPH is the case where we did not:
+   * the operator picked both the picture and the logo and can see whether the
+   * pair works, so a plate they did not ask for is chrome on top of their
+   * composition. That caller passes false.
+   */
+  readonly plated?: boolean;
 }
 
 export function BrandMark({
@@ -95,6 +106,7 @@ export function BrandMark({
   size = "md",
   iconOnly = false,
   onDark = false,
+  plated = true,
 }: BrandMarkProps): React.JSX.Element {
   const hasLogo = branding.logoUrl !== "";
 
@@ -142,7 +154,7 @@ export function BrandMark({
    * THEME, which this component cannot see — so the class is emitted and the
    * stylesheet decides whether it paints, exactly like the image swap.
    */
-  const needsPlate = hasLogo && branding.logoDarkUrl === "";
+  const needsPlate = plated && hasLogo && branding.logoDarkUrl === "";
 
   /*
    * The name accompanies a SQUARE logo and the drawn glyph, and never a

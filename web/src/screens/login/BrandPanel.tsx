@@ -80,12 +80,29 @@ export function BrandPanel({ branding }: BrandPanelProps): React.JSX.Element {
         </>
       )}
 
-      {/* A scrim under the content so text contrast is fixed regardless of
-          which image a customer uploaded. */}
-      <div className={styles.scrim} aria-hidden="true" />
+      {/*
+        The scrim belongs to the GRADIENT-ONLY case.
+
+        Over a photograph it is still a colour effect — the owner read the
+        bottom darkening as a tint on their own picture, which is what it is.
+        With an image the panel paints nothing over it and legibility comes
+        from a text-shadow on the content instead (BrandPanel.module.css).
+        Without one there is no picture to protect, the two stops are the
+        brand's own colours, and the scrim is what keeps the mark legible
+        against a light gradient.
+      */}
+      {!hasImage && <div className={styles.scrim} aria-hidden="true" />}
 
       <div className={styles.content}>
-        <BrandMark branding={branding} size="lg" onDark />
+        {/*
+          `plated` is suppressed over a photograph. The plate is a light
+          rectangle the product puts behind a dark logo so it stays legible on
+          the gradient — useful when WE chose the background, wrong when the
+          operator did: they picked this photograph AND this logo and can see
+          whether the pair works, and a plate they did not ask for is chrome on
+          top of their composition.
+        */}
+        <BrandMark branding={branding} size="lg" onDark plated={!hasImage} />
         {branding.tagline !== "" && <p className={styles.tagline}>{branding.tagline}</p>}
       </div>
     </aside>

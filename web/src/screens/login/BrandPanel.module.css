@@ -115,14 +115,28 @@
 }
 
 /*
- * The scrim, and with an image behind it the ONLY overlay there is.
+ * --- LEGIBILITY WITHOUT TOUCHING THE PICTURE ---
  *
- * This is the element that makes the contrast of the panel's text a FIXED value
- * rather than a property of the customer's image: whatever is behind it, the
- * bottom of the panel — where the mark and tagline sit — is darkened to a known
- * floor. It is a bottom-weighted gradient rather than a flat wash precisely so
- * it buys that legibility without dimming the picture: the top two-thirds of the
- * photograph are untouched.
+ * The scrim used to be the panel's answer for text contrast, and with a
+ * photograph behind it that was still a colour effect: the owner read the
+ * bottom darkening as a tint on their own image, which is exactly what it is.
+ * Removing the blend and keeping a scrim was half a fix.
+ *
+ * So with an IMAGE the panel paints nothing over it at all. Legibility comes
+ * from the text itself — a tight shadow plus a soft halo, which darkens the
+ * few pixels immediately behind each glyph and leaves every other pixel of the
+ * photograph as it was uploaded.
+ *
+ * That is a weaker guarantee than a scrim, honestly stated: a scrim makes
+ * contrast a FIXED value regardless of the image, and a shadow does not. It is
+ * the right trade here because the operator chose the photograph, can see the
+ * result, and can change it — which is the same reasoning that removed the
+ * blend. What they could not do was turn off an effect the product applied
+ * without asking.
+ *
+ * The gradient-only case keeps the scrim: there is no photograph to protect,
+ * the two stops are the brand's own colours, and the scrim is what keeps the
+ * mark legible against a light gradient.
  */
 .scrim {
   background: linear-gradient(
@@ -131,6 +145,18 @@
     rgba(6, 8, 18, 0.34) 38%,
     rgba(6, 8, 18, 0) 68%
   );
+}
+
+/*
+ * The shadow is on the CONTENT, so it applies to the mark's name and the
+ * tagline together and inherits to anything added later. Two layers: a 1px
+ * offset that separates a glyph from whatever is directly under it, and a
+ * wider, softer halo that lifts it off a busy region of a photograph.
+ */
+.panel[data-has-image="true"] .content {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.6),
+    0 0 12px rgba(0, 0, 0, 0.35);
 }
 
 /*
@@ -150,11 +176,25 @@
   /* Deliberately explicit rather than a shorthand: this gap IS the "the
      tagline does not touch the name" rule, and a test names it. */
   gap: var(--space-4);
-  max-width: 44ch;
-  /* The 44ch cap is on the COLUMN; without this the mark inside it — an
-     inline-flex whose name now wraps — would size to its content and hand the
-     name an unbounded line box, so it would never wrap at all and would run
-     off the panel instead. */
+  /*
+   * WIDER THAN A PARAGRAPH, because this column holds a lockup and not prose.
+   *
+   * 44ch is the measure you want for reading, and it was measured on the live
+   * panel at 380px — narrow enough that the brand name AND the tagline each
+   * wrapped to two lines, so a two-line name sat above a two-line tagline and
+   * the panel read as four lines of small text rather than as a mark.
+   *
+   * `min(72%, 760px)` keeps the panel's proportion on a wide screen (the
+   * content stays a column inside it rather than running edge to edge) and
+   * caps the line length on a very wide one. Still left-aligned, same
+   * paddings; the stacked lockup and the wrapping rules stay underneath as
+   * safety nets for a brand whose name is long even at this width.
+   */
+  max-width: min(72%, 760px);
+  /* The cap is on the COLUMN; without this the mark inside it — an inline-flex
+     whose name wraps — would size to its content and hand the name an
+     unbounded line box, so it would never wrap at all and would run off the
+     panel instead. */
   min-width: 0;
 }
 
@@ -163,7 +203,7 @@
  *
  * `BrandMark` is an inline-flex, so on its own it is as wide as its contents
  * want to be; a wrapping name needs a bound or it simply does not wrap. The
- * bound is the content column, which is already the 44ch the panel's
+ * bound is the content column, which is already the width the panel's
  * typography is designed around.
  */
 .content > :first-child {

@@ -309,7 +309,7 @@
  * is a fixed 244px track where a stacked name would grow the top bar.
  */
 /*
- * The name gets the column, and the column is the panel's 44ch content width
+ * The name gets the column, and the column is the panel's content width
  * (BrandPanel.module.css bounds the mark to it).
  *
  * `--text-2xl` rather than the row's `--text-3xl`: with the full width to work

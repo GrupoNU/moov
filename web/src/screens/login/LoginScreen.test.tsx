@@ -372,7 +372,7 @@ describe("branding", () => {
     /*
      * The logo REPLACES the text name rather than sitting beside it: a
      * wordmark already says the name graphically, and rendering both printed
-     * the brand twice — which then ellipsised inside the panel's 44ch content
+     * the brand twice — which then ellipsised inside the panel's content
      * column ("[LOGO] Acme …"). So the name is the image's accessible name and
      * appears nowhere as text.
      */
