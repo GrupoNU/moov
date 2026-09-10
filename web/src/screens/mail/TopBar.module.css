@@ -18,8 +18,18 @@
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-2) var(--space-4);
-  background: var(--surface-default);
-  border-bottom: 1px solid var(--border-subtle);
+  /*
+   * The bar is part of the application chrome, so it takes the CANVAS, not the
+   * list's white — Gmail paints one continuous grey across the top bar, the
+   * left rail and the gutter, and floats the list and reader on it as cards.
+   * The bar and the rail meeting in the same tone is what makes the search
+   * pill and the folder column read as one frame around the mail.
+   *
+   * No bottom border: with the panes below now rounding their top corners onto
+   * that same grey, a hairline would cut across the card's curve. The tone
+   * change at the card edge is the separation.
+   */
+  background: var(--surface-canvas);
 }
 
 .left {
@@ -104,9 +114,22 @@
   height: 18px;
 }
 
+/* Mixed over the canvas the bar now paints, for the reason spelled out in
+ * `MailboxList.module.css`: `--surface-sunken` is a three-per-cent step from
+ * `--surface-canvas` in the light theme and stopped reading as feedback. */
 .iconButton:hover {
-  background: var(--surface-sunken);
+  background: color-mix(in srgb, #000 6%, var(--surface-canvas));
   color: var(--text-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .iconButton:hover {
+    background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
+  }
+}
+
+:root[data-theme="dark"] .iconButton:hover {
+  background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
 }
 
 /* The gear turns a little on hover — enough to read as "this opens the

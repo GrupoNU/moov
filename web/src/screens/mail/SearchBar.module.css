@@ -19,7 +19,19 @@
   flex: 1;
   min-width: 0;
   padding: 0 var(--space-3);
-  background: var(--surface-canvas);
+  /*
+   * A step DOWN from the bar, now that the bar itself is the canvas: at
+   * `--surface-canvas` the pill and its background were the same colour and
+   * only the hairline was left to say a control was there. Gmail's resting
+   * search box is exactly this — a grey well in the chrome that turns white on
+   * focus.
+   *
+   * Mixed over the canvas rather than taken from `--surface-sunken`, for the
+   * reason `MailboxList.module.css` spells out: sunken is a 1.06 step from the
+   * light canvas and a 1.02 step from the dark one, so on a dark theme the pill
+   * would have vanished into the bar all over again.
+   */
+  background: color-mix(in srgb, #000 6%, var(--surface-canvas));
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   transition:
@@ -30,6 +42,23 @@
 
 .wrapper:hover {
   border-color: var(--border-default);
+}
+
+/*
+ * The dark theme's resting well. Scoped with `:not(:focus-within)` on purpose:
+ * a `:root[data-theme]` prefix outweighs the bare `.wrapper:focus-within`
+ * below, so without the exclusion the focused box would have stayed grey in
+ * the dark theme — the one state where "this control is live" has to be
+ * unmistakable.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .wrapper:not(:focus-within) {
+    background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
+  }
+}
+
+:root[data-theme="dark"] .wrapper:not(:focus-within) {
+  background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
 }
 
 /* The focus ring is drawn on the WRAPPER when the input inside it has focus,

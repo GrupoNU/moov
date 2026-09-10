@@ -52,8 +52,11 @@
   height: 14px;
 }
 
+/* The label group lives in the rail, so its hovers mix over the CANVAS for the
+ * reason spelled out in `MailboxList.module.css`: `--surface-sunken` is a
+ * three-per-cent step from the canvas and stops reading as feedback. */
 .create:hover {
-  background: var(--surface-sunken);
+  background: color-mix(in srgb, #000 6%, var(--surface-canvas));
   color: var(--text-strong);
 }
 
@@ -86,7 +89,19 @@
 }
 
 .row:hover {
-  background: var(--surface-sunken);
+  background: color-mix(in srgb, #000 6%, var(--surface-canvas));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .create:hover,
+  :root:not([data-theme="light"]) .row:hover {
+    background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
+  }
+}
+
+:root[data-theme="dark"] .create:hover,
+:root[data-theme="dark"] .row:hover {
+  background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
 }
 
 .rowActive {

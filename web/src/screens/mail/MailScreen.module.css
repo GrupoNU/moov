@@ -278,10 +278,24 @@
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
 }
 
+/*
+ * The rail sits on the APPLICATION CANVAS, not on the list's white.
+ *
+ * Gmail paints one light grey behind the whole chrome — top bar, left rail and
+ * the gutter around the panes — and floats the message list and the reader on
+ * it as white cards. Moov painted rail and list the same `--surface-default`,
+ * so the only thing telling them apart was a 1px hairline: the rail read as
+ * the left edge of the list rather than as a separate surface, and its text
+ * had no ground of its own to lift off.
+ *
+ * With the grey in place the hairline is not just unnecessary, it is wrong —
+ * Gmail has no border there, because a tone change already separates the two
+ * more strongly than a line ever did. The list's own `border-radius` and the
+ * `--space-2` gutter beside it are what make the boundary read as a card edge.
+ */
 .sidebar {
   padding: var(--space-4) var(--space-3);
-  background: var(--surface-default);
-  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-canvas);
   overflow-y: auto;
   min-height: 0;
   /* A flex column so the folder tree and the label group stack and the group
@@ -304,12 +318,28 @@
  * rather than being duplicated.
  */
 
+/*
+ * The list is a white card ON the canvas.
+ *
+ * The rounded TOP corners plus the gutter to the rail are the whole of Gmail's
+ * card shape: the bottom corners stay square because the card runs to the
+ * bottom of the viewport, so rounding them would open a sliver of grey under a
+ * pane that has no bottom edge.
+ *
+ * The gutter is a MARGIN, not a grid `column-gap`: the tracks are the rail's
+ * `--rail-width`, the resizable `--reader-width` and the divider, and every one
+ * of them is a number the user or a canon measurement fixed. A gap would take
+ * its 8px out of those tracks; a margin takes it out of the cell's own box and
+ * leaves the grid arithmetic — and the divider's drag maths — untouched.
+ */
 .listColumn {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-subtle);
+  margin-left: var(--space-2);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
   /* The rows query THIS, not the viewport. */
   container-type: inline-size;
 }
@@ -346,10 +376,27 @@
   z-index: 1;
 }
 
+/* The reader is the second card on the canvas, with the same top corners. In
+ * the "right of the list" split the divider already provides the gutter, so
+ * the margin here would double it; in "no split" and "below" the reader takes
+ * the list's cell and gets the gutter from the rules below. */
 .readerColumn {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.readingFull .readerColumn,
+.readingBottom .readerColumn,
+.readingBottom .listColumn {
+  margin-left: var(--space-2);
+}
+
+/* Stacked, the two panes are the top and bottom halves of one card: only the
+ * upper one has a top edge to round. */
+.readingBottom .readerColumn {
+  border-radius: 0;
 }
 
 /*
@@ -364,7 +411,9 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-subtle);
+  margin-left: var(--space-2);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
 }
 
 .settingsColumn > * {
@@ -512,6 +561,10 @@
    */
   .reading .readerColumn {
     grid-column: 2;
+    /* With the list gone the reader takes its cell, and the divider that used
+     * to supply the gutter is `display: none` two rules up — so the reader has
+     * to carry it, exactly as it does in the "no split" layout. */
+    margin-left: var(--space-2);
   }
 }
 
@@ -528,6 +581,21 @@
 
   .sidebar {
     display: none;
+  }
+
+  /*
+   * The gutter and the card corners go with the rail.
+   *
+   * At this width the pane IS the screen: there is no canvas beside it to be
+   * a gutter, so an 8px margin would be a grey stripe down the left of a phone
+   * and the rounded corners would open two grey wedges at the top of a pane
+   * that has nothing above it.
+   */
+  .body .listColumn,
+  .body .readerColumn,
+  .body .settingsColumn {
+    margin-left: 0;
+    border-radius: 0;
   }
 
   /* `headerBrand` and `account` moved to TopBar with E12/B1; their responsive

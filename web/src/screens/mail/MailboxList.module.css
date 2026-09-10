@@ -63,8 +63,32 @@ button.row {
   cursor: pointer;
 }
 
+/*
+ * Hover is mixed OVER THE CANVAS, not taken from `--surface-sunken`.
+ *
+ * The rail used to sit on `--surface-default`, where `--surface-sunken` is a
+ * clear step down (#ffffff → #eef0f6). On the canvas it is barely a step at
+ * all — #f6f7fb → #eef0f6 is about three per cent of lightness, so hover
+ * stopped being visible feedback and became a rumour. Mixing a fixed amount of
+ * ink into whatever the canvas currently is keeps the step the same size in
+ * both themes and under any brand, which a second surface token cannot: the
+ * two tokens move independently.
+ *
+ * Black in light, white in dark, for the same reason `.selected:hover` flips —
+ * on a near-black canvas more black is invisible.
+ */
 .row:hover {
-  background: var(--surface-sunken);
+  background: color-mix(in srgb, #000 6%, var(--surface-canvas));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .row:hover {
+    background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
+  }
+}
+
+:root[data-theme="dark"] .row:hover {
+  background: color-mix(in srgb, #fff 8%, var(--surface-canvas));
 }
 
 /*
