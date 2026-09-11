@@ -81,3 +81,115 @@ describe("A-07/E-10: the search track's width", () => {
     expect(wrapper).not.toMatch(/max-width/);
   });
 });
+
+/**
+ * The settings gear's geometry (owner: the old one "looks deformed",
+ * 2026-09-11).
+ *
+ * # What this exists to prevent
+ *
+ * The gear was drawn by hand as one long relative path and its teeth were
+ * genuinely uneven — different widths, different reaches, and a hub that was
+ * not concentric with the ring. At 18px that reads as a smudge. The
+ * replacement is Material Symbols "settings" geometry, generated rather than
+ * drawn.
+ *
+ * # Why the numbers and not a snapshot
+ *
+ * A snapshot of the `d` string would fail on any edit, including a correct one,
+ * and would say nothing about WHY it failed. What has to be true is a
+ * geometric fact — eight identical teeth around one centre — so that is what
+ * is measured: every vertex is parsed out of the path and its distance from
+ * the centre is computed. A gear whose teeth drift apart again fails here with
+ * the drift named, whatever the string looks like.
+ */
+describe("the settings gear", () => {
+  const source = readFileSync(resolve(process.cwd(), "src/screens/mail/TopBar.tsx"), "utf8");
+
+  /** The gear's tooth path — the one inside the `styles.gear` svg. */
+  const gearPath = ((): string => {
+    const svg = source.slice(source.indexOf("className={styles.gear}"));
+    const match = /<path d="([^"]+)"/.exec(svg.slice(0, svg.indexOf("</svg>")));
+    if (match?.[1] === undefined) expect.fail("no path inside the gear svg");
+    return match[1];
+  })();
+
+  /** Every absolute vertex of the path, as [x, y]. */
+  const vertices = [...gearPath.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map(
+    (m) => [Number(m[1]), Number(m[2])] as const,
+  );
+
+  const CENTRE = 10;
+  const radius = ([x, y]: readonly [number, number]): number =>
+    Math.round(Math.hypot(x - CENTRE, y - CENTRE) * 100) / 100;
+
+  it("has 16 vertices — eight teeth, each a tip and a root", () => {
+    expect(vertices).toHaveLength(16);
+  });
+
+  it("puts every TIP at exactly the same distance from the centre", () => {
+    // The defect, stated as a measurement: uneven teeth are tips at unequal
+    // radii, and no amount of looking at the string reveals that.
+    const tips = vertices.filter((_, k) => k % 2 === 0).map(radius);
+    expect(new Set(tips).size).toBe(1);
+  });
+
+  it("puts every ROOT at exactly the same distance too", () => {
+    const roots = vertices.filter((_, k) => k % 2 === 1).map(radius);
+    expect(new Set(roots).size).toBe(1);
+  });
+
+  it("makes the teeth actually stick out", () => {
+    const tip = radius(vertices[0]!);
+    const root = radius(vertices[1]!);
+    expect(tip).toBeGreaterThan(root);
+  });
+
+  it("spaces the vertices evenly — one every 22.5°", () => {
+    /*
+     * Equal radii alone would still allow eight teeth bunched to one side.
+     * The angles are what make them a gear rather than a crown.
+     */
+    const angles = vertices.map(([x, y]) =>
+      Math.round(((Math.atan2(y - CENTRE, x - CENTRE) * 180) / Math.PI + 360) % 360),
+    );
+    const sorted = [...angles].sort((a, b) => a - b);
+    const gaps = sorted.map((angle, k) =>
+      k === 0 ? angle + 360 - sorted[sorted.length - 1]! : angle - sorted[k - 1]!,
+    );
+    // 22.5° rounds to 22 or 23 depending on where the vertex falls.
+    for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(22);
+    for (const gap of gaps) expect(gap).toBeLessThanOrEqual(23);
+  });
+
+  it("closes the path, so the ring is a ring", () => {
+    expect(gearPath.trimEnd().endsWith("Z")).toBe(true);
+  });
+
+  it("centres the hub on the same point the teeth are arranged around", () => {
+    // The old gear's hub and ring were not concentric. `cx`/`cy` must be the
+    // centre the radii above were measured from.
+    const svg = source.slice(source.indexOf("className={styles.gear}"));
+    const circle = /<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/.exec(
+      svg.slice(0, svg.indexOf("</svg>")),
+    );
+    if (circle === null) expect.fail("the gear has no hub");
+    expect(Number(circle[1])).toBe(CENTRE);
+    expect(Number(circle[2])).toBe(CENTRE);
+    // And the hub must sit inside the root circle, or it would cut the teeth.
+    expect(Number(circle[3])).toBeLessThan(radius(vertices[1]!));
+  });
+
+  it("carries the same stroke weight as the help icon beside it", () => {
+    /*
+     * The gear was 1.5 while its neighbour was 1.6, which made it read a shade
+     * lighter than the icon next to it — the kind of difference nobody reports
+     * and everybody sees.
+     */
+    const weights = [...source.matchAll(/strokeWidth="([\d.]+)"/g)].map((m) => m[1]);
+    const gearSvg = source.slice(source.indexOf("className={styles.gear}"));
+    const gearWeight = /strokeWidth="([\d.]+)"/.exec(gearSvg)?.[1];
+    expect(gearWeight).toBe("1.6");
+    expect(weights).toContain("1.6");
+  });
+});

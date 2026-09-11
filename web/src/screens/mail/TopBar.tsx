@@ -173,9 +173,33 @@ export function TopBar({
           title={t("settings.open")}
           aria-expanded={quickSettingsOpen}
         >
-          <svg className={styles.gear} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-            <circle cx="10" cy="10" r="2.6" />
-            <path d="M10 2.6l1 2 2.2-.5 1.2 1.9-1.4 1.7.9 2 2.1.7v2.2l-2.1.7-.9 2 1.4 1.7-1.2 1.9-2.2-.5-1 2h-2l-1-2-2.2.5-1.2-1.9 1.4-1.7-.9-2-2.1-.7V10.4l2.1-.7.9-2L3.6 6l1.2-1.9 2.2.5 1-2z" />
+          {/*
+            The gear, Material Symbols "settings" geometry (owner: the old one
+            "looks deformed", 2026-09-11).
+
+            What was here was drawn by hand as one long relative path, and its
+            teeth were genuinely uneven — different widths, different reaches,
+            and the ring was not concentric with the hub. At 18px that reads as
+            a smudge rather than as a gear, which is what the owner saw.
+
+            This one is GENERATED, not drawn: sixteen vertices, one every
+            22.5°, alternating between an outer radius of 8 and an inner radius
+            of 6.1 — so eight identical teeth, by construction rather than by a
+            careful hand. Every tip is exactly 8 from the centre and every root
+            exactly 6.1; `readerFooter`-style invariants for that live in
+            `TopBar.test.tsx`, which measures the path rather than trusting it.
+            `strokeLinejoin="round"` is what turns the polygon into Material's
+            rounded teeth.
+
+            `strokeWidth` is 1.6, matching the help `?` immediately to its left
+            — the old 1.5 made the gear read a shade lighter than its
+            neighbour, which is the kind of difference nobody reports and
+            everybody sees.
+          */}
+          <svg className={styles.gear} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+            <path d="M10 2L12.33 4.36L15.66 4.34L15.64 7.67L18 10L15.64 12.33L15.66 15.66L12.33 15.64L10 18L7.67 15.64L4.34 15.66L4.36 12.33L2 10L4.36 7.67L4.34 4.34L7.67 4.36Z" />
+            {/* The hub, concentric with the ring — which the old one was not. */}
+            <circle cx="10" cy="10" r="2.7" />
           </svg>
         </button>
 
