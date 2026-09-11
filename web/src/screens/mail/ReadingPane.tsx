@@ -900,44 +900,16 @@ export function ReadingPane({
           button the eye lands on and the key the hand reaches for agree.
         */}
         {/*
-          C-09: in conversation view the reply verbs live at the END of the
-          thread, as Gmail's pills (ConversationView), and NOT here as well —
-          two rows saying "Responder" in one pane are two answers to one
-          question. The single-message reader keeps this row: it has no
-          bottom, its body is the whole pane.
+          C-09: the reply verbs are NOT here any more.
+
+          They were under the subject, at the top of the header, which is the
+          one place Gmail never puts them. They are now a pinned footer at the
+          BOTTOM of the pane — see the end of this component's render, below
+          `.bodyRegion`. In conversation view the same job is done by
+          `ConversationView`'s sticky pill row, which lives inside the
+          scroller because the state it needs (the newest message, the
+          thread's membership) lives there too.
         */}
-        {/*
-          …and the row stands down while an inline compose is open, for the
-          reason the conversation's pills do: what it starts is already
-          started. The box itself renders at the FOOT of the pane, below the
-          body, which is where it belongs — see the bottom of this file.
-        */}
-        {!conversationView && inlineCompose === undefined && (
-        <div className={styles.actions} role="group" aria-label={t("action.reply")}>
-          {prefs.defaultReplyBehavior === "replyAll" ? (
-            <>
-              <button type="button" className={styles.primaryAction} onClick={onReplyAll}>
-                {t("action.replyAll")}
-              </button>
-              <button type="button" className={styles.secondaryAction} onClick={onReply}>
-                {t("action.reply")}
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" className={styles.primaryAction} onClick={onReply}>
-                {t("action.reply")}
-              </button>
-              <button type="button" className={styles.secondaryAction} onClick={onReplyAll}>
-                {t("action.replyAll")}
-              </button>
-            </>
-          )}
-          <button type="button" className={styles.secondaryAction} onClick={onForward}>
-            {t("action.forward")}
-          </button>
-        </div>
-        )}
 
         {/*
           E1: the sender block belongs to ONE message, and in conversation view
@@ -1114,6 +1086,59 @@ export function ReadingPane({
         */}
         {!conversationView && inlineCompose}
       </div>
+
+      {/*
+        The reply verbs, PINNED to the bottom of the pane (owner's screenshot,
+        2026-09-10).
+
+        Gmail's reader keeps this row on screen: the message scrolls behind it
+        and the verbs never move. Ours were reachable only after scrolling to
+        the end of the content, which in a long message means scrolling past
+        all of it to answer a single line.
+
+        It is a `flex: none` SIBLING of the scrolling `.bodyRegion`, not a
+        `position: fixed` strip: the row is genuinely the last item of a flex
+        column that fills the pane, so it lands at the bottom with no
+        coordinates to keep in sync and no chance of overlapping the message
+        it sits under.
+
+        Conversation view has its own (`ConversationView`'s sticky pill row):
+        two rows saying "Responder" in one pane would be two answers to one
+        question, and the conversation's pills need state that lives inside
+        the scroller.
+
+        And the row stands down while an inline compose is open, for the
+        reason the conversation's pills do — what it starts is already
+        started. Gmail puts the inline box in the FLOW, at the foot of the
+        thread, where it scrolls with the content; the pinned strip disappears
+        while it exists and returns on discard or send.
+      */}
+      {!conversationView && inlineCompose === undefined && (
+        <div className={styles.actions} role="group" aria-label={t("action.reply")}>
+          {prefs.defaultReplyBehavior === "replyAll" ? (
+            <>
+              <button type="button" className={styles.primaryAction} onClick={onReplyAll}>
+                {t("action.replyAll")}
+              </button>
+              <button type="button" className={styles.secondaryAction} onClick={onReply}>
+                {t("action.reply")}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className={styles.primaryAction} onClick={onReply}>
+                {t("action.reply")}
+              </button>
+              <button type="button" className={styles.secondaryAction} onClick={onReplyAll}>
+                {t("action.replyAll")}
+              </button>
+            </>
+          )}
+          <button type="button" className={styles.secondaryAction} onClick={onForward}>
+            {t("action.forward")}
+          </button>
+        </div>
+      )}
 
       <OriginalDialog
         isOpen={originalOpen}

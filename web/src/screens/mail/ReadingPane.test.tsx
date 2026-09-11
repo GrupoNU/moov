@@ -856,3 +856,84 @@ describe("the inline compose box", () => {
     expect(within(bar).getByRole("button", { name: /^archivar$/i })).toBeInTheDocument();
   });
 });
+
+/**
+ * Where the reply verbs LIVE — the owner's screenshot finding (2026-09-10).
+ *
+ * Gmail pins them to the foot of the reading pane; ours had drifted to the
+ * top, under the subject. The stylesheet half is pinned in
+ * `readerFooter.test.ts` (jsdom cannot see a pinned footer); this half pins
+ * the DOM arrangement that makes the stylesheet's rules apply at all.
+ */
+describe("the reply verbs are a footer, not a header row", () => {
+  it("comes AFTER the message body in the document", () => {
+    renderPane();
+    const verbs = screen.getByRole("group", { name: /responder/i });
+    const body = document.querySelector("[class*='bodyRegion']");
+    if (body === null) expect.fail("the reader rendered no body region");
+    expect(
+      body.compareDocumentPosition(verbs) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("is a SIBLING of the scrolling body, not inside it", () => {
+    /*
+     * The distinction the CSS depends on: a `flex: none` footer works only as
+     * a child of the pane's column. Nested inside the scroller it would scroll
+     * away with the message, which is the defect being fixed.
+     */
+    renderPane();
+    const verbs = screen.getByRole("group", { name: /responder/i });
+    expect(verbs.closest("[class*='bodyRegion']")).toBeNull();
+  });
+
+  it("is outside the header, where it used to be", () => {
+    renderPane();
+    const verbs = screen.getByRole("group", { name: /responder/i });
+    expect(verbs.closest("header")).toBeNull();
+  });
+
+  it("keeps the verbs last in the tab order — the chrome still comes first", () => {
+    /*
+     * Moving the row from the header to the foot moves it in the tab order
+     * too, and that is the CORRECT direction: the toolbar's verbs are reached
+     * before the reply verbs, which is the order Gmail's reader has and the
+     * order the eye reads the pane in.
+     */
+    renderPane();
+    const bar = screen.getByRole("toolbar", { name: /más acciones/i });
+    const verbs = screen.getByRole("group", { name: /responder/i });
+    expect(
+      bar.compareDocumentPosition(verbs) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});
+
+/**
+ * The swap: pinned pills, or an inline box in the flow — never both.
+ *
+ * Gmail's asymmetry, deliberately preserved. The PILLS are pinned; the BOX is
+ * in the flow and scrolls with the content, because a pinned compose box would
+ * eat half the reader and pin the thing you are writing over the thing you are
+ * answering.
+ */
+describe("the pinned pills and the inline box swap places", () => {
+  const BOX = <div data-testid="inline-box">a reply in progress</div>;
+
+  it("the pinned row disappears entirely while the box exists", () => {
+    renderPane({ inlineCompose: BOX });
+    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
+  });
+
+  it("the box goes INSIDE the scrolling body, so it scrolls with the mail", () => {
+    renderPane({ inlineCompose: BOX });
+    const box = screen.getByTestId("inline-box");
+    expect(box.closest("[class*='bodyRegion']")).not.toBeNull();
+  });
+
+  it("the pinned row returns when the box is gone", () => {
+    renderPane();
+    expect(screen.getByRole("group", { name: /responder/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
+  });
+});

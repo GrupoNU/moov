@@ -645,3 +645,61 @@ describe("the inline compose box", () => {
     ).toBeTruthy();
   });
 });
+
+/**
+ * The pinned pill row, and the asymmetry it has with the inline box.
+ *
+ * Gmail pins the "Responder / Reenviar" pills to the foot of the reading pane
+ * — the thread scrolls behind them — but puts the inline compose box in the
+ * FLOW, where it scrolls with the content. The stylesheet half (sticky, the
+ * hairline, the opaque background) is pinned in `readerFooter.test.ts`; this
+ * half pins the DOM arrangement that lets `position: sticky` work at all.
+ */
+describe("the pills are pinned, the box is not", () => {
+  const BOX = <div data-testid="inline-box">a reply in progress</div>;
+
+  it("keeps the pills as the LAST child of the scrolling column", async () => {
+    /*
+     * `position: sticky` pins an element against its scroll container. The
+     * pills must therefore stay INSIDE that column — a footer lifted out of it
+     * would need the thread's state (the newest message, the membership)
+     * lifted with it, which is the reducer this component exists to keep out
+     * of the pane.
+     */
+    renderConversation();
+    const pills = await screen.findByRole("group", { name: /responder/i });
+    const column = pills.parentElement;
+    expect(column).not.toBeNull();
+    expect(column?.lastElementChild).toBe(pills);
+  });
+
+  it("puts the pills after every message of the thread", async () => {
+    renderConversation();
+    const pills = await screen.findByRole("group", { name: /responder/i });
+    const newest = screen.getByText("the newest message");
+    expect(
+      newest.compareDocumentPosition(pills) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("takes the pills away entirely while the box exists", async () => {
+    renderConversation({ inlineCompose: BOX });
+    await screen.findByTestId("inline-box");
+    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
+  });
+
+  it("puts the box in the same column, so it SCROLLS rather than pinning", async () => {
+    renderConversation({ inlineCompose: BOX });
+    const box = await screen.findByTestId("inline-box");
+    // Same parent the pills had: in the flow of the thread, not a sibling of
+    // the scroller. A pinned compose box would pin what you are writing over
+    // what you are answering.
+    expect(box.parentElement?.className).toMatch(/conversation/i);
+  });
+
+  it("brings the pills back when the box is gone", async () => {
+    renderConversation();
+    expect(await screen.findByRole("group", { name: /responder/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
+  });
+});

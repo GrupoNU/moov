@@ -510,6 +510,12 @@ export function ConversationView({
         conversation still readable above it. The pills are not merely hidden
         while it is open — they have nothing left to do, because what they
         start is already started — and they return unchanged when it closes.
+
+        Note the asymmetry, which is Gmail's: the PILLS are pinned to the
+        bottom of the pane (sticky — see the stylesheet), but the BOX is in
+        the FLOW and scrolls with the content. A pinned compose box would eat
+        half the reader and pin the thing you are writing over the thing you
+        are answering, which is the opposite of why an inline reply exists.
       */}
       {inlineCompose}
 

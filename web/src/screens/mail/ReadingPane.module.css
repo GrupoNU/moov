@@ -1,11 +1,25 @@
 /* The reading pane. */
 
+/*
+ * The pane itself does NOT scroll — the BODY inside it does.
+ *
+ * It used to be the scrollport, which put the header, the icon bar and the
+ * reply verbs on the same scroll as the message. Gmail's reader keeps all
+ * three chrome elements still: the subject and the toolbar at the top, the
+ * "Responder / Reenviar" row pinned to the bottom, and only the message
+ * moving between them. Ours were reachable only after scrolling to the end of
+ * a long thread, which is the defect the owner's screenshot caught.
+ *
+ * So the scroll moved one level down, to `.bodyRegion`. Everything else here
+ * is `flex: none` and therefore fixed by construction rather than by a
+ * `position` that could be argued with.
+ */
 .pane {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--surface-default);
 }
 
@@ -335,6 +349,8 @@ a.attachmentName:focus-visible {
 .bodyRegion {
   flex: 1;
   min-height: 0;
+  /* THE scrollport (see `.pane`): the message moves, the chrome does not. */
+  overflow-y: auto;
   padding: var(--space-5) var(--space-6);
   /* A flex column, so the HTML path's iframe can FILL the region (the
    * message scrolls inside its own sandboxed document — W-A4). The text
@@ -392,12 +408,32 @@ a.attachmentName:focus-visible {
  * P3: the action row
  * ------------------------------------------------------------------------ */
 
+/*
+ * The reply verbs, PINNED to the bottom of the reader (canon 07 §6; owner's
+ * screenshot, 2026-09-10).
+ *
+ * They used to sit under the subject, at the TOP, and before that at the end
+ * of the content — reachable in a long message only after scrolling past all
+ * of it. Gmail pins them: a fixed strip at the foot of the reading pane with
+ * a hairline above it, the body scrolling behind.
+ *
+ * `flex: none` as a sibling of the scrolling `.bodyRegion` rather than
+ * `position: fixed`: the row is genuinely the last item of a flex column that
+ * fills the pane, so it lands at the bottom with no coordinates to keep in
+ * sync and no chance of overlapping the content it sits below. The
+ * conversation's own pill row is sticky instead, and for a reason its file
+ * records — it lives inside the scroller, with the thread's state.
+ */
 .actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
-  margin-top: var(--space-3);
+  flex: none;
+  padding: var(--space-3) var(--space-6);
+  /* The hairline Gmail draws between the message and the verbs. */
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-default);
 }
 
 
