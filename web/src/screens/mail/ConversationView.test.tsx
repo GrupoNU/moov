@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { JmapClient } from "../../api/jmap";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { KEYWORD_SEEN, type Email, type Thread } from "../../mail/types";
-import { ConversationView, type ConversationControls } from "./ConversationView";
+import {
+  ConversationView,
+  type ConversationControls,
+  type ReplyTarget,
+} from "./ConversationView";
 
 /**
  * The conversation reader in a real DOM (L3 epic E1, canon §2.1).
@@ -97,6 +101,7 @@ function renderConversation(
     readonly onMarkRead?: (ids: readonly string[]) => void;
     readonly onControls?: (c: ConversationControls | undefined) => void;
     readonly inlineCompose?: React.ReactNode;
+    readonly onReplyTarget?: (t: ReplyTarget | undefined) => void;
   } = {},
 ) {
   const openEmail = overrides.openEmail ?? withBody(M3, "the newest message");
@@ -125,6 +130,9 @@ function renderConversation(
     ...(overrides.onControls !== undefined ? { onControls: overrides.onControls } : {}),
     ...(overrides.inlineCompose !== undefined
       ? { inlineCompose: overrides.inlineCompose }
+      : {}),
+    ...(overrides.onReplyTarget !== undefined
+      ? { onReplyTarget: overrides.onReplyTarget }
       : {}),
   };
 
@@ -521,39 +529,45 @@ describe("per-message actions", () => {
   });
 });
 
-describe("the reply pills at the end of the conversation (C-09)", () => {
-  it("offers Reply and Forward after the last message, acting on the newest", async () => {
-    const user = userEvent.setup();
-    const { props } = renderConversation();
+/**
+ * C-09: which message the thread's reply verbs act on.
+ *
+ * The verbs themselves left this component — they are the pane's pinned strip
+ * now (`ReplyRow`), because a row pinned with `position: sticky` inside this
+ * scrolling column stopped short of the pane's bottom padding and the message
+ * showed through the gap. What this component still owns, and all it owns, is
+ * the ANSWER to "reply to what": the newest message, and whether reply-all
+ * would reach anyone a plain reply would not.
+ *
+ * So these cases assert the published value rather than a rendered button. The
+ * button is `ReplyRow`'s and is tested there; the decision is here.
+ */
+describe("the published reply target (C-09)", () => {
+  it("names the NEWEST message of the thread", async () => {
+    const onReplyTarget = vi.fn();
+    renderConversation({ onReplyTarget });
     await waitFor(() => {
       expect(screen.getByText("Sender m1")).toBeInTheDocument();
     });
-    const row = screen.getByRole("group", { name: /^responder$/i });
-    // Rendered AFTER the messages: the pills are the last thing in the column.
-    const lastMessage = screen.getByText("Sender m3").closest<HTMLElement>("[data-message-id]")!;
-    expect(lastMessage.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    await user.click(within(row).getByRole("button", { name: /^responder$/i }));
-    expect(props.onReply).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }), false);
-
-    await user.click(within(row).getByRole("button", { name: /^reenviar$/i }));
-    expect(props.onForward).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }));
-  });
-
-  it("omits Reply all when the newest message had one party — it would build the same draft", async () => {
-    renderConversation();
     await waitFor(() => {
-      expect(screen.getByRole("group", { name: /^responder$/i })).toBeInTheDocument();
+      expect(onReplyTarget).toHaveBeenLastCalledWith(
+        expect.objectContaining({ newest: expect.objectContaining({ id: "m3" }) }),
+      );
     });
-    expect(
-      within(screen.getByRole("group", { name: /^responder$/i })).queryByRole("button", {
-        name: /responder a todos/i,
-      }),
-    ).not.toBeInTheDocument();
   });
 
-  it("offers Reply all when the newest message had several parties, replying to all of them", async () => {
-    const user = userEvent.setup();
+  it("says reply-all is pointless when the newest message had one party", async () => {
+    // It would build the identical draft, and Gmail omits it too.
+    const onReplyTarget = vi.fn();
+    renderConversation({ onReplyTarget });
+    await waitFor(() => {
+      expect(onReplyTarget).toHaveBeenLastCalledWith(
+        expect.objectContaining({ severalRecipients: false }),
+      );
+    });
+  });
+
+  it("says reply-all is meaningful when the newest message had several", async () => {
     const wide = withBody(
       email("m3", "2026-08-03T10:00:00Z", {
         to: [
@@ -563,10 +577,42 @@ describe("the reply pills at the end of the conversation (C-09)", () => {
       }),
       "the newest message",
     );
-    const { props } = renderConversation({ openEmail: wide, rows: [M1, M2, wide] });
-    const row = await screen.findByRole("group", { name: /^responder$/i });
-    await user.click(await within(row).findByRole("button", { name: /responder a todos/i }));
-    expect(props.onReply).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }), true);
+    const onReplyTarget = vi.fn();
+    renderConversation({ openEmail: wide, rows: [M1, M2, wide], onReplyTarget });
+    await waitFor(() => {
+      expect(onReplyTarget).toHaveBeenLastCalledWith(
+        expect.objectContaining({ severalRecipients: true }),
+      );
+    });
+  });
+
+  it("publishes nothing until the membership is COMPLETE", () => {
+    /*
+     * The guard the row carried when it rendered here. A thread still loading
+     * its rows must not produce a footer, or the verbs would momentarily act
+     * on whichever message happened to have arrived.
+     */
+    const onReplyTarget = vi.fn();
+    renderConversation({ onReplyTarget });
+    // Synchronously, before any fetch resolves.
+    expect(onReplyTarget).toHaveBeenCalledWith(undefined);
+    expect(onReplyTarget).not.toHaveBeenCalledWith(
+      expect.objectContaining({ newest: expect.anything() }),
+    );
+  });
+
+  it("withdraws the target when the conversation goes away", async () => {
+    // A pane still holding a target from a closed conversation would draw a
+    // footer for mail nobody is looking at.
+    const onReplyTarget = vi.fn();
+    renderConversation({ onReplyTarget });
+    await waitFor(() => {
+      expect(onReplyTarget).toHaveBeenLastCalledWith(
+        expect.objectContaining({ newest: expect.anything() }),
+      );
+    });
+    cleanup();
+    expect(onReplyTarget).toHaveBeenLastCalledWith(undefined);
   });
 });
 
@@ -604,102 +650,40 @@ describe("degrading honestly", () => {
 });
 
 /**
- * The inline compose box at the foot of the thread (canon 07 §7).
+ * The inline box stays in the FLOW, and that is deliberate.
  *
- * Gmail's reply opens under the last message, with the conversation still
- * readable above it — and it TAKES THE PILLS' PLACE rather than sitting beside
- * them, because what they start is already started.
+ * Gmail pins the reply PILLS to the foot of the pane — they are `ReplyRow`
+ * now, a real last child of the pane's column outside this scroller — but
+ * puts the BOX in the flow, where it scrolls with the thread. A pinned compose
+ * box would eat half the reader and pin what you are writing over what you are
+ * answering.
  */
-describe("the inline compose box", () => {
+describe("the inline box scrolls with the thread", () => {
   const BOX = <div data-testid="inline-box">a reply in progress</div>;
 
-  it("renders at the foot of the conversation", async () => {
-    renderConversation({ inlineCompose: BOX });
-    await waitFor(() => {
-      expect(screen.getByTestId("inline-box")).toBeInTheDocument();
-    });
-  });
-
-  it("takes the reply pills' place rather than joining them", async () => {
-    renderConversation({ inlineCompose: BOX });
-    await waitFor(() => {
-      expect(screen.getByTestId("inline-box")).toBeInTheDocument();
-    });
-    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
-  });
-
-  it("leaves the pills alone when no box is open", async () => {
-    renderConversation();
-    await waitFor(() => {
-      expect(screen.getByRole("group", { name: /responder/i })).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
-  });
-
-  it("comes after the last message, not before the thread", async () => {
+  it("lands inside the conversation column, after the last message", async () => {
     renderConversation({ inlineCompose: BOX });
     const box = await screen.findByTestId("inline-box");
+    expect(box.parentElement?.className).toMatch(/conversation/i);
     const newest = screen.getByText("the newest message");
     expect(
       newest.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
-});
 
-/**
- * The pinned pill row, and the asymmetry it has with the inline box.
- *
- * Gmail pins the "Responder / Reenviar" pills to the foot of the reading pane
- * — the thread scrolls behind them — but puts the inline compose box in the
- * FLOW, where it scrolls with the content. The stylesheet half (sticky, the
- * hairline, the opaque background) is pinned in `readerFooter.test.ts`; this
- * half pins the DOM arrangement that lets `position: sticky` work at all.
- */
-describe("the pills are pinned, the box is not", () => {
-  const BOX = <div data-testid="inline-box">a reply in progress</div>;
-
-  it("keeps the pills as the LAST child of the scrolling column", async () => {
+  it("still publishes a reply target — the PANE decides to hide its strip", async () => {
     /*
-     * `position: sticky` pins an element against its scroll container. The
-     * pills must therefore stay INSIDE that column — a footer lifted out of it
-     * would need the thread's state (the newest message, the membership)
-     * lifted with it, which is the reducer this component exists to keep out
-     * of the pane.
+     * This component does not know a composer exists. It reports what the
+     * thread is; `ReadingPane` is what drops the pinned strip while a box is
+     * open, because the strip is the pane's. Keeping the target published is
+     * what lets the strip come straight back on discard or send.
      */
-    renderConversation();
-    const pills = await screen.findByRole("group", { name: /responder/i });
-    const column = pills.parentElement;
-    expect(column).not.toBeNull();
-    expect(column?.lastElementChild).toBe(pills);
-  });
-
-  it("puts the pills after every message of the thread", async () => {
-    renderConversation();
-    const pills = await screen.findByRole("group", { name: /responder/i });
-    const newest = screen.getByText("the newest message");
-    expect(
-      newest.compareDocumentPosition(pills) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("takes the pills away entirely while the box exists", async () => {
-    renderConversation({ inlineCompose: BOX });
-    await screen.findByTestId("inline-box");
-    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
-  });
-
-  it("puts the box in the same column, so it SCROLLS rather than pinning", async () => {
-    renderConversation({ inlineCompose: BOX });
-    const box = await screen.findByTestId("inline-box");
-    // Same parent the pills had: in the flow of the thread, not a sibling of
-    // the scroller. A pinned compose box would pin what you are writing over
-    // what you are answering.
-    expect(box.parentElement?.className).toMatch(/conversation/i);
-  });
-
-  it("brings the pills back when the box is gone", async () => {
-    renderConversation();
-    expect(await screen.findByRole("group", { name: /responder/i })).toBeInTheDocument();
-    expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
+    const onReplyTarget = vi.fn();
+    renderConversation({ inlineCompose: BOX, onReplyTarget });
+    await waitFor(() => {
+      expect(onReplyTarget).toHaveBeenLastCalledWith(
+        expect.objectContaining({ newest: expect.objectContaining({ id: "m3" }) }),
+      );
+    });
   });
 });

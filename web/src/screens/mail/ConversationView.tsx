@@ -17,7 +17,6 @@ import {
   withMarked,
   type ConversationState,
 } from "../../mail/conversation";
-import { usePrefs } from "../../mail/PrefsProvider";
 import { isSuspicious, type Email, type Thread } from "../../mail/types";
 import { ConversationMessage } from "./ConversationMessage";
 import type { SignImageUrls } from "./SecureHtmlBody";
@@ -104,6 +103,40 @@ export interface ConversationViewProps {
    */
   readonly inlineCompose?: React.ReactNode;
   /**
+   * Publishes WHICH message the thread's reply verbs should act on, so the
+   * pane can render them as a real footer outside the scroller.
+   *
+   * # Why the row left this component
+   *
+   * It used to render here, at the end of the column, pinned with
+   * `position: sticky`. Sticky pins against the scrollport's PADDING edge, and
+   * the scrollport has a bottom padding — so the strip stopped short of the
+   * pane's bottom and the message scrolled through the gap beneath it. The
+   * owner caught it in the live pilot. A negative margin does not help: it
+   * moves the box, not the position sticky pins to.
+   *
+   * The fix is the arrangement the single-message reader already has — the row
+   * as a real `flex: none` last child OUTSIDE the scrollport, where "bottom of
+   * the column" is a fact of the layout rather than a coordinate that can miss.
+   *
+   * # Why a published VALUE and not a rendered node
+   *
+   * What the row needs from this component is two derived facts: which message
+   * is newest, and whether reply-all would reach anyone a plain reply would
+   * not. Publishing those keeps the reducer, the fetches and the membership
+   * bookkeeping exactly where they are — the pane learns no more than it did
+   * before — while the row itself becomes the pane's to place. Publishing a
+   * ReactNode instead would have put JSX through an effect, which is a render
+   * loop waiting to happen.
+   *
+   * `undefined` means there is nothing to reply to yet: an empty thread, or
+   * one whose membership is still loading. The row must not appear before
+   * then or it would momentarily act on the wrong message.
+   *
+   * Same seam shape as `onControls` next door, for the same reason.
+   */
+  readonly onReplyTarget?: (target: ReplyTarget | undefined) => void;
+  /**
    * Publishes the conversation's controls so the pane can drive them from the
    * keyboard (`;`, `:`, `p`, `n`). A ref-shaped callback rather than props
    * flowing down, because the keyboard lives at the top of the screen and the
@@ -113,6 +146,30 @@ export interface ConversationViewProps {
   readonly onControls?: (controls: ConversationControls | undefined) => void;
   /** C-14: the reader's own addresses, for each message's "para mí". */
   readonly ownAddresses?: readonly string[] | undefined;
+}
+
+/**
+ * Which message the thread's reply verbs act on, and whether reply-all is a
+ * choice with a difference.
+ *
+ * The whole of what `ReplyRow` needs from a conversation. Two derived facts
+ * rather than the thread, the reducer or the membership set — so the footer
+ * can live in the pane (outside the scrollport, where a pinned strip actually
+ * reaches the bottom edge) while everything that computes them stays put.
+ */
+export interface ReplyTarget {
+  /**
+   * The NEWEST message of the thread — what "reply to this conversation"
+   * means, and what Gmail's bottom pills act on. A reply to an older message
+   * is its own arrow in its own sender line (C-08).
+   */
+  readonly newest: Email;
+  /**
+   * True when replying to everyone would reach someone a plain reply would
+   * not. False removes the reply-all pill: a control that would produce the
+   * identical draft is a choice with no difference, and Gmail omits it too.
+   */
+  readonly severalRecipients: boolean;
 }
 
 /**
@@ -154,14 +211,14 @@ export function ConversationView({
   onControls,
   ownAddresses,
   inlineCompose,
+  onReplyTarget,
 }: ConversationViewProps): React.JSX.Element {
   const { t } = useTranslation();
   /*
-   * C-09: which reply the bottom pills put FIRST. Read from the provider for
-   * the same reason ReadingPane reads it there: one enum reaching one row.
-   * Outside a provider it falls back to Gmail's default (plain reply).
+   * `usePrefs` is gone from here with the pill row it served — the
+   * `defaultReplyBehavior` that ordered the two verbs is now read by
+   * `ReplyRow`, which is where the row lives. One consumer, one reader.
    */
-  const { prefs } = usePrefs();
 
   /*
    * The thread's messages, keyed by id.
@@ -432,6 +489,31 @@ export function ConversationView({
     };
   }, [controls, onControls]);
 
+  /**
+   * The reply target, published for the pane's footer (see `onReplyTarget`).
+   *
+   * `undefined` until the membership is COMPLETE, which is the same guard the
+   * row carried when it rendered here: a thread still loading its rows would
+   * otherwise show verbs that momentarily act on the wrong message. The
+   * withdrawal on unmount matters as much — a pane still holding a target from
+   * a conversation that has closed would draw a footer for mail nobody is
+   * looking at.
+   */
+  const replyTarget = useMemo<ReplyTarget | undefined>(
+    () =>
+      newest === undefined || members.size < memberIds.length
+        ? undefined
+        : { newest, severalRecipients: hasSeveralRecipients(newest) },
+    [newest, members.size, memberIds.length],
+  );
+
+  useEffect(() => {
+    onReplyTarget?.(replyTarget);
+    return () => {
+      onReplyTarget?.(undefined);
+    };
+  }, [replyTarget, onReplyTarget]);
+
   // --- render ---------------------------------------------------------------
 
   /*
@@ -488,87 +570,17 @@ export function ConversationView({
       ))}
 
       {/*
-        C-09: the reply pills at the END of the conversation, Gmail's shape —
-        outlined, with the verb's glyph, after the last message, where the
-        eye is when it finishes reading. They act on the NEWEST message,
-        which is what "reply to this conversation" means (and what Gmail's
-        bottom pills do); a reply to an older message is its own arrow in its
-        own sender line (C-08). They render once the membership is known, so
-        they cannot momentarily reply to the wrong message while rows load.
+        C-09: the reply pills are NOT rendered here any more — see
+        `onReplyTarget` above for where they went and why.
 
-        Reply-all is offered only when the newest message HAD more than one
-        party besides the reader — a pill that would produce the same draft as
-        "Reply" is a choice with no difference, and Gmail omits it too. The
-        E5 `defaultReplyBehavior` preference orders the two, exactly as the
-        single-message reader's row does, so the key and the pill agree.
-      */}
-      {/*
-        The inline compose box, at the foot of the thread and IN PLACE OF the
-        pills (canon 07 §7).
-
-        Gmail's reply opens exactly here, under the last message, with the
-        conversation still readable above it. The pills are not merely hidden
-        while it is open — they have nothing left to do, because what they
-        start is already started — and they return unchanged when it closes.
-
-        Note the asymmetry, which is Gmail's: the PILLS are pinned to the
-        bottom of the pane (sticky — see the stylesheet), but the BOX is in
-        the FLOW and scrolls with the content. A pinned compose box would eat
-        half the reader and pin the thing you are writing over the thing you
-        are answering, which is the opposite of why an inline reply exists.
+        The inline compose box still IS here, and the asymmetry is Gmail's:
+        the pills are pinned to the foot of the PANE, outside the scroller,
+        but the BOX is in the flow and scrolls with the thread. A pinned
+        compose box would eat half the reader and pin the thing you are
+        writing over the thing you are answering, which is the opposite of why
+        an inline reply exists.
       */}
       {inlineCompose}
-
-      {inlineCompose === undefined &&
-        newest !== undefined &&
-        members.size >= memberIds.length && (
-        <div className={styles.replyRow} role="group" aria-label={t("action.reply")}>
-          {(prefs.defaultReplyBehavior === "replyAll" && hasSeveralRecipients(newest)
-            ? (["replyAll", "reply"] as const)
-            : hasSeveralRecipients(newest)
-              ? (["reply", "replyAll"] as const)
-              : (["reply"] as const)
-          ).map((verb) => (
-            <button
-              key={verb}
-              type="button"
-              className={styles.replyPill}
-              onClick={() => {
-                onReply(newest, verb === "replyAll");
-              }}
-            >
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                {verb === "replyAll" ? (
-                  <>
-                    <path d="M7 5.5L2.5 9.5 7 13.5" />
-                    <path d="M11 5.5L6.5 9.5 11 13.5" />
-                    <path d="M6.8 9.5h5.2a5.3 5.3 0 0 1 5.3 5.3v.7" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M8 5.5L3.5 9.5 8 13.5" />
-                    <path d="M3.8 9.5h6.4a5.3 5.3 0 0 1 5.3 5.3v.7" />
-                  </>
-                )}
-              </svg>
-              {verb === "replyAll" ? t("action.replyAll") : t("action.reply")}
-            </button>
-          ))}
-          <button
-            type="button"
-            className={styles.replyPill}
-            onClick={() => {
-              onForward(newest);
-            }}
-          >
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-              <path d="M12 5.5l4.5 4-4.5 4" />
-              <path d="M16.2 9.5H9.8a5.3 5.3 0 0 0-5.3 5.3v.7" />
-            </svg>
-            {t("action.forward")}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

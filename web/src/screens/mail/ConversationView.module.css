@@ -30,85 +30,16 @@
 }
 
 /*
- * C-09: the reply pills after the last message — Gmail's outlined pills with
- * the verb's glyph, sitting on the same left edge as the message bodies.
+ * C-09: the reply pills are gone from this file, with the row they styled.
+ *
+ * They were pinned here with `position: sticky; bottom: 0` while the row still
+ * rendered inside the scrolling column, and that could not reach the bottom:
+ * sticky pins against the scrollport's PADDING edge, and this scrollport has a
+ * bottom padding, so the strip stopped short and the message scrolled through
+ * the gap underneath it. The owner saw it in the live pilot.
+ *
+ * The row is now `ReplyRow` — a real `flex: none` last child of the PANE's
+ * column, outside the scrollport, where "the bottom" is a fact of the layout
+ * rather than a coordinate. This component publishes which message to act on
+ * (`onReplyTarget`) and keeps its reducer.
  */
-/*
- * PINNED to the bottom of the reader (owner's screenshot, 2026-09-10).
- *
- * They sat at the end of the content, so in a thread of twenty messages the
- * way to reply was to scroll past all twenty. Gmail keeps the row on screen:
- * a strip at the foot of the reading pane with a hairline above it, the
- * conversation scrolling behind.
- *
- * `position: sticky` rather than the flex footer the single-message reader
- * uses, and the difference is not a style choice. These pills act on the
- * NEWEST message and appear only once the thread's membership is known —
- * `newest` and `members` are this component's state, and this component lives
- * INSIDE the scroller. Lifting them to `ReadingPane` to make the row a flex
- * sibling would put a fetch-owning reducer into the pane, which is exactly
- * what `ConversationView` exists to avoid. Sticky pins the row to the
- * scrollport's bottom edge without moving a single piece of state.
- *
- * The opaque background is load-bearing, not decoration: a sticky element
- * with a transparent background has the message it is floating over showing
- * through it.
- */
-.replyRow {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  /* Pulled out to the pane's own padding so the strip spans the full width,
-   * the way a footer does — the region it sits in is inset by `--space-6`. */
-  margin: var(--space-4) calc(-1 * var(--space-6)) calc(-1 * var(--space-5));
-  padding: var(--space-3) var(--space-6);
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-default);
-}
-
-.replyPill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--text-default);
-  background: var(--surface-default);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-pill, 999px);
-  cursor: pointer;
-}
-
-.replyPill svg {
-  width: 18px;
-  height: 18px;
-  color: var(--text-muted);
-}
-
-.replyPill:hover,
-.replyPill:focus-visible {
-  background: var(--surface-sunken);
-  border-color: var(--border-strong);
-  color: var(--text-strong);
-}
-
-/*
- * Printing: the pills are not part of the message, and a sticky element in a
- * paged medium has nothing to stick to.
- *
- * `ReadingPane.module.css` already hides its own `.actions` row for print
- * (and lets `.bodyRegion` flow across pages instead of scrolling inside a
- * box). This is the conversation's half of the same rule — it was not needed
- * while the row was an ordinary block at the end of the content, and it is
- * now that the row is positioned.
- */
-@media print {
-  .replyRow {
-    display: none !important;
-  }
-}

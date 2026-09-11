@@ -16,7 +16,12 @@ import {
 import { listIdLabel, unsubscribeInfo, type UnsubscribeInfo } from "../../mail/unsubscribe";
 import { useOffline } from "../../offline/OfflineProvider";
 import { usePrefs } from "../../mail/PrefsProvider";
-import { ConversationView, type ConversationControls } from "./ConversationView";
+import {
+  ConversationView,
+  type ConversationControls,
+  type ReplyTarget,
+} from "./ConversationView";
+import { ReplyRow } from "./ReplyRow";
 import { AttachmentList, DownloadOriginalButton } from "./MessageAttachments";
 import { MessageBody } from "./MessageBody";
 import { LabelChips } from "./LabelChips";
@@ -313,6 +318,19 @@ export function ReadingPane({
     },
     [onConversationControls],
   );
+
+  /**
+   * Which message the pinned footer answers, in conversation view.
+   *
+   * Published by `ConversationView` rather than computed here, and only two
+   * derived facts cross: the newest message and whether reply-all is a choice
+   * with a difference. The thread's reducer, its fetches and its membership
+   * bookkeeping all stay inside that component — the same seam `publishControls`
+   * above uses, for the same reason.
+   *
+   * It exists because the row had to leave the scroller. See `ReplyRow`.
+   */
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget | undefined>(undefined);
 
   // The remote-image signer the secure HTML renderer uses (W-A4): the ONLY
   // path by which a message's remote image can ever be fetched, and it goes
@@ -1052,9 +1070,13 @@ export function ReadingPane({
             onMarkRead={onMarkMessagesRead}
             onControls={publishControls}
             ownAddresses={ownAddresses}
-            /* The box goes at the foot of the THREAD, in the pills' place —
-               the conversation owns that end of the pane, so it mounts it. */
+            /* The box goes at the foot of the THREAD, inside the scroller, so
+               it scrolls with the conversation the way Gmail's does. The
+               PILLS are the pane's (see `replyTarget`) — they are pinned, and
+               a pinned row cannot live inside the thing it is pinned against
+               without stopping short of its padding edge. */
             inlineCompose={inlineCompose}
+            onReplyTarget={setReplyTarget}
           />
         ) : (
           /* Keyed by message id so per-message state — the remote-images
@@ -1088,57 +1110,52 @@ export function ReadingPane({
       </div>
 
       {/*
-        The reply verbs, PINNED to the bottom of the pane (owner's screenshot,
-        2026-09-10).
+        The reply verbs, PINNED to the bottom of the pane — ONE strip, for both
+        readers (owner's screenshots, 2026-09-10 and 2026-09-11).
 
-        Gmail's reader keeps this row on screen: the message scrolls behind it
-        and the verbs never move. Ours were reachable only after scrolling to
-        the end of the content, which in a long message means scrolling past
-        all of it to answer a single line.
+        Gmail keeps this row on screen: the message scrolls behind it and the
+        verbs never move. Ours were reachable only after scrolling to the end
+        of the content, and in the single-message case had drifted to the top,
+        under the subject.
 
-        It is a `flex: none` SIBLING of the scrolling `.bodyRegion`, not a
-        `position: fixed` strip: the row is genuinely the last item of a flex
-        column that fills the pane, so it lands at the bottom with no
-        coordinates to keep in sync and no chance of overlapping the message
-        it sits under.
+        It is a `flex: none` SIBLING of the scrolling `.bodyRegion` — the last
+        item of a flex column that fills the pane — and NOT the sticky row the
+        conversation had. Sticky pins against the scrollport's padding edge,
+        and that scrollport has a bottom padding, so the strip stopped short of
+        the pane's bottom and the message scrolled through the gap beneath it.
+        The owner caught that in the pilot. As a real last child there is no
+        `bottom` to get wrong and nothing below it to show through.
 
-        Conversation view has its own (`ConversationView`'s sticky pill row):
-        two rows saying "Responder" in one pane would be two answers to one
-        question, and the conversation's pills need state that lives inside
-        the scroller.
+        Which message it acts on differs by mode and nothing else does:
+        conversation view answers the NEWEST message of the thread, published
+        by `ConversationView` (`onReplyTarget` — the reducer stays there); the
+        single-message reader answers the one message it is showing. Both then
+        render the identical strip.
 
-        And the row stands down while an inline compose is open, for the
-        reason the conversation's pills do — what it starts is already
-        started. Gmail puts the inline box in the FLOW, at the foot of the
+        The row stands down while an inline compose is open: what it starts is
+        already started. Gmail puts the box in the FLOW, at the foot of the
         thread, where it scrolls with the content; the pinned strip disappears
         while it exists and returns on discard or send.
       */}
-      {!conversationView && inlineCompose === undefined && (
-        <div className={styles.actions} role="group" aria-label={t("action.reply")}>
-          {prefs.defaultReplyBehavior === "replyAll" ? (
-            <>
-              <button type="button" className={styles.primaryAction} onClick={onReplyAll}>
-                {t("action.replyAll")}
-              </button>
-              <button type="button" className={styles.secondaryAction} onClick={onReply}>
-                {t("action.reply")}
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" className={styles.primaryAction} onClick={onReply}>
-                {t("action.reply")}
-              </button>
-              <button type="button" className={styles.secondaryAction} onClick={onReplyAll}>
-                {t("action.replyAll")}
-              </button>
-            </>
-          )}
-          <button type="button" className={styles.secondaryAction} onClick={onForward}>
-            {t("action.forward")}
-          </button>
-        </div>
-      )}
+      {inlineCompose === undefined &&
+        (conversationView ? (
+          replyTarget !== undefined && (
+            <ReplyRow
+              onReply={() => {
+                onReplyToMessage(replyTarget.newest, false);
+              }}
+              onReplyAll={() => {
+                onReplyToMessage(replyTarget.newest, true);
+              }}
+              onForward={() => {
+                onForwardMessage(replyTarget.newest);
+              }}
+              severalRecipients={replyTarget.severalRecipients}
+            />
+          )
+        ) : (
+          <ReplyRow onReply={onReply} onReplyAll={onReplyAll} onForward={onForward} />
+        ))}
 
       <OriginalDialog
         isOpen={originalOpen}

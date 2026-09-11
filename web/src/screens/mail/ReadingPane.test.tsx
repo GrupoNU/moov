@@ -597,33 +597,35 @@ describe("the sanitize chokepoint holds for cache-shaped bodies (E10 / D-4, E9b)
  * always agree.
  */
 describe("the default reply behaviour", () => {
-  /** The two reply buttons, in DOM order, with the primary flagged. */
-  function replyButtons(): readonly { label: string; isPrimary: boolean }[] {
+  /**
+   * The reply verbs, in DOM order.
+   *
+   * The assertion used to read a `primaryAction` class off them: the row had a
+   * filled primary button and two outlined secondaries. Both readers share
+   * `ReplyRow` now and it uses Gmail's outlined pills throughout, because
+   * Gmail's reader has no filled reply button — the emphasis IS the order, and
+   * a colour that said "this one" on top of an order that already said it was
+   * one claim made twice.
+   *
+   * So what is asserted is what the preference actually means. The ORDER is
+   * the whole of its effect, and the next case pins the part that matters more:
+   * both verbs stay reachable either way.
+   */
+  function replyVerbs(): readonly string[] {
     return screen
       .getAllByRole("button")
-      .filter((button) => /^Responder( a todos)?$/.test(button.textContent ?? ""))
-      .map((button) => ({
-        label: button.textContent ?? "",
-        // `classNameStrategy: "non-scoped"` keeps module class names literal in
-        // the test environment, so the styling role is readable here.
-        isPrimary: button.className.includes("primaryAction"),
-      }));
+      .map((button) => button.textContent ?? "")
+      .filter((label) => /^Responder( a todos)?$/.test(label));
   }
 
-  it("makes plain reply primary by default — Gmail's own choice", () => {
+  it("puts plain reply FIRST by default — Gmail's own choice", () => {
     renderPane();
-    expect(replyButtons()).toEqual([
-      { label: "Responder", isPrimary: true },
-      { label: "Responder a todos", isPrimary: false },
-    ]);
+    expect(replyVerbs()).toEqual(["Responder", "Responder a todos"]);
   });
 
-  it("promotes reply-all to primary when the preference says so", () => {
+  it("promotes reply-all to first when the preference says so", () => {
     renderPane({}, { ...DEFAULT_PREFS, defaultReplyBehavior: "replyAll" });
-    expect(replyButtons()).toEqual([
-      { label: "Responder a todos", isPrimary: true },
-      { label: "Responder", isPrimary: false },
-    ]);
+    expect(replyVerbs()).toEqual(["Responder a todos", "Responder"]);
   });
 
   it("NEVER removes the other verb — the setting moves emphasis, not controls", async () => {
@@ -935,5 +937,63 @@ describe("the pinned pills and the inline box swap places", () => {
     renderPane();
     expect(screen.getByRole("group", { name: /responder/i })).toBeInTheDocument();
     expect(screen.queryByTestId("inline-box")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The pinned strip in CONVERSATION view.
+ *
+ * The pane renders it from the target `ConversationView` publishes, so it acts
+ * on the thread's newest message while the reducer that found it stays where it
+ * was. The single-message cases above cover the other mode; this covers the
+ * wiring between the two components.
+ */
+describe("the pinned strip in conversation view", () => {
+  const THREAD = { id: "t1", emailIds: ["m1"] };
+
+  it("acts on the message the CONVERSATION published, not the route's", async () => {
+    /*
+     * The wiring this describe exists for. `ConversationView` publishes which
+     * message is newest; the pane renders the strip from that and calls
+     * `onReplyToMessage` with it — the per-message callbacks, not the
+     * route-scoped `onReply`/`onForward` the single-message reader uses.
+     *
+     * With a one-message thread the two coincide in VALUE, which is fine: what
+     * is asserted is which callback fires, and that is what would break if
+     * someone wired the conversation strip to the wrong pair.
+     */
+    const user = userEvent.setup();
+    const props = renderPane({ conversationView: true, thread: THREAD });
+    const strip = await screen.findByRole("group", { name: /responder/i });
+
+    await user.click(within(strip).getByRole("button", { name: /^responder$/i }));
+    expect(props.onReplyToMessage).toHaveBeenCalledTimes(1);
+    expect(props.onReply).not.toHaveBeenCalled();
+
+    await user.click(within(strip).getByRole("button", { name: /^reenviar$/i }));
+    expect(props.onForwardMessage).toHaveBeenCalledTimes(1);
+    expect(props.onForward).not.toHaveBeenCalled();
+  });
+
+  it("keeps the strip OUTSIDE the scrolling body here too", async () => {
+    /*
+     * The whole point of moving the row out of `ConversationView`: inside the
+     * scroller it could only be pinned with `position: sticky`, which pins
+     * against the scrollport's padding edge and left a gap at the bottom for
+     * the message to show through.
+     */
+    renderPane({ conversationView: true, thread: THREAD });
+    const strip = await screen.findByRole("group", { name: /responder/i });
+    expect(strip.closest("[class*='bodyRegion']")).toBeNull();
+  });
+
+  it("shows no strip while an inline box is open", async () => {
+    renderPane({
+      conversationView: true,
+      thread: THREAD,
+      inlineCompose: <div data-testid="inline-box">writing</div>,
+    });
+    await screen.findByTestId("inline-box");
+    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
   });
 });

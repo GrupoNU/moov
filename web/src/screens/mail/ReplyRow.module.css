@@ -1,0 +1,70 @@
+/*
+ * The reader's pinned reply strip (canon 07 §6).
+ *
+ * It is the LAST FLEX CHILD of the pane's column, after the scrollport rather
+ * than inside it — see `ReplyRow.tsx` for the defect that arrangement fixes
+ * (a sticky row pins against the scrollport's padding edge, so the strip
+ * stopped short of the pane's bottom and the message scrolled through the gap).
+ *
+ * `flex: none` is therefore the load-bearing declaration: it makes "the bottom
+ * of the pane" a fact of the layout rather than a coordinate. There is nothing
+ * below the strip for the message to show through, because there is no `bottom`
+ * to get wrong.
+ */
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: none;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-6);
+  /* The hairline Gmail draws between the message and the verbs. */
+  border-top: 1px solid var(--border-subtle);
+  /* Opaque, and not only for looks: the pane's cell is a card on the canvas
+   * and a translucent strip would show the canvas grey at the bottom edge. */
+  background: var(--surface-default);
+}
+
+/*
+ * Gmail's outlined pills with the verb's glyph.
+ *
+ * The conversation's row already looked like this; the single-message reader's
+ * used a filled primary + two secondaries, which made the same three verbs
+ * read as two different controls depending on one preference. One shape for
+ * one strip — and no filled primary, because Gmail's reader has none: the
+ * emphasis is the ORDER (`defaultReplyBehavior`), not the colour.
+ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-default);
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill, 999px);
+  cursor: pointer;
+}
+
+.pill svg {
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+}
+
+.pill:hover,
+.pill:focus-visible {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+/* The verbs are not part of the message. */
+@media print {
+  .row {
+    display: none !important;
+  }
+}

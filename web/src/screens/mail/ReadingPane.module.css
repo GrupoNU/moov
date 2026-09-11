@@ -409,32 +409,17 @@ a.attachmentName:focus-visible {
  * ------------------------------------------------------------------------ */
 
 /*
- * The reply verbs, PINNED to the bottom of the reader (canon 07 §6; owner's
- * screenshot, 2026-09-10).
+ * `.actions` is gone from this file.
  *
- * They used to sit under the subject, at the TOP, and before that at the end
- * of the content — reachable in a long message only after scrolling past all
- * of it. Gmail pins them: a fixed strip at the foot of the reading pane with
- * a hairline above it, the body scrolling behind.
+ * Both readers now render the one pinned strip — `ReplyRow`, with its own
+ * stylesheet — as the last flex child of the pane's column. See that file for
+ * why the row had to leave the scroller: a sticky row pins against the
+ * scrollport's PADDING edge, so the strip stopped short of the pane's bottom
+ * and the message scrolled through the gap underneath it.
  *
- * `flex: none` as a sibling of the scrolling `.bodyRegion` rather than
- * `position: fixed`: the row is genuinely the last item of a flex column that
- * fills the pane, so it lands at the bottom with no coordinates to keep in
- * sync and no chance of overlapping the content it sits below. The
- * conversation's own pill row is sticky instead, and for a reason its file
- * records — it lives inside the scroller, with the thread's state.
+ * `.primaryAction` and `.secondaryAction` below stay: the Spam and suspicious
+ * banners still use them, and they were never only the reply row's.
  */
-.actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  flex: none;
-  padding: var(--space-3) var(--space-6);
-  /* The hairline Gmail draws between the message and the verbs. */
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-default);
-}
 
 
 .primaryAction {
@@ -695,8 +680,9 @@ a.attachmentName:focus-visible {
     color: #000;
   }
 
-  /* The controls are not part of the message. */
-  .actions,
+  /* The controls are not part of the message. `.actions` is not listed any
+   * more — it no longer exists; the pinned reply strip hides itself from print
+   * in `ReplyRow.module.css`, next to the rule that positions it. */
   .navGroup,
   .footer,
   .downloadRow,
