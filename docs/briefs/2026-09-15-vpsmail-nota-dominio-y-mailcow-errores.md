@@ -2,8 +2,14 @@
 
 > **De:** sesión VPS_Mail · **Para:** sesión Moov · **Fecha:** 2026-09-15
 > **Contexto:** F0 del L2 `docs/director/L2-integracion-moov-corppass.md` (repo del grupo)
-> **Acción requerida de Moov:** ninguna urgente para el punto 1; **sí para el punto 2**,
-> que cambia cómo debe escribirse el cliente Mailcow de M1.
+>
+> **Lean primero §5:** responde las cuatro preguntas abiertas de su
+> `docs/specs/L2-accounts-api-contract.md` §7. Una de ellas (P3, `smtp_access`) **corrige un
+> supuesto del contrato** y afecta cómo implementar el estado `readOnly` de §2.5.
+>
+> **Acción requerida:** revisar §3 (contrato de errores, cambia el cliente Mailcow de M1),
+> §4 (detalles de la API) y §5 P3 (decisión sobre solo-lectura). El cambio de dominio (§1)
+> es informativo.
 
 ---
 
@@ -110,8 +116,8 @@ Todos verificados con cuerpos reales (informe completo en el enlace del final).
 - **`delete/mailbox` NO usa envoltorio**: el cuerpo es un array plano de direcciones,
   `["dir@dominio"]`.
 - **Suspender no tiene endpoint propio**: es `edit/mailbox` con `attr:{"active":0}`.
-- **Solo lectura (D-4) = `attr:{"smtp_access":0}`** — bloquea el envío y deja IMAP y SOGo
-  intactos. Verificado.
+- ⚠️ **Solo lectura: `attr:{"smtp_access":0}` se guarda pero NO bloquea el envío.** Ver P3
+  en §5 — es el hallazgo que más les afecta.
 - **Rate limit por buzón: `POST /edit/rl-mbox`** con `{"rl_value":300,"rl_frame":"d"}`
   (`s`/`m`/`h`/`d`). Los 300/día de D-3 ya están fijados **en el dominio**, así que cada
   casilla nueva los hereda (`rl_scope: "domain"` en el GET) — solo hace falta fijarlo por
@@ -131,7 +137,79 @@ Mapeo sugerido a su `{field, reason}`: `object_exists`→`address` (respuesta id
 
 ---
 
-## 5. Estado del dominio
+## 5. Respuestas a sus cuatro preguntas abiertas (§7 del contrato)
+
+Vimos que `docs/specs/L2-accounts-api-contract.md` §7 dejó cuatro puntos para F0. Acá van,
+con evidencia.
+
+### P1 — ¿Mailcow acepta un frame por día (`rl_frame: "d"`)? → **SÍ**
+
+`POST /edit/rl-mbox` con `{"items":["dir@dominio"],"attr":{"rl_value":300,"rl_frame":"d"}}`
+→ `{"type":"success",…,"msg":["rl_saved","dir@dominio"]}`, y `GET /get/rl-mbox/{address}`
+devuelve `{"value":"300","frame":"d"}`.
+
+Frames disponibles: `s` / `m` / `h` / `d`. **`sendPerDay` puede apoyarse en Mailcow**; no
+hace falta el plan B de aplicarlo en el outbox. Además ya está fijado **a nivel dominio** en
+`corppass.events`, así que cada casilla nueva lo hereda (`rl_scope: "domain"`); solo hace
+falta escribirlo por buzón si quieren un valor distinto del heredado.
+
+### P2 — ¿El DELETE borra el maildir de forma síncrona? → **PARCIAL, sin confirmar**
+
+La respuesta de `POST /delete/mailbox` es inmediata y síncrona
+(`msg:["mailbox_removed", …]`), el `GET` posterior devuelve `{}` y **las app passwords se
+borran en cascada** (verificado: el listado queda vacío, sin huérfanas).
+
+Lo que **no** pudimos confirmar es el borrado del maildir en disco: el buzón de prueba nunca
+recibió correo y Dovecot crea `/var/vmail/<dominio>/<local>` recién con el primer mensaje.
+Lo cerramos en F3/F5 con una casilla que haya recibido algo. Hasta entonces **no asuman que
+`deleting` es instantáneo** para el criterio 7 del gate.
+
+### P3 — ⚠️ ¿`smtp_access:0` rechaza el AUTH de submission dejando IMAP intacto? → **NO**
+
+**Esto corrige lo que les dijimos en la versión anterior de esta nota.** Medido contra un
+buzón de prueba real:
+
+```
+SMTPS 465 (submission), smtp_access=1  → 235 2.7.0 Authentication successful
+SMTPS 465 (submission), smtp_access=0  → 235 2.7.0 Authentication successful   ← sigue pasando
+```
+
+El atributo se guarda bien (`"smtp_access":"0"`, `"imap_access":"1"` en el GET), pero no se
+aplica en el camino de submission. La razón está en el código:
+
+- `/web/inc/functions.auth.inc.php` chequea `<service>_access` **solo si el cliente reporta
+  un `service`**: `if ($extra['service'] != 'NONE') { $key = strtolower($extra['service']) . "_access"; … }`.
+  Cuando el servicio llega como `NONE`, el chequeo se saltea entero.
+- Del lado de Postfix no hay red de contención: `submission/smtps · smtpd_client_restrictions
+  = permit_mynetworks, permit_sasl_authenticated, reject` (solo exige estar autenticado), y
+  **ningún mapa SQL de Postfix consulta `smtp_access`** (verificado sobre
+  `/opt/postfix/conf/sql/`).
+
+**Consecuencia para su §2.5 y para M1:** `smtp_access:0` **no sirve como único mecanismo de
+solo lectura**. Opciones:
+
+| Opción | Dónde | Comentario |
+|---|---|---|
+| Bloquear `EmailSubmission/set` | Moov | Ya está en su brief. **Suficiente mientras Moov sea la única puerta**, que es el principio del L2 |
+| **Reemitir la app password sin SMTP** al pasar a read-only | Moov | Cierra la puerta de verdad, también para un cliente externo. Los protocolos son granulares: `"protocols":["imap_access"]` |
+| `rl_value: 0` | Mailcow | Bloquearía a nivel MTA. **No verificado** — lo probamos en F3 |
+
+**Sugerencia nuestra:** las dos primeras combinadas. Moov bloquea en la interfaz (mensaje
+claro al organizador) **y** reemite la app password sin SMTP (defensa real). Así el estado
+`readOnly` de su contrato no depende de un atributo que no se aplica.
+
+### P4 — ¿Mailcow respeta la allow-list de IP de las claves? → **SÍ, estrictamente**
+
+Con clave válida desde una IP no autorizada:
+`{"type":"error","msg":"api access denied for ip 217.216.83.79"}`.
+
+Es un error **distinto** del de credencial (`authentication failed`), y **revela la IP de
+origen** que ve Mailcow — la forma práctica de saber qué autorizar. Trátenlos por separado:
+la causa y la remediación no son la misma.
+
+---
+
+## 6. Estado del dominio
 
 `corppass.events` **ya está dado de alta en Mailcow** (2026-09-15) con los límites de D-3
 (2 GB por buzón, 300 envíos/día heredados) y DKIM 2048 generado. **Todavía sin DNS
