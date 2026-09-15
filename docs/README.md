@@ -78,6 +78,14 @@ them.
   mutation, submission with an undo window, and SSE push.
 - **[L2 — The PWA](specs/L2-pwa.md)** *(Spanish)* — The client: foundations,
   reading, the secure HTML renderer, writing and sending.
+- **[L2 — Accounts API and delegated sign-in: the contract](specs/L2-accounts-api-contract.md)**
+  *(English)* — The wire contract an external portal builds against: a per-domain
+  accounts API behind service-account keys (create / suspend / read-only / export /
+  delete, no-oracle 404s, the `{field, reason}` error vocabulary) and delegated
+  sign-in (issuer-signed JWT in the URL fragment → Moov session). Published ahead
+  of the implementation so consumers can start on a mock; the machine-readable half
+  is [openapi-accounts-and-delegated.yaml](specs/openapi-accounts-and-delegated.yaml)
+  with a response example for every status.
 - **[L3 — The Gmail-class plan](specs/L3-gmail-class-plan.md)** *(Spanish)* —
   The eleven-epic program (E0–E11) that took Moov from "a working webmail" to
   "measured against Gmail". It carries the ten director arbitrations

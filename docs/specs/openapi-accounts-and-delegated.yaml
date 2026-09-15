@@ -1,0 +1,1392 @@
+openapi: 3.1.0
+info:
+  title: Moov Mail — Accounts API and delegated sign-in
+  version: 1.0.0-draft.1
+  summary: Machine contract for the domain accounts API (service accounts) and the delegated sign-in exchange.
+  description: |
+    This file is the wire contract consumed by an external portal that manages
+    mailboxes on a Moov installation and opens Moov for its users without a
+    password. It is published BEFORE the implementation (epics M1/M2 of
+    `docs/briefs/2026-09-14-corppass-event-mailboxes.md`) so consumers can build
+    against a mock. The prose companion — semantics, state machine, security
+    rules, mock instructions — is `docs/specs/L2-accounts-api-contract.md`.
+    Where the two disagree, the prose wins and this file has a bug.
+
+    Nothing here is specific to any consumer. "Service account", "delegated
+    issuer", "read-only account" are Moov concepts usable by any installation.
+
+    ## Conventions
+    - Every request and response body is JSON (UTF-8). Timestamps are RFC 3339
+      in UTC with millisecond precision. Sizes: `*MB` fields are mebibytes,
+      `*Bytes` fields are bytes.
+    - Addresses are lower-cased by the server; the canonical form is returned.
+    - Error bodies come in three shapes, chosen by status (see the components):
+      `FieldError` for 400, `Problem` (RFC 7807) for 401/403/404/410/5xx,
+      `Reason` for 409/413/415/429/502/503.
+    - Anything the caller is not allowed to see answers the SAME 404 as a
+      route that does not exist: the feature is off, the key is missing or
+      invalid, the key lacks the scope, the address is outside the key's
+      domain, or the account does not exist. No oracle.
+    - `X-Request-Id`: echoed if the client sends one (≤ 64 chars, `[A-Za-z0-9._-]`),
+      generated otherwise. It is written to Moov's audit line for the call.
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+  contact:
+    name: Moov Mail
+    url: https://github.com/GrupoNU/moov
+
+servers:
+  - url: https://{moovHost}
+    description: The Moov host the accounts belong to (one brand, one delegated issuer set per host).
+    variables:
+      moovHost:
+        default: mail.example.test
+        description: The hostname the browser reaches; also the `aud` of every delegated token.
+
+tags:
+  - name: Accounts
+    description: Create, inspect and manage mailboxes of ONE domain with a service-account key.
+  - name: Exports
+    description: Background EML export of an account and its signed download.
+  - name: Delegated sign-in
+    description: Exchange an issuer-signed JWT for a Moov session; renew, log out, revoke.
+
+security:
+  - serviceAccount: []
+
+paths:
+  /admin/accounts:
+    post:
+      tags: [Accounts]
+      operationId: createAccount
+      summary: Create a mailbox (idempotent by address)
+      description: |
+        Creates the mailbox in Mailcow (random password, discarded), provisions
+        it in Moov (scoped app password, encrypted), seeds the display name as
+        the account's identity and inherits the host's brand. The mailbox is
+        usable the moment 201 is returned; the initial sync runs in the
+        background (`sync.state`).
+
+        **Idempotent by `address`:** if the account already exists the server
+        answers 200 with the CURRENT resource and changes nothing — differing
+        `name`, `quotaMB` or `limits` in the body are ignored (use PATCH). A
+        retry after a network failure is therefore always safe.
+
+        The domain of `address` MUST be the key's domain; otherwise 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+            examples:
+              minimal:
+                summary: Only the required fields; defaults fill the rest
+                value:
+                  address: expo-diseno-2026@eventos.example.test
+                  name: Expo Diseño 2026
+              full:
+                summary: Every field set explicitly
+                value:
+                  address: expo-diseno-2026@eventos.example.test
+                  name: Expo Diseño 2026
+                  quotaMB: 2048
+                  limits:
+                    sendPerDay: 300
+                    recipientsPerMessage: 50
+                    attachmentMB: 25
+      responses:
+        '201':
+          description: Created. `Location` points at the new resource.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              example: /admin/accounts/expo-diseno-2026@eventos.example.test
+            X-Request-Id:
+              $ref: '#/components/headers/X-Request-Id'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                created:
+                  $ref: '#/components/examples/AccountJustCreated'
+        '200':
+          description: Already existed. The current resource, unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                existing:
+                  $ref: '#/components/examples/AccountActive'
+        '400':
+          $ref: '#/components/responses/FieldError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The address exists but is being deleted; it cannot be recreated until the purge finishes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reason'
+              example:
+                reason: the account is being deleted; retry after the purge completes
+                state: deleting
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamRefused'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /admin/accounts/{address}:
+    parameters:
+      - $ref: '#/components/parameters/address'
+    get:
+      tags: [Accounts]
+      operationId: getAccount
+      summary: State, quota usage, last access, retention phase
+      responses:
+        '200':
+          description: The account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                active:
+                  $ref: '#/components/examples/AccountActive'
+                readonly:
+                  $ref: '#/components/examples/AccountReadOnly'
+                suspended:
+                  $ref: '#/components/examples/AccountSuspended'
+                deleting:
+                  $ref: '#/components/examples/AccountDeleting'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [Accounts]
+      operationId: updateAccount
+      summary: Change name, quota or limits
+      description: |
+        Partial update: absent fields are untouched. `name` updates the Moov
+        identity and the Mailcow mailbox name; `quotaMB` and `limits.sendPerDay`
+        are applied in Mailcow; the other limits are enforced by Moov at
+        submission time. Refused with 409 while the account is `deleting`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+            example:
+              name: Expo Diseño 2026 — Edición Rosario
+              quotaMB: 4096
+      responses:
+        '200':
+          description: Updated; the full resource after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/FieldError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamRefused'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+    delete:
+      tags: [Accounts]
+      operationId: deleteAccount
+      summary: Permanently delete the mailbox (requires the address repeated in `confirm`)
+      description: |
+        Revokes every Moov session and token of the account, deletes the
+        mailbox in Mailcow (maildir included) and purges Moov's cache and blobs
+        in the background. Answers 202 with `state: "deleting"`; once the purge
+        completes the address answers 404 and MAY be created again — the
+        recreation is an audited event, never silent.
+
+        The body is mandatory and `confirm` must equal the path address
+        exactly (after lower-casing). This is the only DELETE in the API that
+        carries a body; clients whose HTTP stack strips DELETE bodies must be
+        fixed, not the contract.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAccountRequest'
+            example:
+              confirm: expo-diseno-2026@eventos.example.test
+      responses:
+        '202':
+          description: Deletion started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                deleting:
+                  $ref: '#/components/examples/AccountDeleting'
+        '400':
+          description: Missing or mismatching confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FieldError'
+              example:
+                field: confirm
+                reason: must repeat the address being deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamRefused'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /admin/accounts/{address}/suspend:
+    parameters:
+      - $ref: '#/components/parameters/address'
+    post:
+      tags: [Accounts]
+      operationId: suspendAccount
+      summary: Suspend (Mailcow inactive, Moov sessions revoked)
+      description: |
+        Deactivates the mailbox in Mailcow (no IMAP/SMTP), revokes every Moov
+        session and token, and stops the sync worker. Idempotent: suspending a
+        suspended account answers 200 unchanged. Takes effect for the browser on
+        its next request (well under the 60 s gate).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransitionRequest'
+            example:
+              reason: organizer removed
+      responses:
+        '200':
+          description: Suspended (or already was).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                suspended:
+                  $ref: '#/components/examples/AccountSuspended'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamRefused'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /admin/accounts/{address}/resume:
+    parameters:
+      - $ref: '#/components/parameters/address'
+    post:
+      tags: [Accounts]
+      operationId: resumeAccount
+      summary: Lift a suspension
+      description: |
+        Reactivates the mailbox in Mailcow and restarts sync. The account
+        returns to its retention phase: `readonly` if it was read-only when
+        suspended, `active` otherwise. Idempotent on a non-suspended account.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransitionRequest'
+      responses:
+        '200':
+          description: Resumed (or was not suspended).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                active:
+                  $ref: '#/components/examples/AccountActive'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamRefused'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /admin/accounts/{address}/readonly:
+    parameters:
+      - $ref: '#/components/parameters/address'
+    post:
+      tags: [Accounts]
+      operationId: setReadOnly
+      summary: Enter the read-only retention phase
+      description: |
+        Blocks sending in Mailcow (SMTP access off) and in Moov
+        (`EmailSubmission/set` refused with a clear error; the client hides
+        compose/reply). Reading, searching and exporting keep working. The
+        phase is one-way in this version: there is no "resume to active"
+        transition from read-only. Idempotent.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransitionRequest'
+            example:
+              reason: event closed 90 days ago
+      responses:
+        '200':
+          description: Read-only (or already was).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              examples:
+                readonly:
+                  $ref: '#/components/examples/AccountReadOnly'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamRefused'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /admin/accounts/{address}/export:
+    parameters:
+      - $ref: '#/components/parameters/address'
+    post:
+      tags: [Exports]
+      operationId: startExport
+      summary: Start a background EML export
+      description: |
+        Queues a job that writes every message of the account as `.eml` into a
+        zip, with a `manifest.json` (per-message sha256, mailbox path, counts).
+        At most one job per account runs at a time: while one is `pending` or
+        `running`, a second POST answers 202 with THAT job (idempotent). A
+        `ready` export stays downloadable for 7 days; a new POST after that
+        produces a fresh job. Works in every state except `deleting`.
+      responses:
+        '202':
+          description: Queued, or the job already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Export'
+              examples:
+                pending:
+                  $ref: '#/components/examples/ExportPending'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      tags: [Exports]
+      operationId: getExport
+      summary: "Latest export job: status, signed download URL, manifest"
+      description: |
+        Returns the most recent job for the account. `status: "none"` means no
+        export was ever requested (this is a 200, not a 404, so that 404 keeps
+        its single meaning). Poll this until `ready`; a sensible interval is
+        5–15 s. `download.url` is absolute, signed, valid until
+        `download.expiresAt` (24 h from readiness) and needs NO Authorization
+        header — it can be handed to a browser.
+      responses:
+        '200':
+          description: The latest job (or none).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Export'
+              examples:
+                none:
+                  $ref: '#/components/examples/ExportNone'
+                running:
+                  $ref: '#/components/examples/ExportRunning'
+                ready:
+                  $ref: '#/components/examples/ExportReady'
+                failed:
+                  $ref: '#/components/examples/ExportFailed'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /admin/exports/{exportId}:
+    get:
+      tags: [Exports]
+      operationId: downloadExport
+      summary: Download a ready export (signed URL, no Authorization header)
+      description: |
+        The URL handed out in `Export.download.url`. Authorized by the `sig`
+        and `exp` query parameters (HMAC over exportId + exp with the server's
+        master-derived key), NOT by a bearer key — so it works from a browser
+        tab. Any tampering, a wrong host or a past `exp` answer 404 (no
+        oracle); an export that was `ready` but has since been purged answers
+        410.
+      security: []
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^exp_[A-Za-z0-9]{20,32}$'
+          example: exp_7Q1xkV3mZp8bN2cR4tW6
+        - name: exp
+          in: query
+          required: true
+          description: Unix seconds; the signature is invalid after this instant.
+          schema: { type: integer, format: int64 }
+        - name: sig
+          in: query
+          required: true
+          description: Base64url HMAC-SHA256; opaque to the client.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The zip.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              example: attachment; filename="expo-diseno-2026@eventos.example.test-2026-12-15.zip"
+            Content-Length:
+              schema: { type: integer, format: int64 }
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: The export existed but has been purged (7-day retention).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                status: 410
+                detail: this export has been purged; request a new one
+
+  /auth/delegated/exchange:
+    post:
+      tags: [Delegated sign-in]
+      operationId: exchangeDelegatedToken
+      summary: Exchange an issuer-signed JWT for a Moov session token
+      description: |
+        Called by the Moov PWA after the browser lands on
+        `GET /auth/delegated#token=<jwt>` (the fragment never reaches the
+        server; the PWA strips it before anything else runs). Third parties MAY
+        call it directly (a native app, a test), with the same rules.
+
+        The server verifies: a configured issuer for THIS host (`iss`), the
+        signature against the issuer's JWKS (`kid` required; EdDSA/Ed25519 or
+        RS256 only), `aud` equal to the host, `exp` ≤ `iat` + 300 s and not past
+        (30 s skew), `nbf` if present, `jti` unseen (cached until `exp`),
+        `purpose` = `login`, and that `sub` is a provisioned, non-suspended
+        account of this host. Every refusal of the TOKEN itself is one 401 with
+        one message — no oracle about which check failed. Refusals about the
+        ACCOUNT (not provisioned, suspended) are 403 with a `code`, because the
+        PWA renders different screens for them.
+
+        Rate-limited per client IP: 30 exchanges per minute.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeRequest'
+            example:
+              token: eyJhbGciOiJFZERTQSIsImtpZCI6ImNwLTIwMjYtMDkiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2lkLmV4YW1wbGUudGVzdCIsImF1ZCI6Im1haWwuZXhhbXBsZS50ZXN0Iiwic3ViIjoiZXhwby1kaXNlbm8tMjAyNkBldmVudG9zLmV4YW1wbGUudGVzdCIsImlhdCI6MTc5NzQyMDAwMCwiZXhwIjoxNzk3NDIwMzAwLCJqdGkiOiIzZTk0ZDE0Yi1kYjE3LTRhNzItOTQzYy0wOGE2ZDhmMjM5MWEiLCJwdXJwb3NlIjoibG9naW4ifQ.c2lnbmF0dXJlLWJ5dGVzLWdvLWhlcmU
+      responses:
+        '200':
+          description: A Moov session. Store the token in memory or sessionStorage; never in a URL.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              examples:
+                active:
+                  $ref: '#/components/examples/SessionActive'
+                readonly:
+                  $ref: '#/components/examples/SessionReadOnly'
+        '400':
+          description: The body is not a JSON object with a non-empty `token`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FieldError'
+              example:
+                field: token
+                reason: required
+        '401':
+          description: The token was refused (bad signature, unknown issuer or key, wrong audience, expired, replayed, wrong purpose, malformed). One message for all of them.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                status: 401
+                detail: invalid delegated token
+        '403':
+          description: The token is valid but the account cannot be signed in. `code` is machine-readable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/AccountProblem'
+              examples:
+                notProvisioned:
+                  value:
+                    type: about:blank
+                    status: 403
+                    code: notProvisioned
+                    detail: this mailbox is not provisioned in Moov
+                suspended:
+                  value:
+                    type: about:blank
+                    status: 403
+                    code: suspended
+                    detail: this account is suspended
+        '404':
+          description: No delegated issuer is configured for this host (the feature does not exist here).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                status: 404
+                detail: not found
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: The issuer's JWKS could not be fetched and no cached key matches `kid`.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reason'
+              example:
+                reason: the issuer's signing keys are temporarily unavailable
+
+  /auth/delegated/renew:
+    post:
+      tags: [Delegated sign-in]
+      operationId: renewSession
+      summary: Renew a session before it expires
+      description: |
+        Authenticated with the session itself (`Authorization: Bearer <session>`).
+        Returns a NEW token with a fresh 12 h TTL; the old one keeps working for
+        60 s so in-flight requests do not fail. Renewal is refused once the
+        session's absolute lifetime (7 days from the exchange, configurable)
+        is reached: the user must be sent through the issuer again.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The renewed session.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          description: The session is missing, invalid, expired, revoked, or past its absolute lifetime.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                status: 401
+                detail: invalid session
+        '403':
+          description: The account was suspended or disabled after the session was issued.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/AccountProblem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /auth/delegated/logout:
+    post:
+      tags: [Delegated sign-in]
+      operationId: logoutSession
+      summary: End this session now
+      description: |
+        Authenticated with the session. Revokes it immediately, along with the
+        push/blob tokens it minted. Idempotent: an already-dead session answers
+        204 too, so a sign-out never fails on the user.
+      security:
+        - session: []
+      responses:
+        '204':
+          description: Gone.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /auth/delegated/revoke:
+    post:
+      tags: [Delegated sign-in]
+      operationId: revokeDelegatedSessions
+      summary: Issuer-initiated revocation of every session of one subject
+      description: |
+        For "the user signed out of the portal": the issuer signs a JWT with
+        the SAME profile as a login token but `purpose: "revoke"`, and Moov
+        revokes every session (and minted token) of `sub` that was created
+        through THAT issuer. A revoke token is never exchangeable for a session
+        and a login token is never accepted here. Idempotent; answers the
+        count actually revoked.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeRequest'
+            example:
+              token: eyJhbGciOiJFZERTQSIsImtpZCI6ImNwLTIwMjYtMDkiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2lkLmV4YW1wbGUudGVzdCIsImF1ZCI6Im1haWwuZXhhbXBsZS50ZXN0Iiwic3ViIjoiZXhwby1kaXNlbm8tMjAyNkBldmVudG9zLmV4YW1wbGUudGVzdCIsImlhdCI6MTc5NzQyMDAwMCwiZXhwIjoxNzk3NDIwMzAwLCJqdGkiOiJhNmYyMmM3MS0xYzEyLTRhMGItYjJkOS0xYzNiN2Q1N2U4YjEiLCJwdXJwb3NlIjoicmV2b2tlIn0.c2lnbmF0dXJlLWJ5dGVzLWdvLWhlcmU
+      responses:
+        '200':
+          description: Done.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Sessions revoked by this call (0 when none were alive).
+              example:
+                revoked: 2
+        '400':
+          $ref: '#/components/responses/FieldError'
+        '401':
+          description: The token was refused. Same single message as the exchange.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                status: 401
+                detail: invalid delegated token
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: JWKS unavailable and no cached key matches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reason'
+
+components:
+  securitySchemes:
+    serviceAccount:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        A Moov service-account key, issued by
+        `moovctl service-account create -domain <d> -scopes accounts:write`,
+        shown once, stored hashed. Bound to ONE domain and a scope set.
+        Treat it as opaque (currently `msa1_` + 43 base64url chars). A missing,
+        malformed, revoked or under-scoped key answers 404, never 401.
+    session:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        A Moov session token returned by the delegated exchange (`mds1_…`).
+        Accepted wherever HTTP Basic is accepted today (`/.well-known/jmap`,
+        `/jmap/api`, `/jmap/upload/*`, `/jmap/token`, …) and on the
+        renew/logout routes. Never in a query string.
+
+  parameters:
+    address:
+      name: address
+      in: path
+      required: true
+      description: The mailbox address. Case-insensitive; must belong to the key's domain (else 404).
+      schema:
+        $ref: '#/components/schemas/Address'
+      example: expo-diseno-2026@eventos.example.test
+
+  headers:
+    X-Request-Id:
+      description: The request id (client-supplied or generated) written to the audit line.
+      schema: { type: string, maxLength: 64 }
+    Retry-After:
+      description: Seconds to wait before retrying.
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    FieldError:
+      description: A field of the request is invalid. Only the FIRST offending field is reported.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FieldError'
+          examples:
+            badAddress:
+              value:
+                field: address
+                reason: local part must match ^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$ with no consecutive dots
+            nameTooLong:
+              value:
+                field: name
+                reason: must be 1–128 characters without control characters
+            quotaTooSmall:
+              value:
+                field: quotaMB
+                reason: must be between 64 and 10240
+            unknownField:
+              value:
+                field: colour
+                reason: unknown field
+            notJSON:
+              value:
+                field: ''
+                reason: 'the body is not a valid JSON object: unexpected end of input'
+    NotFound:
+      description: |
+        Not found — deliberately the same for a route that does not exist, a
+        feature that is off, a missing/invalid/under-scoped key, an address
+        outside the key's domain, and an account that does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            status: 404
+            detail: not found
+    Conflict:
+      description: The operation is not allowed in the account's current state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Reason'
+          examples:
+            deleting:
+              value:
+                reason: the account is being deleted
+                state: deleting
+    TooLarge:
+      description: The body exceeds 16 KiB.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Reason'
+          example:
+            reason: the body is too large
+    UnsupportedMediaType:
+      description: The request's Content-Type is not application/json.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Reason'
+          example:
+            reason: Content-Type must be application/json
+    RateLimited:
+      description: |
+        The caller's budget is exhausted. Service-account keys: 120 requests
+        per minute (burst 30). Delegated exchange/revoke: 30 per minute per
+        client IP. Always carries Retry-After.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Reason'
+          example:
+            reason: too many requests; try again in 12 s
+    UpstreamRefused:
+      description: Mailcow answered but refused the operation. `upstream` names it; `reason` is Moov's summary, never the raw upstream body and never a credential.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpstreamError'
+          examples:
+            mailcowRefused:
+              value:
+                reason: 'Mailcow refused to create the mailbox: domain quota exceeded'
+                upstream: mailcow
+    UpstreamUnavailable:
+      description: Mailcow (or Dovecot for the validation login) did not answer in time. Nothing was changed; retry after the delay.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpstreamError'
+          example:
+            reason: Mailcow is temporarily unavailable
+            upstream: mailcow
+
+  schemas:
+    Address:
+      type: string
+      format: email
+      maxLength: 254
+      pattern: '^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?@[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
+      description: Lower-case mailbox address. The local part is an ASCII slug (no consecutive dots, no leading/trailing dot); the domain must equal the service account's domain.
+      example: expo-diseno-2026@eventos.example.test
+
+    Limits:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-mailbox limits. `sendPerDay` is applied as a Mailcow rate limit on
+        the mailbox; `recipientsPerMessage` and `attachmentMB` are enforced by
+        Moov when a message is submitted (Mailcow's global Postfix limits still
+        apply on top and are never raised by this API).
+      properties:
+        sendPerDay:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 300
+          description: Outbound messages per rolling day.
+        recipientsPerMessage:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+        attachmentMB:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+          description: Total attachment size per message, MiB.
+
+    CreateAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [address, name]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Display name; becomes the account's sending identity and the Mailcow mailbox name.
+        quotaMB:
+          type: integer
+          minimum: 64
+          maximum: 10240
+          default: 2048
+          description: Mailbox quota, MiB. The maximum is the installation's `MOOV_ACCOUNTS_MAX_QUOTA_MB` (default 10240).
+        limits:
+          $ref: '#/components/schemas/Limits'
+
+    UpdateAccountRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        quotaMB:
+          type: integer
+          minimum: 64
+          maximum: 10240
+        limits:
+          $ref: '#/components/schemas/Limits'
+
+    DeleteAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        confirm:
+          $ref: '#/components/schemas/Address'
+
+    TransitionRequest:
+      type: object
+      additionalProperties: false
+      description: Optional context for the audit line. Never shown to the mailbox user.
+      properties:
+        reason:
+          type: string
+          maxLength: 256
+
+    AccountState:
+      type: string
+      enum: [active, readonly, suspended, deleting]
+      description: |
+        Derived headline state, precedence `deleting` > `suspended` > `readonly` > `active`.
+        The underlying facts are `suspended` and `readOnly`; a suspended read-only account
+        shows `suspended` here and `readOnly: true` beside it, and `resume` takes it back to
+        `readonly`.
+
+    SyncState:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [initial, ready, paused, error]
+          description: '`initial` = first sync running; `ready` = watcher connected; `paused` = suspended; `error` = see Moov logs/metrics.'
+        lastSyncAt:
+          type: [string, 'null']
+          format: date-time
+        messages:
+          type: integer
+          minimum: 0
+          description: Messages currently in Moov's store for the account.
+
+    Quota:
+      type: object
+      required: [limitMB, usedBytes, messages]
+      properties:
+        limitMB:
+          type: integer
+        usedBytes:
+          type: integer
+          format: int64
+          description: As reported by Mailcow (the mailbox's real disk usage).
+        messages:
+          type: integer
+          description: As reported by Mailcow.
+
+    Account:
+      type: object
+      required: [address, domain, name, state, readOnly, suspended, quota, limits, sync, createdAt, updatedAt]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        domain:
+          type: string
+        name:
+          type: string
+        state:
+          $ref: '#/components/schemas/AccountState'
+        readOnly:
+          type: boolean
+        suspended:
+          type: boolean
+        quota:
+          $ref: '#/components/schemas/Quota'
+        limits:
+          $ref: '#/components/schemas/Limits'
+        sync:
+          $ref: '#/components/schemas/SyncState'
+        lastAccessAt:
+          type: [string, 'null']
+          format: date-time
+          description: Last authenticated request to Moov by this account (any scheme). Null until the first.
+        readOnlySince:
+          type: [string, 'null']
+          format: date-time
+        suspendedAt:
+          type: [string, 'null']
+          format: date-time
+        deletingSince:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ExportStatus:
+      type: string
+      enum: [none, pending, running, ready, failed, expired]
+
+    Export:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/ExportStatus'
+        id:
+          type: [string, 'null']
+          pattern: '^exp_[A-Za-z0-9]{20,32}$'
+        requestedAt:
+          type: [string, 'null']
+          format: date-time
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        progress:
+          type: [object, 'null']
+          description: Present while `running`.
+          properties:
+            messagesDone: { type: integer }
+            messagesTotal: { type: integer }
+        download:
+          type: [object, 'null']
+          description: Present only when `ready`.
+          required: [url, expiresAt, bytes]
+          properties:
+            url:
+              type: string
+              format: uri
+              description: Absolute, signed, no Authorization needed. Valid until `expiresAt`.
+            expiresAt:
+              type: string
+              format: date-time
+            bytes:
+              type: integer
+              format: int64
+        manifest:
+          type: [object, 'null']
+          description: Present only when `ready`. The same numbers are inside the zip's `manifest.json`, which also lists every message.
+          required: [messages, mailboxes, sha256]
+          properties:
+            messages: { type: integer }
+            mailboxes: { type: integer }
+            sha256:
+              type: string
+              pattern: '^[a-f0-9]{64}$'
+              description: SHA-256 of the zip file.
+        error:
+          type: [string, 'null']
+          description: Present only when `failed`. Human-readable, no internals.
+
+    ExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: The compact JWS (three base64url segments). Profile in the prose spec §3.2.
+
+    Session:
+      type: object
+      required: [tokenType, sessionToken, expiresAt, renewAfter, absoluteExpiresAt, account, readOnly, jmap]
+      properties:
+        tokenType:
+          type: string
+          const: Bearer
+        sessionToken:
+          type: string
+          description: "Opaque (`mds1_…`). Send as `Authorization: Bearer`. Never put it in a URL."
+        expiresAt:
+          type: string
+          format: date-time
+          description: 12 h from issue/renewal.
+        renewAfter:
+          type: string
+          format: date-time
+          description: When the client SHOULD renew (expiresAt − 1 h). Renewing earlier is allowed.
+        absoluteExpiresAt:
+          type: string
+          format: date-time
+          description: The exchange + 7 days; no renewal past this.
+        account:
+          type: object
+          required: [address, name]
+          properties:
+            address:
+              $ref: '#/components/schemas/Address'
+            name:
+              type: string
+        readOnly:
+          type: boolean
+          description: Mirrors the account's retention phase so the client can hide compose immediately (the JMAP session object carries the same flag).
+        jmap:
+          type: object
+          required: [sessionUrl]
+          properties:
+            sessionUrl:
+              type: string
+              format: uri-reference
+              const: /.well-known/jmap
+              description: Fetch it with the bearer to get the RFC 8620 Session object.
+
+    FieldError:
+      type: object
+      required: [field, reason]
+      properties:
+        field:
+          type: string
+          description: JSON field name (dotted for nested, e.g. `limits.sendPerDay`); empty when the body itself is malformed.
+        reason:
+          type: string
+
+    Reason:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+        state:
+          $ref: '#/components/schemas/AccountState'
+          description: Present on 409 to say which state refused the operation.
+
+    UpstreamError:
+      type: object
+      required: [reason, upstream]
+      properties:
+        reason:
+          type: string
+        upstream:
+          type: string
+          enum: [mailcow, dovecot]
+
+    Problem:
+      type: object
+      description: RFC 7807 problem details; `type` is always `about:blank` (the status is the whole story).
+      required: [type, status, detail]
+      properties:
+        type:
+          type: string
+          const: about:blank
+        status:
+          type: integer
+        detail:
+          type: string
+
+    AccountProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+              enum: [notProvisioned, suspended, disabled]
+              description: Machine-readable reason the account cannot be signed in (RFC 7807 extension member).
+
+  examples:
+    AccountJustCreated:
+      summary: Right after 201 — Mailcow mailbox exists, Moov is provisioned, first sync running
+      value:
+        address: expo-diseno-2026@eventos.example.test
+        domain: eventos.example.test
+        name: Expo Diseño 2026
+        state: active
+        readOnly: false
+        suspended: false
+        quota: { limitMB: 2048, usedBytes: 0, messages: 0 }
+        limits: { sendPerDay: 300, recipientsPerMessage: 50, attachmentMB: 25 }
+        sync: { state: initial, lastSyncAt: null, messages: 0 }
+        lastAccessAt: null
+        readOnlySince: null
+        suspendedAt: null
+        deletingSince: null
+        createdAt: '2026-10-01T14:03:12.418Z'
+        updatedAt: '2026-10-01T14:03:12.418Z'
+    AccountActive:
+      summary: A working mailbox some weeks in
+      value:
+        address: expo-diseno-2026@eventos.example.test
+        domain: eventos.example.test
+        name: Expo Diseño 2026
+        state: active
+        readOnly: false
+        suspended: false
+        quota: { limitMB: 2048, usedBytes: 183502848, messages: 1274 }
+        limits: { sendPerDay: 300, recipientsPerMessage: 50, attachmentMB: 25 }
+        sync: { state: ready, lastSyncAt: '2026-10-22T09:41:07.002Z', messages: 1274 }
+        lastAccessAt: '2026-10-22T09:40:55.310Z'
+        readOnlySince: null
+        suspendedAt: null
+        deletingSince: null
+        createdAt: '2026-10-01T14:03:12.418Z'
+        updatedAt: '2026-10-01T14:03:12.418Z'
+    AccountReadOnly:
+      summary: Retention phase — reading and export work, sending is blocked
+      value:
+        address: expo-diseno-2026@eventos.example.test
+        domain: eventos.example.test
+        name: Expo Diseño 2026
+        state: readonly
+        readOnly: true
+        suspended: false
+        quota: { limitMB: 2048, usedBytes: 201326592, messages: 1391 }
+        limits: { sendPerDay: 300, recipientsPerMessage: 50, attachmentMB: 25 }
+        sync: { state: ready, lastSyncAt: '2027-01-14T03:00:11.000Z', messages: 1391 }
+        lastAccessAt: '2027-01-10T16:12:40.000Z'
+        readOnlySince: '2027-01-14T03:00:00.000Z'
+        suspendedAt: null
+        deletingSince: null
+        createdAt: '2026-10-01T14:03:12.418Z'
+        updatedAt: '2027-01-14T03:00:00.000Z'
+    AccountSuspended:
+      summary: Suspended while read-only — `resume` returns it to `readonly`
+      value:
+        address: expo-diseno-2026@eventos.example.test
+        domain: eventos.example.test
+        name: Expo Diseño 2026
+        state: suspended
+        readOnly: true
+        suspended: true
+        quota: { limitMB: 2048, usedBytes: 201326592, messages: 1391 }
+        limits: { sendPerDay: 300, recipientsPerMessage: 50, attachmentMB: 25 }
+        sync: { state: paused, lastSyncAt: '2027-01-20T03:00:11.000Z', messages: 1391 }
+        lastAccessAt: '2027-01-10T16:12:40.000Z'
+        readOnlySince: '2027-01-14T03:00:00.000Z'
+        suspendedAt: '2027-01-21T11:05:00.000Z'
+        deletingSince: null
+        createdAt: '2026-10-01T14:03:12.418Z'
+        updatedAt: '2027-01-21T11:05:00.000Z'
+    AccountDeleting:
+      summary: After DELETE — sessions gone, purge in progress; will answer 404 when done
+      value:
+        address: expo-diseno-2026@eventos.example.test
+        domain: eventos.example.test
+        name: Expo Diseño 2026
+        state: deleting
+        readOnly: true
+        suspended: false
+        quota: { limitMB: 2048, usedBytes: 201326592, messages: 1391 }
+        limits: { sendPerDay: 300, recipientsPerMessage: 50, attachmentMB: 25 }
+        sync: { state: paused, lastSyncAt: '2027-04-12T03:00:11.000Z', messages: 1391 }
+        lastAccessAt: '2027-01-10T16:12:40.000Z'
+        readOnlySince: '2027-01-14T03:00:00.000Z'
+        suspendedAt: null
+        deletingSince: '2027-04-13T03:00:02.000Z'
+        createdAt: '2026-10-01T14:03:12.418Z'
+        updatedAt: '2027-04-13T03:00:02.000Z'
+    ExportNone:
+      value:
+        status: none
+        id: null
+    ExportPending:
+      value:
+        status: pending
+        id: exp_7Q1xkV3mZp8bN2cR4tW6
+        requestedAt: '2027-01-15T10:00:00.000Z'
+        completedAt: null
+        progress: null
+        download: null
+        manifest: null
+        error: null
+    ExportRunning:
+      value:
+        status: running
+        id: exp_7Q1xkV3mZp8bN2cR4tW6
+        requestedAt: '2027-01-15T10:00:00.000Z'
+        completedAt: null
+        progress: { messagesDone: 640, messagesTotal: 1391 }
+        download: null
+        manifest: null
+        error: null
+    ExportReady:
+      value:
+        status: ready
+        id: exp_7Q1xkV3mZp8bN2cR4tW6
+        requestedAt: '2027-01-15T10:00:00.000Z'
+        completedAt: '2027-01-15T10:01:48.221Z'
+        progress: null
+        download:
+          url: https://mail.example.test/admin/exports/exp_7Q1xkV3mZp8bN2cR4tW6?exp=1800180108&sig=Q0h3ZWtfbm90LWEtcmVhbC1zaWduYXR1cmU
+          expiresAt: '2027-01-16T10:01:48.221Z'
+          bytes: 198237441
+        manifest:
+          messages: 1391
+          mailboxes: 6
+          sha256: 9f2c1b7e0a4d5c6b8e7f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d
+        error: null
+    ExportFailed:
+      value:
+        status: failed
+        id: exp_7Q1xkV3mZp8bN2cR4tW6
+        requestedAt: '2027-01-15T10:00:00.000Z'
+        completedAt: '2027-01-15T10:00:31.004Z'
+        progress: null
+        download: null
+        manifest: null
+        error: the blob store was unavailable; request the export again
+    SessionActive:
+      value:
+        tokenType: Bearer
+        sessionToken: mds1_9vXk2Qm7Lp4Rt8Wz1Yc3Nb6Hd0Jf5Sg2Va7Ke4Mu9Xq1Zr
+        expiresAt: '2026-10-22T21:40:55.310Z'
+        renewAfter: '2026-10-22T20:40:55.310Z'
+        absoluteExpiresAt: '2026-10-29T09:40:55.310Z'
+        account:
+          address: expo-diseno-2026@eventos.example.test
+          name: Expo Diseño 2026
+        readOnly: false
+        jmap:
+          sessionUrl: /.well-known/jmap
+    SessionReadOnly:
+      value:
+        tokenType: Bearer
+        sessionToken: mds1_Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op7Qr9St1Uv3Wx5Yz7Ab9Cd1Ef
+        expiresAt: '2027-01-15T22:12:40.000Z'
+        renewAfter: '2027-01-15T21:12:40.000Z'
+        absoluteExpiresAt: '2027-01-22T10:12:40.000Z'
+        account:
+          address: expo-diseno-2026@eventos.example.test
+          name: Expo Diseño 2026
+        readOnly: true
+        jmap:
+          sessionUrl: /.well-known/jmap

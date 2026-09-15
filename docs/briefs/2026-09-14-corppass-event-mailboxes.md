@@ -5,6 +5,11 @@
 > built as a GENERAL Moov capability, documented in `deploy/README.md`, tested, and usable
 > by any installation. CorpPass is the first consumer, not a special case in the code.
 
+> **Contract published 2026-09-15:** `docs/specs/L2-accounts-api-contract.md` (prose, wins on
+> conflict) + `docs/specs/openapi-accounts-and-delegated.yaml` (OpenAPI 3.1 with examples).
+> M1/M2 implement THAT contract; its §6 lists the acceptance tests, its §8 the deviations
+> from the L2 integration spec.
+
 ## Scope (three epics)
 
 ### M1 — Service accounts + accounts API (size L)
