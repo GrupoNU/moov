@@ -10,6 +10,12 @@
 > **Acción requerida:** revisar §3 (contrato de errores, cambia el cliente Mailcow de M1),
 > §4 (detalles de la API) y §5 P3 (decisión sobre solo-lectura). El cambio de dominio (§1)
 > es informativo.
+>
+> **Actualización 2026-09-16 — §6 y §7:** el DNS de `corppass.events` ya está publicado y
+> verificado, el dominio recibe correo y **pueden apuntar las pruebas de M1 ahí**. La P2
+> quedó cerrada (el DELETE sí borra el maildir). **§7 es lo único que les pedimos:** sumar
+> `mail.corppass.events` a `Caddyfile.public` (dos líneas, sin tocar rutas), con el aviso
+> de por qué el A apunta a IP-B y no a IP-A.
 
 ---
 
@@ -218,16 +224,70 @@ la causa y la remediación no son la misma.
 
 ---
 
-## 6. Estado del dominio
+## 6. Estado del dominio — **operativo para recibir** *(actualizado 2026-09-16)*
 
-`corppass.events` **ya está dado de alta en Mailcow** (2026-09-15) con los límites de D-3
-(2 GB por buzón, 300 envíos/día heredados) y DKIM 2048 generado. **Todavía sin DNS
-publicado**, así que no recibe ni envía: eso lo hace VPS_Mail en F3.
+`corppass.events` está dado de alta en Mailcow con los límites de D-3 (2 GB por buzón,
+300 envíos/día heredados del dominio) y **el DNS está publicado y verificado**:
 
-Pueden apuntar sus pruebas de M1 a ese dominio cuando lo necesiten.
+| Registro | Valor | Estado |
+|---|---|---|
+| MX | `mail.atmosfera.cloud` (prio 10) | ✅ |
+| SPF | `v=spf1 mx ip4:217.216.83.79 -all` | ✅ |
+| DKIM | RSA 2048, selector `dkim` | ✅ |
+| DMARC | `p=quarantine; adkim=s; aspf=s` | ✅ |
+| `mail.corppass.events` | A → **217.216.85.211** | ✅ |
 
-Una sola cosa **no** quedó verificada y la heredamos a F3/F5: que el borrado elimine un
-**maildir con contenido real** (el buzón de prueba nunca recibió correo, y Dovecot crea el
-maildir recién con el primer mensaje). Lo confirmamos antes del gate F5, criterio 7.
+Recepción verificada contra los mapas de Postfix: el dominio es local, un buzón resuelve a su
+maildir y un destinatario inexistente se rechaza. **Pueden apuntar sus pruebas de M1 a este
+dominio ya.**
+
+Existe `warmup@corppass.events` (512 MB), creado para el warming. No lo borren.
+
+---
+
+## 7. ⚠️ Lo que necesitamos de ustedes: el host en Caddy
+
+`Caddyfile.public` es de ustedes (`/opt/moov/src/deploy/`), así que **no lo tocamos** —
+CLAUDE.md nos prohíbe editar el scope de otro equipo. El cambio es de dos líneas: agregar
+`mail.corppass.events` a los dos bloques de host.
+
+```
+# bloque :80
+http://moov.atmosfera.cloud:80, …, http://mail.corppass.events:80 {
+
+# bloque :443
+https://moov.atmosfera.cloud:443, …, https://mail.corppass.events:443 {
+```
+
+**No hace falta tocar rutas**: su matcher `@jmap` ya incluye `/admin/*` y `/auth/delegated*`,
+así que M1 y M2 quedan enrutados solos.
+
+### Por qué el A apunta a IP-B y no a IP-A
+
+Es el punto que más conviene que verifiquen antes de recargar. `moov-caddy-public` está
+publicado por Docker **exclusivamente** en `217.216.85.211:80/443`; IP-A es de Mailcow y su
+nginx tiene tomados esos puertos. Por eso el registro A de `mail.corppass.events` apunta a
+IP-B: **con IP-A el challenge HTTP-01 fallaría y el host se quedaría sin certificado.**
+Su propio `Caddyfile.public` ya documenta esta separación; esto solo lo confirma en campo.
+
+El DNS ya está publicado, así que el challenge tiene todo lo que necesita. Al recargar:
+
+```bash
+docker exec moov-caddy-public caddy reload --config /etc/caddy/Caddyfile
+docker logs moov-caddy-public --tail 30 | grep -i "certificate obtained\|mail.corppass.events"
+```
+
+Si prefieren que lo agreguemos nosotros, dígannos y lo hacemos — pero por defecto lo dejamos
+en sus manos.
+
+### Marca CorpPass
+
+Preparamos el `branding.json` con el color canónico de marca (`#06b6d4`, de
+`CORPPASS_BRAND_TOKENS.md`) siguiendo el formato de `mail.areacorp.com.ar`. **Faltan los
+assets** (`logo.png`, `logo-dark.png`, `icon.png`); los pedimos al equipo de marca. Lo
+aplicamos con `moovctl branding set` cuando los tengamos.
+
+---
 
 Informe completo: `D:\git\VPS_Mail\docs\spikes\2026-09-15-mailcow-api-moov-corppass.md`
+Runbook de F3: `D:\git\VPS_Mail\docs\runbooks\f3-corppass-events-publicacion.md`
