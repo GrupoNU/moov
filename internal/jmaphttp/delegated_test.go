@@ -270,18 +270,6 @@ func (f *fakeDelegatedStore) ConsumeDelegatedJTI(_ context.Context, issuer, jti 
 	return true, nil
 }
 
-func (f *fakeDelegatedStore) live(now time.Time) int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n := 0
-	for _, s := range f.sessions {
-		if s.RevokedAt == nil && s.ExpiresAt.After(now) {
-			n++
-		}
-	}
-	return n
-}
-
 // --- signing ---------------------------------------------------------------
 
 // tokenSpec describes one token to sign. Zero values mean "the good token".
@@ -772,10 +760,14 @@ func TestDelegatedSessionResponseShape(t *testing.T) {
 	if got["absoluteExpiresAt"] != wireTime(now.Add(168*time.Hour)) {
 		t.Errorf("absoluteExpiresAt = %v, want 7 d from now", got["absoluteExpiresAt"])
 	}
-	if !strings.HasSuffix(got["expiresAt"].(string), "Z") || len(got["expiresAt"].(string)) != len("2026-10-22T21:40:55.310Z") {
+	expires, ok := got["expiresAt"].(string)
+	if !ok || !strings.HasSuffix(expires, "Z") || len(expires) != len("2026-10-22T21:40:55.310Z") {
 		t.Errorf("expiresAt = %v, want millisecond UTC form", got["expiresAt"])
 	}
-	acct := got["account"].(map[string]any)
+	acct, ok := got["account"].(map[string]any)
+	if !ok {
+		t.Fatalf("account = %v, want an object", got["account"])
+	}
 	if acct["name"] != "Expo Diseño 2026" || got["readOnly"] != true {
 		t.Errorf("account/readOnly = %v / %v: the status source was not consulted", acct, got["readOnly"])
 	}
@@ -1236,11 +1228,11 @@ func TestBadBearerNeverReachesDovecotAndIsBudgeted(t *testing.T) {
 	t.Parallel()
 	fx := newDelegatedFixture(t, nil)
 	bad := []string{
-		"mds1_" + strings.Repeat("A", 43),      // well-formed, unknown
-		"msa1_" + strings.Repeat("A", 43),      // M1's service-account key: never a session
-		"mds1_short",                            // malformed
-		strings.Repeat("A", 5000),               // garbage
-		"mt1.cHVzaHw3fDF8YWJj.AAAA",             // a scoped token in the header
+		"mds1_" + strings.Repeat("A", 43), // well-formed, unknown
+		"msa1_" + strings.Repeat("A", 43), // M1's service-account key: never a session
+		"mds1_short",                      // malformed
+		strings.Repeat("A", 5000),         // garbage
+		"mt1.cHVzaHw3fDF8YWJj.AAAA",       // a scoped token in the header
 	}
 	for _, tok := range bad {
 		w := fx.do(http.MethodPost, PathAPI, apiBody(""), bearer(tok))
@@ -1341,9 +1333,16 @@ func TestDelegatedJWKSCachingRotationAndOutage(t *testing.T) {
 	fx.jwks.mu.Lock()
 	var doc map[string]any
 	_ = json.Unmarshal(fx.jwks.body, &doc)
-	keys := doc["keys"].([]any)
+	keys, ok := doc["keys"].([]any)
+	if !ok {
+		t.Fatalf("the JWKS document has no keys array: %v", doc)
+	}
+	newPub, ok := newPriv.Public().(ed25519.PublicKey)
+	if !ok {
+		t.Fatal("an Ed25519 private key did not yield an Ed25519 public key")
+	}
 	keys = append(keys, map[string]any{"kty": "OKP", "crv": "Ed25519", "kid": "ed-2026-10", "use": "sig", "alg": "EdDSA",
-		"x": b64(newPriv.Public().(ed25519.PublicKey))})
+		"x": b64(newPub)})
 	doc["keys"] = keys
 	fx.jwks.body, _ = json.Marshal(doc)
 	fx.jwks.mu.Unlock()

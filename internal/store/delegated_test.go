@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
@@ -149,8 +150,11 @@ func TestDelegatedJTIRefusesReplayAndSweepsExpired(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	issuer := "https://id.example.test/" + sanitizeName(t.Name())
-	jti := hashOf(t)
-	id := string(jti[:8])
+	// A jti is a PRINTABLE token id — a UUIDv4 in the wild, never raw bytes.
+	// Slicing the hash and calling string() on it produced an invalid UTF-8
+	// sequence that PostgreSQL refused outright (SQLSTATE 22021), so the test
+	// failed before it could test anything. Hex is what the column holds.
+	id := hex.EncodeToString(hashOf(t)[:16])
 
 	fresh, err := s.ConsumeDelegatedJTI(ctx, issuer, id, now.Add(5*time.Minute), now)
 	if err != nil || !fresh {
