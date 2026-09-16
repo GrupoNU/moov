@@ -58,6 +58,12 @@ type Identity struct {
 
 	// AccountID is the account's JMAP id (jmap.EncodeAccountID of the row id).
 	AccountID string
+
+	// Delegated is the session behind an `Authorization: Bearer` credential
+	// (delegated.go), nil for Basic. It names HOW the caller authenticated;
+	// the two routes that act on the session itself (renew, logout) read it,
+	// nothing else does.
+	Delegated *store.DelegatedSession
 }
 
 // AuthConfig configures NewAuthenticator. Validator and Directory are
