@@ -153,16 +153,25 @@ hace falta el plan B de aplicarlo en el outbox. Además ya está fijado **a nive
 `corppass.events`, así que cada casilla nueva lo hereda (`rl_scope: "domain"`); solo hace
 falta escribirlo por buzón si quieren un valor distinto del heredado.
 
-### P2 — ¿El DELETE borra el maildir de forma síncrona? → **PARCIAL, sin confirmar**
+### P2 — ¿El DELETE borra el maildir de forma síncrona? → **SÍ** *(cerrado 2026-09-16)*
 
-La respuesta de `POST /delete/mailbox` es inmediata y síncrona
-(`msg:["mailbox_removed", …]`), el `GET` posterior devuelve `{}` y **las app passwords se
-borran en cascada** (verificado: el listado queda vacío, sin huérfanas).
+Verificado con entrega real. Un buzón que **sí recibió correo** (mensaje entregado por LMTP
+interno; `"messages": 1`, `"quota_used": 427`, y en disco 6 archivos / 32K en
+`/var/vmail/corppass.events/maildir-test`):
 
-Lo que **no** pudimos confirmar es el borrado del maildir en disco: el buzón de prueba nunca
-recibió correo y Dovecot crea `/var/vmail/<dominio>/<local>` recién con el primer mensaje.
-Lo cerramos en F3/F5 con una casilla que haya recibido algo. Hasta entonces **no asuman que
-`deleting` es instantáneo** para el criterio 7 del gate.
+```
+POST /delete/mailbox ["maildir-test@corppass.events"]  →  msg:["mailbox_removed", …]
+ls -d /var/vmail/corppass.events/maildir-test          →  ELIMINADO (inmediatamente después)
+```
+
+El directorio del dominio queda vacío y la API reporta cero buzones. **No hay ventana de
+limpieza diferida**: al momento de responder la API, el contenido ya no está en disco. Su
+estado `deleting` no necesita esperar a Mailcow — el tiempo que dure es el de la purga de
+caché y blobs del lado de Moov.
+
+Las app passwords también se borran en cascada (listado vacío, sin huérfanas).
+
+Con esto el **criterio 7 del gate F5** queda cerrado en su parte de Mailcow.
 
 ### P3 — ⚠️ ¿`smtp_access:0` rechaza el AUTH de submission dejando IMAP intacto? → **NO**
 
