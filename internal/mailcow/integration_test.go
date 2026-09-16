@@ -82,6 +82,14 @@ func testClient(t *testing.T) (*Client, string) {
 	if !c.Config().ForceIPv4 {
 		t.Fatal("ForceIPv4 is off; S1 H5 requires it")
 	}
+	// F0 rule 6: `{}` is trusted as "not found" only after the key is
+	// validated, so every integration test starts by validating it — which
+	// also proves /get/status/version is the right probe on this Mailcow.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := c.ValidateKey(ctx); err != nil {
+		t.Fatalf("ValidateKey: %v", err)
+	}
 	return c, mailbox
 }
 
