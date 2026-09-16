@@ -1164,7 +1164,8 @@ docker run --rm --network moov-internal curlimages/curl -s http://moovd:8080/met
 
 | Metric | Meaning |
 |---|---|
-| `moov_sync_lag_seconds{account}` | Seconds since that account's oldest scope last synced. The **oldest** scope, so a single stalled folder cannot hide behind a busy one. |
+| `moov_sync_lag_seconds{account}` | Seconds since that account last made **any** sync progress — the newest of `mailboxes.last_synced_at` (what every incremental pass writes) and `sync_log.last_success_at` (what the initial sync and the watcher's handshake write). It used to read the second alone and was therefore un-alertable; that is fixed. |
+| `moov_sync_watcher_idle_seconds{account}` | Seconds since that account's push watcher last did anything observable — an event, a pass, a sweep, a heartbeat. **The alert for a silently stalled watcher**; see below. |
 | `moov_sync_breaker_open{account}` | 1 while an account's circuit breaker is open. The breaker is the anti-fail2ban control (ADR §4), so this answers "who is locked out of Dovecot right now". |
 | `moov_jmap_http_requests_total{route,status}` | JMAP requests by route pattern and status class. |
 | `moov_jmap_http_request_duration_seconds{route}` | Latency histogram, bucketed around the 100 ms Gmail-class bar (regla 1). |
@@ -1205,17 +1206,48 @@ measures:
   shows a healthy flat line straight through an outage. Alert on the series
   being *absent*, never on it reading zero.
 
-Unlike `moov_sync_lag_seconds` — which reads from the wrong table and is not
-trustworthy (see *Troubleshooting*) — each of these four reads the thing its
-name claims. Where one is imprecise it is said above rather than left to be
-discovered.
+Each of these four reads the thing its name claims. Where one is imprecise it is
+said above rather than left to be discovered.
+
+#### Alerting on a stalled watcher
+
+`moov_sync_watcher_idle_seconds` exists because of the 2026-09-16 incident, in
+which push stopped for **every** account and nothing said so: no error, no
+warning, no log line, and no metric that moved. The process was healthy, the
+IMAP connections were open in `doveadm who`, and the breaker was closed. Mail
+was delivered, stored by Dovecot, and never appeared in Moov for two hours.
+
+The watcher now probes its own session after `MOOV_SYNC_IDLE_HEARTBEAT` (default
+**2 minutes**) of no events, which both repairs the stall and logs it. This
+gauge is the external half of that: it rises for as long as a watcher is quiet
+and drops to zero whenever one does anything — including the heartbeat. So a
+healthy watcher, even on a completely silent mailbox, can never exceed the
+heartbeat period by much, and the alert is simply:
+
+```promql
+# The watcher has seen nothing for three heartbeat periods.
+max by (account) (moov_sync_watcher_idle_seconds) > 360
+```
+
+Alert on the series being **absent**, too: no series for an account means no
+watcher is running for it at all, which is the same outage arrived at from the
+other direction. The gauge is pushed from the running process rather than read
+from a table on purpose — the incident was precisely a process whose in-memory
+loop had stopped while every persisted row stayed plausible.
+
+The second-order backstop is the reconciler (`MOOV_SYNC_RECONCILE_INTERVAL`,
+default **15 minutes**, was 6 h). It re-derives every folder's state with one
+`LIST-STATUS` per account per sweep, so a divergence the heartbeat cannot see —
+a session that is live and answering but whose events are being lost upstream —
+self-corrects within that window. Each one it finds logs at WARN with the
+counters that moved.
 
 `/healthz` is a **liveness** probe: it reports that the process and its HTTP
 stack are up, and deliberately does *not* check the database. A health check
 that failed on a PostgreSQL blip would have Docker restart a healthy daemon
 during a database restart, turning a recoverable outage into a crash loop.
-Store problems surface through `moov_sync_lag_seconds` going stale and through
-the logs, where an operator can act on them.
+Store problems surface through `moov_sync_lag_seconds` rising and through the
+logs, where an operator can act on them.
 
 The container healthcheck is `moovd -health`, which probes its own `/healthz`.
 The image is distroless — no shell, no curl — so the binary probes itself.
@@ -1342,16 +1374,30 @@ serve until migrations finish, so a redeploy onto a populated store is not the
 sub-second restart an empty one is. A fresh deployment pays nothing: there are
 no rows to backfill.
 
-**`moov_sync_lag_seconds` reads high on a healthy system.** Known limitation of
-E8-lite. The gauge is computed from `sync_log.last_success_at`, which the
-*initial* sync writes; the steady-state watcher records its progress on
-`mailboxes.last_synced_at` instead. An account whose watcher is working
-perfectly therefore reports a lag measured from its last full pass — days, on
-the pilot — while mail arrives in seconds. Until the collector reads the
-mailbox column, **do not alert on this gauge**; `mailboxes.last_synced_at` is
-the honest freshness signal:
+**`moov_sync_lag_seconds` reads high on a healthy system — FIXED.** This was a
+real defect and the gauge is now honest: the collector reads
+`store.AccountLastProgressAt`, which takes the newest of
+`mailboxes.last_synced_at` (written by every incremental pass the watcher runs)
+and `sync_log.last_success_at` (written by the initial sync and the watcher's
+handshake). Previously it read the second alone, which only the initial sync
+ever advances, so an account whose watcher was working perfectly reported days
+of lag — 8.6 of them on the pilot — while mail arrived in seconds. The old
+instruction "do not alert on this gauge" no longer applies; **alert on it.**
+
+Per-mailbox freshness is a different question and is still worth asking
+directly when investigating one account:
 
 ```sql
 SELECT name, last_synced_at, now() - last_synced_at AS age
 FROM mailboxes WHERE account_id = $1 ORDER BY last_synced_at DESC;
 ```
+
+**New mail stops appearing, with no error anywhere.** This was the 2026-09-16
+incident and it now self-heals within `MOOV_SYNC_IDLE_HEARTBEAT` (2 min). If it
+recurs, the log is no longer silent — look for `watcher idle; probing the
+session` (INFO, every heartbeat on a quiet account), `watcher heartbeat found
+divergence` (WARN — the session was alive but not current: events are being
+lost), and `watcher heartbeat failed; the session is dead, reconnecting` (WARN,
+followed by the ordinary reconnect and its sweep). An account with none of
+those lines and a rising `moov_sync_watcher_idle_seconds` has no watcher at
+all, which is a supervisor problem rather than a session one.
