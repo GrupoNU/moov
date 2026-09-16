@@ -174,6 +174,28 @@ type Metrics struct {
 	// are locked out of Dovecot right now" must be a first-class question.
 	BreakerOpen *Gauge
 
+	// WatcherIdleSeconds is how long ago each account's push watcher last did
+	// anything observable — an event, a pass, a sweep, a heartbeat.
+	//
+	// It exists because of the 2026-09-16 incident, in which push stopped for
+	// every account and NOTHING said so: no error, no warning, no log line, no
+	// metric. The process was healthy, the connections were open, the breaker
+	// was closed, and moov_sync_lag_seconds reported the same stale number it
+	// had reported for days for unrelated reasons. An operator had no series
+	// that would have moved.
+	//
+	// This is that series. It rises monotonically while a watcher is quiet and
+	// drops to zero every time one does something, so the alertable condition
+	// is simply "this account's watcher has seen nothing for N minutes" — with
+	// N chosen above the heartbeat period, since a healthy idle watcher resets
+	// this on every heartbeat and can therefore never exceed it by much.
+	//
+	// It is a PUSHED gauge, not a scrape-time store read, because the fact it
+	// reports exists only in the running process: the watcher's liveness is not
+	// written to any table, and the incident was precisely a process whose
+	// in-memory loop had stopped while every persisted row stayed plausible.
+	WatcherIdleSeconds *Gauge
+
 	// --- Sieve (E6)
 
 	// SievePushes counts pushes of the managed Sieve script (vacation,
@@ -268,6 +290,8 @@ func NewWithRegistry(r *Registry) *Metrics {
 			"Push watcher state per account: 1 watching, 0 idle, -1 failed."),
 		BreakerOpen: r.Gauge("moov_sync_breaker_open",
 			"1 when an account's circuit breaker is open, 0 otherwise."),
+		WatcherIdleSeconds: r.Gauge("moov_sync_watcher_idle_seconds",
+			"Seconds since each account's push watcher last did anything observable."),
 
 		SievePushes: r.Counter("moov_sieve_script_pushes_total",
 			"Managed Sieve script pushes by result (ok, error)."),

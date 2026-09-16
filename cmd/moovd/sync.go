@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -125,13 +126,21 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	}
 
 	if cfg.Sync.WatcherEnabled {
+		// The watcher-liveness gauge (the 2026-09-16 incident). It is wired
+		// here, not inside internal/sync, for the same reason every other
+		// observer seam in this daemon is: the engine must be buildable and
+		// testable without a metrics registry, so it declares a callback and
+		// this file is the only place that knows an exporter exists.
+		activity := newWatcherActivity(m)
 		watcher, werr := syncengine.NewPushWatcher(st, blobs, syncengine.WatcherOptions{
 			Options:           opts,
 			Connector:         connector,
 			Debounce:          cfg.Sync.Debounce,
 			ReconcileInterval: cfg.Sync.ReconcileInterval,
+			IdleHeartbeat:     cfg.Sync.IdleHeartbeat,
 			BreakerThreshold:  cfg.Sync.BreakerThreshold,
 			BreakerCooldown:   cfg.Sync.BreakerCooldown,
+			OnEvent:           activity.observe,
 		})
 		if werr != nil {
 			st.Close()
@@ -173,6 +182,71 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		"blob_root", cfg.Sync.BlobRoot, "watcher", cfg.Sync.WatcherEnabled,
 		"triage", writer != nil)
 	return comp, nil
+}
+
+// watcherActivity turns the sync engine's watcher observations into the
+// per-account liveness gauge (moov_sync_watcher_idle_seconds).
+//
+// # Why this lives here and not in internal/sync
+//
+// Because internal/sync must not import internal/metrics. That rule is not
+// tidiness: the engine's tests construct watchers by the dozen, and an engine
+// whose correctness depends on a metrics registry being present is one that
+// cannot be tested without building one. So the engine declares a callback
+// (WatcherOptions.OnEvent, already there for exactly this) and this file — the
+// only place in the daemon that knows an exporter exists at all — adapts it.
+// Same seam shape as submit.Observer and sync.MuteObserver.
+//
+// # Why a collector and not a Set on every observation
+//
+// The number that matters is how long a watcher has been SILENT, and silence
+// produces no callbacks by definition. A gauge written only when something
+// happens would freeze at its last value during exactly the outage it exists to
+// reveal — which is the mistake moov_sync_lag_seconds made in a different form.
+// So the observations record a timestamp, and the gauge is computed at scrape
+// time as "now minus that", which rises on its own for as long as nothing
+// happens.
+type watcherActivity struct {
+	mu   sync.Mutex
+	last map[int64]time.Time
+}
+
+// newWatcherActivity installs the collector and returns the observer.
+func newWatcherActivity(m *metrics.Metrics) *watcherActivity {
+	a := &watcherActivity{last: map[int64]time.Time{}}
+	if m == nil {
+		return a
+	}
+	m.WatcherIdleSeconds.SetCollector(a.samples)
+	return a
+}
+
+// observe records that an account's watcher did something. It is called from
+// the watcher's own goroutine and must not block (WatcherOptions.OnEvent's
+// contract), which a map write under a mutex satisfies.
+func (a *watcherActivity) observe(obs syncengine.WatchObservation) {
+	if obs.AccountID == 0 {
+		return
+	}
+	a.mu.Lock()
+	a.last[obs.AccountID] = time.Now()
+	a.mu.Unlock()
+}
+
+// samples renders the gauge at scrape time.
+func (a *watcherActivity) samples() []metrics.Sample {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	out := make([]metrics.Sample, 0, len(a.last))
+	for id, at := range a.last {
+		out = append(out, metrics.Sample{
+			Labels: metrics.Labels{"account": strconv.FormatInt(id, 10)},
+			Value:  now.Sub(at).Seconds(),
+		})
+	}
+	return out
 }
 
 // close releases the components' resources.
