@@ -36,3 +36,8 @@ data/
 # negations the blanket *.eml rule above silently hides the entire corpus.
 !testdata/mime-corpus/**/*.eml
 !testdata/mime-corpus/**/*.mbox
+
+# Agent worktrees: full checkouts of this repository created for parallel
+# work. They carry their own .git pointer and would otherwise be added as
+# stray copies of the tree.
+.claude/worktrees/
