@@ -138,10 +138,15 @@ type jwksCache struct {
 	client *http.Client
 	now    func() time.Time
 
-	mu          sync.Mutex
-	keys        map[string]jwksKey
-	fetchedAt   time.Time
-	lastAttempt time.Time
+	mu        sync.Mutex
+	keys      map[string]jwksKey
+	fetchedAt time.Time
+	// lastKidMiss is when an UNKNOWN KID last provoked a refetch. It is
+	// deliberately not the same clock as fetchedAt: the routine fill of a
+	// cold or stale cache must not arm the throttle, or the first rotation
+	// after any fetch would be invisible for a minute — exactly what §3.2
+	// promises will NOT happen ("a key rotation is picked up immediately").
+	lastKidMiss time.Time
 	inflight    *sync.WaitGroup
 }
 
@@ -159,8 +164,9 @@ func (c *jwksCache) lookup(ctx context.Context, kid string) (jwksKey, error) {
 		return k, nil
 	}
 	// Refetch when the cache is stale, or when the kid is unknown and the
-	// throttle allows. Concurrent lookups share one fetch.
-	mayFetch := !fresh || now.Sub(c.lastAttempt) >= jwksRefetchMinGap
+	// unknown-kid throttle allows. Concurrent lookups share one fetch.
+	kidMiss := fresh // a stale cache is a routine refill, not a kid miss
+	mayFetch := !fresh || now.Sub(c.lastKidMiss) >= jwksRefetchMinGap
 	if !mayFetch {
 		k, ok := c.keys[kid]
 		c.mu.Unlock()
@@ -178,7 +184,9 @@ func (c *jwksCache) lookup(ctx context.Context, kid string) (jwksKey, error) {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	c.inflight = wg
-	c.lastAttempt = now
+	if kidMiss {
+		c.lastKidMiss = now
+	}
 	c.mu.Unlock()
 
 	keys, fetchErr := c.fetch(ctx)

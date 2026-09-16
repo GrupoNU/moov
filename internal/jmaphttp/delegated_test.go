@@ -388,6 +388,31 @@ type delegatedFixture struct {
 	status *fakeAccountStatus
 	obs    *fakeDelegatedObserver
 	logs   *bytes.Buffer
+
+	// ip, when set, is the client address every request comes from; empty
+	// means the shared default. freshIP hands out a new one per call.
+	ipMu sync.Mutex
+	ip   string
+	ipN  int
+}
+
+// remoteAddr is the RemoteAddr of the next request.
+func (fx *delegatedFixture) remoteAddr() string {
+	fx.ipMu.Lock()
+	defer fx.ipMu.Unlock()
+	if fx.ip != "" {
+		return fx.ip
+	}
+	return "203.0.113.10:4444"
+}
+
+// freshIP moves the fixture to a client address no request has used, so the
+// per-IP exchange budget starts full.
+func (fx *delegatedFixture) freshIP() {
+	fx.ipMu.Lock()
+	defer fx.ipMu.Unlock()
+	fx.ipN++
+	fx.ip = fmt.Sprintf("198.18.%d.%d:5555", fx.ipN/256, fx.ipN%256)
 }
 
 type fakeAccountStatus struct {
@@ -471,7 +496,10 @@ func newDelegatedFixture(t *testing.T, mutate func(*DelegatedConfig)) *delegated
 	return fx
 }
 
-// do runs a request through the full handler with Host set.
+// do runs a request through the full handler with Host set. fx.ip selects
+// the client address, because the exchange budget (§3.4, 30/min) is PER IP:
+// a test that walks a long matrix of tokens is not testing the rate limiter
+// and must not trip it, so it moves to a fresh IP for each case.
 func (fx *delegatedFixture) do(method, path, body string, header map[string]string) *httptest.ResponseRecorder {
 	var r *http.Request
 	if body != "" {
@@ -481,7 +509,7 @@ func (fx *delegatedFixture) do(method, path, body string, header map[string]stri
 		r = httptest.NewRequest(method, path, nil)
 	}
 	r.Host = delegatedHostA
-	r.RemoteAddr = "203.0.113.10:4444"
+	r.RemoteAddr = fx.remoteAddr()
 	for k, v := range header {
 		r.Header.Set(k, v)
 	}
@@ -644,6 +672,7 @@ func TestDelegatedExchangeVerificationMatrix(t *testing.T) {
 	}
 	for _, tc := range refused {
 		t.Run(tc.name, func(t *testing.T) {
+			fx.freshIP()
 			w := fx.exchange(signToken(t, keys, now, tc.spec))
 			if w.Code != http.StatusUnauthorized {
 				t.Fatalf("status %d body %s, want 401", w.Code, w.Body.String())
@@ -662,6 +691,7 @@ func TestDelegatedExchangeVerificationMatrix(t *testing.T) {
 
 	t.Run("garbage", func(t *testing.T) {
 		for _, raw := range []string{"x", "a.b.c", "....", strings.Repeat("A", 5000)} {
+			fx.freshIP()
 			if w := fx.exchange(raw); w.Code != http.StatusUnauthorized || w.Body.String() != invalidTokenBody {
 				t.Errorf("%q: %d %s", raw[:min(len(raw), 8)], w.Code, w.Body.String())
 			}
@@ -687,6 +717,7 @@ func TestDelegatedExchangeVerificationMatrix(t *testing.T) {
 	}
 	for _, tc := range accepted {
 		t.Run("accepted: "+tc.name, func(t *testing.T) {
+			fx.freshIP()
 			resp := fx.session(t, tc.spec)
 			if resp.TokenType != "Bearer" || !strings.HasPrefix(resp.SessionToken, "mds1_") || len(resp.SessionToken) != sessionTokenLength {
 				t.Fatalf("session = %+v", resp)
