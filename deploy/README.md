@@ -117,62 +117,383 @@ docker compose restart moovd
 
 ---
 
-## The per-domain accounts API (epic M1)
+## Managing a domain's mailboxes from outside (epics M1, M2)
 
 An external system — a portal, a CRM, an event platform — can manage the
-mailboxes of ONE domain without ever touching Mailcow: create, read usage,
-suspend, move into read-only retention, export, delete. The wire contract is
-`docs/specs/L2-accounts-api-contract.md`; this section is only what an
-operator has to do.
+mailboxes of ONE domain without ever touching Mailcow: create them, read their
+usage, suspend them, move them into read-only retention, export them, delete
+them. It can also sign its own users straight into Moov, with no second
+password. The wire contract is
+[`docs/specs/L2-accounts-api-contract.md`](../docs/specs/L2-accounts-api-contract.md)
+and it is what a consumer's developer reads; this section is what an operator
+does and what an operator has to know before doing it.
 
-**It is OFF unless you turn it on, and turning it on is handing over a
-credential.** The API needs a Mailcow read-write key, and Mailcow does not
-scope keys by domain: the only thing standing between one consumer and
-another's mail is Moov's own check that the address belongs to the service
-account's domain. That check runs before every Mailcow call and is pinned by
-test, but the credential itself is unrestricted, which is why enabling the
-feature is a deliberate act and not a default.
+Three capabilities, three switches, all of them off by default:
+
+| Capability | Turned on by | Off means |
+|---|---|---|
+| Service-account keys | `moovctl service-account create` | no keys exist, so nothing can authenticate |
+| The accounts API | `MOOV_MAILCOW_WRITE_KEY` in **moovd's** environment | every `/admin/accounts` route answers the generic 404 |
+| Delegated sign-in | `MOOV_DELEGATED_ISSUERS` in **moovd's** environment | every `/auth/delegated/*` route answers the generic 404, and `Authorization: Bearer` is refused |
+
+They are independent. A domain can have keys issued and the API off (nothing
+works, nothing leaks), or delegated sign-in on without the accounts API (a
+portal signs users into mailboxes an operator provisioned by hand).
+
+### Issuing a service-account key
+
+A key is the credential a consumer presents on every accounts-API call. It is
+issued from the shell, never over a network route — deciding that an external
+system may create and delete mailboxes of a domain is an operator decision with
+shell access behind it, exactly like granting a brand admin, and giving that
+decision a bootstrap credential of its own would only move the problem.
 
 ```bash
-# In the moovd service's environment. A DIFFERENT variable from
-# MOOV_MAILCOW_API_KEY, which is moovctl's and lives on an operator's machine
-# for the length of one command; this one lives in a long-running,
-# network-facing process.
+docker compose exec moovd /usr/local/bin/moovctl service-account create \
+  -domain events.example.test -scopes accounts:write -name "the portal"
+
+docker compose exec moovd /usr/local/bin/moovctl service-account list
+docker compose exec moovd /usr/local/bin/moovctl service-account revoke -id sa_...
+```
+
+`-domain` is required and is the whole of the key's authority: **one key, one
+domain**, and there is no flag to widen it. `-scopes` takes a comma-separated
+list of `accounts:read` and `accounts:write` (write implies read) and defaults
+to `accounts:write`. `-name` is a label that appears in every audit line the key
+produces, so give it the consumer's name rather than leaving it blank.
+
+**The key is printed once and only its SHA-256 is stored.** There is no command
+to print it again, and that is not an oversight: a key an operator can re-read
+is a key a stolen database dump can re-read. It goes to stdout on its own line
+so it can be piped into a secret store. An operator who lost one does not
+recover it — they revoke it and issue another, which is a twenty-second
+operation and leaves a trail of both events.
+
+**Rotation is therefore issue-then-revoke, in that order.** Issue the new key,
+hand it to the consumer, wait for the consumer to be using it, then revoke the
+old one. There is no overlap window to configure, because both keys are simply
+valid until one is revoked. `service-account list` shows `LAST USED`, which is
+how you tell whether the old key is still in traffic before you pull it.
+
+Revocation is immediate: the next request presenting a revoked key gets the same
+generic 404 an unknown key gets. The audit lines it already wrote stay — the
+record of what a key did must outlive the key.
+
+### The accounts API
+
+**What it does.** Creates a mailbox (idempotent by address), reads it, updates
+its display name and quota, suspends and resumes it, moves it into read-only
+retention, exports it, deletes it. Seven verbs, each one audited.
+
+**What it cannot do: read mail.** There is no route on this API that returns a
+message, a subject, a sender or a mailbox listing. A service-account key is a
+second authentication class that shares nothing with a mailbox credential: a
+session token presented to `/admin/accounts` resolves to no service account and
+gets the 404, and a service-account key is not a mailbox credential and gets
+nowhere on `/jmap`. Both directions are pinned by test, because "it happened to
+work" is how two authentication classes quietly merge into one.
+
+**Turning it on is handing over a credential.** Read *The Mailcow write key*
+below before setting it. With the variable absent the routes answer the generic
+404 — deliberately, and not a 501: a prober must not be able to learn that the
+feature exists here and is merely off.
+
+```bash
+# In the moovd service's environment (deploy/.env):
 MOOV_MAILCOW_WRITE_KEY=...          # or MOOV_MAILCOW_WRITE_KEY_FILE=/run/secrets/...
-MOOV_ACCOUNTS_MAX_QUOTA_MB=10240    # optional; the ceiling for a mailbox quota
+MOOV_ACCOUNTS_MAX_QUOTA_MB=10240    # optional; the installation's ceiling for a
+                                    # mailbox quota. Default 10240. A create
+                                    # without quotaMB gets 2048; the floor is 64.
 ```
 
-With the variable absent, every `/admin/accounts` route answers the same
-generic 404 an unknown route answers — deliberately, so that a prober cannot
-learn the feature exists here and is merely off.
+On start the daemon logs `accounts api enabled` with the redacted Mailcow config,
+or `accounts api disabled` naming the variable that would enable it. That line is
+the fastest answer to "is it on".
 
-Then issue a key per consumer. It is bound to one domain, and it is shown
-**once**: only its SHA-256 is stored, and there is no command to print it
-again.
+#### The no-oracle 404, and why debugging it is annoying
+
+**Six different causes return the same 404, byte for byte, as a route that does
+not exist**: the feature is off; the `Authorization` header is missing; the key is
+malformed, revoked, or lacks the scope; the address is outside the key's domain;
+the account does not exist. It is enforced in one place — every
+`accounts.ErrNotFound` is rendered as that one body — so no handler can forget it.
+
+This is deliberate and it is right: otherwise the API is an oracle for which
+domains and which mailboxes an installation has, and a consumer could enumerate
+another customer's mail estate with a key it legitimately holds. But it means
+**an operator debugging a consumer's integration learns nothing from the
+response.** The answers are all on this side:
+
+- `docker compose logs moovd | grep '"msg":"accounts'` — the cause of a refusal
+  is logged even though it is never sent.
+- `moovctl service-account list` — is the key active, is its domain what the
+  consumer thinks it is, has it *ever* been used? `LAST USED` = `never` means the
+  key in the consumer's configuration is not this one.
+- The startup line above — is the feature on at all.
+
+Ask the consumer for the `X-Request-Id` they sent. Moov echoes it and writes it
+on every audit line and log line, and it is what joins their trace to ours.
+
+#### The rate limit
+
+**120 requests per minute per key, burst 30.** Budgeted per key and not per IP,
+because the budget belongs to the credential: one consumer behind a NAT cannot
+spend another's. Over budget is a `429` with `Retry-After` in seconds. A request
+body is capped at 16 KiB, and an echoed `X-Request-Id` at 64 characters.
+
+This is a different limiter from the login lockout under *Rate limiting: what is
+honestly there*. That one counts failed mailbox logins; this one counts
+accounts-API requests. Neither knows about the other.
+
+#### The audit line
+
+Every write — not reads; `GET` deliberately writes no line — produces one row in
+the store and one `accounts: admin action` line in the log, carrying the actor id,
+the actor's name, the verb, the address, `ok` or `error`, the consumer's
+`X-Request-Id`, and the `reason` string the consumer supplied. Insist on reasons
+when agreeing an integration: the row answers *what* happened by itself, and only
+the consumer can supply *why*.
+
+**A failure to write the audit row does not fail the operation it describes.** The
+mailbox was already created in Mailcow and in Moov, and answering 500 to a caller
+whose mailbox in fact exists sends it into a retry loop against a state that is
+already correct. The log line is the fallback record and carries everything the
+row would have — so a gap in the table is a reason to read the log, never a reason
+to assume nothing happened.
+
+Migrations 0012 (accounts API) and 0013 (delegated sessions) create the tables.
+Both add tables and indexes and **backfill nothing**, so they stay sub-second even
+on a populated store — unlike 0004, which is documented under *Troubleshooting*.
+
+### The Mailcow write key and its trust boundary
+
+`MOOV_MAILCOW_WRITE_KEY` — or `MOOV_MAILCOW_WRITE_KEY_FILE` for deployments that
+mount secrets as files; set exactly one, setting both is a startup error — is a
+**read-write Mailcow API key**. It can create mailboxes, delete mailboxes and mint
+app passwords.
+
+**It is a different variable from `MOOV_MAILCOW_API_KEY` on purpose, and the
+difference is the point.** `MOOV_MAILCOW_API_KEY` is `moovctl`'s: it lives on an
+operator's machine for the length of one command. `MOOV_MAILCOW_WRITE_KEY` lives
+in a long-running, network-facing process. Those are not the same risk, they
+should not be satisfied by the same value in the same file, and collapsing them
+into one variable would mean anyone who enabled the CLI had also enabled the API.
+Setting this one is the operator's deliberate act of opening a new trust boundary.
+
+**Mailcow does not scope API keys by domain.** There is no per-domain key to
+issue; the key Moov holds can touch every mailbox on the server. So the only thing
+standing between one consumer and another consumer's mail is **Moov's own check**
+that the address belongs to the service account's domain. That check
+(`accounts.Service.resolve`) runs before any Mailcow call, refuses with the
+generic 404, and is pinned by a test that fails if a foreign address reaches the
+Mailcow client at all. It is deliberately the only place in the code that decides
+that question: a second one could disagree with the first.
+
+Operationally: **the blast radius of this key is the whole mail server, and the
+boundary is software.** Treat it the way `MOOV_MASTER_KEY` is treated — `chmod
+600`, out of the repository, out of the database backup.
+
+#### The IP allow-list on Mailcow's side
+
+Mailcow can restrict an API key to source IPs, and **F0 verified it honours that
+strictly**. Use it: it is the one part of this boundary that is not Moov's own
+code. Authorise the address `moovd` reaches Mailcow from — inside the shared
+Docker network that is the container's address on
+`mailcowdockerized_mailcow-network`, not the host's public IP.
+
+The useful property when you get it wrong is that Mailcow's refusal **names the IP
+it actually saw**:
+
+```
+{"type":"error","msg":"api access denied for ip 203.0.113.7"}
+```
+
+That is how you learn what to authorise — read the IP out of the error rather
+than reasoning about the topology. Two traps F0 measured alongside it:
+
+- It is a **different** error from a bad credential (`authentication failed`).
+  Same symptom for a consumer, opposite remediation. Do not conflate them.
+- Mailcow returns these with **HTTP 200** and an error body, not a 4xx. Any check
+  that only looks at the status code will call a rejected key healthy.
+
+### Delegated sign-in
+
+An external system that owns a mailbox has a user who has no mailbox password —
+the portal authenticated them its own way. Delegated sign-in lets that portal sign
+the user into Moov: the portal mints a short-lived JWT, the browser carries it to
+Moov, and Moov exchanges it for an opaque session of its own.
 
 ```bash
-docker compose exec moovd moovctl service-account create   -domain events.example.test -scopes accounts:write -name "portal"
-
-docker compose exec moovd moovctl service-account list
-docker compose exec moovd moovctl service-account revoke -id sa_...
+# In the moovd service's environment (deploy/.env):
+MOOV_DELEGATED_ISSUERS='[{"host":"mail.example.test","issuer":"https://portal.example.test","jwksUrl":"https://portal.example.test/.well-known/jwks.json"}]'
+MOOV_DELEGATED_SESSION_MAX=168h     # optional; default 168h (7 days)
 ```
 
-**Read-only retention deletes the mailbox's ability to send, permanently in
-this version.** `POST /admin/accounts/{a}/readonly` re-issues the account's
-app password WITHOUT SMTP and deletes the old one. It works that way because
-F0 measured that Mailcow's `smtp_access: 0` does *not* stop submission — AUTH
-on 465 still answers 235 — so the flag alone would be a lock that does not
-lock. There is no route back to active.
+`MOOV_DELEGATED_ISSUERS` is a **JSON array** of objects with exactly three fields:
 
-Exports land in `exports/` under the blob root, are downloadable for 7 days
-through a signed URL that needs no credential, and are swept afterwards.
-Budget disk for them: one export is a copy of the mailbox.
+- `host` — the Moov hostname the browser reaches, as a **bare hostname**: no
+  scheme, no port. It is compared against the token's `aud`, and a value
+  containing `/` or `:` is refused at startup.
+- `issuer` — the exact `iss` string the portal puts in its tokens. Compared by
+  string equality; it is never fetched and need not resolve.
+- `jwksUrl` — an absolute **HTTPS** URL. Plaintext is refused at startup, because
+  a key document anyone on the path can rewrite lets anyone on the path mint
+  tokens for the installation.
 
-Migration 0012 creates the tables. It adds columns and indexes and
-**backfills nothing**, so it is sub-second on a populated store — unlike 0004,
-which is documented below.
+One host may have several issuers and one issuer may serve several hosts; an entry
+is the pairing of the two.
 
----
+`MOOV_DELEGATED_SESSION_MAX` is the **absolute** session lifetime as a Go duration
+(`168h`, `72h`, `30m`), default `168h`. It is a ceiling, not the session length: a
+session also carries a sliding 12-hour expiry, so an idle one dies long before
+this. Zero or negative is a startup error.
+
+**A malformed value is fatal at startup; an unset one silently disables the
+feature.** The asymmetry is deliberate. An operator who wrote the JSON meant to
+enable delegated sign-in, and a daemon that started while ignoring bad
+configuration would hand the portal a 404 to debug from the outside — where the
+no-oracle rule guarantees it learns nothing. So: JSON that does not parse, an
+empty array, a missing field, a `host` with a port, a non-HTTPS `jwksUrl`, an
+unparseable duration — the daemon refuses to start and names the offending entry
+by its index. If the daemon is running, the configuration was valid.
+
+#### What the issuer must publish
+
+This is the half an operator does not control, and it is where a working
+integration breaks months later. Give the consumer these rules in writing:
+
+- A **JWKS document over HTTPS** at the configured URL, `application/json`, each
+  key carrying `kid`, `use: "sig"` and `alg`.
+- Keys are **EdDSA over Ed25519** (`kty: "OKP"`, `crv: "Ed25519"`) or **RS256**
+  (`kty: "RSA"`, at least 2048 bits). Nothing else is accepted, and the token's
+  `alg` is checked before its signature is looked at — `none`, the HMAC family
+  and the EC family are refused outright.
+- `kid` is **required**, in the JWKS and in the token header.
+- **Publish the next key before signing with it.** Moov caches a key set for 10
+  minutes and re-fetches on an unknown `kid` at most once every 60 seconds, so a
+  key that appears at the same moment as the tokens signed by it produces a minute
+  of refusals for no reason.
+- **Keep the previous key for at least one token lifetime after rotating.** A
+  token lives at most 5 minutes, so this costs nothing; skipping it refuses every
+  token already in flight.
+- **Never reuse a `kid`.** A repeated `kid` within one JWKS makes Moov refuse
+  *both* keys, which is the safe reading of an ambiguous document.
+
+If the JWKS cannot be fetched and no cached key matches, the exchange answers
+`503` with `Retry-After` — the only case where the issuer's availability shows
+through to a user. A `503` here means "go and look at the portal's JWKS
+endpoint", not "go and look at Moov".
+
+#### The token never reaches a log
+
+The browser carries the JWT in the **URL fragment**, which is never sent to any
+server: not to Moov, not to the fronting Caddy, not to a proxy in between. The PWA
+reads it out of the fragment in JavaScript and POSTs it to
+`/auth/delegated/exchange` in a body. The token therefore appears in no access log
+by construction, and this deployment needs no new redaction rule for it.
+
+**The one thing that would break that is letting an integration move the token
+into the query string.** A query string is logged by Caddy whenever access logging
+is on (see *Logs*), and it lands in browser history and `Referer` headers
+besides. The fragment is the whole mechanism, not an implementation detail.
+
+Session tokens are kept out of query strings too: one presented as `access_token=`
+is refused by construction, because anything arriving without an `Authorization`
+header is handed to the scoped push/blob verifier, which does not know the session
+format. A test pins it.
+
+A refused **token** is one `401` with one message, whatever failed — bad
+signature, wrong audience, replayed `jti`, expired, unknown issuer. The reason goes
+to a debug log line that never carries the token. A refused **account** is a `403`
+with a machine-readable code (`notProvisioned`, `suspended`, `disabled`), because
+the signature has already proved the caller is the issuer and the PWA renders a
+different screen for each.
+
+### Read-only, export and deletion
+
+These three behave in ways that surprise people, so they are spelled out here
+rather than left to the contract.
+
+#### Read-only retention is permanent, and the mechanism looks indirect
+
+`POST /admin/accounts/{address}/readonly` moves a mailbox into retention: still
+readable, no longer able to send. **There is no transition back in this version.**
+Not "not exposed yet" — there is no route, and a consumer that needs reversibility
+should suspend and resume instead.
+
+The mechanism is worth understanding because it looks roundabout: Moov **re-issues
+the account's app password without SMTP** and deletes the old one. The order is
+mint, store, then delete, so a failure at any step leaves the account holding a
+credential that works.
+
+It is built that way because **Mailcow's `smtp_access` flag alone does not block
+sending — F0 measured it.** With `attr:{"smtp_access":0}` saved and visible in a
+subsequent `GET`, AUTH on submission port 465 still answers `235 2.7.0
+Authentication successful`: no Postfix SQL map consults the attribute. A flag that
+is stored and displayed but not enforced is worse than no flag, and building
+retention on it would have produced a lock that does not lock.
+
+So the credential is the lock. Moov still clears `smtp_access` afterwards, as belt
+and braces and so the Mailcow UI shows the intent, and it logs a warning rather
+than failing if that write does not land — by then the account is already unable
+to send. The JMAP layer's refusal of `EmailSubmission/set` and the PWA's hidden
+compose are the *explaining* lock: the one that tells a user why.
+
+One failure mode to watch for in the log: if the old app password cannot be
+deleted, the line says so loudly and names its id. **That credential still permits
+SMTP until someone removes it in the Mailcow UI.** It is the one gap in this
+mechanism, and it is logged at `ERROR`.
+
+#### Exports are files on disk with a 7-day life
+
+An export is **one zip per account** — one `.eml` per message plus a
+`manifest.json` — written under **`exports/` inside the blob root**. It rides the
+blob root rather than taking a variable of its own because the requirements are
+identical (a writable, persistent, sizeable directory the daemon owns) and an
+operator who configured one has configured the other. It is not a blob and never
+enters the blob tree.
+
+**Budget disk for it: one export is a copy of the mailbox.** A queue of them is
+that many copies. `moov_pending_exports` is how a queue forming becomes visible.
+
+Two different clocks, and they are routinely confused:
+
+- **The download URL is valid 24 hours.** It is signed, carries no identity, needs
+  no credential, and grants exactly one zip. It is also bound to the origin it was
+  minted for, so a multi-host installation mints a different URL per host.
+- **The file lives 7 days.** After that a sweep deletes the zip and the row starts
+  answering `410`.
+
+So a consumer that stored a download URL and came back on day three has a dead URL
+and a live export, and asks for a fresh URL. One that comes back on day eight has
+neither, and asks for a new export.
+
+The runner does at most one job per tick (every 5 s), which keeps a backlog from
+starving the sweep. A daemon restart mid-export is harmless: the job row is still
+claimable, and the next daemon produces the file again from the store, which is
+the authority.
+
+#### Deletion is asynchronous, and `deleting` is not a promise of speed
+
+`DELETE` answers **202**, not 204, and the state becomes `deleting`. Synchronously:
+sessions and tokens are revoked, the Mailcow mailbox is deleted (its app passwords
+cascade with it), the row is marked. In the background, on a one-minute ticker:
+Moov's own rows and blob references.
+
+**Do not quote a deadline to a consumer, and do not alert on a `deleting` state
+that persists.** The contract promises only that a `GET` eventually answers 404,
+and it is worded that way for a measured reason: **F0 could not verify that
+Mailcow removes the maildir from disk promptly for a mailbox that has received
+mail.** The mailbox is gone from Mailcow's database and unreachable by its owner
+immediately; whether the bytes have left the disk at that moment is unverified. If
+disk reclamation matters for a compliance answer, verify it on your own
+installation rather than quoting this document.
+
+A second `DELETE` on an account already deleting is a `409`, not a second delete;
+once the purge completes it is a `404`. Blobs are not unlinked by the purge:
+dropping the message rows drops the references, and the blob GC collects what no
+longer has any — the only correct path for content-addressed storage that another
+account may share.
 
 ## Branding a hostname
 
@@ -851,7 +1172,43 @@ docker run --rm --network moov-internal curlimages/curl -s http://moovd:8080/met
 | `moov_parse_results_total{stage}` | Which stage of the S4 parse cascade produced each result. A jump in failures means a new class of message in the wild. |
 | `moov_submissions_total{result}` | Terminal outcomes of the outbox: `sent` (the SMTP 250 was read *and persisted*), `failed` (a permanent 5xx or the retry cap), `canceled` (an undo inside the window). A transient re-queue counts as none of them — the message may still go out, so counting it would make the failure rate report retries. |
 | `moov_jmap_sse_connections` | Open EventSource streams. A leak shows up here and nowhere else, since these are long-lived by design. |
+| `moov_admin_actions_total{action,result}` | Accounts-API **writes** by verb (`create`, `suspend`, `resume`, `readonly`, `export`, `delete`, …) and `ok`/`error`. Reads are not counted: `GET` writes no audit line and no sample. It carries **no actor label** — that question wants a record, not a rate, and the audit row already names the actor on every line. |
+| `moov_pending_exports` | Export jobs pending or running right now, observed by the runner at each 5 s tick. |
+| `moov_delegated_exchanges_total{result}` | Delegated token-for-session exchanges: `ok` (a session was issued), `invalid` (the **token** was refused — the single 401), `account` (the token verified but the account could not be signed in — the 403s). `invalid` is deliberately **not** split by cause; that split is precisely the oracle the contract refuses to give over HTTP, and the reason already goes to a debug log line. |
+| `moov_delegated_sessions_active` | Delegated sessions that are live: neither revoked nor past either expiry. Collected from the store at scrape time. |
 | `moov_build_info{version,commit,go}` | Always 1; the labels identify the running build. |
+
+**What is worth alerting on among the new four**, and what each one honestly
+measures:
+
+- `rate(moov_admin_actions_total{result="error"}[5m])` — a consumer's
+  integration breaking, or Mailcow refusing. Alert on the *rate*, not on any
+  single error: one `error` line is a consumer sending a bad field, which is
+  the API working.
+- `moov_pending_exports` — **the one worth a real alert.** It is a gauge, not
+  a counter, precisely because the failure mode is a queue that stops
+  draining. Exports are minutes of work, so a brief non-zero value is normal
+  and a number that stays high for an hour means the runner is stuck — which
+  a counter of started jobs could never show. Pair it with disk: every pending
+  job becomes a copy of a mailbox.
+- `rate(moov_delegated_exchanges_total{result="invalid"}[5m])` — either the
+  issuer's key rotation went wrong or someone is probing. It cannot tell you
+  which, by design; the log line can.
+- `moov_delegated_sessions_active` — capacity and curiosity, not an alert. It
+  is a gauge collected from the store rather than a counter incremented on
+  issue and decremented on logout, because sessions die three ways no code
+  path observes (the sliding expiry lapses, the absolute lifetime is reached,
+  a suspend or delete cascades them away); a counter pair would drift on the
+  first of those and never recover. **A failed collection emits no series at
+  all rather than a zero** — "no sessions" and "the database did not answer"
+  are different facts, and a dashboard that renders the second as the first
+  shows a healthy flat line straight through an outage. Alert on the series
+  being *absent*, never on it reading zero.
+
+Unlike `moov_sync_lag_seconds` — which reads from the wrong table and is not
+trustworthy (see *Troubleshooting*) — each of these four reads the thing its
+name claims. Where one is imprecise it is said above rather than left to be
+discovered.
 
 `/healthz` is a **liveness** probe: it reports that the process and its HTTP
 stack are up, and deliberately does *not* check the database. A health check
