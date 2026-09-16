@@ -85,12 +85,12 @@
 # Bound to the second IP explicitly. Caddy answers the HTTP-01 challenge on this
 # listener automatically (it is handled before any route below), and everything
 # else is redirected to HTTPS. No application traffic is served in plaintext.
-http://moov.atmosfera.cloud:80, http://mail.gruponu.com:80, http://mail.areacorp.com.ar:80, http://mail.nannini.com.ar:80 {
+http://moov.atmosfera.cloud:80, http://mail.gruponu.com:80, http://mail.areacorp.com.ar:80, http://mail.nannini.com.ar:80, http://mail.corppass.events:80 {
 	redir https://{host}{uri} permanent
 }
 
 # --- :443 — the application ---------------------------------------------------
-https://moov.atmosfera.cloud:443, https://mail.gruponu.com:443, https://mail.areacorp.com.ar:443, https://mail.nannini.com.ar:443 {
+https://moov.atmosfera.cloud:443, https://mail.gruponu.com:443, https://mail.areacorp.com.ar:443, https://mail.nannini.com.ar:443, https://mail.corppass.events:443 {
 	# --- Security headers ---
 	#
 	# Applied to every response. The set is deliberately the one that hardens a
