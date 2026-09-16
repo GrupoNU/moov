@@ -211,6 +211,23 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		deps.Quota = writerAdapter
 	}
 
+	// --- Delegated sign-in (M2, delegated.go) --------------------------------
+	// Off unless MOOV_DELEGATED_ISSUERS is set; a MALFORMED value stops the
+	// daemon here rather than serving a 404 the operator would debug from the
+	// outside. The collector is installed only when the feature is on, so a
+	// disabled installation exports no delegated series at all.
+	delegatedCfg, err := buildDelegatedConfig(st, m)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, err
+	}
+	if delegatedCfg != nil {
+		installDelegatedCollector(m, st, logger)
+		logger.Info("delegated sign-in enabled", "issuers", len(delegatedCfg.Issuers))
+	}
+	// --- end delegated sign-in ------------------------------------------------
+
 	// The uploader is the SAME adapter deps.Blobs is — one object serving
 	// download's reads and upload's writes keeps the account-scoping rule in
 	// one place. The assertion is structural: mail.Adapter implements both.
@@ -263,6 +280,10 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		// operator-granted list in each host's branding.json; a Mailcow
 		// domain-admin provider is designed to slot in as BrandAdminSources.
 		DisableBrandingAdmin: !cfg.JMAP.BrandingAdmin,
+		// M2: nil when MOOV_DELEGATED_ISSUERS is unset, which leaves every
+		// /auth/delegated/* route answering the generic 404 and the Bearer
+		// scheme refused everywhere.
+		Delegated: delegatedCfg,
 		// E6: advertised == registered, per capability (the J1 rule). All
 		// four flags key off the same probe result the registrations below
 		// key off, so they cannot disagree.

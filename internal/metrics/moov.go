@@ -103,6 +103,39 @@ type Metrics struct {
 	// jobs. It is observed by the runner at each tick rather than collected at
 	// scrape time — the runner already counts them to decide what to do next.
 	PendingExports *Gauge
+	// --- Delegated sign-in (M2)
+
+	// DelegatedExchanges counts token-for-session exchanges by result: "ok"
+	// when a session was issued, "invalid" when the TOKEN was refused (the
+	// single 401 the contract's §3.4 mandates), "account" when the token
+	// verified but the account could not be signed in (the 403s).
+	//
+	// One family with a result label, for the reason Submissions gives: the
+	// three are mutually exclusive outcomes of one decision, and the question
+	// worth alerting on — "what fraction of portal links are failing?" — is one
+	// rate() over one family.
+	//
+	// The "invalid" bucket is deliberately NOT split by WHY (bad signature,
+	// wrong audience, replayed jti, expired). That split is exactly the oracle
+	// the contract refuses to give a caller over HTTP, and a metrics endpoint
+	// is a poor place to re-open it; the reason already goes to a debug log
+	// line that never carries the token.
+	//
+	// Unlabeled by issuer or host for the same cardinality reason Submissions
+	// is unlabeled by account: an installation may configure many, and nobody
+	// alerts per issuer.
+	DelegatedExchanges *Counter
+
+	// DelegatedSessionsActive is how many delegated sessions are live right
+	// now — neither revoked nor past either of their two expiries.
+	//
+	// A gauge collected at scrape time from the store, not a counter
+	// incremented on issue and decremented on logout. Sessions die three ways
+	// that no code path observes: the sliding expiry lapses, the absolute
+	// lifetime is reached, and a suspend or delete cascades them away. A
+	// counter pair would drift from the truth on the first of those and never
+	// recover; the store already answers the question exactly.
+	DelegatedSessionsActive *Gauge
 
 	// --- Triage (L3 epic E4)
 
@@ -215,6 +248,10 @@ func NewWithRegistry(r *Registry) *Metrics {
 			"Accounts-API administrative writes by action and result (ok, error)."),
 		PendingExports: r.Gauge("moov_pending_exports",
 			"Export jobs currently pending or running."),
+		DelegatedExchanges: r.Counter("moov_delegated_exchanges_total",
+			"Delegated sign-in exchanges by result (ok, invalid, account)."),
+		DelegatedSessionsActive: r.Gauge("moov_delegated_sessions_active",
+			"Delegated sessions that are currently live."),
 
 		SnoozesWoken: r.Counter("moov_snoozes_woken_total",
 			"Snoozed messages returned to their origin folder by the waker."),
@@ -351,6 +388,35 @@ func (m *Metrics) IncAdminAction(action, result string) {
 // It satisfies accounts.PendingGauge by construction, the same way.
 func (m *Metrics) SetPendingExports(n int) {
 	m.PendingExports.Set(nil, float64(n))
+}
+
+// The delegated-exchange result labels (M2).
+//
+// These three strings are the SAME vocabulary internal/jmaphttp declares as
+// DelegatedExchangeOK / …Invalid / …Account, which that package cannot import
+// from here (it must not depend on the exporter — see DelegatedObserver). The
+// agreement between the two is pinned by a test in cmd/moovd, exactly as the
+// submission constants are, because nothing else checks it.
+const (
+	// DelegatedOK is an exchange that issued a session.
+	DelegatedOK = "ok"
+	// DelegatedInvalid is a refused token — the contract's single 401.
+	DelegatedInvalid = "invalid"
+	// DelegatedAccount is a verified token whose account cannot sign in.
+	DelegatedAccount = "account"
+)
+
+// IncDelegatedExchange counts one delegated sign-in exchange outcome (M2).
+func (m *Metrics) IncDelegatedExchange(result string) {
+	m.DelegatedExchanges.Inc(Labels{"result": result})
+}
+
+// SetDelegatedSessionsActive records how many delegated sessions are live.
+//
+// Set from a scrape-time collector rather than at issue/logout; see the field
+// for why a counter pair would drift.
+func (m *Metrics) SetDelegatedSessionsActive(n int64) {
+	m.DelegatedSessionsActive.Set(nil, float64(n))
 }
 
 // IncSievePush counts one managed-script push (E6). result: "ok"/"error".

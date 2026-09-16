@@ -156,6 +156,49 @@ export function encodeBasicCredentials({ username, password }: BasicCredentials)
 }
 
 /**
+ * A delegated session token (epic M2, contract §3.4).
+ *
+ * The opaque `mds1_…` string the exchange returned, sent as
+ * `Authorization: Bearer`. It is a credential like the Basic pair and travels
+ * the same way — in the header, never in a query string: the token-in-query
+ * set stays exactly the two scoped push/blob tokens `/jmap/token` mints, and
+ * the server refuses a session token there by construction.
+ */
+export interface BearerCredential {
+  readonly token: string;
+}
+
+/**
+ * What a {@link JmapClient} authenticates with.
+ *
+ * A union rather than a single "authorization string" parameter, so the client
+ * can be constructed from either scheme without its callers re-deriving a
+ * header — and so adding a third scheme is a compile error at every site that
+ * must handle one, rather than a runtime surprise.
+ */
+export type AuthCredential = BasicCredentials | BearerCredential;
+
+/** True when a credential is a delegated session token rather than a password. */
+export function isBearerCredential(
+  credential: AuthCredential,
+): credential is BearerCredential {
+  return "token" in credential;
+}
+
+/**
+ * The `Authorization` header value for either scheme.
+ *
+ * One function, so the two or three call sites that must build the header
+ * themselves (the XHR upload, which needs progress events; the one aux GET
+ * that is not a JMAP method) cannot drift from what the client sends.
+ */
+export function authorizationHeader(credential: AuthCredential): string {
+  return isBearerCredential(credential)
+    ? `Bearer ${credential.token}`
+    : encodeBasicCredentials(credential);
+}
+
+/**
  * Reduces a server-advertised URL to a same-origin path.
  *
  * # Why the Session's own URLs cannot be used verbatim
@@ -205,6 +248,28 @@ export interface JmapClientOptions {
    */
   readonly baseUrl?: string;
   readonly fetchImpl?: typeof fetch;
+  /**
+   * Called once for every response that is a 401 (M2, contract §3.7).
+   *
+   * # Why the client and not each call site
+   *
+   * "On 401 from ANY route, drop the session and show the right screen" is a
+   * property of the SESSION, not of whichever screen happened to make the
+   * request. Wiring it per call site would mean auditing every `catch` in the
+   * app — there are dozens — and the first one forgotten is a user left
+   * clicking a dead mailbox with an error toast that never explains why.
+   *
+   * It fires on the response, BEFORE the error is classified and thrown, so
+   * the existing per-call error handling is unchanged: the caller still sees
+   * its `ApiError` and still renders whatever it renders. The session teardown
+   * simply happens alongside it, and the auth state change re-renders the tree
+   * out from under the stale screen.
+   *
+   * Deliberately NOT called for a 403: `not-provisioned` is a state with its
+   * own screen and its own remedy, and tearing the session down would replace
+   * that explanation with a less specific one.
+   */
+  readonly onUnauthorized?: () => void;
 }
 
 /**
@@ -217,12 +282,14 @@ export class JmapClient {
   private readonly authorization: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly onUnauthorized: (() => void) | undefined;
   private session: JmapSession | undefined;
 
-  constructor(credentials: BasicCredentials, options: JmapClientOptions = {}) {
-    this.authorization = encodeBasicCredentials(credentials);
+  constructor(credentials: AuthCredential, options: JmapClientOptions = {}) {
+    this.authorization = authorizationHeader(credentials);
     this.baseUrl = (options.baseUrl ?? "").replace(/\/+$/, "");
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.onUnauthorized = options.onUnauthorized;
   }
 
   /**
@@ -458,6 +525,12 @@ export class JmapClient {
     }
 
     if (!response.ok) {
+      /*
+       * The 401 hook runs BEFORE the throw, so the session teardown happens
+       * even for a caller that swallows the error — and the caller still gets
+       * its ApiError, unchanged.
+       */
+      if (response.status === 401) this.onUnauthorized?.();
       throw await apiErrorFromResponse(response);
     }
     return response;
@@ -471,7 +544,7 @@ export class JmapClient {
  * as a method so the login screen depends on one narrow thing it can stub.
  */
 export async function authenticate(
-  credentials: BasicCredentials,
+  credentials: AuthCredential,
   options: JmapClientOptions = {},
   signal?: AbortSignal,
 ): Promise<{ client: JmapClient; session: JmapSession }> {

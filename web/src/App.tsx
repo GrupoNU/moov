@@ -1,14 +1,14 @@
 import { useEffect, useMemo } from "react";
 
-import { JmapClient, type BasicCredentials } from "./api/jmap";
+import { JmapClient } from "./api/jmap";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
-import { loadSession } from "./auth/session";
 import { BrandingProvider } from "./branding/BrandingProvider";
 import { I18nProvider, useTranslation } from "./i18n/I18nProvider";
 import { PrefsProvider, usePrefs } from "./mail/PrefsProvider";
 import { prefsMigrationPatch, writePrefsMirrors } from "./mail/prefsMirrors";
 import { OfflineProvider } from "./offline/OfflineProvider";
 import { RouterProvider } from "./router/RouterProvider";
+import { DelegatedLinkScreen } from "./screens/login/DelegatedLinkScreen";
 import { LoginScreen } from "./screens/login/LoginScreen";
 import { MailScreen } from "./screens/mail/MailScreen";
 import { applyTheme, loadThemePreference, saveThemePreference } from "./theme/theme";
@@ -60,6 +60,15 @@ function Router(): React.JSX.Element {
       // screens mid-submit would lose what the user typed.
       return <LoginScreen />;
 
+    case "link-dead":
+      /*
+       * M2 (contract §3.7): a delegated link that cannot be used NEVER falls
+       * back to the login form. The user has no password to type — offering
+       * the form would invite them to fail at something impossible — so the
+       * only screen that helps says "open the mail again from the portal".
+       */
+      return <DelegatedLinkScreen reason={state.reason} />;
+
     case "authenticated":
       return (
         <SignedIn>
@@ -91,15 +100,22 @@ function Router(): React.JSX.Element {
  * comment says the construction rule exists to preserve.
  */
 function SignedIn({ children }: { readonly children: React.ReactNode }): React.JSX.Element {
-  const { state } = useAuth();
+  const { state, credential, onUnauthorized } = useAuth();
   const session = state.status === "authenticated" ? state.session : undefined;
   const accountId = session?.primaryAccounts["urn:ietf:params:jmap:mail"] ?? "";
 
-  const client = useMemo<JmapClient | undefined>(() => {
-    if (state.status !== "authenticated") return undefined;
-    const stored: BasicCredentials | undefined = loadSession();
-    return stored === undefined ? undefined : new JmapClient(stored);
-  }, [state.status]);
+  /*
+   * M2: the credential comes from the auth context rather than from storage
+   * directly. It is the SAME value the HTTP layer sends — a Basic pair or a
+   * delegated session token — so "which credential is this request using"
+   * stays answerable by construction while ceasing to assume there is a
+   * password behind it.
+   */
+  const client = useMemo<JmapClient | undefined>(
+    () =>
+      credential === undefined ? undefined : new JmapClient(credential, { onUnauthorized }),
+    [credential, onUnauthorized],
+  );
 
   /*
    * E9: the offline layer wraps the preferences rather than the other way

@@ -20,11 +20,22 @@ func identityFromContext(ctx context.Context) (*Identity, bool) {
 
 // requireAuth gates a route behind the J-A1 authentication flow and stores
 // the resulting identity in the request context.
+//
+// The scheme selects the path: `Bearer` is a delegated session
+// (delegated.go, epic M2), everything else is the Basic flow. Both resolve
+// to the same Identity through the same per-request store consultation, so a
+// handler below this line cannot tell — and must not care — which one ran.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := s.auth.Authenticate(w, r)
+		var id *Identity
+		var ok bool
+		if _, isBearer := bearerToken(r); isBearer {
+			id, ok = s.authenticateBearer(w, r)
+		} else {
+			id, ok = s.auth.Authenticate(w, r)
+		}
 		if !ok {
-			return // Authenticate wrote the response
+			return // the authenticator wrote the response
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, id)))
 	}

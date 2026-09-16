@@ -194,6 +194,13 @@ type Config struct {
 	// /admin/accounts route answers the generic 404 — never a 501, which
 	// would tell a prober the feature is merely off (contract §2.1).
 	Accounts *AccountsAPIConfig
+	// Delegated enables delegated sign-in (epic M2, delegated.go): the
+	// /auth/delegated/* routes and the `Authorization: Bearer` scheme. nil —
+	// the default, and what MOOV_DELEGATED_ISSUERS unset produces — leaves
+	// every one of those routes answering the generic 404 and Bearer refused
+	// everywhere, so an installation that never configures an issuer has no
+	// second authentication path at all.
+	Delegated *DelegatedConfig
 }
 
 // AccountsAPIConfig is the accounts API's dependency set (contract §2).
@@ -297,6 +304,8 @@ type Server struct {
 	// generic 404 when the feature is off, so the routes always exist and
 	// never reveal whether they are configured (admin_accounts.go).
 	accountsAPI *accountsAPI
+	// Delegated sign-in (M2). nil when not configured. See delegated.go.
+	delegated *delegatedAPI
 }
 
 // New builds a Server over an Authenticator.
@@ -353,6 +362,18 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 
 	brandingStore := newBrandingStore(cfg.BrandingDir, cfg.Logger, nil)
 
+	// Delegated sign-in is constructed only when configured, and a bad
+	// configuration is a startup failure — unlike branding, there is no safe
+	// fallback for "the issuer list is wrong": serving with it would either
+	// refuse every portal user or, worse, trust a key set nobody vetted.
+	var delegated *delegatedAPI
+	if cfg.Delegated != nil {
+		delegated, err = newDelegatedAPI(cfg.Delegated, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &Server{
 		cfg:              cfg,
 		auth:             auth,
@@ -373,6 +394,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		imgproxy:         imgproxy,
 		tokens:           tokens,
 		accountsAPI:      newAccountsAPI(cfg.Accounts),
+		delegated:        delegated,
 	}, nil
 }
 

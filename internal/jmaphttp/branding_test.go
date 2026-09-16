@@ -176,6 +176,14 @@ func TestPublicRouteSetIsExactlyBranding(t *testing.T) {
 		PathBrandingIcon:        true,
 		PathImageProxy:          true,
 		PathAdminExportDownload: true,
+		// The four delegated sign-in routes (M2) authenticate THEMSELVES —
+		// an issuer-signed JWT, or the bearer session they act on — and
+		// answer 404 on a host with no issuer before any credential is read.
+		// delegated_test.go proves each refuses what it must.
+		PathDelegatedExchange: true,
+		PathDelegatedRenew:    true,
+		PathDelegatedLogout:   true,
+		PathDelegatedRevoke:   true,
 	}
 	got := make(map[string]bool)
 	for _, rt := range srv.routes() {

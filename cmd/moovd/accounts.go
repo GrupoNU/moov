@@ -278,7 +278,21 @@ func newServerRevoker(auth *jmaphttp.Authenticator, st *store.Store) (accounts.S
 func (r serverRevoker) RevokeAccount(ctx context.Context, accountID int64) error {
 	if r.server != nil {
 		if srv := r.server.Load(); srv != nil {
-			srv.InvalidateAccountTokens(accountID)
+			// M1×M2 seam: this revokes the scoped push/blob tokens AND every
+			// delegated session of the account. It is safe when delegated
+			// sign-in is off — it then only does the token half — so the call
+			// is unconditional and suspend cannot silently leave a portal
+			// session alive on an installation that configured an issuer.
+			//
+			// Its error is deliberately not fatal to the revocation: the token
+			// caches are already evicted above it, the credential cache is
+			// evicted below, and a suspend that fails because ONE of three
+			// eviction paths hit a database hiccup would leave the caller
+			// believing nothing was revoked when most of it was. The error is
+			// returned so the caller can log and retry.
+			if err := srv.RevokeDelegatedSessions(ctx, accountID); err != nil {
+				return fmt.Errorf("revoking delegated sessions: %w", err)
+			}
 		}
 	}
 	if r.auth == nil || r.store == nil {

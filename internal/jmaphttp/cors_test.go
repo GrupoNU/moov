@@ -64,6 +64,14 @@ var corsRoutes = []struct{ method, path string }{
 	// link rather than by fetch — but it preflights like the rest, for the
 	// same reason the image proxy does.
 	{http.MethodGet, "/admin/exports/exp_abc"},
+	// Delegated sign-in (M2, delegated.go). The exchange is the FIRST call
+	// the PWA makes after the portal redirect, before it holds any
+	// credential, so its preflight must succeed on a cross-origin dev host
+	// like every other route here.
+	{http.MethodPost, "/auth/delegated/exchange"},
+	{http.MethodPost, "/auth/delegated/renew"},
+	{http.MethodPost, "/auth/delegated/logout"},
+	{http.MethodPost, "/auth/delegated/revoke"},
 }
 
 func TestPreflightCoversEveryRoute(t *testing.T) {

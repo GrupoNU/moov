@@ -156,6 +156,19 @@ func (s *Server) routes() []route {
 		// 404. It is NOT in the service class: a key cannot open it and it
 		// cannot manage anything.
 		{method: http.MethodGet, pattern: PathAdminExportDownload, handler: s.handleExportDownload, public: true},
+
+		// --- Delegated sign-in (M2, delegated.go) -------------------------------
+		// Public in the table's sense — each route authenticates ITSELF: the
+		// exchange and revoke verify an issuer-signed JWT, renew and logout
+		// resolve the bearer session they act on. They cannot sit behind the
+		// Basic gate: a portal user has no password, and a host with no issuer
+		// configured must answer the generic 404 before any credential is
+		// examined. The public-set pin in branding_test.go names all four.
+		{method: http.MethodPost, pattern: PathDelegatedExchange, handler: s.handleDelegatedExchange, public: true},
+		{method: http.MethodPost, pattern: PathDelegatedRenew, handler: s.handleDelegatedRenew, public: true},
+		{method: http.MethodPost, pattern: PathDelegatedLogout, handler: s.handleDelegatedLogout, public: true},
+		{method: http.MethodPost, pattern: PathDelegatedRevoke, handler: s.handleDelegatedRevoke, public: true},
+		// --- end delegated sign-in ------------------------------------------------
 	}
 }
 

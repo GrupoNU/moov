@@ -319,6 +319,44 @@ func TestSubmissionCounters(t *testing.T) {
 	}
 }
 
+// The delegated sign-in metrics (M2). Same shape as the submission counters
+// and for the same reason: one family with a result label, so "what fraction
+// of portal links fail" is one rate() rather than a join.
+func TestDelegatedMetrics(t *testing.T) {
+	m := metrics.New()
+	m.IncDelegatedExchange(metrics.DelegatedOK)
+	m.IncDelegatedExchange(metrics.DelegatedOK)
+	m.IncDelegatedExchange(metrics.DelegatedInvalid)
+	m.IncDelegatedExchange(metrics.DelegatedAccount)
+	m.SetDelegatedSessionsActive(7)
+
+	got := render(t, m.Registry())
+
+	for _, want := range []string{
+		"# TYPE moov_delegated_exchanges_total counter",
+		`moov_delegated_exchanges_total{result="ok"} 2`,
+		`moov_delegated_exchanges_total{result="invalid"} 1`,
+		`moov_delegated_exchanges_total{result="account"} 1`,
+		"# TYPE moov_delegated_sessions_active gauge",
+		"moov_delegated_sessions_active 7",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("exposition is missing %q; got:\n%s", want, got)
+		}
+	}
+
+	if n := strings.Count(got, "# TYPE moov_delegated_exchanges_total"); n != 1 {
+		t.Errorf("want exactly one delegated exchange family, got %d:\n%s", n, got)
+	}
+
+	// The refusal reason must never become a label: that is the oracle the
+	// contract refuses to give over HTTP, and a metrics endpoint is a worse
+	// place to re-open it than a debug log.
+	if strings.Contains(got, "moov_delegated_exchanges_total{reason=") {
+		t.Errorf("the refusal reason leaked into a label:\n%s", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
