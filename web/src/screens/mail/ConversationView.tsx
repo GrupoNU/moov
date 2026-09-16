@@ -86,6 +86,8 @@ export interface ConversationViewProps {
   /** Per-message composition — the caller supplies the message to act on. */
   readonly onReply: (email: Email, all: boolean) => void;
   readonly onForward: (email: Email) => void;
+  /** M1: read-only retention — the per-message reply verbs are not drawn. */
+  readonly readOnly?: boolean | undefined;
   /** Marks the given messages read (canon §2.1: only what was expanded). */
   readonly onMarkRead: (ids: readonly string[]) => void;
   /**
@@ -207,6 +209,7 @@ export function ConversationView({
   autoLoadImages,
   onReply,
   onForward,
+  readOnly = false,
   onMarkRead,
   onControls,
   ownAddresses,
@@ -552,6 +555,7 @@ export function ConversationView({
           onForward={() => {
             onForward(message);
           }}
+          readOnly={readOnly}
           signImageUrls={signImageUrls}
           /*
            * E10 (canon §4.1.15): the folder-level rule (Junk, the prop) AND

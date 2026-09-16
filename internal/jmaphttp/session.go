@@ -46,6 +46,14 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 //     flag as "true if the entire account is read-only", which stopped being
 //     the truth the moment the write core landed — this is the "myRights e
 //     isReadOnly pasan a decir la verdad nueva" flip of L2-jmap-write §3.
+//
+//     It flips BACK to true for an account the accounts API moved into its
+//     read-only retention phase (M1, contract §2.4). That is not a second
+//     meaning for the flag: such an account's credential was re-issued
+//     without SMTP and its submissions are refused, so "the entire account is
+//     read-only" is simply true again. Moov's vendor extension below carries
+//     the same fact under a name the PWA can act on without inferring
+//     product behaviour from a standards flag.
 func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 	capabilities := map[string]any{
 		jmap.CapCore: s.cfg.Limits.CoreCapability(),
@@ -83,7 +91,17 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		// ignores three extra keys, which is exactly what §2's extensibility
 		// contract asks of it.
 		capabilities[jmap.CapPrefs] = prefsCapability()
-		accountCapabilities[jmap.CapPrefs] = prefsAccountCapability()
+		prefsAcct := prefsAccountCapability()
+		// The retention lock, under a name the PWA can act on (M1, contract
+		// §2.4). isReadOnly above says the same thing in RFC 8620's own
+		// vocabulary; this entry exists because the client's behaviour —
+		// hiding Redactar, reply and forward, and explaining why in the
+		// reader — is a PRODUCT decision, and a product decision should not be
+		// inferred from a standards flag whose meaning may be widened later.
+		// The two are set from one source (id.Account.ReadOnly), so they
+		// cannot disagree.
+		prefsAcct["readOnly"] = id.Account.ReadOnly
+		accountCapabilities[jmap.CapPrefs] = prefsAcct
 		primaryAccounts[jmap.CapPrefs] = id.AccountID
 	}
 	if s.cfg.Triage {
@@ -127,9 +145,12 @@ func (s *Server) sessionObject(base string, id *Identity) map[string]any {
 		"capabilities": capabilities,
 		"accounts": map[string]any{
 			id.AccountID: map[string]any{
-				"name":                id.Account.Email,
-				"isPersonal":          true,
-				"isReadOnly":          false,
+				"name":       id.Account.Email,
+				"isPersonal": true,
+				// True exactly when the accounts API locked the mailbox into
+				// its retention phase (M1). RFC 8620 §2's own definition, used
+				// for what it means.
+				"isReadOnly":          id.Account.ReadOnly,
 				"accountCapabilities": accountCapabilities,
 			},
 		},

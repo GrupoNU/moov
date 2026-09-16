@@ -1158,6 +1158,16 @@ export const en = {
     `${brand} shows it because you asked for it, and keeps its images and links inert. If it does not belong here, mark it as not spam.`,
   "reader.spamImagesBlocked":
     "Images are never loaded for a message in Spam.",
+
+  /*
+   * M1: the read-only retention phase (docs/specs/L2-accounts-api-contract.md
+   * §2.4). The mailbox can be read and exported but can no longer send: its
+   * credential was re-issued without SMTP. The reader says so where the reply
+   * verbs used to be, so the absence is explained rather than merely noticed.
+   */
+  "reader.readOnlyNotice": "Esta casilla está en modo de solo lectura",
+  "reader.readOnlyNoticeBody":
+    "You can read, search and export its mail. Sending, replying and forwarding are turned off.",
   // --- E10: suspicious mail outside Spam (canon §4.1.15) ---
   "reader.suspiciousBanner": "This message looks like spam",
   "reader.suspiciousBannerBody":
@@ -2598,6 +2608,11 @@ export const es: Strings = {
     `${brand} lo muestra porque lo pediste, y mantiene sus imágenes y enlaces inertes. Si no corresponde que esté acá, marcalo como que no es spam.`,
   "reader.spamImagesBlocked":
     "Las imágenes nunca se cargan en un mensaje que está en Spam.",
+
+  // M1: la fase de solo lectura (contrato §2.4).
+  "reader.readOnlyNotice": "Esta casilla está en modo de solo lectura",
+  "reader.readOnlyNoticeBody":
+    "Podés leer, buscar y exportar su correo. Enviar, responder y reenviar están desactivados.",
   // --- E10: correo sospechoso fuera de Spam (canon §4.1.15) ---
   "reader.suspiciousBanner": "Este mensaje parece spam",
   "reader.suspiciousBannerBody":

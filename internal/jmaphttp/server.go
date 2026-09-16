@@ -493,6 +493,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	ctx := jmap.WithCaller(r.Context(), jmap.Caller{
 		AccountID: id.Account.ID,
 		Email:     id.Account.Email,
+		// The retention lock travels with the caller (M1, contract §2.4), so
+		// a method handler never has to read the account row again to learn
+		// whether this mailbox may still send.
+		ReadOnly: id.Account.ReadOnly,
 	})
 
 	resp, rerr := s.engine.Process(ctx, body, s.sessionState(r, id))

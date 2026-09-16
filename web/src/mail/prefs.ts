@@ -670,6 +670,36 @@ export function sessionHasPrefs(
   return account !== undefined && CAP_PREFS in account.accountCapabilities;
 }
 
+/**
+ * True when this account is in the read-only retention phase (M1, contract
+ * §2.4): it can be read, searched and exported, but can no longer send.
+ *
+ * TWO sources, and either one is enough. RFC 8620 §2's own `isReadOnly` says
+ * "the entire account is read-only", which is exactly what this phase is; the
+ * `readOnly` entry under the vendor preference capability says the same thing
+ * under a name the product owns. Reading both is what lets the PWA behave
+ * correctly against a server that carries only one of them — and, more to the
+ * point, keeps the UI on the SAFE side of a disagreement: if either says the
+ * mailbox cannot send, the compose verbs stay hidden. Hiding a verb that would
+ * have worked is a inconvenience; showing one that cannot is a message the
+ * user writes and loses.
+ */
+export function sessionIsReadOnly(
+  session: JmapSession | undefined,
+  accountId: string | undefined,
+): boolean {
+  if (session === undefined || accountId === undefined) return false;
+  const account = session.accounts[accountId];
+  if (account === undefined) return false;
+  if (account.isReadOnly) return true;
+  const prefs = account.accountCapabilities[CAP_PREFS];
+  return (
+    typeof prefs === "object" &&
+    prefs !== null &&
+    (prefs as Record<string, unknown>)["readOnly"] === true
+  );
+}
+
 // ---------------------------------------------------------------------------
 // the two calls
 // ---------------------------------------------------------------------------
