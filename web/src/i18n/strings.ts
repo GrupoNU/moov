@@ -93,6 +93,32 @@ export const en = {
   "error.notProvisioned.body": (brand: BrandName): string =>
     `Your password was correct, but this mailbox has not been added to ${brand}. An administrator has to enable it before you can sign in.`,
 
+  // --- delegated sign-in (M2, contract §3.7) ---
+  //
+  // Every one of these ends with the same instruction, and it is the only one
+  // that works: go back to the portal. A user who arrived through a delegated
+  // link has no password — the mailbox was provisioned with a random one that
+  // was discarded — so "try signing in again" would be advice they cannot
+  // follow.
+  //
+  // The expired copy covers EVERY token-level refusal, because the server
+  // gives exactly one 401 for all of them by design (§3.4): a bad signature, a
+  // wrong audience, a replayed token and an expired one are one message here
+  // for the same reason they are one message there.
+  "delegated.expired.title": "This link has expired or is not valid",
+  "delegated.expired.body":
+    "Open the mail again from the portal to get a fresh link. These links are short-lived on purpose and can only be used once.",
+
+  "delegated.unusable.title": "This mailbox cannot be opened right now",
+  "delegated.unusable.body":
+    "The link was valid, but this mailbox is suspended or disabled. An administrator has to re-enable it.",
+
+  "delegated.unavailable.title": "Could not open the mailbox",
+  "delegated.unavailable.body":
+    "Nothing is wrong with your link — the server did not answer. Try opening it again from the portal in a moment.",
+  "delegated.unavailable.bodyWithSeconds": (seconds: number): string =>
+    `Nothing is wrong with your link — the server did not answer. Try again in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
+
   "error.rateLimited.title": "Too many attempts",
   "error.rateLimited.body": "Wait a moment before trying again.",
   "error.rateLimited.bodyWithSeconds": (seconds: number): string =>
@@ -1755,6 +1781,20 @@ export const es: Strings = {
     `Este buzón todavía no está habilitado en ${brand}`,
   "error.notProvisioned.body": (brand: BrandName): string =>
     `Tu contraseña era correcta, pero este buzón no fue dado de alta en ${brand}. Un administrador tiene que habilitarlo antes de que puedas entrar.`,
+
+  "delegated.expired.title": "El enlace expiró o no es válido",
+  "delegated.expired.body":
+    "Volvé a abrir el correo desde el portal para obtener un enlace nuevo. Estos enlaces duran poco a propósito y se usan una sola vez.",
+
+  "delegated.unusable.title": "Este buzón no se puede abrir en este momento",
+  "delegated.unusable.body":
+    "El enlace era válido, pero este buzón está suspendido o deshabilitado. Un administrador tiene que volver a habilitarlo.",
+
+  "delegated.unavailable.title": "No se pudo abrir el buzón",
+  "delegated.unavailable.body":
+    "Tu enlace está bien: el servidor no respondió. Probá volver a abrirlo desde el portal en un momento.",
+  "delegated.unavailable.bodyWithSeconds": (seconds: number): string =>
+    `Tu enlace está bien: el servidor no respondió. Probá de nuevo en unos ${seconds} segundo${seconds === 1 ? "" : "s"}.`,
 
   "error.rateLimited.title": "Demasiados intentos",
   "error.rateLimited.body": "Esperá un momento antes de volver a intentar.",

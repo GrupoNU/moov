@@ -84,6 +84,14 @@ const NOT_APP_CODE = [
    * would be a bug. Same category as the corpus above.
    */
   "test/fakeIndexedDB.ts",
+  /*
+   * M2's fetch stubs. Also a fixture by construction — it exists so that every
+   * delegated sign-in test records a request URL the SAME way, which is what
+   * makes "the token is not in this URL" trustworthy across three test files.
+   * A per-file copy would be three chances for one of them to stringify a
+   * Request as "[object Object]" and pass for the wrong reason.
+   */
+  "test/delegatedFetch.ts",
 ];
 
 /** Extensions a bare specifier may resolve to, in the order Vite tries them. */

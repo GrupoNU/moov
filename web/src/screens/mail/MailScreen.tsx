@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { JmapClient, withAccessToken, type BasicCredentials } from "../../api/jmap";
+import { JmapClient, withAccessToken } from "../../api/jmap";
 import { TokenManager } from "../../api/tokens";
 import { connectPush } from "../../mail/push";
 import { useAuth } from "../../auth/AuthProvider";
-import { loadSession } from "../../auth/session";
 import { useBranding } from "../../branding/BrandingProvider";
 import { BrandMark } from "../../components/BrandMark";
 import { useConfirm } from "../../components/useConfirm";
@@ -119,7 +118,7 @@ import { makeChip } from "../../mail/addresses";
 import { groupByThread, type ThreadGroup } from "../../mail/threading";
 import { KEYWORD_FLAGGED, KEYWORD_SEEN, type Email, type Mailbox, type Thread } from "../../mail/types";
 import { fetchIdentities, normalizeIdentityName, type Identity } from "../../mail/write";
-import { encodeBasicCredentials } from "../../api/jmap";
+import { authorizationHeader } from "../../api/jmap";
 import { useRouter } from "../../router/RouterProvider";
 import {
   DEFAULT_ROUTE,
@@ -216,7 +215,7 @@ import styles from "./MailScreen.module.css";
 const SNIPPET_BATCH = 50;
 
 export function MailScreen(): React.JSX.Element {
-  const { state, signOut } = useAuth();
+  const { state, signOut, credential, onUnauthorized } = useAuth();
   const branding = useBranding();
   const { t, format, locale } = useTranslation();
   const { route, navigate, replace } = useRouter();
@@ -242,15 +241,17 @@ export function MailScreen(): React.JSX.Element {
    * sign-in — it is not re-prompted.
    */
   const client = useMemo<JmapClient | undefined>(() => {
-    if (state.status !== "authenticated") return undefined;
-    const stored: BasicCredentials | undefined = loadSession();
-    if (stored === undefined) return undefined;
-    const built = new JmapClient(stored);
+    // M2: either scheme. The credential is the auth context's, which is what
+    // the HTTP layer sends — a Basic pair or a delegated session token.
+    if (credential === undefined) return undefined;
+    // M2 §3.7: a 401 from ANY route tears the session down here rather than in
+    // each of the dozens of call sites below, so none of them can forget.
+    const built = new JmapClient(credential, { onUnauthorized });
     // Seed the session so apiUrl/downloadUrl come from the server's own
     // templates rather than from a guess.
     void built.fetchSession().catch(() => undefined);
     return built;
-  }, [state.status]);
+  }, [credential, onUnauthorized]);
 
   /*
    * The Authorization header value, for the ONE request the JmapClient cannot
@@ -258,11 +259,10 @@ export function MailScreen(): React.JSX.Element {
    * its progress events (see `uploadBlob`). It is derived from the same stored
    * credential the client uses and never leaves this component tree.
    */
-  const authorization = useMemo<string>(() => {
-    if (state.status !== "authenticated") return "";
-    const stored: BasicCredentials | undefined = loadSession();
-    return stored === undefined ? "" : encodeBasicCredentials(stored);
-  }, [state.status]);
+  const authorization = useMemo<string>(
+    () => (credential === undefined ? "" : authorizationHeader(credential)),
+    [credential],
+  );
 
   /**
    * An authenticated GET, for the ONE aux route that is neither a JMAP method
