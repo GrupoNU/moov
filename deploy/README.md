@@ -1246,10 +1246,25 @@ anywhere.
 
 ### Upgrading
 
+The pilot host is **not** a git checkout — the tree is copied there — so an
+upgrade is: back up the running tree, upload the new one beside it, restore
+`deploy/.env` into it, build, then swap and start.
+
 ```bash
-cd /opt/moov/src && git pull
-cd deploy && docker compose up -d --build
+# On the host, with the new tree already uploaded to /opt/moov/src.new:
+cp -a /opt/moov/src /opt/moov/src.pre-<name>        # rollback point
+cp /opt/moov/src/deploy/.env /opt/moov/src.new/deploy/.env
+cd /opt/moov/src.new/deploy && docker compose build moovd
+mv /opt/moov/src /opt/moov/src.old && mv /opt/moov/src.new /opt/moov/src
+cd /opt/moov/src/deploy && docker compose up -d moovd
 ```
+
+The PWA is a bind mount of `web/dist`, so a web change additionally needs
+`docker compose up -d --force-recreate caddy-public` — the container holds the
+old directory's inode otherwise and keeps serving the previous bundle.
+
+Rollback is the same swap in reverse: `mv` the backup back into `src` and
+`docker compose up -d`.
 
 Migrations apply on start. `moovd` drains in-flight requests within
 `MOOV_SHUTDOWN_TIMEOUT` (30 s default) before exiting.
