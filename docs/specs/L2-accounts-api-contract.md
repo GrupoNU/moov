@@ -56,8 +56,9 @@ Content-Type: application/problem+json
 {"type":"about:blank","status":404,"detail":"not found"}
 ```
 
-That covers: the accounts API is off on this installation (`MOOV_ACCOUNTS_API` unset or no
-Mailcow write key), no `Authorization` header, a malformed or revoked key, a key without the
+That covers: the accounts API is off on this installation (no Mailcow write key — see the
+erratum in §9; the draft named a `MOOV_ACCOUNTS_API` variable that was never built), no
+`Authorization` header, a malformed or revoked key, a key without the
 needed scope, an address whose domain is not the key's domain, and an address that does not
 exist. A consumer therefore cannot distinguish "wrong domain" from "no such mailbox" — that is
 the point (same policy as the brand-admin API, where a non-admin gets the generic 404).
@@ -533,6 +534,14 @@ budget in §2.2 is Moov's.
 
 - 2026-09-15 — `1.0.0-draft.1` published. Consumers may build against it; breaking changes
   before M1/M2 ship will bump the draft number and be listed here with a migration note.
+- 2026-09-16 — **Erratum, no wire change.** §2.1 named `MOOV_ACCOUNTS_API` as a switch for
+  the feature. **That variable was never built and does not exist.** The accounts API's only
+  switch is the Mailcow write key (`MOOV_MAILCOW_WRITE_KEY` or `MOOV_MAILCOW_WRITE_KEY_FILE`):
+  absent, `buildAccountsAPI` returns nothing and every route answers the generic 404 —
+  exactly the behaviour §2.1 describes, reached by one condition instead of two. Nothing a
+  consumer sees changes; the erratum is recorded rather than edited away because the draft
+  was published and built against. Found by the operator-documentation pass, which checked
+  every variable it was about to document against the source.
 - 2026-09-15 (later) — F0 answers folded in (§7). **No wire change**, draft number kept:
   read-only is enforced by re-issuing the app password without SMTP (§2.4), `sendPerDay`
   confirmed on Mailcow (§2.5), `deleting` not promised instantaneous (§2.4). The mailbox

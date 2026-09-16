@@ -95,10 +95,12 @@ const headerRequestID = "X-Request-Id"
 
 // accountsAPI is the server-side state of the routes.
 type accountsAPI struct {
-	// enabled is false when the operator did not turn the feature on
-	// (MOOV_ACCOUNTS_API) or configured no Mailcow write key. Every route
-	// then answers the generic 404 - not a 501, which would tell a prober
-	// that the feature exists and is merely off.
+	// enabled is false when the operator configured no Mailcow write key
+	// (MOOV_MAILCOW_WRITE_KEY or _FILE), which is the feature's ONLY switch:
+	// the API cannot do anything without that credential, so there is no
+	// second flag to disagree with it. Every route then answers the generic
+	// 404 - not a 501, which would tell a prober that the feature exists and
+	// is merely off.
 	enabled bool
 
 	svc     *accounts.Service
