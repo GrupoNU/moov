@@ -99,10 +99,10 @@ func (z *zipf) sample(r *rand.Rand) int {
 // ---------------------------------------------------------------------------
 
 type account struct {
-	id       int
-	count    int   // messages in this account
-	mailboxes int  // number of mailboxes
-	mboxCDF  []float64
+	id        int
+	count     int // messages in this account
+	mailboxes int // number of mailboxes
+	mboxCDF   []float64
 }
 
 // buildAccounts distributes total messages: account 1 = 1,000,000;
@@ -402,8 +402,8 @@ func main() {
 	// Using a separate RNG stream keyed off the seed keeps needle placement
 	// stable regardless of how many random draws the body generator makes.
 	nr := rand.New(rand.NewSource(*seed ^ 0x5eed))
-	needleTok := map[int]bool{}   // message index -> carries needleToken
-	needlePhr := map[int]bool{}   // message index -> carries needlePhrase
+	needleTok := map[int]bool{} // message index -> carries needleToken
+	needlePhr := map[int]bool{} // message index -> carries needlePhrase
 	needleUniqIdx := -1
 
 	// Build the per-account index ranges so needles can target accounts.

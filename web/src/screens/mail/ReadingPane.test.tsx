@@ -997,3 +997,45 @@ describe("the pinned strip in conversation view", () => {
     expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
   });
 });
+
+/*
+ * M1 (contract §2.4/§3.7): the read-only retention phase.
+ *
+ * The mailbox can be read, searched and exported but can no longer send —
+ * its credential was re-issued without SMTP. What the reader owes the user is
+ * the REASON: a row of verbs that answer with an error teaches the same thing
+ * one failed attempt later, after they have written the reply.
+ */
+describe("ReadingPane — read-only retention", () => {
+  it("replaces the reply strip with the reason", async () => {
+    renderPane({ readOnly: true });
+    expect(
+      await screen.findByText("Esta casilla está en modo de solo lectura"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /responder/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the strip for an ordinary account, so the notice is attributable", async () => {
+    renderPane({ readOnly: false });
+    expect(await screen.findByRole("group", { name: /responder/i })).toBeInTheDocument();
+    expect(
+      screen.queryByText("Esta casilla está en modo de solo lectura"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("drops the per-message reply verbs in conversation view too", async () => {
+    // The pinned strip is not the only way to reply: each message in a
+    // conversation carries its own arrow and ⋮ menu, and every verb in that
+    // group sends mail. Hiding only the strip would leave a working-looking
+    // reply button on every row.
+    renderPane({
+      readOnly: true,
+      conversationView: true,
+      thread: { id: "t1", emailIds: ["m1"] },
+    });
+    expect(
+      await screen.findByText("Esta casilla está en modo de solo lectura"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^responder$/i })).not.toBeInTheDocument();
+  });
+});

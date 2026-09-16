@@ -696,7 +696,7 @@ export function sessionIsReadOnly(
   return (
     typeof prefs === "object" &&
     prefs !== null &&
-    (prefs as Record<string, unknown>)["readOnly"] === true
+    (prefs as Record<string, unknown>).readOnly === true
   );
 }
 

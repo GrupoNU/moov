@@ -22,7 +22,7 @@ type ServiceAccount struct {
 // Revoked reports whether the key has been revoked.
 func (sa ServiceAccount) Revoked() bool { return sa.RevokedAt != nil }
 
-// HasScope reports whether the key carries scope, honouring the contract's
+// HasScope reports whether the key carries scope, honoring the contract's
 // "accounts:write implies accounts:read".
 func (sa ServiceAccount) HasScope(scope string) bool {
 	for _, s := range sa.Scopes {

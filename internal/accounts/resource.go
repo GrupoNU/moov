@@ -23,6 +23,9 @@ const (
 // SyncState is the sync half of the resource.
 type SyncState string
 
+// The four sync states §2.3 defines. They describe MOOV's mirror, not the
+// mailbox: "paused" is a suspended or deleting account, "error" a broken
+// credential or an open breaker, "initial" an account with no checkpoint yet.
 const (
 	SyncInitial SyncState = "initial"
 	SyncReady   SyncState = "ready"

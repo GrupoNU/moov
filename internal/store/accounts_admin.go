@@ -62,7 +62,7 @@ func (s *Store) SetAccountAppPasswordID(ctx context.Context, accountID int64, id
 // SetAccountSuspended records a suspension or its lift.
 //
 // The engine state moves with the fact: suspended ⇒ disabled, which is the
-// gate the authenticator and the sync supervisor already honour; lifted ⇒
+// gate the authenticator and the sync supervisor already honor; lifted ⇒
 // active. It never touches read_only, so a suspended read-only account comes
 // back read-only (contract §2.4, deviation D3).
 func (s *Store) SetAccountSuspended(ctx context.Context, accountID int64, suspended bool, at time.Time) error {

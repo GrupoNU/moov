@@ -39,6 +39,12 @@ func TestMigration0012SchemaExists(t *testing.T) {
 			}
 			got[name] = kind
 		}
+		// An iteration that ended in an error would otherwise yield a SHORT
+		// column list, and a schema assertion against a short list passes for
+		// the wrong reason — the worst failure mode a migration test has.
+		if err := rows.Err(); err != nil {
+			t.Fatalf("iterating information_schema: %v", err)
+		}
 		return got
 	}
 

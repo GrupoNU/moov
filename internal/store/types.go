@@ -222,7 +222,7 @@ type Account struct {
 
 	// Suspended is the API's suspension. While true, State is
 	// AccountDisabled — the one gate the authenticator and the sync
-	// supervisor already honour — and Resume restores AccountActive.
+	// supervisor already honor — and Resume restores AccountActive.
 	Suspended   bool
 	SuspendedAt *time.Time
 

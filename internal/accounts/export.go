@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GrupoNU/moov/internal/blob"
@@ -68,6 +67,9 @@ const (
 // 200 rather than a 404 (§2.6).
 type ExportStatus string
 
+// The export statuses of §2.6. "none" is the one that is not a job state at
+// all: it is what GET answers when no export was ever requested, as a 200, so
+// that 404 keeps its single meaning on this API.
 const (
 	ExportNone    ExportStatus = "none"
 	ExportPending ExportStatus = "pending"
@@ -175,10 +177,6 @@ type ExportRunner struct {
 	now   func() time.Time
 	log   *slog.Logger
 	gauge PendingGauge
-
-	// mu guards nothing but the test hook below; the runner's state is the
-	// store's.
-	mu sync.Mutex
 }
 
 // NewExportRunner builds a runner.
@@ -204,9 +202,9 @@ func NewExportRunner(cfg ExportConfig, st ExportStore, blobs BlobReader, gauge P
 	}
 	return &ExportRunner{
 		store: st, blobs: blobs, dir: cfg.Dir,
-		key: append([]byte(nil), cfg.SigningKey...),
+		key:  append([]byte(nil), cfg.SigningKey...),
 		base: strings.TrimRight(cfg.BaseURL, "/"),
-		now: cfg.Now, log: cfg.Logger, gauge: gauge,
+		now:  cfg.Now, log: cfg.Logger, gauge: gauge,
 	}, nil
 }
 

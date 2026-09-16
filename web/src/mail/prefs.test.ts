@@ -19,6 +19,7 @@ import {
   servesPrefsV2,
   servesPrefsV3,
   sessionHasPrefs,
+  sessionIsReadOnly,
   sortForInboxType,
   UNDO_SEND_SECONDS,
   type Prefs,
@@ -189,6 +190,58 @@ describe("sessionHasPrefs — feature detection", () => {
 
   it("does not consult an account it was not given", () => {
     expect(sessionHasPrefs(withCapabilities({}, { [CAP_PREFS]: {} }))).toBe(false);
+  });
+});
+
+/*
+ * M1 (contract §2.4/§3.7): the read-only retention phase, as the PWA reads it.
+ *
+ * The rule under test is that EITHER source counts as yes. That is not
+ * laziness about which one is authoritative — it is the safe side of a
+ * disagreement: hiding a compose verb that would have worked costs an
+ * inconvenience, while showing one that cannot costs a message the user wrote
+ * and lost.
+ */
+describe("sessionIsReadOnly — the retention phase", () => {
+  const session = (isReadOnly: boolean, prefs: Record<string, unknown>): JmapSession => ({
+    capabilities: {},
+    accounts: {
+      a1: { name: "a", isPersonal: true, isReadOnly, accountCapabilities: { [CAP_PREFS]: prefs } },
+    },
+    primaryAccounts: {},
+    username: "u",
+    apiUrl: "",
+    downloadUrl: "",
+    uploadUrl: "",
+    eventSourceUrl: "",
+    state: "",
+  });
+
+  it("is false for an ordinary account", () => {
+    expect(sessionIsReadOnly(session(false, { readOnly: false }), "a1")).toBe(false);
+  });
+
+  it("is true from RFC 8620's own isReadOnly", () => {
+    expect(sessionIsReadOnly(session(true, {}), "a1")).toBe(true);
+  });
+
+  it("is true from the vendor capability alone", () => {
+    expect(sessionIsReadOnly(session(false, { readOnly: true }), "a1")).toBe(true);
+  });
+
+  it("is false before the session loads, so the pre-load render is not crippled", () => {
+    expect(sessionIsReadOnly(undefined, "a1")).toBe(false);
+  });
+
+  it("is false for an account the session does not describe", () => {
+    expect(sessionIsReadOnly(session(true, { readOnly: true }), "missing")).toBe(false);
+  });
+
+  it("ignores a non-boolean readOnly rather than treating it as truthy", () => {
+    // A server sending readOnly: "true" is sending something this client does
+    // not understand; guessing at its intent is how a string "false" locks a
+    // mailbox out of composing.
+    expect(sessionIsReadOnly(session(false, { readOnly: "true" }), "a1")).toBe(false);
   });
 });
 

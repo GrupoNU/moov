@@ -175,7 +175,12 @@ func errorEnvelope(body []byte) error {
 	}
 	var one apiResult
 	if err := json.Unmarshal(trimmed, &one); err != nil {
-		return nil
+		// A body this function cannot decode is simply not the error family
+		// it is looking for — the caller goes on to parse it as a normal
+		// result and produces its own, better error if that fails too.
+		// Returning the decode failure here would turn every unexpected shape
+		// into "Mailcow refused", which is the wrong diagnosis.
+		return nil //nolint:nilerr // "not this family" is the answer, not an error.
 	}
 	if one.Type != "error" {
 		return nil

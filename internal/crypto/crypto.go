@@ -157,7 +157,7 @@ var ErrEmptyLabel = errors.New("crypto: derivation label is required")
 // Two consequences are deliberate. The value changes when the primary key is
 // ROTATED, so anything signed under the old primary stops verifying: that is
 // the right default for a capability URL (a rotation is the moment to stop
-// honouring old signatures), and callers whose artifacts must outlive a
+// honoring old signatures), and callers whose artifacts must outlive a
 // rotation should store the key id they signed under. And the label is part of
 // the output, so the same label must be spelled identically wherever the same
 // key is needed — a constant, never an ad-hoc string.

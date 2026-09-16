@@ -387,7 +387,7 @@ func genHeaders() {
 		var sb strings.Builder
 		sb.WriteString("From: Ada Lovelace <ada@example.com>" + CRLF)
 		sb.WriteString("To: Grace Hopper <grace@example.org>" + CRLF)
-		sb.WriteString("Subject: A\xc3\xb1oranza se\xc3\xb1or" + CRLF) // raw UTF-8
+		sb.WriteString("Subject: A\xc3\xb1oranza se\xc3\xb1or" + CRLF)  // raw UTF-8
 		sb.WriteString("X-Latin1-Subject: A\xf1oranza se\xf1or" + CRLF) // raw ISO-8859-1
 		sb.WriteString("Date: Mon, 06 Jan 2025 10:00:00 +0000" + CRLF)
 		sb.WriteString("Message-ID: <hdr-8bit@corpus.example.com>" + CRLF)

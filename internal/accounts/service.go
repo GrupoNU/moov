@@ -121,7 +121,7 @@ type Service struct {
 
 // New builds a Service. Every dependency except the export runner and the
 // observer is required: a service that cannot reach Mailcow, the store, the
-// provisioner or the revoker cannot honour a single transition of §2.4, and
+// provisioner or the revoker cannot honor a single transition of §2.4, and
 // discovering that per request rather than at startup is the wrong trade.
 func New(cfg Config, api MailcowAPI, st Store, prov Provisioner, revoker SessionRevoker, exports *ExportRunner, obs Observer) (*Service, error) {
 	switch {

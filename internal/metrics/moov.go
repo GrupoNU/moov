@@ -78,7 +78,7 @@ type Metrics struct {
 	// --- Accounts API (epic M1)
 
 	// AdminActions counts finished administrative writes by action and
-	// result: one line per transition of contract §2.4, labelled with the
+	// result: one line per transition of contract §2.4, labeled with the
 	// contract's own verb ("create", "suspend", "readonly", "delete", …) and
 	// "ok" or "error".
 	//

@@ -21,7 +21,7 @@ type Caller struct {
 	// §2.4): the account's app password was re-issued WITHOUT SMTP, so the
 	// credential itself can no longer submit. This flag is the explaining
 	// half — it lets EmailSubmission/set answer a clear "forbidden" instead
-	// of letting the send fail somewhere down in the SMTP dialogue with an
+	// of letting the send fail somewhere down in the SMTP dialog with an
 	// error no user can act on.
 	//
 	// The two locks are deliberately independent. F0 measured that Mailcow's
