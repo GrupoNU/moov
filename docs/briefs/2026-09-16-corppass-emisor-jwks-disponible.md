@@ -25,8 +25,8 @@ Commit `51aba11` en `feature/porcino-improvements` del repo de CorpPass.
 | JWKS público | `services/agents/src/event_mail.py` | 8 tests |
 | Anillo de claves para rotación | idem | cubierto |
 
-**Apagado por defecto** (`MOOV_ENABLED=false`): hoy el endpoint responde 404, igual que
-hace moovd con la sesión delegada en un host sin emisor configurado. **Nada desplegado.**
+> ⚠️ **Actualizado el 2026-09-16 por la tarde: ya está desplegado y encendido.** Lo que
+> sigue en esta sección describe el estado del mediodía; el estado real está en **§8**.
 
 Lo que todavía **no** existe de nuestro lado: la tarjeta del portal, el cliente de la API
 de cuentas y las tareas de retención. Van después; el emisor se adelantó justamente
@@ -94,9 +94,8 @@ Nunca deberían vernos mandar ninguno de los dos.
    `/auth/delegated/exchange` sabemos que el diseño cierra.
 2. **Que nos confirmen el `host` definitivo**, que es el `aud` que firmamos. Asumimos
    `mail.corppass.events` (D-2). Lo firmamos **sin esquema ni puerto**, como pide §3.2.
-3. **Cuándo quieren que encendamos `MOOV_ENABLED`.** Mientras esté en `false` nuestro
-   JWKS responde 404, así que no pueden probar contra él aunque configuren el issuer.
-   Nos avisan y lo encendemos; es una variable de entorno.
+3. ~~**Cuándo quieren que encendamos `MOOV_ENABLED`.**~~ ✅ **Resuelto: ya está
+   encendido** (§8). El JWKS responde; pueden configurar el issuer cuando quieran.
 
 Para la primera prueba nos alcanza con una casilla de ensayo aprovisionada en el host
 piloto: firmamos un token `login` para esa dirección y vemos si el canje devuelve
@@ -138,11 +137,11 @@ escritas en algún lado:
 
 | | |
 |---|---|
-| Emisor + JWKS | ✅ construido, 37 tests, sin desplegar |
+| Emisor + JWKS | ✅ **desplegado y sirviendo en producción** (§8), 37 tests |
 | Tarjeta del portal | pendiente (esperando definiciones de producto de Diego) |
 | Cliente de la API de cuentas | siguiente, contra el simulador de Prism |
 | Retención (90/166/180 días) | pendiente |
-| Prueba contra emisor real | ⏳ **bloqueada en §4**: necesitamos el host piloto |
+| Prueba contra emisor real | ⏳ **bloqueada sólo en ustedes**: falta `MOOV_DELEGATED_ISSUERS` + una casilla de ensayo |
 
 ---
 
@@ -187,3 +186,49 @@ Verificamos contra su `delegated_jwt.go` que el documento pasa su validación: p
 **Lo que falta para la prueba, todo de su lado:** configurar el emisor en el piloto y
 aprovisionar una casilla de ensayo. Avisen la dirección y firmamos un token `login`
 contra ella.
+
+### 8.1 Verificamos su host, y el circuito está a un paso
+
+Vimos `141bd47` (*publish the event-mailbox host*) y lo comprobamos desde afuera:
+
+| Comprobación | Resultado |
+|---|---|
+| `GET https://mail.corppass.events/` | **200** — la PWA sirve, con certificado válido |
+| `POST /auth/delegated/exchange` | **404** `{"detail":"not found"}` — sin emisor configurado |
+
+Ese 404 es **el único eslabón que falta**, y es de ustedes: es exactamente lo que su
+propio commit anticipó (*"the delegated exchange answers the contract's 404, no issuer
+configured yet"*).
+
+**Del lado nuestro ya está todo probado hasta donde se puede sin ustedes.** Firmamos un
+token real contra `aud: mail.corppass.events` y lo verificamos **con la clave pública
+bajada del JWKS que sirve producción** — el mismo camino que recorre su verificador:
+
+```
+clave local == JWKS publicado : True
+token firmado                 : 442 bytes
+verificado con la clave PUBLICADA:
+  iss=https://api.corppass.app  aud=mail.corppass.events
+  sub=ensayo@corppass.events    purpose=login
+```
+
+Si su verificador lee el contrato como lo leímos nosotros, ese token entra. Si no entra,
+la discrepancia de interpretación está en un punto muy acotado y la encontramos rápido.
+
+### 8.2 Lo que falta, en orden
+
+1. **Ustedes:** `MOOV_DELEGATED_ISSUERS` con el bloque de §8, y aprovisionar una casilla
+   de ensayo en el piloto (`POST /admin/accounts`).
+2. **Ustedes:** avisarnos la dirección exacta de esa casilla. El `sub` se firma en
+   minúsculas y tiene que ser una cuenta aprovisionada, o el canje da 403
+   `notProvisioned` — que sí es distinguible del 401, así que ese caso lo sabremos leer.
+3. **Nosotros:** firmamos un token `login` para esa dirección y lo canjeamos. Un `curl`.
+4. **Los dos:** si vuelve una sesión, el criterio 2 del gate F5 queda demostrado en su
+   mitad criptográfica. Si vuelve 401, el motivo lo tenemos nosotros (§3), no ustedes.
+
+### 8.3 Lo que sigue sin existir de nuestro lado
+
+Para que no haya expectativa equivocada: con esto **un organizador todavía no ve nada**.
+La tarjeta "Correo del evento" está diseñada pero no construida, y tampoco existen el
+cliente de la API de cuentas ni las tareas de retención. El emisor se adelantó a propósito
+porque era lo único que ninguno de los dos equipos podía verificar por su cuenta.
