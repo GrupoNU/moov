@@ -79,6 +79,22 @@ func (f *fakeMailcow) client(t *testing.T) *Client {
 	return c
 }
 
+// validatedClient is a client that has proved its key works from this
+// address, which is the precondition F0 attaches to reading `{}` as
+// "does not exist" (note §3, rule 6): the SAME body is what a silently
+// rejected key produces. Every test that exercises a not-found path needs it,
+// and needing it is the point — a client that skipped validation and inferred
+// absence would mint duplicate mailboxes on the idempotent create.
+func (f *fakeMailcow) validatedClient(t *testing.T) *Client {
+	t.Helper()
+	f.onJSON("GET /api/v1"+statusVersionPath, `{"version":"2026-07a"}`)
+	c := f.client(t)
+	if err := c.ValidateKey(context.Background()); err != nil {
+		t.Fatalf("ValidateKey: %v", err)
+	}
+	return c
+}
+
 func (f *fakeMailcow) last() capturedRequest {
 	f.t.Helper()
 	if len(f.requests) == 0 {
@@ -435,13 +451,32 @@ func TestGetMailboxDeniedScopes(t *testing.T) {
 }
 
 func TestGetMailboxNotFound(t *testing.T) {
-	// Mailcow answers an absent mailbox with `{}` and HTTP 200.
+	// Mailcow answers an absent mailbox with `{}` and HTTP 200 — but only a
+	// VALIDATED key may read that as "does not exist" (F0 note §3, rule 6).
+	f := newFakeMailcow(t)
+	f.onJSON("GET /api/v1/get/mailbox/ghost@example.com", `{}`)
+
+	_, err := f.validatedClient(t).GetMailbox(context.Background(), "ghost@example.com")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
+// TestGetMailboxEmptyObjectIsNotFoundOnlyOnceValidated is the other half of
+// the F0 rule, and the one that protects the idempotent create of contract
+// §2.4: before the key is proved, `{}` is NOT "no such mailbox" — it is
+// indistinguishable from a silently rejected key, and treating it as absence
+// is how a create mints a duplicate over an existing mailbox.
+func TestGetMailboxEmptyObjectIsNotFoundOnlyOnceValidated(t *testing.T) {
 	f := newFakeMailcow(t)
 	f.onJSON("GET /api/v1/get/mailbox/ghost@example.com", `{}`)
 
 	_, err := f.client(t).GetMailbox(context.Background(), "ghost@example.com")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("got %v, want ErrNotFound", err)
+	if !errors.Is(err, ErrKeyNotValidated) {
+		t.Fatalf("got %v, want ErrKeyNotValidated", err)
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Error("an unvalidated key read an empty object as not-found")
 	}
 }
 
@@ -506,9 +541,16 @@ func TestUnauthorizedCarriesMailcowDiagnostic(t *testing.T) {
 		_, _ = io.WriteString(w, `{"type":"error","msg":"api access denied for ip 217.216.83.79"}`)
 	})
 
+	// F0 answer 4: an IP-allow-list refusal is its OWN error, not a generic
+	// "authentication failed". Different cause, different fix — the key is
+	// fine and the operator has to add an address — so collapsing the two
+	// would send an operator to regenerate a key that was never the problem.
 	_, err := f.client(t).GetMailbox(context.Background(), "user@example.com")
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("got %v, want ErrUnauthorized", err)
+	if !errors.Is(err, ErrIPDenied) {
+		t.Fatalf("got %v, want ErrIPDenied", err)
+	}
+	if errors.Is(err, ErrUnauthorized) {
+		t.Error("an IP-allow-list refusal is indistinguishable from a bad key")
 	}
 	if !strings.Contains(err.Error(), "217.216.83.79") {
 		t.Errorf("error drops the rejected address: %v", err)

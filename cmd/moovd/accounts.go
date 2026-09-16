@@ -62,6 +62,16 @@ const exportDirName = "exports"
 // would only spend queries on an empty table.
 const exportPollInterval = 5 * time.Second
 
+// purgeInterval is how often accounts marked deleting have their rows
+// removed.
+//
+// A minute, not a second: DELETE answers 202 precisely because the purge is
+// not request-sized work (§2.4), and the contract promises only that GET
+// eventually answers 404 — F0 could not even verify that Mailcow removes the
+// maildir promptly. A tight loop would scan a table that is empty almost
+// always, for a deadline nobody holds.
+const purgeInterval = time.Minute
+
 // accountsComponents holds what the accounts API owns, so the daemon can
 // release it in one place.
 type accountsComponents struct {
@@ -152,10 +162,18 @@ func buildAccountsAPI(
 	}
 
 	runnerCtx, cancel := context.WithCancel(context.Background())
-	comp := &accountsComponents{exports: runner, cancel: cancel, done: make(chan struct{})}
+	comp := &accountsComponents{exports: runner, cancel: cancel, done: make(chan struct{}, 2)}
 	go func() {
-		defer close(comp.done)
+		defer func() { comp.done <- struct{}{} }()
 		runner.Run(runnerCtx, exportPollInterval)
+	}()
+	// The background half of DELETE (§2.4): the rows and blob references of
+	// accounts already gone from Mailcow. Its own loop rather than a step
+	// inside the export runner's, because the two answer to different clocks
+	// and a slow export must never delay a purge.
+	go func() {
+		defer func() { comp.done <- struct{}{} }()
+		runPurge(runnerCtx, svc, logger)
 	}()
 
 	return &jmaphttp.AccountsAPIConfig{
@@ -176,9 +194,41 @@ func (c *accountsComponents) shutdown(ctx context.Context) {
 		return
 	}
 	c.cancel()
-	select {
-	case <-c.done:
-	case <-ctx.Done():
+	for i := 0; i < cap(c.done); i++ {
+		select {
+		case <-c.done:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// runPurge removes the store rows of deleted accounts until ctx ends.
+//
+// A failure is logged and retried on the next tick rather than escalated: the
+// account is already gone from Mailcow and already invisible to its owner, so
+// a row that survives one pass is a cleanup that is late, not a correctness
+// problem — and taking the daemon down over it would be the wrong trade by a
+// wide margin.
+func runPurge(ctx context.Context, svc *accounts.Service, logger *slog.Logger) {
+	t := time.NewTicker(purgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n, err := svc.Purge(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					logger.Error("accounts: the purge pass failed; retrying next tick", "error", err)
+				}
+				continue
+			}
+			if n > 0 {
+				logger.Info("accounts: purged deleted accounts", "count", n)
+			}
+		}
 	}
 }
 
