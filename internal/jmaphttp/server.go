@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrupoNU/moov/internal/accounts"
 	"github.com/GrupoNU/moov/internal/jmap"
 	"github.com/GrupoNU/moov/internal/jmap/mail"
 )
@@ -185,6 +186,31 @@ type Config struct {
 	// aux route that consumes a verification token. nil keeps the route
 	// answering 501, the same degradation shape push uses.
 	Forwarding ForwardingVerifier
+
+	// Accounts backs the per-domain accounts API (epic M1, admin_accounts.go).
+	//
+	// nil is a complete configuration and the DEFAULT one: the installation
+	// issued no Mailcow write key, so the feature does not exist and every
+	// /admin/accounts route answers the generic 404 — never a 501, which
+	// would tell a prober the feature is merely off (contract §2.1).
+	Accounts *AccountsAPIConfig
+}
+
+// AccountsAPIConfig is the accounts API's dependency set (contract §2).
+//
+// All three fields are required together: a service with no authenticator
+// could not resolve a key, and an authenticator with no service could
+// authenticate a caller into nothing. Exports may be nil — an installation
+// with no export directory serves every other route and answers §2.6's
+// "none", which the Service already handles.
+type AccountsAPIConfig struct {
+	Service *accounts.Service
+	Auth    *accounts.Authenticator
+	Exports *accounts.ExportRunner
+
+	// Now is the clock the per-key budget ages its buckets against; nil means
+	// time.Now. Injectable so a test can spend a budget without sleeping.
+	Now func() time.Time
 }
 
 // SieveCapability carries the live server facts the RFC 9661 §1.2.1 account
@@ -266,6 +292,11 @@ type Server struct {
 	// Scoped short-lived tokens for the header-less browser contexts
 	// (EventSource, <a download>, <img>). See token.go.
 	tokens *tokenAuthority
+
+	// The per-domain accounts API (M1). nil-safe: serviceRoute renders the
+	// generic 404 when the feature is off, so the routes always exist and
+	// never reveal whether they are configured (admin_accounts.go).
+	accountsAPI *accountsAPI
 }
 
 // New builds a Server over an Authenticator.
@@ -341,6 +372,7 @@ func New(cfg Config, auth *Authenticator) (*Server, error) {
 		brandAdmin:       newBrandAdminAPI(&cfg, brandingStore, cfg.Logger),
 		imgproxy:         imgproxy,
 		tokens:           tokens,
+		accountsAPI:      newAccountsAPI(cfg.Accounts),
 	}, nil
 }
 

@@ -1,9 +1,12 @@
 package jmaphttp
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/GrupoNU/moov/internal/accounts"
 )
 
 // Every route the JMAP server exposes, in one place (L2 §2.4). Spike S1 H7's
@@ -56,6 +59,21 @@ type route struct {
 	// token by CONSTRUCTION, not by a check someone must remember. A test
 	// pins the token-accepting set exactly as one pins the public set.
 	tokenScope TokenScope
+
+	// serviceScope, when set, makes the route part of the accounts API's
+	// SECOND authentication class: it is served by serviceRoute, which
+	// accepts a service-account key (Bearer msa1_…) and NOTHING else — a
+	// mailbox credential presented here resolves to no service account and
+	// gets the generic 404 (contract §4).
+	//
+	// It is a third field rather than a value of tokenScope because the two
+	// grant incomparable things: a token is one mailbox's own short-lived
+	// capability, a service-account key manages a whole domain's mailboxes
+	// and can read no mail at all. Collapsing them would make a route able to
+	// drift from one class to the other by a one-word edit. The value is the
+	// scope the key must carry (accounts.ScopeRead / ScopeWrite), and the set
+	// is pinned by test exactly as the public and token sets are.
+	serviceScope string
 }
 
 // routes returns the complete route table. Every route gets a CORS preflight
@@ -111,7 +129,48 @@ func (s *Server) routes() []route {
 		// branding_test.go names it.
 		{method: http.MethodPost, pattern: PathImageProxySign, handler: s.handleImageProxySign},
 		{method: http.MethodGet, pattern: PathImageProxy, handler: s.handleImageProxy, public: true},
+
+		// The per-domain accounts API (epic M1, admin_accounts.go). Every row
+		// carries a serviceScope, which is what puts it in the service-account
+		// authentication class instead of the mailbox one; reads need
+		// accounts:read, writes need accounts:write (which implies read).
+		// With the feature off, serviceRoute answers the generic 404, so the
+		// rows are unconditional — their presence reveals nothing.
+		{method: http.MethodPost, pattern: PathAdminAccounts, handler: s.serviceRoute(accounts.ScopeWrite, s.handleAccountCreate), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodGet, pattern: PathAdminAccount, handler: s.serviceRoute(accounts.ScopeRead, s.handleAccountGet), serviceScope: accounts.ScopeRead},
+		{method: http.MethodPatch, pattern: PathAdminAccount, handler: s.serviceRoute(accounts.ScopeWrite, s.handleAccountUpdate), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodDelete, pattern: PathAdminAccount, handler: s.serviceRoute(accounts.ScopeWrite, s.handleAccountDelete), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodPost, pattern: PathAdminAccountSuspend, handler: s.serviceRoute(accounts.ScopeWrite, s.transitionHandler(suspendOp)), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodPost, pattern: PathAdminAccountResume, handler: s.serviceRoute(accounts.ScopeWrite, s.transitionHandler(resumeOp)), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodPost, pattern: PathAdminAccountReadOnly, handler: s.serviceRoute(accounts.ScopeWrite, s.transitionHandler(readOnlyOp)), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodPost, pattern: PathAdminAccountExport, handler: s.serviceRoute(accounts.ScopeWrite, s.handleExportStart), serviceScope: accounts.ScopeWrite},
+		{method: http.MethodGet, pattern: PathAdminAccountExport, handler: s.serviceRoute(accounts.ScopeRead, s.handleExportGet), serviceScope: accounts.ScopeRead},
+
+		// The signed export download (§2.6). PUBLIC in this table's sense,
+		// deliberately, and the public-set pin names it: the URL is handed to
+		// a BROWSER TAB, which attaches no Authorization header — the same
+		// shape PathImageProxy has, and the same reasoning. Its authority is
+		// the HMAC in its query string, bound to the origin, the export id
+		// and a 24 h expiry, granting exactly one zip and nothing else; a
+		// tampered, foreign-host or expired signature answers the generic
+		// 404. It is NOT in the service class: a key cannot open it and it
+		// cannot manage anything.
+		{method: http.MethodGet, pattern: PathAdminExportDownload, handler: s.handleExportDownload, public: true},
 	}
+}
+
+// The three transition operations, as values, so the route table names them
+// once and the shared transitionHandler stays one function rather than three.
+func suspendOp(s *accounts.Service) func(context.Context, accounts.Call, string) (accounts.Account, error) {
+	return s.Suspend
+}
+
+func resumeOp(s *accounts.Service) func(context.Context, accounts.Call, string) (accounts.Account, error) {
+	return s.Resume
+}
+
+func readOnlyOp(s *accounts.Service) func(context.Context, accounts.Call, string) (accounts.Account, error) {
+	return s.ReadOnly
 }
 
 // Handler builds the complete HTTP handler: the route table wrapped in
@@ -126,6 +185,13 @@ func (s *Server) Handler() http.Handler {
 		switch {
 		case rt.public:
 			// Served without authentication; the set is pinned by test.
+		case rt.serviceScope != "":
+			// The accounts API's own class: the handler in the row is ALREADY
+			// wrapped in serviceRoute (which is where the key, the scope, the
+			// budget and the no-oracle 404 live), so the mailbox
+			// authenticator must not also run — a service-account key is not
+			// a mailbox credential and requireAuth would refuse it with a 401
+			// that tells a prober the route exists.
 		case rt.tokenScope != "":
 			h = s.requireAuthOrToken(rt.tokenScope, h)
 		default:

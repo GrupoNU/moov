@@ -175,13 +175,6 @@ func serviceAccountRevoke(ctx context.Context, e *env, args []string) error {
 	return nil
 }
 
-func orDash(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "-"
-	}
-	return s
-}
-
 func formatTime(t *time.Time) string {
 	if t == nil {
 		return "never"

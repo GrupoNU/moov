@@ -1,7 +1,6 @@
 package jmaphttp
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -9,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GrupoNU/moov/internal/accounts"
@@ -116,16 +116,21 @@ type serviceCall struct {
 	requestID string
 }
 
-// newAccountsAPI builds the routes' state. A nil service means the feature is
-// off, which is a complete and supported configuration.
-func newAccountsAPI(svc *accounts.Service, auth *accounts.Authenticator, exports *accounts.ExportRunner, now func() time.Time) *accountsAPI {
-	return &accountsAPI{
-		enabled: svc != nil && auth != nil,
-		svc:     svc,
-		auth:    auth,
-		exports: exports,
-		limiter: newRateLimiter(accountsBurst, accountsRequestsPerMinute, time.Minute, now),
+// newAccountsAPI builds the routes' state. A nil config — or one missing
+// either half of the credential story — means the feature is off, which is a
+// complete and supported configuration and the default one.
+func newAccountsAPI(cfg *AccountsAPIConfig) *accountsAPI {
+	a := &accountsAPI{}
+	if cfg != nil {
+		a.enabled = cfg.Service != nil && cfg.Auth != nil
+		a.svc, a.auth, a.exports = cfg.Service, cfg.Auth, cfg.Exports
+		a.limiter = newRateLimiter(accountsBurst, accountsRequestsPerMinute, time.Minute, cfg.Now)
+		return a
 	}
+	// The limiter exists even when the feature does not, so serviceRoute has
+	// no nil branch to get wrong; it is simply never reached.
+	a.limiter = newRateLimiter(accountsBurst, accountsRequestsPerMinute, time.Minute, nil)
+	return a
 }
 
 // serviceRoute wraps a handler in the service-account gate: the feature
@@ -329,6 +334,3 @@ func (l *rateLimiter) allow(key string) (time.Duration, bool) {
 	}
 	return time.Duration((1 - b.tokens) / l.perSec * float64(time.Second)), false
 }
-
-// ensure the context import is used by the handlers file's shared helpers.
-var _ = context.Background
