@@ -136,9 +136,15 @@ type SyncConfig struct {
 	Debounce time.Duration
 
 	// ReconcileInterval is the defensive STATUS sweep period
-	// (MOOV_SYNC_RECONCILE_INTERVAL). Zero means the engine's default of 6 h
-	// (L2 §2.5).
+	// (MOOV_SYNC_RECONCILE_INTERVAL). Zero means the engine's default.
 	ReconcileInterval time.Duration
+
+	// IdleHeartbeat is how long the watcher's event loop may sit with no event
+	// before it actively verifies its session (MOOV_SYNC_IDLE_HEARTBEAT). Zero
+	// means the engine's default; a negative value disables the heartbeat,
+	// which re-opens the silent-stall failure mode of 2026-09-16 and should
+	// only ever be done to reproduce it.
+	IdleHeartbeat time.Duration
 
 	// BreakerThreshold is how many consecutive watcher failures open an
 	// account's circuit breaker (MOOV_SYNC_BREAKER_THRESHOLD). Zero means the
@@ -277,6 +283,7 @@ func loadSync() (SyncConfig, error) {
 	}{
 		{"MOOV_SYNC_DEBOUNCE", &s.Debounce},
 		{"MOOV_SYNC_RECONCILE_INTERVAL", &s.ReconcileInterval},
+		{"MOOV_SYNC_IDLE_HEARTBEAT", &s.IdleHeartbeat},
 		{"MOOV_SYNC_BREAKER_COOLDOWN", &s.BreakerCooldown},
 	} {
 		v, err := envDuration(f.key)
@@ -360,11 +367,11 @@ func (s SyncConfig) String() string {
 	return fmt.Sprintf(
 		"sync_enabled=%t sync_watcher=%t blob_root=%s sync_connections=%d "+
 			"sync_parse_workers=%d sync_accounts=%d imap_server_name=%s "+
-			"sync_debounce=%s sync_reconcile_interval=%s "+
+			"sync_debounce=%s sync_reconcile_interval=%s sync_idle_heartbeat=%s "+
 			"sync_breaker_threshold=%d sync_breaker_cooldown=%s",
 		s.Enabled, s.WatcherEnabled, s.BlobRoot, s.Connections,
 		s.ParseWorkers, s.Accounts, orUnset(s.IMAPServerName),
-		orDefault(s.Debounce), orDefault(s.ReconcileInterval),
+		orDefault(s.Debounce), orDefault(s.ReconcileInterval), orDefault(s.IdleHeartbeat),
 		s.BreakerThreshold, orDefault(s.BreakerCooldown),
 	)
 }

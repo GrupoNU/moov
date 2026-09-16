@@ -510,3 +510,89 @@ func TestWatcherClearsTheErrorCountOnASuccessfulSession(t *testing.T) {
 			"the health of a push-only account would be invisible to an operator")
 	}
 }
+
+// TestWatcherHeartbeatNoticesASilentlyDeadSession is the regression test for the
+// production defect that stopped push for EVERY pilot account with no error, no
+// warning, and no log line at all (found on the live pilot, 2026-09-16).
+//
+// # The defect
+//
+// dispatch's select had exactly three branches: ctx.Done, the events channel,
+// and the debouncer. If Dovecot stops delivering NOTIFY events WITHOUT closing
+// the connection — which is what happened; the sockets were still listed by
+// `doveadm who` — the loop blocks forever on a channel that never fires again.
+// The events channel never closes, so the "watch ended" path never runs, the
+// reconnect/backoff loop is never entered, and the breaker never counts a
+// failure. Every observable the engine has stays quiet: the last watcher line
+// on the pilot was an incremental pass at 18:09 UTC, and nothing followed it
+// for two hours while Postfix delivered mail that Dovecot stored and Moov never
+// saw. A restart fixed it instantly. Silence, not error, was the symptom.
+//
+// # What this test pins
+//
+// A watcher whose events dry up while the connection stays open must notice by
+// itself, within its heartbeat, and re-derive state. The scenario is written as
+// the incident: turn off event delivery (the connection stays live — the test
+// asserts that), deliver a message, and require it to reach the store anyway.
+//
+// The reconciler is left OFF, so nothing but the heartbeat can pass this: with
+// a periodic sweep enabled the test would prove only that a backstop exists,
+// which the incident showed was configured six hours out and therefore useless.
+func TestWatcherHeartbeatNoticesASilentlyDeadSession(t *testing.T) {
+	env := newSyncedEnv(t, 3)
+
+	h := startWatcher(t, env, func(o *WatcherOptions) {
+		o.ReconcileInterval = -1 // the backstop must NOT be what saves this
+		o.IdleHeartbeat = 250 * time.Millisecond
+	})
+
+	// The incident's defining condition: events stop arriving, and the
+	// connection stays open.
+	env.srv.setSilentNotify(true)
+	env.srv.deliver("INBOX",
+		buildMessage(900, "Delivered into the silence", referenceNow, "Body."),
+		nil, referenceNow)
+
+	if got := env.srv.watcherCount(); got != 1 {
+		t.Fatalf("the watch is not live (%d watchers); the test would be proving a reconnect, not a heartbeat", got)
+	}
+
+	h.waitFor(t, ObsHeartbeat, 1, "the heartbeat never reported itself; the incident's symptom was silence")
+
+	waitFor(t, 20*time.Second, func() bool {
+		return len(env.liveUIDs(t, "INBOX")) == 4
+	}, "the watcher never noticed that its events had stopped: a message delivered into a "+
+		"silent-but-open session stayed invisible (the 2026-09-16 pilot incident)")
+}
+
+// TestWatcherHeartbeatTearsDownAnUnusableSession covers the other half of the
+// heartbeat: a probe that FAILS must end the session rather than swallow the
+// error, so the reconnect-and-backoff loop — which is audible, counts against
+// the breaker, and sweeps on the way back up — takes over.
+//
+// Without this, a heartbeat would detect the hang and then continue looping on
+// the same dead session, which is the original defect with extra log lines.
+func TestWatcherHeartbeatTearsDownAnUnusableSession(t *testing.T) {
+	env := newSyncedEnv(t, 3)
+
+	h := startWatcher(t, env, func(o *WatcherOptions) {
+		o.ReconcileInterval = -1
+		o.IdleHeartbeat = 200 * time.Millisecond
+	})
+
+	// The probe's command fails while the watch channel stays open: the
+	// session is unusable but nothing has closed it.
+	env.srv.mu.Lock()
+	env.srv.listErr = errors.New("simulated dead session")
+	env.srv.mu.Unlock()
+
+	h.waitFor(t, ObsDisconnected, 1,
+		"a failed heartbeat probe did not end the session; the watcher kept looping on a dead connection")
+
+	// And it comes back: the failure is a reconnect, not a stop.
+	env.srv.mu.Lock()
+	env.srv.listErr = nil
+	env.srv.mu.Unlock()
+
+	h.waitFor(t, ObsConnected, 2, "the watcher never reconnected after the failed heartbeat")
+}

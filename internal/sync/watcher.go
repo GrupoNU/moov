@@ -59,9 +59,80 @@ const (
 	// bug, and here it would mean mail that never appears.
 	DefaultMaxDebounce = 2 * time.Second
 
+	// DefaultIdleHeartbeat is how long the event loop may sit with no event and
+	// no debounce fire before it stops trusting its own session and checks.
+	//
+	// It exists because of a production incident (2026-09-16): Dovecot stopped
+	// delivering NOTIFY events on connections it never closed. The sockets were
+	// still listed in `doveadm who`, the events channel simply never fired
+	// again, and the dispatch loop — whose select had only ctx, events and the
+	// debouncer — blocked forever on it. Push stopped for every account with no
+	// error, no warning and no log line, for two hours, through several real
+	// deliveries. A silent hang is the one failure mode a reconnect loop cannot
+	// catch, because nothing ever reports a failure to it.
+	//
+	// # Why two minutes
+	//
+	// The number is bounded on both sides and the bounds are close together.
+	//
+	// The upper bound is the user. This heartbeat is the ONLY thing that
+	// detects a silent stall, so its period is the worst-case delay before mail
+	// becomes visible again — and the reconciler is a second-order backstop,
+	// not a substitute. A webmail whose worst case is "up to five minutes,
+	// once, after a server-side stall" is defensible; one whose worst case is
+	// "an hour" is a broken mail client. Minutes, not tens of minutes.
+	//
+	// The lower bound is the point at which the heartbeat stops being a
+	// heartbeat and becomes polling — which would defeat NOTIFY, the entire
+	// reason this engine holds one connection instead of forty (S2 T2d). The
+	// probe is a LIST-STATUS: one command per sweep, and it only fires after a
+	// genuinely idle period, so an account under any real traffic never pays
+	// for it at all. At two minutes a completely silent account costs 30
+	// commands an hour, which is noise next to the IDLE keepalives the same
+	// connection already exchanges.
+	//
+	// Dovecot's ~29-minute IDLE timeout is the usual prior art here and is
+	// deliberately NOT adopted: that interval answers a different question —
+	// how long a client may hold an IDLE before the RFC 2177 recommendation
+	// requires it to re-issue one — and it is calibrated to NAT and middlebox
+	// timeouts, not to how long a user will accept not seeing their mail. A
+	// heartbeat sized to it would have shortened this incident from two hours
+	// to half an hour, which is not a fix.
+	//
+	// Two minutes sits an order of magnitude under the tolerable worst case and
+	// an order of magnitude over anything that could be called polling, which is
+	// the widest margin available on both sides at once.
+	DefaultIdleHeartbeat = 2 * time.Minute
+
 	// DefaultReconcileInterval is the defensive STATUS sweep period (L2 §2.5:
 	// "configurable, default 6 h").
-	DefaultReconcileInterval = 6 * time.Hour
+	//
+	// # Why the default is no longer six hours
+	//
+	// The spec's number was chosen when the sweep was understood as a rare
+	// audit — a guard against a theoretically lost event. The 2026-09-16
+	// incident made it the load-bearing safety net instead, and it failed the
+	// job by a wide margin: push went silent at 18:09 and was noticed by a human
+	// at 20:00, with the first sweep still hours away. Six hours of invisible
+	// mail is not a safety net for a mail client; it is the interval at which
+	// nobody would still be waiting.
+	//
+	// The cost side is small and known exactly. A sweep is one LIST-STATUS —
+	// every folder's counters in a single round trip (S2 T2a) — plus one local
+	// read per mailbox, and a fetch only for a mailbox that actually diverged.
+	// So the recurring cost is ONE IMAP command per account per sweep,
+	// regardless of folder count. At fifteen minutes that is four commands an
+	// hour per account: for the pilot's five accounts, twenty commands an hour
+	// against a server that handles that many in a second, and far below
+	// anything fail2ban counts (ADR §4).
+	//
+	// Fifteen minutes is therefore chosen as the interval at which a divergence
+	// self-corrects inside the window a user would still describe as "it showed
+	// up", while staying a backstop rather than a poller: the heartbeat above is
+	// the primary detector, and this catches what the heartbeat cannot — a
+	// session that is live and responsive but whose events are being lost
+	// upstream.
+	DefaultReconcileInterval = 15 * time.Minute
 
 	// DefaultBackoffMin and DefaultBackoffMax bound the reconnection backoff.
 	//
@@ -118,6 +189,12 @@ type WatcherOptions struct {
 	// DefaultBreakerCooldown.
 	BreakerCooldown time.Duration
 
+	// IdleHeartbeat is how long the event loop may sit with no event and no
+	// debounce fire before it actively verifies the session. Default
+	// DefaultIdleHeartbeat. Negative disables it, which is a thing only a test
+	// should do.
+	IdleHeartbeat time.Duration
+
 	// OnEvent, when set, is called for every watcher observation. It exists for
 	// tests and for E8's metrics; it must not block.
 	OnEvent func(WatchObservation)
@@ -149,6 +226,9 @@ const (
 	ObsBreakerOpen WatchObservationKind = "breaker-open"
 	// ObsDisconnected means the watcher's connection ended and it will retry.
 	ObsDisconnected WatchObservationKind = "disconnected"
+	// ObsHeartbeat means the idle heartbeat probed a session that had gone
+	// quiet. Its Err is set when the probe found the session dead.
+	ObsHeartbeat WatchObservationKind = "heartbeat"
 )
 
 // withDefaults returns a copy with every zero field filled in.
@@ -165,6 +245,9 @@ func (o WatcherOptions) withDefaults() WatcherOptions {
 	}
 	if o.ReconcileInterval == 0 {
 		o.ReconcileInterval = DefaultReconcileInterval
+	}
+	if o.IdleHeartbeat == 0 {
+		o.IdleHeartbeat = DefaultIdleHeartbeat
 	}
 	if o.BackoffMin <= 0 {
 		o.BackoffMin = DefaultBackoffMin
@@ -474,10 +557,36 @@ func (w *PushWatcher) dispatch(
 	d := newDebouncer(w.opts.Debounce, w.opts.MaxDebounce, time.Now)
 	defer d.stop()
 
+	// The heartbeat, for the same real-clock reason the debouncer takes
+	// time.Now: Options.Clock is routinely pinned to a fixed instant, and a
+	// heartbeat measured against a frozen clock never fires — which would make
+	// the one branch that exists to break a silent hang the branch that hangs.
+	//
+	// A ticker rather than a timer reset per event, because the question it
+	// answers is "has anything happened lately", and an idle check that runs a
+	// little early on a busy account is a wasted LIST-STATUS, while one that
+	// never runs is the incident. lastActivity below makes the early case free.
+	heartbeat := newIdleTicker(w.opts.IdleHeartbeat)
+	defer heartbeat.stop()
+	lastActivity := time.Now()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+
+		case <-heartbeat.C():
+			// Only when the session has genuinely been quiet. A busy account
+			// proves its own liveness with every event it delivers, and probing
+			// one would be exactly the polling this heartbeat is sized not to
+			// become.
+			if time.Since(lastActivity) < w.opts.IdleHeartbeat {
+				continue
+			}
+			if err := w.heartbeatProbe(ctx, syncer, account, log); err != nil {
+				return err
+			}
+			lastActivity = time.Now()
 
 		case ev, ok := <-events:
 			if !ok {
@@ -520,6 +629,7 @@ func (w *PushWatcher) dispatch(
 			default:
 				log.Debug("ignoring unknown watch event", "kind", ev.Kind)
 			}
+			lastActivity = time.Now()
 
 		case <-d.ready():
 			for _, mailbox := range d.take() {
@@ -527,7 +637,110 @@ func (w *PushWatcher) dispatch(
 					return err
 				}
 			}
+			lastActivity = time.Now()
 		}
+	}
+}
+
+// heartbeatProbe verifies a session that has gone quiet, and re-derives state.
+//
+// # Why the probe is the reconciler's sweep and not a new command
+//
+// The question the heartbeat asks is exactly the question the reconciler
+// already answers — "does the server's view still match ours?" — and Reconcile
+// answers it with one LIST-STATUS, comparing UIDNEXT, MESSAGES and
+// HIGHESTMODSEQ per folder and repairing anything that moved. A cheaper probe
+// (a NOOP, a bare STATUS of INBOX) would confirm the socket is alive without
+// confirming the events are, and the 2026-09-16 incident was precisely a socket
+// that was alive while its events were not: the probe has to look at state, or
+// it re-tests the thing that was never broken.
+//
+// Reusing it also means a heartbeat that fires on a stalled session does not
+// merely detect the stall, it FIXES it in the same round trip — the messages
+// that arrived during the silence are fetched before the reconnect that follows
+// would have swept for them.
+//
+// # Why a failed probe returns an error
+//
+// Returning it ends the dispatch loop, which ends the session, which drops into
+// the reconnect-and-backoff loop that Watch has always had. That path is
+// already correct and already audible: it emits ObsDisconnected, records the
+// error against the breaker, and logs a warning naming the cause. Tearing down
+// on a dead probe therefore turns the one failure mode nothing could observe
+// into the failure mode the engine handles best — which is the whole shape of
+// this fix. It deliberately does NOT try to repair the connection in place: a
+// session whose NOTIFY has stopped cannot be argued back into working, and a
+// fresh connection re-establishes the watch and sweeps every mailbox on the way
+// up.
+func (w *PushWatcher) heartbeatProbe(
+	ctx context.Context,
+	syncer *Syncer,
+	account store.Account,
+	log *slog.Logger,
+) error {
+	// INFO, not Debug. The incident's defining property was that nothing was
+	// written down: an operator reading the log two hours in could not tell a
+	// healthy quiet account from a wedged one, because both produced the same
+	// empty output. A line per idle period per account is a few an hour and it
+	// is the difference between "the watcher is alive and has nothing to say"
+	// and "the watcher is gone".
+	log.Info("watcher idle; probing the session",
+		"idle_for", w.opts.IdleHeartbeat.Round(time.Second))
+
+	res, err := w.Reconcile(ctx, syncer, account, log)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// WARN and then tear down. This is the incident's signature arriving as
+		// a log line instead of as silence.
+		log.Warn("watcher heartbeat failed; the session is dead, reconnecting",
+			"error", err)
+		w.emit(WatchObservation{AccountID: account.ID, Kind: ObsHeartbeat, Err: err})
+		return fmt.Errorf("heartbeat probe: %w", err)
+	}
+
+	w.emit(WatchObservation{AccountID: account.ID, Kind: ObsHeartbeat})
+
+	if res.Diverged > 0 {
+		// The session answered, so it is not dead — but it had stopped telling
+		// us things, which is the half of the incident that loses mail
+		// quietly. Reconcile has already repaired it and logged each
+		// divergence; this line is the one that names the CAUSE, so the rate of
+		// "push went quiet and was wrong" is greppable.
+		log.Warn("watcher heartbeat found divergence: the session was quiet but not current",
+			"mailboxes_checked", res.Checked, "diverged", res.Diverged,
+			"repaired", res.Repaired)
+		w.emit(WatchObservation{AccountID: account.ID, Kind: ObsReconciled})
+	}
+	return nil
+}
+
+// idleTicker is a ticker that is a no-op when its period is non-positive.
+//
+// The watcher's options let a test disable the heartbeat, and a disabled
+// heartbeat has to produce a channel that never fires rather than a nil ticker
+// the select would have to guard around. A nil channel in a select blocks
+// forever, which is exactly the semantics wanted.
+type idleTicker struct{ t *time.Ticker }
+
+func newIdleTicker(period time.Duration) idleTicker {
+	if period <= 0 {
+		return idleTicker{}
+	}
+	return idleTicker{t: time.NewTicker(period)}
+}
+
+func (i idleTicker) C() <-chan time.Time {
+	if i.t == nil {
+		return nil
+	}
+	return i.t.C
+}
+
+func (i idleTicker) stop() {
+	if i.t != nil {
+		i.t.Stop()
 	}
 }
 
