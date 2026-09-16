@@ -831,3 +831,78 @@ func insertN(t *testing.T, s *store.Store, accountID, mailboxID int64, n int, ta
 func isNotFound(err error) bool {
 	return errors.Is(err, store.ErrNotFound)
 }
+
+// TestAccountLastProgressAtSeesTheWatchersWork is the regression test for a
+// monitoring defect that made the sync-lag gauge unusable on the pilot.
+//
+// # The defect
+//
+// moov_sync_lag_seconds was computed from sync_log.last_success_at, which only
+// the INITIAL sync and the watcher's connection handshake ever write. The
+// engine's steady state — every incremental pass the watcher runs — advances
+// mailboxes.last_synced_at instead. So the gauge stopped moving the moment an
+// account finished its initial sync and entered normal operation: the pilot
+// reported 8.6 DAYS of lag for an account that was delivering mail within
+// seconds, and the deploy documentation had to carry an instruction not to
+// alert on it. A metric nobody may trust is worse than no metric, because it
+// sits where a real one would have gone.
+//
+// # What this test pins
+//
+// The lag source must see a watcher's pass. It is written as the sequence that
+// broke: record an account-scope success long ago (the initial sync), then have
+// a mailbox pass complete now (the watcher's steady state), and require the
+// answer to be the recent moment, not the stale one.
+func TestAccountLastProgressAtSeesTheWatchersWork(t *testing.T) {
+	s := testStore(t)
+	acct := newAccount(t, s)
+	ctx := context.Background()
+
+	// Never synced: an absent answer, not a zero time. A zero would render as
+	// "lagging since 1970" on the gauge.
+	at, err := s.AccountLastProgressAt(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("AccountLastProgressAt: %v", err)
+	}
+	if at != nil {
+		t.Errorf("a never-synced account reports progress at %v, want none", *at)
+	}
+
+	// The initial sync completes, and is then backdated to stand for an account
+	// that has been in steady-state operation for days.
+	if err := s.RecordSyncSuccess(ctx, acct.ID, store.AccountScope); err != nil {
+		t.Fatalf("RecordSyncSuccess: %v", err)
+	}
+	stale := time.Now().Add(-8 * 24 * time.Hour)
+	if _, err := s.Pool().Exec(ctx,
+		`UPDATE sync_log SET last_success_at = $2 WHERE account_id = $1`,
+		acct.ID, stale); err != nil {
+		t.Fatalf("backdating the checkpoint: %v", err)
+	}
+
+	mbox, err := s.UpsertMailbox(ctx, store.Mailbox{
+		AccountID: acct.ID, Name: "INBOX", Selectable: true, Subscribed: true,
+	})
+	if err != nil {
+		t.Fatalf("UpsertMailbox: %v", err)
+	}
+
+	// The watcher applies a delta. This is the ONLY write the steady state
+	// makes, and it is the one the old gauge could not see.
+	if err := s.SetMailboxSyncState(ctx, mbox.ID, 1, 2, 3); err != nil {
+		t.Fatalf("SetMailboxSyncState: %v", err)
+	}
+
+	at, err = s.AccountLastProgressAt(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("AccountLastProgressAt: %v", err)
+	}
+	if at == nil {
+		t.Fatal("an account whose watcher just applied a pass reports no progress at all")
+	}
+	if lag := time.Since(*at); lag > time.Minute {
+		t.Errorf("the account reports %s of lag right after a watcher pass, want near zero; "+
+			"the lag source is still reading sync_log.last_success_at, which the steady state never writes",
+			lag.Round(time.Second))
+	}
+}

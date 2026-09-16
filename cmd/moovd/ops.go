@@ -177,34 +177,39 @@ func installSyncCollectors(m *metrics.Metrics, st *store.Store, logger *slog.Log
 			}
 			label := metrics.Labels{"account": strconv.FormatInt(a.ID, 10)}
 
-			// The account's lag is its OLDEST scope: a mailbox that stopped
-			// syncing is the problem, and taking the newest checkpoint would
-			// hide it behind whichever folder updated most recently.
-			var oldest time.Time
 			anyOpen := false
 			for _, cp := range checkpoints {
 				if cp.BreakerState == store.BreakerOpen {
 					anyOpen = true
 				}
-				if cp.LastSuccessAt == nil {
-					continue
-				}
-				if oldest.IsZero() || cp.LastSuccessAt.Before(oldest) {
-					oldest = *cp.LastSuccessAt
-				}
 			}
 
 			// An account with no checkpoints at all has nothing to report on
-			// either gauge; emitting a 0 would read as "healthy and current".
+			// the breaker gauge; emitting a 0 would read as "healthy".
 			if len(checkpoints) > 0 {
 				breaker = append(breaker, metrics.Sample{Labels: label, Value: boolGauge(anyOpen)})
 			}
-			if oldest.IsZero() {
+
+			// The lag comes from AccountLastProgressAt, NOT from the checkpoint
+			// rows read just above, and the difference is the whole point of
+			// that method existing: sync_log.last_success_at is written by the
+			// initial sync and by the watcher's connection handshake, while the
+			// steady state — every incremental pass that stores a message —
+			// advances mailboxes.last_synced_at. A gauge built on the
+			// checkpoints alone reported 8.6 days of lag on the pilot for an
+			// account that was delivering mail in seconds, and had to be
+			// documented as un-alertable. See store.AccountLastProgressAt.
+			progress, err := st.AccountLastProgressAt(ctx, a.ID)
+			if err != nil {
+				logger.Warn("metrics: reading sync progress failed", "account", a.ID, "error", err)
+				continue
+			}
+			if progress == nil {
 				// Never synced: no lag to report. An absent series is honest;
 				// a zero would read as "perfectly fresh".
 				continue
 			}
-			lag = append(lag, metrics.Sample{Labels: label, Value: now.Sub(oldest).Seconds()})
+			lag = append(lag, metrics.Sample{Labels: label, Value: now.Sub(*progress).Seconds()})
 		}
 		return lag, breaker
 	}

@@ -155,6 +155,46 @@ func (s *Store) SetBreakerState(ctx context.Context, accountID int64, scope stri
 	return nil
 }
 
+// AccountLastProgressAt reports the most recent moment at which ANY of an
+// account's sync state actually moved forward, or nil if it never has.
+//
+// # Why this is not sync_log.last_success_at
+//
+// Because that column only ever records the INITIAL sync and the watcher's
+// connection handshake. The engine's steady state — every incremental pass the
+// watcher runs, every delta it applies, every message it stores — writes
+// mailboxes.last_synced_at (SetMailboxSyncState) and nothing else. Reading
+// sync_log alone therefore produces a number that stops advancing the moment an
+// account finishes its initial sync and goes into normal operation, which is
+// backwards: it is highest precisely when the engine is healthiest.
+//
+// The pilot demonstrated the consequence rather than theorized it — the gauge
+// built on sync_log reported 8.6 DAYS of lag for an account that was delivering
+// mail within seconds, which meant the one metric an operator would reach for
+// during a sync outage had to be documented as "do not alert on this". A
+// monitoring signal nobody may trust is worse than none, because it occupies
+// the place a real one would have had.
+//
+// So the answer is the greater of the two sources: the freshest mailbox pass,
+// and the account-scope checkpoint that the initial sync and the watcher's
+// successful connection write. Taking the greater rather than the oldest is
+// deliberate — the question is "when did this account last make progress", and
+// a folder that legitimately has nothing new (an empty Junk, an archive nobody
+// writes to) is not evidence of a stall. Per-mailbox staleness is a different
+// question, and the reconciler answers it directly by comparing counters.
+func (s *Store) AccountLastProgressAt(ctx context.Context, accountID int64) (*time.Time, error) {
+	var at *time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT greatest(
+		         (SELECT max(last_synced_at) FROM mailboxes WHERE account_id = $1),
+		         (SELECT max(last_success_at) FROM sync_log WHERE account_id = $1))`,
+		accountID).Scan(&at)
+	if err != nil {
+		return nil, fmt.Errorf("reading last sync progress of account %d: %w", accountID, err)
+	}
+	return at, nil
+}
+
 // ListCheckpoints returns every scope's state for an account, which is what an
 // operator and the E8 metrics exporter read.
 func (s *Store) ListCheckpoints(ctx context.Context, accountID int64) ([]SyncCheckpoint, error) {
