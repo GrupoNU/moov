@@ -215,3 +215,41 @@ func (e *testEnv) mustSyncableAccount(t *testing.T) {
 	}
 	e.account = acct
 }
+
+// mustExtraSyncableAccounts creates n additional accounts, each with
+// credentials so the supervisor considers them eligible, and returns them.
+//
+// They are cleaned up with the environment. The emails are derived from the
+// test name so two packages' suites cannot collide on the same row.
+func (e *testEnv) mustExtraSyncableAccounts(t *testing.T, n int) []store.Account {
+	t.Helper()
+	ctx := context.Background()
+
+	out := make([]store.Account, 0, n)
+	for i := range n {
+		email := fmt.Sprintf("extra-%d-%d@example.test", i, time.Now().UnixNano())
+		acct, err := e.store.CreateAccount(ctx, store.Account{
+			Email:    email,
+			IMAPHost: "dovecot.internal",
+			IMAPPort: 143,
+		})
+		if err != nil {
+			t.Fatalf("CreateAccount(%s): %v", email, err)
+		}
+		id := acct.ID
+		t.Cleanup(func() {
+			if err := e.store.DeleteAccount(context.Background(), id); err != nil {
+				t.Logf("cleanup: deleting account %d: %v", id, err)
+			}
+		})
+		if err := e.store.SetAccountCredentials(ctx, acct.ID, email, []byte("ciphertext")); err != nil {
+			t.Fatalf("SetAccountCredentials(%s): %v", email, err)
+		}
+		fresh, err := e.store.GetAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("GetAccount(%d): %v", acct.ID, err)
+		}
+		out = append(out, fresh)
+	}
+	return out
+}

@@ -14,13 +14,13 @@ import (
 // request by twelve hours. Those two sentences meet in exactly one statement:
 // serverRevoker.RevokeAccount calling Server.RevokeDelegatedSessions.
 //
-// # Why this is a source assertion and not a behavioural one
+// # Why this is a source assertion and not a behavioral one
 //
-// The honest behavioural test — suspend an account over the accounts API,
+// The honest behavioral test — suspend an account over the accounts API,
 // then present its delegated session and watch it fail — needs a live server,
 // a database, a Mailcow, and a signed token from a configured issuer. That
 // test belongs to the end-to-end gate (F5), and it is the one that will prove
-// the behaviour.
+// the behavior.
 //
 // What can be lost silently LONG before that gate runs is the call itself.
 // Each half is independently well tested: jmaphttp proves

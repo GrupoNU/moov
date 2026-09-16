@@ -192,6 +192,29 @@ services:
       # brand), so this is always set rather than made optional.
       MOOV_BRANDING_DIR: /etc/moov/branding
 
+      # --- Delegated sign-in (M2) and the accounts API (M1).
+      #
+      # Both are OFF unless set, and off means the routes answer the generic
+      # 404 — never a 501, which would tell a prober the feature exists here.
+      # MOOV_DELEGATED_ISSUERS is a JSON array of {host, issuer, jwksUrl};
+      # a MALFORMED value stops the daemon rather than silently serving
+      # without it. The accounts API's only switch is the Mailcow write key,
+      # which is a credential an operator hands over deliberately (see
+      # deploy/README.md, "Managing a domain's mailboxes from outside").
+      MOOV_DELEGATED_ISSUERS: ${MOOV_DELEGATED_ISSUERS:-}
+      MOOV_DELEGATED_SESSION_MAX: ${MOOV_DELEGATED_SESSION_MAX:-168h}
+      MOOV_MAILCOW_WRITE_KEY: ${MOOV_MAILCOW_WRITE_KEY:-}
+      # The API root as reached from INSIDE the Mailcow network. Mailcow's
+      # internal certificate does not cover the container alias, which is the
+      # same situation MOOV_IMAP_SERVER_NAME solves for Dovecot — but the API
+      # client has no "server name" override, so verification is skipped for
+      # this hop only. The hop never leaves the Docker bridge, and the key is
+      # additionally bound by Mailcow's own IP allow-list.
+      MOOV_MAILCOW_BASE_URL: ${MOOV_MAILCOW_BASE_URL:-}
+      MOOV_MAILCOW_HOST_HEADER: ${MOOV_MAILCOW_HOST_HEADER:-}
+      MOOV_MAILCOW_INSECURE_SKIP_VERIFY: ${MOOV_MAILCOW_INSECURE_SKIP_VERIFY:-}
+      MOOV_ACCOUNTS_MAX_QUOTA_MB: ${MOOV_ACCOUNTS_MAX_QUOTA_MB:-10240}
+
       # --- Operational HTTP: /healthz and /metrics (E8-lite).
       MOOV_HTTP_ADDR: ":8080"
 

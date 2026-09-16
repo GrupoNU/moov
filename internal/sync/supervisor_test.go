@@ -227,3 +227,62 @@ func waitFor(t *testing.T, limit time.Duration, cond func() bool, msg string) {
 	}
 	t.Fatal(msg)
 }
+
+// TestSupervisorWatchesEveryAccountBeyondConcurrency is the regression test for
+// a defect found in production on 2026-09-16, the first time a fifth account
+// existed on the pilot.
+//
+// # The defect
+//
+// Run() bounds initial syncs with a semaphore of Concurrency slots, and each
+// account's goroutine releases its slot with `defer func() { <-sem }()`. But
+// the goroutine does not END after the initial sync: it calls runWatcher, whose
+// Watch blocks for the LIFETIME of the account's watcher. So a slot is held
+// forever, not for the duration of a sync.
+//
+// With the default Concurrency of 4 and four accounts, nothing was wrong. The
+// fifth account — created through the accounts API, against a real Mailcow —
+// simply never started: no sync, no watcher, no error, no log line. It waited
+// on a semaphore that would never be released, and the supervisor never even
+// finished its startup round.
+//
+// The symptom is the worst kind: silent. The mailbox existed in Mailcow and
+// received mail; Moov just never showed it, and nothing anywhere said why.
+//
+// # What this test pins
+//
+// Concurrency limits how many accounts are initially synced AT ONCE, which is
+// what the option's documentation says it means. It must not limit how many
+// accounts are watched, and an account beyond the limit must not be stranded.
+func TestSupervisorWatchesEveryAccountBeyondConcurrency(t *testing.T) {
+	env := newTestEnv(t)
+	env.mustSyncableAccount(t)
+
+	// Two more accounts than the concurrency limit below, all watchable.
+	const concurrency = 1
+	extra := env.mustExtraSyncableAccounts(t, 2)
+	want := len(extra) + 1
+
+	srv := newFakeServer()
+	srv.addMailbox("INBOX", imap.RoleInbox, 100)
+
+	// block: true is the whole point — a real watcher never returns either.
+	watcher := &recordingWatcher{block: true}
+	sup, err := NewSupervisor(env.store, env.blobs, SupervisorOptions{
+		Options:     env.testOptions(referenceNow),
+		Connector:   ConnectorFunc(func(context.Context, store.Account, int) ([]imap.Client, error) { return srv.clients(2), nil }),
+		Watcher:     watcher,
+		Concurrency: concurrency,
+	})
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	go func() { _ = sup.Run(ctx) }()
+
+	waitFor(t, 45*time.Second, func() bool { return len(watcher.accounts()) >= want },
+		"an account beyond the concurrency limit was never watched — it is stranded on the semaphore, "+
+			"exactly as the pilot's fifth account was: no sync, no watcher, no error")
+}

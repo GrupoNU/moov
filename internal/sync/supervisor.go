@@ -143,8 +143,17 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func(a store.Account) {
 			defer wg.Done()
-			defer func() { <-sem }()
-			s.superviseAccount(ctx, a)
+			// The slot is released by superviseAccount the moment the INITIAL
+			// SYNC is done — not when this goroutine ends, which is when the
+			// account's watcher dies, i.e. at shutdown.
+			//
+			// Releasing it here instead (the shape this had until 2026-09-16)
+			// means every slot is held for the process's lifetime, so with
+			// Concurrency slots filled, account number Concurrency+1 waits on a
+			// semaphore that is never posted: no sync, no watcher, no error, no
+			// log line. That is what stranded the pilot's fifth account, and
+			// TestSupervisorWatchesEveryAccountBeyondConcurrency pins it.
+			s.superviseAccount(ctx, a, func() { <-sem })
 		}(acct)
 	}
 
@@ -164,8 +173,27 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 // superviseAccount runs one account's initial sync (if needed) and then its
 // watcher.
-func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account) {
+//
+// releaseSlot gives back this account's concurrency slot. It is called exactly
+// once, as soon as the account stops doing initial-sync work — whether that is
+// success, a context end, or entering the retry wait. It is deliberately NOT
+// deferred to the end of this function: the function does not end until the
+// watcher dies, and holding a slot for that long strands every account past the
+// limit (see the call site).
+//
+// The retry wait releases too, because it is minutes long by design
+// (DefaultRetryDelay): an account whose credentials are wrong must not hold a
+// slot that a healthy account could use. It re-acquires nothing on the way
+// back, which means a retrying account is no longer bounded by Concurrency —
+// the right trade, since the retry path is rate-limited by RetryDelay and by
+// the per-account breaker, and the bound exists to protect Dovecot from a
+// thundering herd of INITIAL syncs, not from one slow retry loop.
+func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account, releaseSlot func()) {
 	log := s.log.With("account_id", account.ID, "email", account.Email)
+
+	var once sync.Once
+	release := func() { once.Do(releaseSlot) }
+	defer release()
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -175,6 +203,7 @@ func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account
 		err := s.syncOnce(ctx, account, log)
 		switch {
 		case err == nil:
+			release()
 			s.runWatcher(ctx, account, log)
 			return
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
@@ -182,6 +211,7 @@ func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account
 		}
 
 		log.Error("initial sync failed; will retry", "error", err, "retry_in", s.opts.RetryDelay)
+		release()
 		select {
 		case <-time.After(s.opts.RetryDelay):
 		case <-ctx.Done():
