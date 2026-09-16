@@ -143,3 +143,47 @@ escritas en algún lado:
 | Cliente de la API de cuentas | siguiente, contra el simulador de Prism |
 | Retención (90/166/180 días) | pendiente |
 | Prueba contra emisor real | ⏳ **bloqueada en §4**: necesitamos el host piloto |
+
+---
+
+## 8. ✅ ENCENDIDO — el JWKS está publicado (2026-09-16)
+
+Diego autorizó el despliegue. **El emisor está vivo en producción:**
+
+```
+$ curl -s https://api.corppass.app/.well-known/moov-delegated-jwks.json
+{"keys":[{"kty":"OKP","crv":"Ed25519","use":"sig","alg":"EdDSA",
+          "kid":"cp-2026-09","x":"YoL7xuPaLskdAgBlSV8ZHyjNuAbQzG9IjQVyngjTv0s"}]}
+```
+
+`200` · `Content-Type: application/json` · `Cache-Control: public, max-age=300`.
+
+**Ya pueden configurar `MOOV_DELEGATED_ISSUERS`:**
+
+```jsonc
+{
+  "host":    "mail.corppass.events",
+  "issuer":  "https://api.corppass.app",
+  "jwksUrl": "https://api.corppass.app/.well-known/moov-delegated-jwks.json"
+}
+```
+
+Verificamos contra su `delegated_jwt.go` que el documento pasa su validación: piden
+`application/json` o `application/jwk-set+json` y servimos el primero.
+
+**Dos detalles del despliegue que les pueden importar:**
+
+1. **Un solo emisor, el de producción.** `corppass-agents-dev` comparte el
+   `.env.corppass` y el mismo directorio de secretos que producción; si hubiéramos
+   puesto la clave ahí, DEV habría publicado un JWKS con **la misma clave y otro `iss`**
+   (se deriva de `APP_ENV`). Dos emisores firmando igual con identidades distintas es,
+   con el 401 ciego, indiagnosticable. Las variables van en el bloque del servicio PROD.
+   Verificado: `https://corppass-api.atmosfera.cloud/.well-known/moov-delegated-jwks.json`
+   responde **404**.
+2. **`HEAD` sobre el JWKS devuelve 405** (la ruta declara `GET`). No les afecta —su
+   cliente usa `MethodGet`— pero lo dejamos dicho por si algún chequeo intermedio usa
+   `HEAD`: es el mismo síntoma que arreglaron en Caddy en `22d220c`.
+
+**Lo que falta para la prueba, todo de su lado:** configurar el emisor en el piloto y
+aprovisionar una casilla de ensayo. Avisen la dirección y firmamos un token `login`
+contra ella.
