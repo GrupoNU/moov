@@ -60,6 +60,26 @@ type Config struct {
 
 	// Submit is the outbox's configuration (W3).
 	Submit SubmitConfig
+
+	// Accounts is the per-domain accounts API's configuration (M1).
+	Accounts AccountsConfig
+}
+
+// AccountsConfig is what the accounts API reads from the environment
+// (docs/specs/L2-accounts-api-contract.md §2.5).
+//
+// Whether the API exists at all is NOT here: it is decided by the presence of
+// the Mailcow write key, which internal/mailcow owns and cmd/moovd reads
+// (accounts.go). Putting an "enabled" flag beside the key would let the two
+// disagree — a daemon with a key and the flag off, or the reverse — and the
+// honest answer to "is this feature on" is "did the operator hand it the
+// credential it cannot work without".
+type AccountsConfig struct {
+	// MaxQuotaMB is the installation's ceiling for a mailbox quota
+	// (MOOV_ACCOUNTS_MAX_QUOTA_MB). Zero means accounts.DefaultMaxQuotaMB
+	// (10240). A create or update above it is a 400, never a silent clamp:
+	// a portal that asked for 50 GB and got 10 must be told.
+	MaxQuotaMB int
 }
 
 // SyncConfig is everything the sync supervisor, its initial-sync pipeline and
@@ -197,7 +217,26 @@ func Load() (Config, error) {
 	}
 	c.Submit = submit
 
+	accounts, err := loadAccounts()
+	if err != nil {
+		return Config{}, err
+	}
+	c.Accounts = accounts
+
 	return c, c.Validate()
+}
+
+// loadAccounts reads the accounts API's settings (M1).
+//
+// There is only one, and its absence is not a failure: the ceiling has an
+// installation default, and whether the API runs at all is decided by the
+// Mailcow write key, not here (see AccountsConfig).
+func loadAccounts() (AccountsConfig, error) {
+	maxQuota, err := envPositiveInt("MOOV_ACCOUNTS_MAX_QUOTA_MB")
+	if err != nil {
+		return AccountsConfig{}, err
+	}
+	return AccountsConfig{MaxQuotaMB: maxQuota}, nil
 }
 
 // loadSync reads the sync engine's settings.

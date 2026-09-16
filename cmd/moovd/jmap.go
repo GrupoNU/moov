@@ -31,7 +31,10 @@ type jmapComponents struct {
 	ln     net.Listener
 	writer *syncengine.WriteExecutor
 	outbox *outboxComponent
-	log    *slog.Logger
+	// accounts is the M1 export runner's lifecycle; nil when the accounts
+	// API is off, and shutdown is nil-safe.
+	accounts *accountsComponents
+	log      *slog.Logger
 }
 
 // startJMAP builds and starts the JMAP HTTP server, or returns nil when it is
@@ -213,6 +216,18 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	// one place. The assertion is structural: mail.Adapter implements both.
 	uploader, _ := deps.Blobs.(jmaphttp.BlobUploader)
 
+	// M1: the per-domain accounts API. Off unless the operator set the
+	// Mailcow WRITE key — see cmd/moovd/accounts.go for why that credential,
+	// and not a flag, is what turns it on. nil is the ordinary configuration
+	// and makes every /admin/accounts route answer the generic 404.
+	revoker, bindRevokerServer := newServerRevoker(auth, st)
+	accountsCfg, accountsComp, err := buildAccountsAPI(cfg, st, blobs, keyring, revoker, m, logger)
+	if err != nil {
+		writer.Close()
+		st.Close()
+		return nil, err
+	}
+
 	srv, err := jmaphttp.New(jmaphttp.Config{
 		BaseURL:        cfg.JMAP.ExternalURL,
 		AllowedOrigins: cfg.JMAP.CORSOrigins,
@@ -261,12 +276,19 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 			}
 			return nil
 		}(),
+		// M1: nil when the feature is off, which is the default.
+		Accounts: accountsCfg,
 	}, auth)
 	if err != nil {
+		accountsComp.shutdown(context.Background())
 		writer.Close()
 		st.Close()
 		return nil, fmt.Errorf("building jmap server: %w", err)
 	}
+
+	// Closes the cycle the revoker opened: from here a suspend can end the
+	// sessions of the server that is about to start serving.
+	bindRevokerServer(srv)
 
 	// The mail methods: J2's get family, J3's query/changes family, the set
 	// family (W1's Email/set, W2's Mailbox/set) and W3's submission family,
@@ -299,6 +321,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 
 	ln, err := net.Listen("tcp", cfg.JMAP.Addr)
 	if err != nil {
+		accountsComp.shutdown(context.Background())
 		writer.Close()
 		st.Close()
 		return nil, fmt.Errorf("binding jmap listener on %s: %w", cfg.JMAP.Addr, err)
@@ -320,6 +343,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		writer, raws, broker, blobs, submissionMetrics{m}, logger)
 	if err != nil {
 		_ = httpSrv.Close()
+		accountsComp.shutdown(context.Background())
 		writer.Close()
 		st.Close()
 		return nil, fmt.Errorf("starting the outbox: %w", err)
@@ -331,7 +355,10 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		"cors_origins", len(cfg.JMAP.CORSOrigins),
 		"imap_host", cfg.JMAP.IMAPHost,
 	)
-	return &jmapComponents{store: st, server: httpSrv, ln: ln, writer: writer, outbox: outbox, log: logger}, nil
+	return &jmapComponents{
+		store: st, server: httpSrv, ln: ln, writer: writer,
+		outbox: outbox, accounts: accountsComp, log: logger,
+	}, nil
 }
 
 // brokerNotifier adapts internal/sync's Broker to the HTTP layer's
@@ -390,6 +417,9 @@ func (c *jmapComponents) shutdown(ctx context.Context) {
 		_ = c.server.Close()
 	}
 	c.outbox.shutdown(ctx)
+	// The export runner stops after the HTTP server drains, so a request that
+	// was starting a job finds a runner that is still alive to claim it.
+	c.accounts.shutdown(ctx)
 	if c.writer != nil {
 		c.writer.Close()
 	}
