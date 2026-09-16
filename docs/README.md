@@ -85,7 +85,11 @@ them.
   sign-in (issuer-signed JWT in the URL fragment → Moov session). Published ahead
   of the implementation so consumers can start on a mock; the machine-readable half
   is [openapi-accounts-and-delegated.yaml](specs/openapi-accounts-and-delegated.yaml)
-  with a response example for every status.
+  with a response example for every status. The **operator's** half — issuing and
+  rotating service-account keys, the Mailcow write key and its trust boundary,
+  configuring issuers, and what the export and deletion clocks really promise —
+  is [`deploy/README.md`](../deploy/README.md), "Managing a domain's mailboxes
+  from outside".
 - **[L3 — The Gmail-class plan](specs/L3-gmail-class-plan.md)** *(Spanish)* —
   The eleven-epic program (E0–E11) that took Moov from "a working webmail" to
   "measured against Gmail". It carries the ten director arbitrations
