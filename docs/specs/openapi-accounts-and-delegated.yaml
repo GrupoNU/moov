@@ -355,11 +355,13 @@ paths:
       operationId: setReadOnly
       summary: Enter the read-only retention phase
       description: |
-        Blocks sending in Mailcow (SMTP access off) and in Moov
-        (`EmailSubmission/set` refused with a clear error; the client hides
-        compose/reply). Reading, searching and exporting keep working. The
-        phase is one-way in this version: there is no "resume to active"
-        transition from read-only. Idempotent.
+        Blocks sending with two independent locks: Moov re-issues the
+        account's app password WITHOUT the SMTP protocol (the credential lock,
+        effective for any client), and `EmailSubmission/set` is refused with a
+        clear error while the client hides compose/reply (the explaining
+        lock). Reading, searching and exporting keep working. The phase is
+        one-way in this version: there is no "resume to active" transition
+        from read-only. Idempotent.
       requestBody:
         required: false
         content:

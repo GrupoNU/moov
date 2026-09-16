@@ -24,9 +24,13 @@
   call. Key from env, encrypted at rest with the master key; absent ⇒ feature off.
 - Creating an account = Mailcow mailbox (random password, discarded) + Moov provisioning
   (today's `provision` flow) + identity name + the host brand. Idempotent by address.
-- Read-only phase: sending blocked server-side (Mailcow) and in JMAP (`EmailSubmission/set`
-  refused with a clear error); the PWA hides Redactar/reply when the account is read-only
-  (flag exposed to the client).
+- Read-only phase: sending blocked by re-issuing the app password WITHOUT SMTP (F0 proved
+  `smtp_access:0` does not block submission) and in JMAP (`EmailSubmission/set` refused
+  with a clear error); the PWA hides Redactar/reply when the account is read-only (flag
+  exposed to the client).
+- The Mailcow client follows the F0 error contract (note §3): failures inside HTTP 200,
+  both `error` and `danger` families, `msg` string-or-array, `{}` never trusted as
+  "absent", key validated at startup, rate limit is Moov's.
 - Export: background job producing a zip of EML files from the blob store, signed expiring
   download URL, counts and a sha256 manifest.
 - Tests per AC: scope enforcement (another domain ⇒ 404), idempotency, audit lines, Mailcow

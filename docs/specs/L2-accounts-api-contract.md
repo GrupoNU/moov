@@ -137,8 +137,8 @@ so the consumer's own log and Moov's audit can be joined.
 | update | `PATCH /admin/accounts/{a}` | yes | name, quota, rate limit updated | identity name updated; Moov-enforced limits updated |
 | suspend | `POST …/suspend` | yes | mailbox inactive (no IMAP/SMTP) | every session and token revoked; sync worker stopped (`sync.state: paused`); next request by the browser fails |
 | resume | `POST …/resume` | yes | mailbox active | sync restarted; returns to `readonly` if `readOnly` was true, else `active` |
-| readonly | `POST …/readonly` | yes; **one-way in this version** | SMTP access off | `EmailSubmission/set` refused with a clear `forbidden`-class error; JMAP session and the delegated session carry `readOnly: true` so the client hides compose/reply/forward; drafts still open |
-| delete | `DELETE /admin/accounts/{a}` with `{"confirm": "<a>"}` | no (202 once; then 409 while deleting; then 404) | mailbox deleted, maildir included | sessions and tokens revoked immediately; store rows and blobs purged in the background |
+| readonly | `POST …/readonly` | yes; **one-way in this version** | the account's app password is **re-issued without SMTP** (`protocols: ["imap_access","sieve_access"]`), the old one deleted; `smtp_access: 0` is also set but NOT relied on — F0 measured that Mailcow saves it and still accepts submission AUTH (`functions.auth.inc.php` skips the check when the service is `NONE`; no Postfix SQL map reads it) | `EmailSubmission/set` refused with a clear `forbidden`-class error; JMAP session and the delegated session carry `readOnly: true` so the client hides compose/reply/forward; drafts still open. Two independent locks: the UI one explains, the credential one enforces even for a non-Moov client |
+| delete | `DELETE /admin/accounts/{a}` with `{"confirm": "<a>"}` | no (202 once; then 409 while deleting; then 404) | mailbox deleted (synchronous API answer, app passwords cascade — F0 verified); **maildir removal on disk not yet verified** for a mailbox that received mail, so `deleting` must not be assumed instantaneous until F3/F5 closes it | sessions and tokens revoked immediately; store rows and blobs purged in the background |
 | export | `POST …/export` / `GET …/export` | POST is idempotent while a job is pending/running | — | see §2.6 |
 
 Every transition writes one audit line: `actor` (the service account's id and name),
@@ -154,13 +154,15 @@ in the body. Recreating an address after deletion is allowed and is an audited e
 - `name`: 1–128 characters, no control characters. Becomes the Moov identity's name and
   the Mailcow mailbox name.
 - `quotaMB`: 64 … `MOOV_ACCOUNTS_MAX_QUOTA_MB` (default 10240). Default 2048.
-- `limits.sendPerDay` (default 300): applied as the Mailcow per-mailbox rate limit.
+- `limits.sendPerDay` (default 300): applied as the Mailcow per-mailbox rate limit —
+  **F0 confirmed** `POST /edit/rl-mbox` with `{"rl_value": 300, "rl_frame": "d"}` on our
+  version (frames `s/m/h/d`). A domain-level limit is inherited by every new mailbox
+  (`rl_scope: "domain"`), so Moov writes the per-mailbox value only when it differs from the
+  requested one; the resource always reports the effective value.
   `limits.recipientsPerMessage` (default 50) and `limits.attachmentMB` (default 25): enforced
   by **Moov at submission** (`EmailSubmission/set` and the upload endpoint), because Mailcow
   has no per-mailbox knob for them; Mailcow's global Postfix limits still apply and this
-  API never raises them. **F0 must confirm** the exact Mailcow rate-limit semantics
-  (`rl_value`/`rl_frame` per day) on our version; if a day frame is not available the
-  contract keeps `sendPerDay` and Moov enforces it in the outbox.
+  API never raises them.
 - `DELETE` requires a JSON body `{"confirm": "<address>"}` equal to the path address after
   lower-casing. A client whose HTTP stack strips DELETE bodies is broken; the contract does
   not offer a query-string alternative because a confirmation that can be pasted into a URL
@@ -485,17 +487,33 @@ the Basic set; (h) the token-in-query set is unchanged; (i) the PWA strips the f
 before any network call (jsdom test asserting `location.hash === ""` and no request URL
 contains the token).
 
-## 7. Open points for F0 (VPS_Mail) that can change §2.5 only
+## 7. F0 answers (VPS_Mail, 2026-09-15) and what they changed
 
-1. Mailcow rate limit on our version: does the mailbox API accept a per-day frame
-   (`rl_frame: "d"`)? If only hour/minute frames exist, `sendPerDay` stays in the contract
-   and Moov enforces it in the outbox; nothing changes for the consumer.
-2. Does the mailbox DELETE remove the maildir synchronously? Affects how long `deleting`
-   lasts, not the contract.
-3. Per-mailbox SMTP access toggle (`smtp_access`) as the read-only mechanism: confirm it
-   rejects AUTH for submission while leaving IMAP intact.
-4. The write key's IP restriction: confirm Mailcow honours the allowed-from list for API
-   keys on our version.
+Answered in `docs/briefs/2026-09-15-vpsmail-nota-dominio-y-mailcow-errores.md` §5 against
+Mailcow 2026-07a on the real installation. **Nothing on the wire changed**; two internal
+mechanisms did.
+
+1. **Per-day rate limit: YES** (`rl_frame: "d"`). `sendPerDay` rides Mailcow; the outbox
+   plan B is dropped (§2.5).
+2. **Mailbox DELETE: synchronous API answer, app passwords cascade; maildir removal on
+   disk UNVERIFIED** (the test mailbox never received mail). `deleting` is not promised to
+   be instantaneous; F3/F5 close it against a mailbox with content (gate criterion 7).
+3. **`smtp_access: 0` does NOT block submission** — measured: AUTH on 465 still answers
+   `235`. Read-only therefore re-issues the app password without SMTP (§2.4); the JMAP
+   refusal stays as the explaining lock. `rl_value: 0` as an MTA-level block is unverified
+   and not used.
+4. **IP allow-list on API keys: YES, strict**, with a distinct error
+   (`api access denied for ip <IP>`, which names the IP Mailcow sees). Moov's client
+   reports it apart from `authentication failed`: different cause, different fix.
+
+Two more F0 facts the M1 client is built on (note §3): Mailcow reports **almost every
+failure inside an HTTP 200** — `type: "error"` (transport/auth, single object) and
+`type: "danger"` (operation failures, inside the result array, `msg` string OR array) are
+BOTH failures, an empty body is a failure, and `{}` on a GET means "does not exist" and is
+indistinguishable from a silently failed authentication. The client validates the key at
+startup and never infers "no such mailbox" from a `{}` it cannot trust — otherwise the
+idempotent create of §2.4 would mint duplicates. The API does not throttle itself; the
+budget in §2.2 is Moov's.
 
 ## 8. Deviations from the L2 integration spec (§4.1/§4.2), for the record
 
@@ -515,3 +533,7 @@ contains the token).
 
 - 2026-09-15 — `1.0.0-draft.1` published. Consumers may build against it; breaking changes
   before M1/M2 ship will bump the draft number and be listed here with a migration note.
+- 2026-09-15 (later) — F0 answers folded in (§7). **No wire change**, draft number kept:
+  read-only is enforced by re-issuing the app password without SMTP (§2.4), `sendPerDay`
+  confirmed on Mailcow (§2.5), `deleting` not promised instantaneous (§2.4). The mailbox
+  domain of the first consumer changed to a root domain; the contract never named it.
