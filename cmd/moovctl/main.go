@@ -108,6 +108,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		err = keyCommand(ctx, env, rest[1:])
 	case "branding":
 		err = brandingCommand(ctx, env, rest[1:])
+	case "service-account":
+		err = serviceAccountCommand(ctx, env, rest[1:])
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return exitOK
@@ -170,6 +172,9 @@ Commands:
   branding unset          remove a host's branding (back to Moov's defaults)
   branding grant          let a mailbox edit a host's brand from Settings (the admin API)
   branding revoke         take that permission away
+  service-account create  issue an accounts-API key for one domain (shown once)
+  service-account list    list the accounts-API keys
+  service-account revoke  revoke an accounts-API key
 
 Flags:
   -v          log at debug level
