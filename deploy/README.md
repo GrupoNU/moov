@@ -117,6 +117,63 @@ docker compose restart moovd
 
 ---
 
+## The per-domain accounts API (epic M1)
+
+An external system — a portal, a CRM, an event platform — can manage the
+mailboxes of ONE domain without ever touching Mailcow: create, read usage,
+suspend, move into read-only retention, export, delete. The wire contract is
+`docs/specs/L2-accounts-api-contract.md`; this section is only what an
+operator has to do.
+
+**It is OFF unless you turn it on, and turning it on is handing over a
+credential.** The API needs a Mailcow read-write key, and Mailcow does not
+scope keys by domain: the only thing standing between one consumer and
+another's mail is Moov's own check that the address belongs to the service
+account's domain. That check runs before every Mailcow call and is pinned by
+test, but the credential itself is unrestricted, which is why enabling the
+feature is a deliberate act and not a default.
+
+```bash
+# In the moovd service's environment. A DIFFERENT variable from
+# MOOV_MAILCOW_API_KEY, which is moovctl's and lives on an operator's machine
+# for the length of one command; this one lives in a long-running,
+# network-facing process.
+MOOV_MAILCOW_WRITE_KEY=...          # or MOOV_MAILCOW_WRITE_KEY_FILE=/run/secrets/...
+MOOV_ACCOUNTS_MAX_QUOTA_MB=10240    # optional; the ceiling for a mailbox quota
+```
+
+With the variable absent, every `/admin/accounts` route answers the same
+generic 404 an unknown route answers — deliberately, so that a prober cannot
+learn the feature exists here and is merely off.
+
+Then issue a key per consumer. It is bound to one domain, and it is shown
+**once**: only its SHA-256 is stored, and there is no command to print it
+again.
+
+```bash
+docker compose exec moovd moovctl service-account create   -domain events.example.test -scopes accounts:write -name "portal"
+
+docker compose exec moovd moovctl service-account list
+docker compose exec moovd moovctl service-account revoke -id sa_...
+```
+
+**Read-only retention deletes the mailbox's ability to send, permanently in
+this version.** `POST /admin/accounts/{a}/readonly` re-issues the account's
+app password WITHOUT SMTP and deletes the old one. It works that way because
+F0 measured that Mailcow's `smtp_access: 0` does *not* stop submission — AUTH
+on 465 still answers 235 — so the flag alone would be a lock that does not
+lock. There is no route back to active.
+
+Exports land in `exports/` under the blob root, are downloadable for 7 days
+through a signed URL that needs no credential, and are swept afterwards.
+Budget disk for them: one export is a copy of the mailbox.
+
+Migration 0012 creates the tables. It adds columns and indexes and
+**backfills nothing**, so it is sub-second on a populated store — unlike 0004,
+which is documented below.
+
+---
+
 ## Branding a hostname
 
 One Moov install can serve several customers, each on its own hostname, each
