@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -76,6 +77,10 @@ func MoovScopes() []Protocol {
 type Client struct {
 	cfg  Config
 	http *http.Client
+
+	// validated is set by ValidateKey. Until then a GET answering `{}` is
+	// refused rather than read as "not found" (F0 rule 6).
+	validated atomic.Bool
 }
 
 // New builds a client from a config, normalizing it first.
@@ -165,9 +170,24 @@ type Mailbox struct {
 	Name     string `json:"name"`
 	// Active is 1 or 0. Mailcow sends it as a number here and as a string
 	// elsewhere, which is why it is decoded through flexInt.
-	Active     flexInt `json:"active"`
-	Quota      int64   `json:"quota"`
-	Messages   int64   `json:"messages"`
+	Active flexInt `json:"active"`
+	// Quota is in BYTES on read (it is written in MB — see CreateMailbox).
+	Quota    int64 `json:"quota"`
+	Messages int64 `json:"messages"`
+	// QuotaUsed is the mailbox's real disk usage in bytes, as Dovecot
+	// reported it to Mailcow (F0 §3.2). It is what the accounts API serves
+	// as quota.usedBytes.
+	QuotaUsed int64 `json:"quota_used"`
+	// LastIMAPLogin and LastSMTPLogin are Unix seconds, 0 when never.
+	LastIMAPLogin flexInt `json:"last_imap_login"`
+	LastSMTPLogin flexInt `json:"last_smtp_login"`
+	// RL is the effective per-mailbox rate limit and RLScope says whether it
+	// is the mailbox's own ("mailbox") or inherited from the domain
+	// ("domain"). Mailcow sends `rl` as an object when one applies and as
+	// `false` otherwise, hence the custom decoder.
+	RL      RateLimit `json:"rl"`
+	RLScope string    `json:"rl_scope"`
+
 	Attributes struct {
 		IMAPAccess  flexInt `json:"imap_access"`
 		SMTPAccess  flexInt `json:"smtp_access"`
@@ -177,6 +197,38 @@ type Mailbox struct {
 
 // IsActive reports whether the mailbox is enabled.
 func (m Mailbox) IsActive() bool { return m.Active != 0 }
+
+// RateLimit is a Mailcow sending rate limit: Value messages per Frame, where
+// Frame is one of "s", "m", "h", "d" (F0 answer P1 confirmed "d").
+//
+// The zero value means "no limit of its own" — a mailbox inheriting the
+// domain's limit reads as the inherited value with RLScope "domain".
+type RateLimit struct {
+	Value int
+	Frame string
+}
+
+// IsZero reports whether no limit is set.
+func (rl RateLimit) IsZero() bool { return rl.Value == 0 && rl.Frame == "" }
+
+// UnmarshalJSON accepts the object form {"value":"300","frame":"d"} and the
+// `false`/`null`/`{}` forms Mailcow uses for "none".
+func (rl *RateLimit) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || b[0] != '{' {
+		*rl = RateLimit{}
+		return nil
+	}
+	var raw struct {
+		Value flexInt `json:"value"`
+		Frame string  `json:"frame"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*rl = RateLimit{Value: int(raw.Value), Frame: raw.Frame}
+	return nil
+}
 
 // AllowsMoovScopes reports whether the MAILBOX itself permits the protocols
 // Moov needs. An app password cannot grant access the mailbox denies, so
@@ -227,10 +279,47 @@ func (c *Client) GetMailbox(ctx context.Context, mailbox string) (Mailbox, error
 		return Mailbox{}, fmt.Errorf("%w: decoding mailbox: %w", ErrUnexpectedResponse, err)
 	}
 	if m.Username == "" {
-		return Mailbox{}, fmt.Errorf("%w: mailbox %q", ErrNotFound, mailbox)
+		return Mailbox{}, c.emptyObject(fmt.Sprintf("mailbox %q", mailbox))
 	}
 	return m, nil
 }
+
+// emptyObject is the F0 rule for a GET that answered `{}`: it is "not found"
+// only once the key has been validated, because the same body is what a
+// silently rejected key produces (rule 6 of the note).
+func (c *Client) emptyObject(what string) error {
+	if !c.validated.Load() {
+		return fmt.Errorf("%w: %s answered an empty object", ErrKeyNotValidated, what)
+	}
+	return fmt.Errorf("%w: %s", ErrNotFound, what)
+}
+
+// ValidateKey proves the configured key works from this address, so that a
+// later `{}` can be trusted as "does not exist".
+//
+// It reads the server version: a call every key may make, whose answer is a
+// non-empty object with a version string — never `{}` — so a valid key is
+// positively identified rather than inferred from the absence of an error.
+// The accounts API calls it at startup and refuses to enable itself when it
+// fails; moovctl calls it before provisioning for the same reason.
+func (c *Client) ValidateKey(ctx context.Context) error {
+	body, err := c.do(ctx, http.MethodGet, statusVersionPath, nil)
+	if err != nil {
+		return fmt.Errorf("validating the API key: %w", err)
+	}
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(body), &v); err != nil || v.Version == "" {
+		return fmt.Errorf("%w: validating the API key: %s did not answer a version (%s)",
+			ErrUnexpectedResponse, statusVersionPath, snippet(body))
+	}
+	c.validated.Store(true)
+	return nil
+}
+
+// Validated reports whether ValidateKey succeeded on this client.
+func (c *Client) Validated() bool { return c.validated.Load() }
 
 // ListAppPasswords returns the app passwords of one mailbox.
 func (c *Client) ListAppPasswords(ctx context.Context, mailbox string) ([]AppPassword, error) {
@@ -437,10 +526,21 @@ func (c *Client) do(ctx context.Context, method, path string, payload any) ([]by
 
 	switch resp.StatusCode {
 	case http.StatusOK:
+		// F0: the "error" family arrives inside a 200 on reads. It is looked
+		// for on EVERY 200, because an error object would otherwise decode
+		// into an empty Mailbox and read as "not found".
+		if err := errorEnvelope(body); err != nil {
+			return nil, err
+		}
 		return body, nil
 	case http.StatusUnauthorized:
-		// Mailcow's body here names the rejected source IP, which is the
-		// single most useful diagnostic for the S1 H5 allowlist failure.
+		// Writes with a bad key get a real 401 (reads get a 200, above).
+		// The body still says WHICH failure: a wrong key, or a valid key from
+		// an address outside its allow-list — the S1 H5 case, whose message
+		// names the IP Mailcow saw.
+		if err := errorEnvelope(body); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, snippet(body))
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("%w: %s", ErrForbidden, snippet(body))
@@ -450,61 +550,6 @@ func (c *Client) do(ctx context.Context, method, path string, payload any) ([]by
 		return nil, fmt.Errorf("%w: %s %s returned HTTP %d: %s",
 			ErrUnexpectedResponse, method, path, resp.StatusCode, snippet(body))
 	}
-}
-
-// apiResult is Mailcow's mutation response envelope. Both msg and type vary in
-// shape between endpoints, so both are decoded permissively.
-type apiResult struct {
-	Type string          `json:"type"`
-	Msg  json.RawMessage `json:"msg"`
-}
-
-// checkAPIResult interprets a mutation response.
-//
-// Mailcow answers HTTP 200 for failures, so this — not the status code — is
-// what decides whether a write happened. The response is sometimes an object
-// and sometimes an array of them; both are handled.
-func checkAPIResult(body []byte, wantMsg string) error {
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return fmt.Errorf("%w: empty response body", ErrUnexpectedResponse)
-	}
-
-	var results []apiResult
-	if trimmed[0] == '[' {
-		if err := json.Unmarshal(trimmed, &results); err != nil {
-			return fmt.Errorf("%w: decoding result: %w (%s)", ErrUnexpectedResponse, err, snippet(body))
-		}
-	} else {
-		var one apiResult
-		if err := json.Unmarshal(trimmed, &one); err != nil {
-			return fmt.Errorf("%w: decoding result: %w (%s)", ErrUnexpectedResponse, err, snippet(body))
-		}
-		results = []apiResult{one}
-	}
-	if len(results) == 0 {
-		return fmt.Errorf("%w: response carried no result (%s)", ErrUnexpectedResponse, snippet(body))
-	}
-
-	// Every element must report success: a partial failure is a failure.
-	var sawExpected bool
-	for _, r := range results {
-		msg := string(bytes.Trim(r.Msg, `"`))
-		if r.Type != "success" {
-			return fmt.Errorf("%w: type=%q msg=%s", ErrAPI, r.Type, snippet(r.Msg))
-		}
-		if wantMsg != "" && strings.Contains(msg, wantMsg) {
-			sawExpected = true
-		}
-	}
-
-	// The expected msg is checked but its absence is NOT fatal: Mailcow's msg
-	// strings are localization keys that have been renamed across releases,
-	// and refusing a success that used a new key would break Moov on a
-	// Mailcow upgrade that changed nothing important. type=success is the
-	// contract; the msg is corroboration.
-	_ = sawExpected
-	return nil
 }
 
 // flexInt decodes a value Mailcow sends sometimes as a number and sometimes as

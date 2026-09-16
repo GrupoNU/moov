@@ -60,8 +60,8 @@ const (
 
 // Result is one (case x parser) observation.
 type Result struct {
-	Case    string  `json:"case"`    // "01-nesting/001-nested-multipart-10.eml"
-	Parser  string  `json:"parser"`  // "go-message" | "enmime"
+	Case    string  `json:"case"`   // "01-nesting/001-nested-multipart-10.eml"
+	Parser  string  `json:"parser"` // "go-message" | "enmime"
 	Outcome Outcome `json:"outcome"`
 	Detail  string  `json:"detail,omitempty"` // error text / panic value / defect summary
 

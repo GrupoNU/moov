@@ -207,7 +207,49 @@ type Account struct {
 	State           AccountState
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+
+	// The accounts-API facts (migration 0012). They describe what MOOV does
+	// with the account — never mailbox content, which stays Dovecot's.
+	//
+	// DisplayName is the name the API set (mirrored to the Mailcow mailbox
+	// and the default identity); empty for accounts provisioned by moovctl.
+	DisplayName string
+
+	// ReadOnly is the retention lock: the app password was re-issued without
+	// SMTP and EmailSubmission/set refuses creates. One-way in this version.
+	ReadOnly      bool
+	ReadOnlySince *time.Time
+
+	// Suspended is the API's suspension. While true, State is
+	// AccountDisabled — the one gate the authenticator and the sync
+	// supervisor already honor — and Resume restores AccountActive.
+	Suspended   bool
+	SuspendedAt *time.Time
+
+	// DeletingSince is set by DELETE /admin/accounts until the purge removes
+	// the row. Non-nil means "deleting" in the contract's state machine.
+	DeletingSince *time.Time
+
+	// LastAccessAt is the last authenticated request by the mailbox itself
+	// (any scheme), throttled by the writer; nil until the first.
+	LastAccessAt *time.Time
+
+	// The mirrored quota and the Moov-enforced limits. QuotaMB 0 and a nil
+	// limit mean "not managed through the API"; the resource reports the
+	// installation defaults in that case.
+	QuotaMB              int
+	SendPerDay           *int
+	RecipientsPerMessage *int
+	AttachmentMB         *int
+
+	// MailcowAppPasswordID is the id of the app password Moov minted, so the
+	// read-only transition can delete it after re-issuing one. nil when Moov
+	// did not mint it (moovctl account add -app-password).
+	MailcowAppPasswordID *int64
 }
+
+// IsDeleting reports whether the account's purge has started.
+func (a Account) IsDeleting() bool { return a.DeletingSince != nil }
 
 // Mailbox is one IMAP folder of one account, with its QRESYNC resume point and
 // backfill progress.

@@ -16,6 +16,20 @@ type Caller struct {
 
 	// Email is the authenticated address, as stored on the account row.
 	Email string
+
+	// ReadOnly is the retention lock of the accounts API (epic M1, contract
+	// §2.4): the account's app password was re-issued WITHOUT SMTP, so the
+	// credential itself can no longer submit. This flag is the explaining
+	// half — it lets EmailSubmission/set answer a clear "forbidden" instead
+	// of letting the send fail somewhere down in the SMTP dialog with an
+	// error no user can act on.
+	//
+	// The two locks are deliberately independent. F0 measured that Mailcow's
+	// smtp_access:0 does NOT block submission, so the credential lock is the
+	// one that actually enforces; this one exists so the product can EXPLAIN,
+	// and so a non-Moov IMAP client is still stopped by the credential even
+	// though it never sees this flag.
+	ReadOnly bool
 }
 
 // JMAPAccountID is the caller's account id in JMAP wire form.

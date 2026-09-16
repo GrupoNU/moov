@@ -45,6 +45,25 @@ var corsRoutes = []struct{ method, path string }{
 	// Forwarding verification (E6, forwarding.go): an authenticated GET the
 	// PWA calls with fetch, so it preflights like /jmap/api.
 	{http.MethodGet, "/jmap/forwarding/verify"},
+	// The per-domain accounts API (M1, admin_accounts.go). A consumer calling
+	// it from a browser — a portal's admin page — preflights exactly like the
+	// PWA does, so these get the same treatment as every other route. The
+	// preflight says nothing about whether the feature is enabled: it is
+	// answered from the route TABLE, and the 404 that the real request gets
+	// when the API is off is what keeps §2.1's promise.
+	{http.MethodPost, "/admin/accounts"},
+	{http.MethodGet, "/admin/accounts/a@example.test"},
+	{http.MethodPatch, "/admin/accounts/a@example.test"},
+	{http.MethodDelete, "/admin/accounts/a@example.test"},
+	{http.MethodPost, "/admin/accounts/a@example.test/suspend"},
+	{http.MethodPost, "/admin/accounts/a@example.test/resume"},
+	{http.MethodPost, "/admin/accounts/a@example.test/readonly"},
+	{http.MethodPost, "/admin/accounts/a@example.test/export"},
+	{http.MethodGet, "/admin/accounts/a@example.test/export"},
+	// The signed download: public, and fetched by a browser tab following a
+	// link rather than by fetch — but it preflights like the rest, for the
+	// same reason the image proxy does.
+	{http.MethodGet, "/admin/exports/exp_abc"},
 }
 
 func TestPreflightCoversEveryRoute(t *testing.T) {

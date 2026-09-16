@@ -146,7 +146,7 @@ func TestBrandingIsPublic(t *testing.T) {
 // route added with public:true — or a copy-paste that marks an authenticated
 // one public — fails here rather than in production.
 //
-// Five routes, each with a reason to exist without HTTP auth:
+// Six routes, each with a reason to exist without HTTP auth:
 //   - the four branding routes ARE the login screen and the installed app's
 //     identity (branding.go, branding_pwa.go) — the browser fetches the
 //     manifest and icons before any credential exists;
@@ -155,15 +155,27 @@ func TestBrandingIsPublic(t *testing.T) {
 //     minted through the AUTHENTICATED sign route instead, and
 //     TestImageProxyRefusesUnsignedRequests below proves an anonymous request
 //     without a valid signature gets nothing from it.
+//   - PathAdminExportDownload (M1, contract §2.6) is the same shape and the
+//     same argument: the signed URL is handed to a BROWSER TAB, which
+//     attaches no header. Its authority is an HMAC bound to the origin, the
+//     export id and a 24 h expiry — so it grants exactly one zip, to whoever
+//     holds one unguessable URL, and nothing else on this server. A tampered,
+//     foreign-host or expired signature answers the generic 404, which
+//     TestExportDownloadRefusesEverythingButAValidSignature proves.
+//
+// The accounts API's OTHER nine routes are deliberately NOT here: they are a
+// separate authentication class (serviceScope), pinned by
+// TestServiceRouteSetIsExactlyTheAccountsAPI.
 func TestPublicRouteSetIsExactlyBranding(t *testing.T) {
 	srv := brandingServer(t, "")
 
 	want := map[string]bool{
-		PathBranding:         true,
-		PathBrandingAsset:    true,
-		PathBrandingManifest: true,
-		PathBrandingIcon:     true,
-		PathImageProxy:       true,
+		PathBranding:            true,
+		PathBrandingAsset:       true,
+		PathBrandingManifest:    true,
+		PathBrandingIcon:        true,
+		PathImageProxy:          true,
+		PathAdminExportDownload: true,
 	}
 	got := make(map[string]bool)
 	for _, rt := range srv.routes() {

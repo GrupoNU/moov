@@ -77,6 +77,19 @@ export interface ReadingPaneProps {
    * do not render and the whole-message download below still works.
    */
   readonly blobToken?: string | undefined;
+  /**
+   * M1: the mailbox is in the accounts API's read-only retention phase
+   * (contract §2.4/§3.7).
+   *
+   * It hides the reply verbs and explains their absence, and it is exactly
+   * that — an EXPLANATION. The enforcement is two layers below, in the
+   * credential Mailcow re-issued without SMTP and in the server's refusal of
+   * `EmailSubmission/set`, so a client that ignored this flag would still send
+   * nothing. Which is the reason to render the notice rather than merely to
+   * disable a button: what the user needs is the reason.
+   */
+  readonly readOnly?: boolean | undefined;
+
   // --- P3: acting on the open message --------------------------------------
   readonly onReply: () => void;
   readonly onReplyAll: () => void;
@@ -230,6 +243,7 @@ export function ReadingPane({
   onClose,
   client,
   accountId,
+  readOnly = false,
   onReply,
   onReplyAll,
   onForward,
@@ -1058,6 +1072,7 @@ export function ReadingPane({
             client={client}
             accountId={accountId}
             blobToken={blobToken}
+            readOnly={readOnly}
             signImageUrls={signImages}
             /* E10: the thread-level conjunct is the FOLDER rule (Junk); the
                per-message suspicious verdict is applied inside
@@ -1137,7 +1152,21 @@ export function ReadingPane({
         thread, where it scrolls with the content; the pinned strip disappears
         while it exists and returns on discard or send.
       */}
-      {inlineCompose === undefined &&
+      {/*
+        M1: in read-only retention the reply strip is REPLACED by the reason it
+        is gone. A row of verbs that answer with an error is worse than no row:
+        the user learns the same thing one failed attempt later, after writing
+        the reply.
+      */}
+      {readOnly ? (
+        <div className={styles.spamBanner} role="status">
+          <div>
+            <p className={styles.spamBannerTitle}>{t("reader.readOnlyNotice")}</p>
+            <p className={styles.spamBannerBody}>{t("reader.readOnlyNoticeBody")}</p>
+          </div>
+        </div>
+      ) : (
+        inlineCompose === undefined &&
         (conversationView ? (
           replyTarget !== undefined && (
             <ReplyRow
@@ -1155,7 +1184,8 @@ export function ReadingPane({
           )
         ) : (
           <ReplyRow onReply={onReply} onReplyAll={onReplyAll} onForward={onForward} />
-        ))}
+        ))
+      )}
 
       <OriginalDialog
         isOpen={originalOpen}

@@ -47,6 +47,13 @@ export interface ConversationMessageProps {
   readonly onReply: () => void;
   readonly onReplyAll: () => void;
   readonly onForward: () => void;
+  /**
+   * M1: the mailbox is in read-only retention (contract §2.4), so this row's
+   * only verbs — reply, reply-all, forward — cannot succeed and are not drawn.
+   * The reason is stated once, at the foot of the pane, rather than three
+   * times per message.
+   */
+  readonly readOnly?: boolean | undefined;
   readonly signImageUrls: SignImageUrls;
   /** Junk suppresses the remote-image opt-in entirely (canon §4.1.9). */
   readonly allowRemoteImages: boolean;
@@ -73,6 +80,7 @@ export function ConversationMessage({
   onReply,
   onReplyAll,
   onForward,
+  readOnly = false,
   signImageUrls,
   allowRemoteImages,
   autoLoadImages,
@@ -184,6 +192,9 @@ export function ConversationMessage({
           spam, move, star) stay in the pane's toolbar, because they act on
           the whole thread.
         */}
+        {/* M1: every verb in this group sends mail, so in read-only retention
+            the group itself is absent (contract §3.7). */}
+        {!readOnly && (
         <div className={styles.messageActions} role="group" aria-label={t("action.more")}>
           <button
             type="button"
@@ -236,6 +247,7 @@ export function ConversationMessage({
             )}
           </PopupMenu>
         </div>
+        )}
       </header>
 
       {/*

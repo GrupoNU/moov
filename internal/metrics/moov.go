@@ -75,6 +75,35 @@ type Metrics struct {
 	// number nobody alerts on per-account.
 	Submissions *Counter
 
+	// --- Accounts API (epic M1)
+
+	// AdminActions counts finished administrative writes by action and
+	// result: one line per transition of contract §2.4, labeled with the
+	// contract's own verb ("create", "suspend", "readonly", "delete", …) and
+	// "ok" or "error".
+	//
+	// One family with two labels rather than a counter per verb, for the same
+	// reason Submissions is one family: the question an operator asks is
+	// "which admin action is failing, and how often" — one rate() over one
+	// family, grouped by action. The labels are bounded by the contract (seven
+	// verbs, two results), so the series set cannot grow with usage.
+	//
+	// It carries NO actor label. A per-service-account series would grow with
+	// the number of consumers, and the audit ROW already names the actor for
+	// every line — which is where the question "who did this" belongs, because
+	// it wants a record, not a rate.
+	AdminActions *Counter
+
+	// PendingExports is the number of export jobs waiting or running right
+	// now (contract §2.6).
+	//
+	// A gauge, not a counter, because the alertable condition is a QUEUE that
+	// stops draining: exports are minutes of work, so a number that stays high
+	// means the runner is stuck, and that is invisible to a counter of started
+	// jobs. It is observed by the runner at each tick rather than collected at
+	// scrape time — the runner already counts them to decide what to do next.
+	PendingExports *Gauge
+
 	// --- Triage (L3 epic E4)
 
 	// SnoozesWoken counts snoozed messages returned to their origin folder by
@@ -181,6 +210,11 @@ func NewWithRegistry(r *Registry) *Metrics {
 
 		Submissions: r.Counter("moov_submissions_total",
 			"EmailSubmission terminal outcomes by result (sent, failed, canceled)."),
+
+		AdminActions: r.Counter("moov_admin_actions_total",
+			"Accounts-API administrative writes by action and result (ok, error)."),
+		PendingExports: r.Gauge("moov_pending_exports",
+			"Export jobs currently pending or running."),
 
 		SnoozesWoken: r.Counter("moov_snoozes_woken_total",
 			"Snoozed messages returned to their origin folder by the waker."),
@@ -289,6 +323,34 @@ const (
 // make the failure rate report retries rather than lost mail.
 func (m *Metrics) IncSubmission(result string) {
 	m.Submissions.Inc(Labels{"result": result})
+}
+
+// The results of an administrative write, as constants for the same reason
+// the submission results are: the exporter, the service and the tests must
+// agree on three strings the compiler does not check.
+const (
+	// AdminOK is a write that completed.
+	AdminOK = "ok"
+	// AdminError is a write that did not, for any reason — a refusal, an
+	// upstream failure, a validation error. The DETAIL is in the audit row
+	// and the log; this label exists to be rated, not to be diagnosed.
+	AdminError = "error"
+)
+
+// IncAdminAction counts one finished administrative write (M1).
+//
+// It satisfies accounts.Observer by construction, which is what lets the
+// accounts service count without importing this package: the seam is declared
+// where it is used, as every other observer seam in this repository is.
+func (m *Metrics) IncAdminAction(action, result string) {
+	m.AdminActions.Inc(Labels{"action": action, "result": result})
+}
+
+// SetPendingExports records the current export queue depth (M1).
+//
+// It satisfies accounts.PendingGauge by construction, the same way.
+func (m *Metrics) SetPendingExports(n int) {
+	m.PendingExports.Set(nil, float64(n))
 }
 
 // IncSievePush counts one managed-script push (E6). result: "ok"/"error".

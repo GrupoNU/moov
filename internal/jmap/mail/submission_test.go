@@ -731,3 +731,58 @@ func (failingPrefsStore) PutPrefs(context.Context, int64, PrefsValue) (PrefsReco
 func (failingPrefsStore) PrefsState(context.Context, int64) (string, error) {
 	return "", errors.New("database unavailable")
 }
+
+// TestM1e_ReadOnlyAccountCannotSubmit is the JMAP half of contract §6 (e).
+//
+// It is a WHOLE-METHOD forbidden rather than a per-record SetError, checked
+// here deliberately: read-only is a fact about the ACCOUNT, so a batch of ten
+// creates would otherwise carry ten identical refusals and a client would
+// have to read all of them to learn one thing.
+//
+// The refusal is the explaining half of the lock, not the enforcing one. F0
+// measured that Mailcow's smtp_access:0 does not stop submission, so the
+// enforcement is the credential re-issued without SMTP (internal/accounts,
+// TestM1e_ReadOnlyReissuesTheCredentialWithoutSMTP). A client that ignored
+// this error would still send nothing — but it would learn nothing either,
+// which is what this exists to prevent.
+func TestM1e_ReadOnlyAccountCannotSubmit(t *testing.T) {
+	_, subs, deps := submissionDeps(t)
+
+	ctx := jmap.WithCaller(context.Background(), jmap.Caller{
+		AccountID: testAccountID,
+		Email:     "user@example.com",
+		ReadOnly:  true,
+	})
+	results, merr := deps.handleSubmissionSet(ctx, submissionCreateArgs(t,
+		map[string]any{"identityId": identityID, "emailId": EncodeEmailID(10)}, nil))
+
+	if merr == nil {
+		t.Fatalf("a read-only account submitted successfully: %+v", results)
+	}
+	if merr.Code != jmap.CodeForbidden {
+		t.Errorf("error type = %q, want %q", merr.Code, jmap.CodeForbidden)
+	}
+	// The description is a debugging aid (§3.6.2 — never shown to a user;
+	// the PWA's own explanation is the Spanish notice in the reader), so what
+	// it must do is tell whoever reads the log WHY, not merely "forbidden".
+	if !strings.Contains(strings.ToLower(merr.Description), "read-only") {
+		t.Errorf("description does not name the retention phase: %q", merr.Description)
+	}
+	// Nothing was enqueued. A refusal that still queued the message would be
+	// the worst possible outcome: mail sent from a mailbox declared unable to
+	// send.
+	if len(subs.specs) != 0 {
+		t.Errorf("a refused submission still enqueued %d message(s)", len(subs.specs))
+	}
+}
+
+// TestSubmissionIsAllowedForAnOrdinaryAccount is the control for the test
+// above: without the flag the same call succeeds, so the refusal is
+// attributable to read-only and not to the fixture.
+func TestSubmissionIsAllowedForAnOrdinaryAccount(t *testing.T) {
+	_, _, deps := submissionDeps(t)
+	if _, merr := deps.handleSubmissionSet(callerCtx(), submissionCreateArgs(t,
+		map[string]any{"identityId": identityID, "emailId": EncodeEmailID(10)}, nil)); merr != nil {
+		t.Fatalf("an ordinary account was refused: %v", merr)
+	}
+}

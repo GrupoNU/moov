@@ -6,7 +6,10 @@ import (
 )
 
 const accountColumns = `id, email, imap_host, imap_port, imap_server_name,
-	imap_username, imap_app_password, credential_state, state, created_at, updated_at`
+	imap_username, imap_app_password, credential_state, state, created_at, updated_at,
+	display_name, read_only, read_only_since, suspended, suspended_at, deleting_since,
+	last_access_at, quota_mb, send_per_day, recipients_per_message, attachment_mb,
+	mailcow_app_password_id`
 
 // CreateAccount inserts an account and returns it with its assigned id.
 //
@@ -163,6 +166,9 @@ func scanAccount(row scanner) (Account, error) {
 	var a Account
 	err := row.Scan(&a.ID, &a.Email, &a.IMAPHost, &a.IMAPPort, &a.IMAPServerName,
 		&a.IMAPUsername, &a.IMAPAppPassword, &a.CredentialState, &a.State,
-		&a.CreatedAt, &a.UpdatedAt)
+		&a.CreatedAt, &a.UpdatedAt,
+		&a.DisplayName, &a.ReadOnly, &a.ReadOnlySince, &a.Suspended, &a.SuspendedAt,
+		&a.DeletingSince, &a.LastAccessAt, &a.QuotaMB, &a.SendPerDay,
+		&a.RecipientsPerMessage, &a.AttachmentMB, &a.MailcowAppPasswordID)
 	return a, err
 }

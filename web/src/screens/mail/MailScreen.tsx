@@ -19,7 +19,12 @@ import {
   type ShortcutAction,
 } from "../../keyboard/shortcuts";
 import { usePrefs } from "../../mail/PrefsProvider";
-import { densityVariables, paneLayout, sortForInboxType } from "../../mail/prefs";
+import {
+  densityVariables,
+  paneLayout,
+  sessionIsReadOnly,
+  sortForInboxType,
+} from "../../mail/prefs";
 import {
   clampPane,
   loadPaneSize,
@@ -234,6 +239,19 @@ export function MailScreen(): React.JSX.Element {
   const session = state.status === "authenticated" ? state.session : undefined;
   const accountId = session?.primaryAccounts["urn:ietf:params:jmap:mail"] ?? "";
   const username = state.status === "authenticated" ? state.username : "";
+
+  /*
+   * M1: the read-only retention phase (contract §2.4). Read from the SESSION,
+   * which is the server's own statement about this account, so it is correct
+   * from the first render and needs no request of its own.
+   *
+   * What it drives is the ABSENCE of the compose verbs — Redactar, reply,
+   * forward — plus the reader's explanation of why they are gone. It is not
+   * the enforcement: the credential was re-issued without SMTP and the server
+   * refuses `EmailSubmission/set`, so a stale flag here costs an error
+   * message, never a sent message.
+   */
+  const readOnlyAccount = sessionIsReadOnly(session, accountId);
 
   /*
    * The client is rebuilt only when the credential changes, which is what makes
@@ -4669,7 +4687,14 @@ export function MailScreen(): React.JSX.Element {
             not depend on the folder list having loaded, so a rail that failed
             to fetch its mailboxes must still let the user write mail.
           */}
-          <ComposeButton onCompose={openCompose} collapsed={sidebarCollapsed} />
+          {/*
+            M1: no Redactar in read-only retention. The button is REMOVED, not
+            disabled — a disabled primary action is a thing to hover and puzzle
+            over, while the reader carries the explanation in prose.
+          */}
+          {!readOnlyAccount && (
+            <ComposeButton onCompose={openCompose} collapsed={sidebarCollapsed} />
+          )}
 
           {mailboxError !== undefined ? (
             <div className={styles.sidebarError}>
@@ -5462,6 +5487,7 @@ export function MailScreen(): React.JSX.Element {
               onClose={closeMessage}
               client={client}
               accountId={accountId}
+              readOnly={readOnlyAccount}
               onReply={() => {
                 openReply(false);
               }}

@@ -27,6 +27,22 @@ const (
 	// #nosec G101 -- likewise a variable name, not a credential.
 	EnvAPIKeyFile = "MOOV_MAILCOW_API_KEY_FILE"
 
+	// EnvWriteKey holds the read-write key the DAEMON uses for the accounts
+	// API (epic M1). It is a different variable from EnvAPIKey on purpose:
+	// the CLI's key lives on the operator's machine for the length of one
+	// command (cmd/moovctl's "why a separate binary"), while this one lives in
+	// the long-running, network-facing process — a new trust boundary the
+	// operator opts into by setting it (contract §4). Absent ⇒ the accounts
+	// API does not exist on the installation.
+	//
+	// #nosec G101 -- the NAME of an environment variable, not a key.
+	EnvWriteKey = "MOOV_MAILCOW_WRITE_KEY"
+
+	// EnvWriteKeyFile is the file form of EnvWriteKey.
+	//
+	// #nosec G101 -- likewise a variable name, not a credential.
+	EnvWriteKeyFile = "MOOV_MAILCOW_WRITE_KEY_FILE"
+
 	// EnvHostHeader overrides the Host header. It is needed when the API is
 	// reached at a container name or IP while Mailcow's nginx routes by the
 	// public hostname — the normal case inside the Docker network.
@@ -109,22 +125,45 @@ type Config struct {
 	InsecureSkipVerify bool
 }
 
-// LoadConfig builds a Config from the environment.
+// LoadConfig builds a Config from the environment, with the CLI's key
+// (EnvAPIKey / EnvAPIKeyFile).
 func LoadConfig() (Config, error) {
+	return loadConfig(EnvAPIKey, EnvAPIKeyFile)
+}
+
+// LoadWriteConfig builds the DAEMON's Config from the environment, with the
+// accounts-API key (EnvWriteKey / EnvWriteKeyFile).
+//
+// The second result is false, with a nil error, when neither variable is set:
+// that is the documented "feature off" state, not a misconfiguration. A key
+// that is set but whose base URL is missing IS an error, because an operator
+// who wrote the key meant to turn the feature on.
+func LoadWriteConfig() (Config, bool, error) {
+	if os.Getenv(EnvWriteKey) == "" && os.Getenv(EnvWriteKeyFile) == "" {
+		return Config{}, false, nil
+	}
+	c, err := loadConfig(EnvWriteKey, EnvWriteKeyFile)
+	if err != nil {
+		return Config{}, false, err
+	}
+	return c, true, nil
+}
+
+func loadConfig(keyEnv, keyFileEnv string) (Config, error) {
 	c := Config{
 		BaseURL:    os.Getenv(EnvBaseURL),
-		APIKey:     os.Getenv(EnvAPIKey),
+		APIKey:     os.Getenv(keyEnv),
 		HostHeader: os.Getenv(EnvHostHeader),
 	}
 
-	if path := os.Getenv(EnvAPIKeyFile); path != "" {
+	if path := os.Getenv(keyFileEnv); path != "" {
 		if c.APIKey != "" {
 			return Config{}, fmt.Errorf("mailcow: both %s and %s are set; set exactly one",
-				EnvAPIKey, EnvAPIKeyFile)
+				keyEnv, keyFileEnv)
 		}
 		raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied configuration path.
 		if err != nil {
-			return Config{}, fmt.Errorf("%s: reading %s: %w", EnvAPIKeyFile, path, err)
+			return Config{}, fmt.Errorf("%s: reading %s: %w", keyFileEnv, path, err)
 		}
 		c.APIKey = strings.TrimSpace(string(raw))
 	}

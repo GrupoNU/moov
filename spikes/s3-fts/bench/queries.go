@@ -12,9 +12,9 @@ package main
 // "GIN + order-by-date + LIMIT" pathology.
 
 type shape struct {
-	ID      int
-	Name    string
-	SQL     string
+	ID   int
+	Name string
+	SQL  string
 	// Args builds the argument list for a given account.
 	ArgsFor func(accountID int, p params) []any
 }
@@ -22,13 +22,13 @@ type shape struct {
 // params carries the corpus-derived literals (which word is "common", which is
 // "rare", …) so the shapes stay data-driven rather than hardcoded.
 type params struct {
-	CommonWord   string
-	RareWord     string
-	TwoWordAND   string // websearch syntax, e.g. "factura vencimiento"
-	Phrase       string // websearch syntax with quotes
-	PrefixTerm   string // e.g. "factur"
-	MailboxID    int
-	FromAddr     string
+	CommonWord string
+	RareWord   string
+	TwoWordAND string // websearch syntax, e.g. "factura vencimiento"
+	Phrase     string // websearch syntax with quotes
+	PrefixTerm string // e.g. "factur"
+	MailboxID  int
+	FromAddr   string
 }
 
 const limitClause = " LIMIT 50"

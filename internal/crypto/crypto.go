@@ -3,7 +3,9 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -91,6 +93,12 @@ var (
 type Key struct {
 	id   KeyID
 	aead cipher.AEAD
+
+	// prf is the derivation secret behind [Keyring.Derive]: HMAC-SHA256 of
+	// the raw material under a fixed label, computed once here so that
+	// derivation never needs the material again. It is a secret in its own
+	// right and is never exposed; it only ever keys another HMAC.
+	prf []byte
 }
 
 // NewKey builds a Key from raw material, validating length and refusing the
@@ -123,7 +131,47 @@ func NewKey(id KeyID, material []byte) (Key, error) {
 	if err != nil {
 		return Key{}, fmt.Errorf("crypto: building GCM: %w", err)
 	}
-	return Key{id: id, aead: aead}, nil
+	mac := hmac.New(sha256.New, material)
+	mac.Write([]byte(derivePRFLabel))
+	return Key{id: id, aead: aead, prf: mac.Sum(nil)}, nil
+}
+
+// derivePRFLabel separates the derivation PRF from any other use of the raw
+// material. The AES schedule and this HMAC never see each other's output.
+const derivePRFLabel = "moov/derive/v1"
+
+// ErrEmptyLabel is returned by Derive for an empty label: a derived key with
+// no purpose name is one that two callers can accidentally share.
+var ErrEmptyLabel = errors.New("crypto: derivation label is required")
+
+// Derive returns a 32-byte secret bound to label, deterministically, from the
+// PRIMARY master key.
+//
+// It exists for the signing keys that must survive a process restart — the
+// export download URLs of the accounts API sign with one — where a per-process
+// random key (the image proxy's model) would invalidate every outstanding URL
+// on every deploy. The construction is HMAC-SHA256(prf, label) with prf itself
+// an HMAC of the raw material, so a derived value reveals nothing about the
+// key that seals credentials, and two labels yield independent secrets.
+//
+// Two consequences are deliberate. The value changes when the primary key is
+// ROTATED, so anything signed under the old primary stops verifying: that is
+// the right default for a capability URL (a rotation is the moment to stop
+// honoring old signatures), and callers whose artifacts must outlive a
+// rotation should store the key id they signed under. And the label is part of
+// the output, so the same label must be spelled identically wherever the same
+// key is needed — a constant, never an ad-hoc string.
+func (kr *Keyring) Derive(label string) ([]byte, error) {
+	if label == "" {
+		return nil, ErrEmptyLabel
+	}
+	k, ok := kr.keys[kr.primary]
+	if !ok {
+		return nil, ErrNoKey
+	}
+	mac := hmac.New(sha256.New, k.prf)
+	mac.Write([]byte(label))
+	return mac.Sum(nil), nil
 }
 
 // ID returns the key's identifier.

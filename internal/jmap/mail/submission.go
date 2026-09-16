@@ -520,6 +520,23 @@ func (d *Deps) handleSubmissionSet(ctx context.Context, args json.RawMessage) ([
 			WithDescription("arguments did not parse: %v", err)
 	}
 
+	// The read-only retention lock (M1, contract §2.4). It is refused HERE,
+	// before anything is read or written, and as a WHOLE-METHOD error rather
+	// than a per-record SetError: read-only is a fact about the account, not
+	// about any one submission, so every create in the batch would carry the
+	// identical refusal and a client would have to read N copies of it to
+	// learn one thing.
+	//
+	// This is the EXPLAINING half of the lock. The enforcing half is the
+	// credential: the account's app password was re-issued without SMTP, so a
+	// client that never speaks JMAP is stopped too — F0 measured that
+	// Mailcow's smtp_access:0 does not stop submission on its own, which is
+	// why the enforcement lives in the credential and not in a flag.
+	if caller.ReadOnly {
+		return nil, jmap.NewMethodError(jmap.CodeForbidden).
+			WithDescription("this mailbox is in read-only retention: it can be read and exported, but not send mail")
+	}
+
 	oldState, err := d.Submissions.SubmissionState(ctx, caller.AccountID)
 	if err != nil {
 		return nil, serverFail("reading submission state", err)
