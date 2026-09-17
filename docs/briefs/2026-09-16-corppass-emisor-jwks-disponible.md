@@ -376,3 +376,85 @@ Ya lo corregimos en nuestro emisor de correo (el `Message-ID` sigue al dominio d
 remitente, y si el llamador ya puso una cabecera se respeta: dos `Message-ID` serían
 peores que ninguno). **Lo mencionamos porque aplica a todo emisor**, y Moov también envía
 (`EmailSubmission/set`).
+
+---
+
+## 11. Qué construimos después, y UN PEDIDO CONCRETO (2026-09-17, tarde)
+
+> **Lo que necesitamos que lean:** §11.2. Es una capacidad que su contrato no
+> tiene y que una decisión de producto de CorpPass va a necesitar. Mejor
+> discutirla ahora que después de que M1 cierre.
+
+### 11.1 Avances
+
+| Pieza | Estado |
+|---|---|
+| Migración de la casilla + su auditoría | ✅ escrita, sin aplicar |
+| Módulo del portal (tarjeta + acceso en el panel) | ✅ construido |
+| Endpoints que unen el portal con su API | ⏳ siguiente |
+| Tareas de retención (D-4) | ⏳ pendiente |
+
+Dos cosas del portal que les pueden interesar porque tocan su superficie:
+
+- **El acceso al webmail abre en pestaña nueva y pide el token EN EL CLICK.**
+  Vive 2 minutos, así que uno emitido al pintar la pantalla ya venció cuando el
+  organizador se decide. Además la pestaña se abre *antes* de pedirlo: Safari y
+  Firefox bloquean como popup cualquier `window.open` que no salga del gesto del
+  usuario.
+- **El acceso sólo aparece si la casilla está `active` o `readonly`.** Un botón
+  que a veces lleva a un error enseña a no confiar en él.
+
+### 11.2 ⭐ PEDIDO: cambiar la dirección conservando el buzón
+
+**La decisión de producto** (Diego, 2026-09-17): la casilla es de la **edición**,
+pero una edición nueva puede **reutilizar la dirección anterior y quedarse con
+todo el correo** — es "empiezan con ventaja" aplicado al buzón. Hasta acá, todo
+se resuelve con lo que ya existe.
+
+Lo que pidió además: *"o cambiar el nombre y mantiene la casilla"*. Y **eso hoy
+no se puede**: `PATCH /admin/accounts/{a}` cubre `name`, `quotaMB` y `limits`
+(§2.4, D2), y la `address` es la clave del recurso. No hay ruta de renombrado.
+
+Nuestra lectura es que **hicieron bien en no incluirlo**: si la dirección
+cambiara sin más, los correos enviados a la anterior rebotarían. No es un
+descuido del contrato, es una decisión sensata.
+
+Pero el caso de uso es real y va a volver: *Genox 2027* quiere pasar a
+*Genox 2029* sin perder dos años de conversaciones ni romper lo que ya se
+imprimió. Dos formas de resolverlo, y la elección es de ustedes:
+
+| Opción | Qué implicaría |
+|---|---|
+| **Alias** — la casilla gana una dirección nueva y conserva la vieja recibiendo | La más conservadora: nada rebota. Necesita decidir cuánto vive el alias y si el envío sale por la nueva |
+| **Renombrado** — `PATCH` acepta `address`, con la vieja como alias por un plazo | Más simple para el consumidor, pero mueve la clave del recurso y toca su idempotencia por dirección |
+
+**Mientras tanto no los bloqueamos:** el portal ofrece las dos que sí funcionan
+hoy (reutilizar la dirección tal cual, o una nueva y vacía) y nuestro esquema ya
+guarda la dirección en una columna, no en la clave, así que agregar la tercera
+más adelante no nos obliga a migrar nada.
+
+Si les parece razonable, díganlo y lo llevamos al L2 como cambio de alcance; si
+prefieren no tocarlo en esta fase, también sirve saberlo para escribir el texto
+del portal en consecuencia.
+
+### 11.3 Cómo modelamos la casilla de nuestro lado (por si les sirve contrastar)
+
+- **Una fila por evento**, con `inherited_from_event_id` apuntando a la edición
+  de la que viene la dirección. Dos ediciones de una serie **pueden compartir
+  dirección**: eso *es* heredar el buzón.
+- **El estado son tres campos, no un enum**, copiando su §2.3: el titular
+  derivado más `read_only` y `suspended` como hechos independientes. Aplanarlo
+  nos habría obligado a reconstruir a mano el estado previo a una suspensión,
+  que es justo el bug que su contrato evita.
+- **`provisioning` y `failed` son nuestros**, no suyos: cubren el hueco entre
+  que el organizador activa el módulo y que ustedes confirman el alta. Sin ellos,
+  una demora de Moov se ve como una tarjeta rota.
+- **Apagar el módulo no borra nada.** Oculta la tarjeta y el acceso; la casilla y
+  sus mensajes siguen. Borrar es una acción aparte, explícita y auditada — nunca
+  el efecto colateral de un interruptor.
+
+### 11.4 Sigue pendiente lo mismo
+
+⛔ **La clave de service account** (§10.3). Sin ella el portal no puede dar de
+alta una casilla de verdad, así que todo lo de §11.1 está probado contra dobles
+y contra el mock, no contra el piloto.
