@@ -286,3 +286,93 @@ Eso es de ustedes y es parte del gate.
 
 **Nada que arreglar de ninguno de los dos lados.** Dos equipos implementaron el mismo
 documento por separado y encajó sin una sola corrección.
+
+---
+
+## 10. Estado de F4 al 2026-09-17 — avances, y lo único que nos bloquea
+
+> **Lo que necesitamos de ustedes, en una línea:** una **clave de service account**
+> para `corppass.events` con `accounts:write`. Es lo único que nos frena; todo lo demás
+> está construido y probado contra dobles.
+
+### 10.1 Lo hecho desde la nota anterior
+
+| Pieza | Estado | Dónde |
+|---|---|---|
+| Emisor de sesión delegada + JWKS | ✅ en producción | `51aba11` |
+| **Primer canje real** | ✅ §9 de esta nota | verificado con ustedes |
+| **Cliente de la API de cuentas** | ✅ construido, 22 tests | `19afffc` |
+| Cabeceras de correo (hallazgo de VPS_Mail) | ✅ corregido, 7 tests | `d4a864b` |
+| Tarjeta del portal | ⏳ diseñada, sin construir | — |
+| Tareas de retención (D-4) | ⏳ pendiente | — |
+
+### 10.2 El cliente de cuentas: cómo interpretamos las dos reglas difíciles
+
+Por si les sirve para contrastar con lo que esperan del consumidor:
+
+- **El 404 ciego.** `get_account()` devuelve `None` en vez de levantar: "no existe" y
+  "no puedo verla" son la misma respuesta y quien llama las trata igual. **Pero en el
+  ALTA un 404 sí es ruidoso**, porque ahí significa que el dominio o la clave están mal
+  configurados, y tragarlo dejaría eventos sin casilla en silencio. El mensaje de nuestro
+  error enumera las cinco causas posibles y **no insinúa cuál** — si dijera "la casilla no
+  existe" habríamos inventado el oráculo que ustedes niegan a propósito.
+- **`502` vs `503`.** Los tratamos como tipos distintos, no como "error de upstream":
+  tras el 502 ustedes ya deshicieron lo hecho y un reintento ciego vuelve a fallar; tras
+  el 503 nada cambió y reintentar es lo correcto — es el caso que deja la casilla en
+  `pending` con reintento de fondo, como pide el brief.
+- **Alta idempotente.** `201` y `200` son ambos éxito y no los distinguimos afuera; sólo
+  cambia la línea de log.
+- **`X-Request-Id`.** Lo mandamos siempre (generado si el llamador no trae uno). Con el
+  404 ciego, ese identificador compartido es a veces la única forma de que ustedes
+  encuentren en su auditoría qué pasó con nuestra llamada.
+
+**Verificamos contra el piloto** que una petición sin credencial y otra con una clave
+inventada devuelven 404 **idénticos byte por byte**. El contrato cumple lo que promete.
+
+### 10.3 ⛔ Lo que nos bloquea: la clave de service account
+
+No tenemos ninguna. La emiten ustedes:
+
+```
+moovctl service-account create -domain corppass.events -scopes accounts:write -name "corppass-portal"
+```
+
+Sin ella podemos seguir contra el mock de Prism, pero **no podemos dar de alta una
+casilla de verdad**, y por lo tanto tampoco cerrar el criterio 1 del gate F5 ("un evento
+nuevo tiene su casilla operativa en menos de 60 s").
+
+Como se muestra una sola vez: pásensela a Diego por un canal privado, no por el repo.
+La guardamos como las demás credenciales (variable de entorno, archivo montado, fuera
+de git).
+
+Con la clave hacemos, en este orden: alta idempotente de una casilla de prueba (201, y
+un segundo POST que debe dar 200 sin duplicar), `readonly`, export hasta `ready` con
+descarga por la URL firmada, y `DELETE` con la confirmación en el cuerpo. Les avisamos
+el resultado.
+
+### 10.4 Una pregunta de producto que puede afectarles
+
+Está sin resolver de nuestro lado y decide **qué dirección pedimos y cuándo la borramos**:
+
+- El brief de producto de CorpPass (agosto, decisión del fundador) dice que **el buzón es
+  del EVENTO y viaja por la serie de ediciones**: Genox 2029 abre con la conversación de
+  Genox 2027 adentro.
+- El L2 §4.4 dice "al crear un evento" y programa el borrado a los 180 días del cierre —
+  leído literal, **borraría el buzón de 2027 antes de que exista 2029**.
+
+Para ustedes cambia poco (una dirección es una dirección), pero sí afecta **cuántas
+casillas y con qué vida** van a existir, y por lo tanto la carga real del piloto. Lo
+resuelve Diego; les avisamos cuando esté decidido.
+
+### 10.5 De paso: un hallazgo de VPS_Mail que también les toca
+
+Su nota del 17/09 midió que un mensaje sin `Message-ID`, `Date` ni `MIME-Version` se
+lleva **5,5 puntos** de castigo de Rspamd (`MISSING_MID` 2.50 + `MISSING_MIME_VERSION`
+2.00 + `MISSING_DATE` 1.00); con las tres puestas el mismo mensaje pasó a −1.05 y ganó
+`MID_RHS_MATCH_FROM`. Sobre un dominio que empezó a construir reputación el 17/09 eso se
+paga caro.
+
+Ya lo corregimos en nuestro emisor de correo (el `Message-ID` sigue al dominio del
+remitente, y si el llamador ya puso una cabecera se respeta: dos `Message-ID` serían
+peores que ninguno). **Lo mencionamos porque aplica a todo emisor**, y Moov también envía
+(`EmailSubmission/set`).
