@@ -177,7 +177,7 @@ func (s *fakeServer) expunge(mailbox string, uid imap.UID) {
 // when it is precisely the path the patch exists for.
 func (m *fakeMailbox) statusFor() imap.EventStatus {
 	return imap.EventStatus{
-		NumMessages:      uint32(len(m.messages)),
+		NumMessages:      m.reportedCount(),
 		HasNumMessages:   true,
 		UIDNext:          m.uidNext(),
 		HasUIDNext:       true,
@@ -322,4 +322,20 @@ func (s *fakeServer) watcherCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.watchers)
+}
+
+// setPhantom makes a mailbox advertise n more messages than it will serve, so
+// a test can build a divergence that no repair can close. See fakeMailbox.phantom.
+func (s *fakeServer) setPhantom(mailbox string, n int) {
+	s.mu.Lock()
+	mb := s.mailbox(mailbox)
+	if mb == nil {
+		s.mu.Unlock()
+		panic("fake: setPhantom on unknown mailbox " + mailbox)
+	}
+	mb.phantom = n
+	status := mb.statusFor()
+	s.mu.Unlock()
+
+	s.notify(mailbox, status)
 }

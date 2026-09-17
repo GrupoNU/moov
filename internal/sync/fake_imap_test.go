@@ -57,6 +57,24 @@ type fakeMailbox struct {
 	// subscribed models the SUBSCRIBE state (W2). Mailboxes seeded by
 	// addMailbox are subscribed, matching what a real account looks like.
 	subscribed bool
+
+	// phantom inflates the MESSAGES counter this mailbox reports without
+	// adding anything a FETCH can return.
+	//
+	// It models the one divergence class that NO repair can close: a server
+	// that counts messages it will not serve. Real causes exist — a message
+	// whose bytes the parser refuses and which is therefore never stored, an
+	// index Dovecot has not yet caught up with — and they matter here because
+	// they are the reason the backfill escalation needs a bound. Without a way
+	// to build a permanently-diverged mailbox, a test can prove the escalation
+	// runs but not that it eventually stops.
+	phantom int
+}
+
+// reportedCount is the MESSAGES counter the server advertises, which is the
+// real corpus size plus any phantoms.
+func (m *fakeMailbox) reportedCount() uint32 {
+	return uint32(len(m.messages) + m.phantom)
 }
 
 func (m *fakeMailbox) uidNext() imap.UID {
@@ -244,7 +262,7 @@ func (c *fakeClient) ListMailboxes(_ context.Context) ([]imap.MailboxInfo, error
 			Subscribed:    m.subscribed,
 			NoSelect:      m.noSelect,
 			HasStatus:     true,
-			NumMessages:   uint32(len(m.messages)),
+			NumMessages:   m.reportedCount(),
 			UIDNext:       m.uidNext(),
 			UIDValidity:   m.uidValidity,
 			HighestModSeq: m.highestModSeq,
@@ -286,7 +304,7 @@ func (c *fakeClient) SelectQResync(_ context.Context, mailbox string, uidValidit
 		UIDValidityChanged: uidValidity != 0 && uidValidity != mb.uidValidity,
 		HighestModSeq:      mb.highestModSeq,
 		UIDNext:            mb.uidNext(),
-		NumMessages:        uint32(len(mb.messages)),
+		NumMessages:        mb.reportedCount(),
 	}
 
 	// QRESYNC only replays when the caller's UIDVALIDITY still matches: after a

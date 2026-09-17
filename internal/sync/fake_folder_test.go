@@ -165,7 +165,7 @@ func (c *fakeClient) StatusMailbox(_ context.Context, name string) (imap.Mailbox
 		Delimiter:     "/",
 		Subscribed:    mb.subscribed,
 		HasStatus:     true,
-		NumMessages:   uint32(len(mb.messages)),
+		NumMessages:   mb.reportedCount(),
 		UIDNext:       mb.uidNext(),
 		UIDValidity:   mb.uidValidity,
 		HighestModSeq: mb.highestModSeq,

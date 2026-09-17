@@ -222,6 +222,15 @@ const (
 	ObsOverflow WatchObservationKind = "overflow"
 	// ObsReconciled means the defensive sweep repaired a divergence.
 	ObsReconciled WatchObservationKind = "reconciled"
+	// ObsStuckDivergence means the sweep found a divergence, attempted a
+	// repair, VERIFIED afterwards, and the divergence was still there.
+	//
+	// It is a separate kind rather than an Err on ObsReconciled because it is
+	// not an error: nothing failed, every call returned nil, and that is
+	// exactly what made the 2026-09-17 defect invisible for five weeks. A
+	// mailbox that cannot be repaired is a distinct, countable, alertable fact
+	// and needs a name of its own.
+	ObsStuckDivergence WatchObservationKind = "stuck-divergence"
 	// ObsBreakerOpen means the circuit breaker tripped.
 	ObsBreakerOpen WatchObservationKind = "breaker-open"
 	// ObsDisconnected means the watcher's connection ended and it will retry.
@@ -277,6 +286,13 @@ type PushWatcher struct {
 	blobs BlobPutter
 	opts  WatcherOptions
 	log   *slog.Logger
+
+	// escMu guards escalated, the set of mailboxes for which this process has
+	// written a reconciler escalation bound (see clearEscalation). It exists
+	// so the sweep's healthy path — nearly every mailbox, nearly every time —
+	// costs no query at all.
+	escMu     sync.Mutex
+	escalated map[int64]struct{}
 }
 
 // NewPushWatcher builds the watcher.

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -183,6 +184,26 @@ func TestReconcilerIsQuietWhenNothingDiverged(t *testing.T) {
 	if second := f.reconcile(t); second.Diverged != 0 {
 		t.Errorf("the second sweep reported %d divergences", second.Diverged)
 	}
+
+	// The escalation bound must not make a healthy sweep cost anything. This
+	// caught a real regression: the first version of the bound cleared it by
+	// reading the checkpoint row for EVERY healthy mailbox on EVERY sweep,
+	// which is a query per mailbox per sweep for bookkeeping about a failure
+	// that had never happened — spending exactly the budget this test exists
+	// to protect. A healthy mailbox is now dismissed from an in-memory set.
+	if f.watcher.hasEscalation(f.mailboxID(t, "INBOX")) {
+		t.Error("a healthy mailbox carries an escalation bound")
+	}
+}
+
+// mailboxID looks up a mailbox row id by name.
+func (e *syncedEnv) mailboxID(t *testing.T, name string) int64 {
+	t.Helper()
+	row, err := e.store.GetMailboxByName(context.Background(), e.account.ID, name)
+	if err != nil {
+		t.Fatalf("GetMailboxByName(%q): %v", name, err)
+	}
+	return row.ID
 }
 
 // TestReconcilerDiscoversAMailboxCreatedSilently covers the structural
@@ -344,4 +365,381 @@ func TestCompareMailboxState(t *testing.T) {
 			t.Error("a mailbox with no stored counters reported as diverged")
 		}
 	})
+}
+
+// TestReconcilerRepairsAMessageLostBelowTheCursor is the production defect of
+// 2026-09-17, written as a test.
+//
+// # The incident
+//
+// The idle heartbeat (c6b0850) probes a quiet session by running Reconcile. It
+// fired 906 times overnight and reported 180 divergences — all on one account,
+// always INBOX, zero errors. The account had 24,147 messages in INBOX on
+// Dovecot and 24,146 in Moov, and diffing the UID lists gave exactly one
+// missing UID: 23840, a message from five weeks earlier that some one-off
+// failure had lost. It was absent from message_state entirely.
+//
+// The sweep detected it every two minutes, ran an incremental pass, declared
+// `repaired=1`, and changed nothing — because incrementalMailbox advances from
+// the STORED CURSOR to find NEW UIDs, and the gap was old, far below it. The
+// pass returned no error, and "no error" was what the old code counted as a
+// repair.
+//
+// So this test reproduces the shape exactly: a message that is on the server,
+// below the cursor, and missing locally. The sweep must not be allowed to call
+// that repaired unless it is.
+func TestReconcilerRepairsAMessageLostBelowTheCursor(t *testing.T) {
+	f := newReconcilerFixture(t, 6)
+
+	// The loss: one OLD message's state row disappears, with the mailbox's
+	// cursor left untouched and far above it. This is what the production
+	// account looked like — not a tombstone, not a soft delete, simply a row
+	// that is not there.
+	const lost = int64(2)
+	f.deleteMessageState(t, "INBOX", lost)
+
+	if before := f.liveUIDs(t, "INBOX"); len(before) != 5 {
+		t.Fatalf("setup: the mailbox holds %d messages, want 5 after the loss", len(before))
+	}
+
+	res := f.reconcile(t)
+
+	if res.Diverged != 1 {
+		t.Fatalf("the sweep found %d divergences, want 1: %+v", res.Diverged, res.Divergences)
+	}
+
+	// The assertion the old code fails: Repaired is a claim about the STORE,
+	// not about whether a function returned nil.
+	live := f.liveUIDs(t, "INBOX")
+	var back bool
+	for _, u := range live {
+		if u == lost {
+			back = true
+		}
+	}
+	if !back {
+		t.Errorf("uid %d is still missing after the sweep (live=%v)", lost, live)
+	}
+	if res.Repaired != 1 {
+		t.Errorf("the sweep repaired %d divergences, want 1", res.Repaired)
+	}
+	if len(live) != 6 {
+		t.Errorf("the mailbox holds %d messages after the sweep, want 6", len(live))
+	}
+}
+
+// deleteMessageState removes one message's state row, modeling a message the
+// engine lost — the row was never written, or was written and lost. It does NOT
+// tombstone: a tombstone is a message the engine knows about and believes
+// expunged, which is a different (and correctly handled) state.
+func (e *syncedEnv) deleteMessageState(t *testing.T, mailbox string, uid int64) {
+	t.Helper()
+
+	tag, err := e.store.Pool().Exec(context.Background(), `
+		DELETE FROM message_state ms
+		 USING mailboxes mb
+		 WHERE ms.mailbox_id = mb.id
+		   AND ms.account_id = $1 AND mb.name = $2 AND ms.uid = $3`,
+		e.account.ID, mailbox, uid)
+	if err != nil {
+		t.Fatalf("deleting message_state for uid %d: %v", uid, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("deleting message_state for uid %d removed %d rows, want 1", uid, tag.RowsAffected())
+	}
+}
+
+// TestReconcilerReportsADivergenceItCannotRepair is the honesty half of the
+// 2026-09-17 fix.
+//
+// The incident's defining property was a WARN that said `repaired=1` while
+// nothing had been repaired — a number an operator would trust, and which was
+// false 906 times in one night. So a divergence that survives every repair the
+// engine has must be counted as UNREPAIRED, named in the result, and emitted as
+// its own observation kind, not folded into a success.
+//
+// The unfixable divergence here is a mailbox that advertises a message it will
+// not serve. That is the real residual class — a message the parser refuses, an
+// index the server has not caught up with — and it is the one a backfill walk
+// cannot close either, which is exactly why the escalation needs a bound.
+func TestReconcilerReportsADivergenceItCannotRepair(t *testing.T) {
+	f := newReconcilerFixture(t, 4)
+
+	var stuck []WatchObservation
+	f.watcher.opts.OnEvent = func(obs WatchObservation) {
+		if obs.Kind == ObsStuckDivergence {
+			stuck = append(stuck, obs)
+		}
+	}
+
+	f.srv.setSilentNotify(true)
+	f.srv.setPhantom("INBOX", 1)
+	f.srv.setSilentNotify(false)
+
+	res := f.reconcile(t)
+
+	if res.Diverged != 1 {
+		t.Fatalf("the sweep found %d divergences, want 1: %+v", res.Diverged, res.Divergences)
+	}
+	if res.Repaired != 0 {
+		t.Errorf("the sweep claimed %d repairs of a divergence it cannot fix, want 0", res.Repaired)
+	}
+	if res.Unrepaired != 1 {
+		t.Errorf("the sweep reported %d unrepaired divergences, want 1", res.Unrepaired)
+	}
+	if res.Escalated != 1 {
+		t.Errorf("the sweep escalated %d times, want 1 — an incremental pass cannot "+
+			"close a gap below the cursor, so the first failure must reach for the walk",
+			res.Escalated)
+	}
+
+	// The reason must still NAME the thing that is wrong. "It did not work" is
+	// not a diagnosis; "messages stored=4 server=5" is where an investigation
+	// starts.
+	if len(res.Stuck) != 1 || res.Stuck[0].Mailbox != "INBOX" {
+		t.Fatalf("stuck = %+v, want one on INBOX", res.Stuck)
+	}
+	if !strings.Contains(res.Stuck[0].Reason, "messages stored=") {
+		t.Errorf("stuck reason = %q, want it to name the counts that still disagree",
+			res.Stuck[0].Reason)
+	}
+
+	if len(stuck) != 1 || stuck[0].Mailbox != "INBOX" {
+		t.Fatalf("observations = %+v, want one ObsStuckDivergence on INBOX", stuck)
+	}
+	if stuck[0].AccountID != f.account.ID {
+		t.Errorf("the stuck observation names account %d, want %d", stuck[0].AccountID, f.account.ID)
+	}
+}
+
+// TestReconcilerBoundsRepeatedEscalations is the bound: the fix must not become
+// a new infinite loop with a bigger hammer.
+//
+// The heartbeat runs Reconcile every two minutes. A mailbox that diverges for a
+// reason no backfill can fix would, without a bound, be walked end to end every
+// two minutes forever — which on the 24k-message INBOX that produced the
+// incident is far worse than the useless incremental pass it replaced. So the
+// SECOND sweep over the same stuck mailbox must still report it, still count it
+// as unrepaired, and NOT walk it again.
+func TestReconcilerBoundsRepeatedEscalations(t *testing.T) {
+	f := newReconcilerFixture(t, 4)
+
+	f.srv.setSilentNotify(true)
+	f.srv.setPhantom("INBOX", 1)
+	f.srv.setSilentNotify(false)
+
+	first := f.reconcile(t)
+	if first.Escalated != 1 {
+		t.Fatalf("the first sweep escalated %d times, want 1", first.Escalated)
+	}
+
+	second := f.reconcile(t)
+
+	if second.Diverged != 1 {
+		t.Fatalf("the second sweep found %d divergences, want 1 — the mailbox is still broken",
+			second.Diverged)
+	}
+	if second.Unrepaired != 1 {
+		t.Errorf("the second sweep reported %d unrepaired, want 1 — silence about a "+
+			"still-broken mailbox is the bug this whole change exists to end",
+			second.Unrepaired)
+	}
+	if second.Escalated != 0 {
+		t.Errorf("the second sweep escalated %d times, want 0: a walk 15 minutes after "+
+			"the last one is the bound, and without it the heartbeat walks a 24k "+
+			"mailbox every two minutes forever", second.Escalated)
+	}
+	if second.Repaired != 0 {
+		t.Errorf("the second sweep claimed %d repairs, want 0", second.Repaired)
+	}
+
+	// The in-memory set that lets a healthy sweep skip the query must actually
+	// know about this mailbox — otherwise clearEscalation would never clear a
+	// real bound, and a mailbox that recovered would serve out its backoff
+	// forever.
+	if !f.watcher.hasEscalation(f.mailboxID(t, "INBOX")) {
+		t.Error("a mailbox with a persisted bound is missing from the in-memory set; " +
+			"clearEscalation would never clear it")
+	}
+}
+
+// TestReconcilerClearsTheEscalationBoundAfterASuccess proves the bound is not a
+// one-way ratchet.
+//
+// A mailbox that failed once and then recovered must pay nothing on its next
+// incident: the backoff exists to stop a HOPELESS mailbox from being walked
+// forever, not to punish a mailbox that had one bad afternoon. Without the
+// clear, a folder that hit a transient problem in August would still be waiting
+// out a 24-hour backoff in September while real mail went missing.
+func TestReconcilerClearsTheEscalationBoundAfterASuccess(t *testing.T) {
+	f := newReconcilerFixture(t, 4)
+
+	// Fail once: the bound is now armed.
+	f.srv.setSilentNotify(true)
+	f.srv.setPhantom("INBOX", 1)
+	f.srv.setSilentNotify(false)
+	if first := f.reconcile(t); first.Unrepaired != 1 {
+		t.Fatalf("the first sweep reported %d unrepaired, want 1", first.Unrepaired)
+	}
+
+	// The condition clears — the message the server was counting turns out to
+	// exist after all.
+	f.srv.setSilentNotify(true)
+	f.srv.setPhantom("INBOX", 0)
+	f.srv.setSilentNotify(false)
+
+	if second := f.reconcile(t); second.Diverged != 0 {
+		t.Fatalf("a healed mailbox still reported %d divergences: %+v",
+			second.Diverged, second.Divergences)
+	}
+
+	// Break it again in the way only a walk can fix. If the bound had survived
+	// the success, this sweep would refuse to escalate and the message would
+	// stay missing.
+	f.deleteMessageState(t, "INBOX", 2)
+
+	third := f.reconcile(t)
+	if third.Escalated != 1 {
+		t.Errorf("the sweep escalated %d times after an intervening success, want 1 — "+
+			"a recovered mailbox must not still be serving out an old backoff",
+			third.Escalated)
+	}
+	if third.Repaired != 1 {
+		t.Errorf("the sweep repaired %d, want 1", third.Repaired)
+	}
+	var back bool
+	for _, u := range f.liveUIDs(t, "INBOX") {
+		if u == 2 {
+			back = true
+		}
+	}
+	if !back {
+		t.Error("uid 2 is still missing after the sweep")
+	}
+}
+
+// TestEscalationBackoffGrows covers the delay schedule directly, because the
+// sweep tests can only observe "escalated or not" and the SHAPE of the backoff
+// — immediate, then 15 minutes, doubling to a one-day ceiling — is the actual
+// design decision.
+func TestEscalationBackoffGrows(t *testing.T) {
+	f := newReconcilerFixture(t, 2)
+	ctx := context.Background()
+
+	row, err := f.store.GetMailboxByName(ctx, f.account.ID, "INBOX")
+	if err != nil {
+		t.Fatalf("GetMailboxByName: %v", err)
+	}
+	mb := syncMailbox{row: row, info: imap.MailboxInfo{Name: "INBOX"}}
+
+	t.Run("a mailbox with no failures escalates immediately", func(t *testing.T) {
+		allowed, failures, wait, err := f.watcher.escalationAllowed(ctx, f.account, mb)
+		if err != nil {
+			t.Fatalf("escalationAllowed: %v", err)
+		}
+		if !allowed || failures != 0 || wait != 0 {
+			t.Errorf("escalationAllowed = (%v, %d, %v), want (true, 0, 0) — the common "+
+				"case is a real gap one walk closes, and making a user wait for it "+
+				"would be absurd", allowed, failures, wait)
+		}
+	})
+
+	cases := []struct {
+		failures int
+		want     time.Duration
+	}{
+		{1, escalationBase},
+		{2, 2 * escalationBase},
+		{3, 4 * escalationBase},
+		{99, escalationMax},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%d failures", tc.failures), func(t *testing.T) {
+			if err := f.watcher.saveEscalation(ctx, f.account.ID, row.ID, escalationState{
+				Failures:    tc.failures,
+				LastAttempt: time.Now(),
+			}); err != nil {
+				t.Fatalf("saveEscalation: %v", err)
+			}
+			allowed, failures, wait, err := f.watcher.escalationAllowed(ctx, f.account, mb)
+			if err != nil {
+				t.Fatalf("escalationAllowed: %v", err)
+			}
+			if allowed {
+				t.Fatal("a mailbox that just failed was allowed to escalate again at once")
+			}
+			if failures != tc.failures {
+				t.Errorf("failures = %d, want %d", failures, tc.failures)
+			}
+			// The wait is measured against a real clock, so it is a hair under
+			// the nominal delay by the time it is read.
+			if wait > tc.want || wait < tc.want-time.Minute {
+				t.Errorf("wait = %v, want about %v", wait, tc.want)
+			}
+		})
+	}
+
+	t.Run("a bound whose delay has elapsed allows the walk", func(t *testing.T) {
+		if err := f.watcher.saveEscalation(ctx, f.account.ID, row.ID, escalationState{
+			Failures:    1,
+			LastAttempt: time.Now().Add(-2 * escalationBase),
+		}); err != nil {
+			t.Fatalf("saveEscalation: %v", err)
+		}
+		allowed, _, _, err := f.watcher.escalationAllowed(ctx, f.account, mb)
+		if err != nil {
+			t.Fatalf("escalationAllowed: %v", err)
+		}
+		if !allowed {
+			t.Error("the backoff never expires; a ceiling that never retries is a mailbox " +
+				"abandoned forever")
+		}
+	})
+}
+
+// TestReconcilerBudgetsEscalationsPerSweep is the other half of "bounded": the
+// backoff limits how OFTEN one mailbox is walked, this limits how MANY are
+// walked at once.
+//
+// The account that produced the incident has 24 mailboxes and 26,869 messages.
+// A sweep that found several of them diverged and walked each one back to back
+// would replace a silent no-op with a thundering herd against the Dovecot this
+// engine is built not to disturb (ADR §4). So a sweep spends one walk, reports
+// the rest honestly, and picks them up on the next tick.
+func TestReconcilerBudgetsEscalationsPerSweep(t *testing.T) {
+	f := newReconcilerFixture(t, 4)
+
+	// A second folder, synced, so both are candidates for escalation.
+	f.srv.addMailbox("Archive", imap.RoleArchive, 700)
+	seedMailboxLocked(f.srv, "Archive", 4, referenceNow, "Archive")
+	if _, err := f.syncer.Run(context.Background(), f.account); err != nil {
+		t.Fatalf("syncing the second folder: %v", err)
+	}
+
+	// Both diverge in the way only a walk could fix, and in a way no walk can
+	// actually fix — so neither can consume the budget and then vanish from
+	// the comparison.
+	f.srv.setSilentNotify(true)
+	f.srv.setPhantom("INBOX", 1)
+	f.srv.setPhantom("Archive", 1)
+	f.srv.setSilentNotify(false)
+
+	res := f.reconcile(t)
+
+	if res.Diverged != 2 {
+		t.Fatalf("the sweep found %d divergences, want 2: %+v", res.Diverged, res.Divergences)
+	}
+	if res.Escalated != 1 {
+		t.Errorf("the sweep escalated %d times, want 1 — one walk per sweep is the budget",
+			res.Escalated)
+	}
+	// Neither was repaired, and BOTH must still be reported: a mailbox that did
+	// not get the budget is deferred, never silently dropped.
+	if res.Unrepaired != 2 {
+		t.Errorf("the sweep reported %d unrepaired, want 2 — a deferred mailbox is "+
+			"still a broken mailbox and must still be visible", res.Unrepaired)
+	}
+	if len(res.Stuck) != 2 {
+		t.Errorf("stuck = %+v, want both mailboxes named", res.Stuck)
+	}
 }
