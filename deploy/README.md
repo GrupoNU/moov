@@ -1166,6 +1166,7 @@ docker run --rm --network moov-internal curlimages/curl -s http://moovd:8080/met
 |---|---|
 | `moov_sync_lag_seconds{account}` | Seconds since that account last made **any** sync progress — the newest of `mailboxes.last_synced_at` (what every incremental pass writes) and `sync_log.last_success_at` (what the initial sync and the watcher's handshake write). It used to read the second alone and was therefore un-alertable; that is fixed. |
 | `moov_sync_watcher_idle_seconds{account}` | Seconds since that account's push watcher last did anything observable — an event, a pass, a sweep, a heartbeat. **The alert for a silently stalled watcher**; see below. |
+| `moov_sync_stuck_divergences_total{account}` | Divergences the reconciler found, tried to repair, **verified afterwards**, and could not fix. **The alert for a mailbox the engine cannot heal on its own**; see below. Labeled by account, not by mailbox — which mailbox is a question the WARN line answers by name, and a mailbox label is unbounded per account. |
 | `moov_sync_breaker_open{account}` | 1 while an account's circuit breaker is open. The breaker is the anti-fail2ban control (ADR §4), so this answers "who is locked out of Dovecot right now". |
 | `moov_jmap_http_requests_total{route,status}` | JMAP requests by route pattern and status class. |
 | `moov_jmap_http_request_duration_seconds{route}` | Latency histogram, bucketed around the 100 ms Gmail-class bar (regla 1). |
@@ -1241,6 +1242,77 @@ default **15 minutes**, was 6 h). It re-derives every folder's state with one
 a session that is live and answering but whose events are being lost upstream —
 self-corrects within that window. Each one it finds logs at WARN with the
 counters that moved.
+
+#### Alerting on a divergence the reconciler cannot repair
+
+`moov_sync_stuck_divergences_total` exists because of the 2026-09-17 defect,
+which the idle heartbeat above uncovered within a day of shipping.
+
+**What happened.** The heartbeat probes a quiet session by running `Reconcile`.
+Overnight it fired 906 times and reported **180 divergences, all on one account,
+always INBOX, with zero errors**. The account had 24,147 messages in INBOX on
+Dovecot and 24,146 in Moov; diffing the UID lists gave exactly one missing UID,
+a message five weeks old that some one-off failure had dropped. The reconciler
+found the mismatch on every sweep, ran an incremental pass, and logged
+`repaired=1` — **which was false every single time**. Two bugs stacked:
+
+1. The incremental pass is *structurally incapable* of fixing that divergence.
+   It resumes from the stored cursor and applies the delta above it; a UID far
+   below the cursor is never in any delta it will be shown.
+2. The result counted a repair whenever the pass returned **no error**. It never
+   looked at the store afterwards. A "repaired" count that does not verify the
+   repair is worse than no count, because it is precisely the number an operator
+   trusts when deciding whether to investigate.
+
+**What it does now.** After every repair attempt the sweep re-derives the same
+comparison that detected the divergence — a fresh `STATUS` of that one mailbox
+against the freshly reloaded row, plus the stored-row count. Only a divergence
+that is actually **gone** counts as repaired. One that survives escalates to a
+full backfill walk of the mailbox, which is the repair that *can* close a gap
+below the cursor. One that survives even that is counted here and logged at WARN
+as `reconciler could not repair a divergence; it persists`, naming the mailbox
+and the reason that is still true.
+
+**The alert.** A counter rather than a gauge, because the condition worth paging
+on is a rate that does **not** fall back to zero:
+
+```promql
+# A mailbox the engine has been unable to repair for an hour.
+sum by (account) (increase(moov_sync_stuck_divergences_total[1h])) > 10
+```
+
+A handful of increments is normal and self-healing — a folder changing under the
+sweep, a walk that had not finished. A line that keeps rising means a mailbox
+that no repair in the engine can close, and the WARN line names it. Expect the
+usual causes in that order: a message whose bytes the parser refuses (check
+`moov_parse_results_total{stage="failed"}` for the same account), a UID Dovecot
+reports in `STATUS` but will not `FETCH`, or a genuine engine bug.
+
+**Two bounds keep the repair from becoming its own incident**, and an operator
+should know both before reading the numbers:
+
+- **Per mailbox**, exponential backoff on a *persisted* counter: the first
+  failure walks immediately, the second waits 15 minutes, then 30, then an hour,
+  to a ceiling of one a day. It is persisted deliberately — the production gap
+  was five weeks old, and an in-memory counter would reset on every deploy and
+  re-authorise the hammer. It is cleared the moment the mailbox looks healthy
+  again, so a folder that had one bad afternoon pays nothing on its next
+  incident.
+- **Per sweep**, at most **one** backfill walk across all of an account's
+  mailboxes. The account above has 24 folders and 26,869 messages; without this,
+  a sweep that found several diverged would walk several 20k folders back to
+  back. A mailbox that does not get the budget is still detected, still counted
+  here, still logged by name, and gets it on the next sweep.
+
+So the honest worst case for an account with many broken folders is **one folder
+repaired per reconcile interval** — in a situation where the previous behaviour
+was zero, forever, while reporting success.
+
+**A backfill walk is safe to let run on a live account.** It re-fetches UIDs
+through the same idempotent path the initial sync uses: a UID already present is
+skipped, never rewritten. Nothing is deleted, nothing is reset, and `UIDVALIDITY`
+is checked before any watermark is trusted. It costs IMAP fetches and changes
+nothing a user can see.
 
 `/healthz` is a **liveness** probe: it reports that the process and its HTTP
 stack are up, and deliberately does *not* check the database. A health check
