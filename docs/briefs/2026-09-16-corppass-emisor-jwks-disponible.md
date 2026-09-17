@@ -232,3 +232,57 @@ Para que no haya expectativa equivocada: con esto **un organizador todavía no v
 La tarjeta "Correo del evento" está diseñada pero no construida, y tampoco existen el
 cliente de la API de cuentas ni las tareas de retención. El emisor se adelantó a propósito
 porque era lo único que ninguno de los dos equipos podía verificar por su cuenta.
+
+---
+
+## 9. ✅✅ EL CANJE FUNCIONA — primer apretón de manos real (2026-09-17)
+
+**Las dos mitades que nunca se habían tocado encajan, al primer intento.** §9.1 del L2,
+cerrado.
+
+### El canje
+
+```
+POST https://mail.corppass.events/auth/delegated/exchange
+→ HTTP 200
+{
+  "tokenType": "Bearer",
+  "sessionToken": "mds1_…",
+  "expiresAt":          "2026-09-18T07:20:00Z",   (12 h)
+  "absoluteExpiresAt":  "2026-09-24T19:20:00Z",   (7 días)
+  "account": { "address": "corppass@corppass.events", "name": "CorpPass Eventos" },
+  "readOnly": false,
+  "jmap": { "sessionUrl": "/.well-known/jmap" }
+}
+```
+
+Token `login` de 445 bytes, `iss=https://api.corppass.app`, `aud=mail.corppass.events`
+(host pelado), `sub=corppass@corppass.events`, firmado con `cp-2026-09`.
+
+### Y la sesión sirve de verdad
+
+No nos quedamos en el 200 del canje: usamos la sesión contra JMAP.
+
+```
+GET /.well-known/jmap   (Authorization: Bearer mds1_…)
+→ HTTP 200 · username: corppass@corppass.events · isReadOnly: false · 9 capacidades
+```
+
+### Las dos direcciones, no solo la feliz
+
+| Prueba | Resultado |
+|---|---|
+| Token `login` presentado en `/auth/delegated/revoke` | **401** — un token vale para una sola ruta (§3.6 / D4) ✅ |
+| Token `revoke` en `/auth/delegated/revoke` | **200** `{"revoked":1}` ✅ |
+| La sesión, después de revocar | **401** — muerta al instante ✅ |
+
+Eso cubre, además del canje, el camino de "el organizador cerró sesión en el portal".
+
+### Qué queda del criterio 2 del gate F5
+
+La mitad criptográfica está demostrada. Falta **el navegador real**: que la PWA borre el
+fragmento de la barra de direcciones antes de cualquier llamada (hoy verificado en jsdom).
+Eso es de ustedes y es parte del gate.
+
+**Nada que arreglar de ninguno de los dos lados.** Dos equipos implementaron el mismo
+documento por separado y encajó sin una sola corrección.
