@@ -196,6 +196,25 @@ type Metrics struct {
 	// in-memory loop had stopped while every persisted row stayed plausible.
 	WatcherIdleSeconds *Gauge
 
+	// StuckDivergences counts divergences the reconciler found, attempted to
+	// repair, VERIFIED afterwards, and could not fix.
+	//
+	// It exists because of the 2026-09-17 defect, in which the only signal an
+	// operator had was a WARN reading `repaired=1` — a number that was false
+	// 906 times in one night while a message stayed missing for five weeks.
+	// The old code could not have exported this series even in principle,
+	// because it never checked whether the repair worked.
+	//
+	// A COUNTER rather than a gauge, and labeled by account rather than by
+	// mailbox. Counter, because the alertable condition is a RATE that does
+	// not fall to zero — `rate(moov_sync_stuck_divergences_total[1h]) > 0`
+	// sustained means a mailbox the engine cannot fix on its own, which is the
+	// exact shape of the incident and something no snapshot gauge distinguishes
+	// from a single transient blip. Account, not mailbox, for the cardinality
+	// rule this file opens with: mailbox counts are unbounded per account, and
+	// WHICH mailbox is a question the WARN line already answers by name.
+	StuckDivergences *Counter
+
 	// --- Sieve (E6)
 
 	// SievePushes counts pushes of the managed Sieve script (vacation,
@@ -292,6 +311,8 @@ func NewWithRegistry(r *Registry) *Metrics {
 			"1 when an account's circuit breaker is open, 0 otherwise."),
 		WatcherIdleSeconds: r.Gauge("moov_sync_watcher_idle_seconds",
 			"Seconds since each account's push watcher last did anything observable."),
+		StuckDivergences: r.Counter("moov_sync_stuck_divergences_total",
+			"Divergences that persisted after the reconciler attempted a repair."),
 
 		SievePushes: r.Counter("moov_sieve_script_pushes_total",
 			"Managed Sieve script pushes by result (ok, error)."),
@@ -461,6 +482,12 @@ func (m *Metrics) IncVacationUpdate(enabled bool) {
 		label = "true"
 	}
 	m.VacationUpdates.Inc(Labels{"enabled": label})
+}
+
+// IncStuckDivergence counts one divergence that survived a verified repair
+// attempt (the 2026-09-17 defect).
+func (m *Metrics) IncStuckDivergence(accountID int64) {
+	m.StuckDivergences.Inc(Labels{"account": strconv.FormatInt(accountID, 10)})
 }
 
 // IncSnoozeWoken counts one snoozed message returned to its folder (L3 E4).

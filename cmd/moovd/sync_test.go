@@ -9,7 +9,9 @@ import (
 
 	"github.com/GrupoNU/moov/internal/config"
 	"github.com/GrupoNU/moov/internal/crypto"
+	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
+	syncengine "github.com/GrupoNU/moov/internal/sync"
 )
 
 // testConfig is a minimal valid configuration for the wiring tests, which never
@@ -193,4 +195,51 @@ func TestDialerRejectsAForeignKeyring(t *testing.T) {
 	if _, err := other.password(store.Account{ID: 7, IMAPAppPassword: envelope}); err == nil {
 		t.Fatal("a foreign keyring opened the envelope")
 	}
+}
+
+// TestWatcherActivityCountsAStuckDivergence pins the seam that carries the
+// 2026-09-17 defect's one external signal.
+//
+// The engine cannot import internal/metrics, so nothing the compiler checks
+// connects sync.ObsStuckDivergence to moov_sync_stuck_divergences_total. The
+// two halves are joined by this adapter and by nothing else — exactly the shape
+// the submission constants are pinned for in outbox_test.go — and an
+// observation kind renamed on one side would otherwise silently stop counting,
+// which is the same class of silent failure the counter exists to break.
+func TestWatcherActivityCountsAStuckDivergence(t *testing.T) {
+	m := metrics.New()
+	a := newWatcherActivity(m)
+
+	a.observe(syncengine.WatchObservation{AccountID: 7, Kind: syncengine.ObsStuckDivergence, Mailbox: "INBOX"})
+
+	var b strings.Builder
+	if err := m.Registry().Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	out := b.String()
+
+	if !strings.Contains(out, `moov_sync_stuck_divergences_total{account="7"} 1`) {
+		t.Errorf("the exporter does not carry the stuck divergence:\n%s", out)
+	}
+
+	// And an ordinary observation must NOT count: a counter that rose on every
+	// healthy pass would be a rate nobody could alert on.
+	a.observe(syncengine.WatchObservation{AccountID: 7, Kind: syncengine.ObsPass, Mailbox: "INBOX"})
+
+	b.Reset()
+	if err := m.Registry().Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !strings.Contains(b.String(), `moov_sync_stuck_divergences_total{account="7"} 1`) {
+		t.Errorf("an ordinary pass moved the stuck-divergence counter:\n%s", b.String())
+	}
+}
+
+// TestWatcherActivityToleratesNoExporter keeps the engine buildable without
+// one: startSync passes a nil *metrics.Metrics in several configurations, and
+// an observer that panicked on it would turn a disabled metrics endpoint into a
+// crashed watcher.
+func TestWatcherActivityToleratesNoExporter(t *testing.T) {
+	a := newWatcherActivity(nil)
+	a.observe(syncengine.WatchObservation{AccountID: 3, Kind: syncengine.ObsStuckDivergence})
 }

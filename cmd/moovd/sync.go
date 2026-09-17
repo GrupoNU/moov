@@ -206,14 +206,27 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 // So the observations record a timestamp, and the gauge is computed at scrape
 // time as "now minus that", which rises on its own for as long as nothing
 // happens.
+//
+// # Why the stuck-divergence counter rides the same seam
+//
+// Because it is the same shape of fact reported through the same callback, and
+// the alternative — a second observer wired into the same Options field — would
+// need one of them to call the other. One adapter, one registration, both
+// series. The counter half needs no collector: unlike silence, a stuck
+// divergence produces an observation every time it happens.
 type watcherActivity struct {
 	mu   sync.Mutex
 	last map[int64]time.Time
+
+	// m is the exporter, or nil when metrics are disabled. Only the
+	// stuck-divergence counter needs it at observation time; the idle gauge is
+	// rendered by the collector below.
+	m *metrics.Metrics
 }
 
 // newWatcherActivity installs the collector and returns the observer.
 func newWatcherActivity(m *metrics.Metrics) *watcherActivity {
-	a := &watcherActivity{last: map[int64]time.Time{}}
+	a := &watcherActivity{last: map[int64]time.Time{}, m: m}
 	if m == nil {
 		return a
 	}
@@ -231,6 +244,14 @@ func (a *watcherActivity) observe(obs syncengine.WatchObservation) {
 	a.mu.Lock()
 	a.last[obs.AccountID] = time.Now()
 	a.mu.Unlock()
+
+	// A sweep that found a divergence it could not repair (the 2026-09-17
+	// defect). It is counted here and NOT treated as an error: nothing failed,
+	// every call returned nil, and that is exactly what made the defect
+	// invisible for five weeks.
+	if obs.Kind == syncengine.ObsStuckDivergence && a.m != nil {
+		a.m.IncStuckDivergence(obs.AccountID)
+	}
 }
 
 // samples renders the gauge at scrape time.
