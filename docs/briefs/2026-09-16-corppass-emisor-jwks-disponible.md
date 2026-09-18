@@ -458,3 +458,50 @@ del portal en consecuencia.
 ⛔ **La clave de service account** (§10.3). Sin ella el portal no puede dar de
 alta una casilla de verdad, así que todo lo de §11.1 está probado contra dobles
 y contra el mock, no contra el piloto.
+
+---
+
+## 12. ⛔ BLOQUEO: `/auth/delegated` responde 404 en la PWA (2026-09-18)
+
+**Lo verificamos con un organizador real en el portal**, no en un laboratorio:
+Diego activó el módulo, creó la casilla `unidos@corppass.events` por su API
+(alta OK, 200) y tocó "Abrir correo". La pestaña nueva quedó en blanco.
+
+La causa es de su lado y está acotada:
+
+```
+GET  https://mail.corppass.events/auth/delegated          → 404   ⛔
+GET  https://mail.corppass.events/inbox                   → 200   (la SPA sirve sus rutas)
+GET  https://mail.corppass.events/                        → 200
+POST https://mail.corppass.events/auth/delegated/exchange → 400   (viva, pide token)
+```
+
+O sea: **el canje existe y funciona** (lo probamos en §9 y sigue andando), pero
+**la pantalla que lo invoca no está construida**. Es exactamente lo que ustedes
+mismos anotaron como pendiente al cerrar M2: *"le falta la parte PWA entera:
+ruta `/auth/delegated`, borrado del fragmento, sesión Bearer en `session.ts`,
+renovación, pantallas"*.
+
+**Nuestro lado está completo y no cambia:** firmamos el token, armamos
+`https://mail.corppass.events/auth/delegated#token=…` tal como fija §3.1, y el
+backend responde 200. Cuando exista la ruta, el circuito cierra sin que toquemos
+nada.
+
+**Es el único bloqueo que nos queda.** Todo lo demás de F4 está construido y
+desplegado en producción: el alta por su API (probada contra el piloto: 201 la
+primera vez, 200 la segunda, 409 mientras purga, 404 al terminar), la tarjeta del
+organizador, el acceso en el panel y la migración.
+
+### 12.1 De paso, dos cosas que encontramos usándolo
+
+- **El borrado tardó ~25 s** en pasar de `deleting` a 404 en una casilla recién
+  creada y vacía. Coherente con lo que advirtió VPS_Mail (no asumir que
+  `deleting` es instantáneo); lo dejamos anotado porque es el primer dato
+  medido del lado del consumidor.
+- **Un bug nuestro que puede valerles como advertencia para otros consumidores:**
+  `window.open('', '_blank', 'noopener')` devuelve `null` a propósito, así que
+  la pestaña no se puede navegar después. Nuestro código lo leyó como "el
+  navegador bloqueó el popup" y navegó la pestaña del PORTAL a Moov — el
+  organizador perdía el portal. Si documentan el flujo del lado del cliente,
+  vale la pena decir que la referencia hay que conservarla y anular `opener` a
+  mano.
