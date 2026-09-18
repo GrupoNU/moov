@@ -505,3 +505,69 @@ organizador, el acceso en el panel y la migración.
   organizador perdía el portal. Si documentan el flujo del lado del cliente,
   vale la pena decir que la referencia hay que conservarla y anular `opener` a
   mano.
+
+---
+
+## 13. La sesión entra, pero la bandeja no carga: `sync.state` clavado en `initial` (2026-09-18)
+
+**Primero: gracias, y la corrección era de ustedes.** El proxy quedó bien — `/auth/delegated`
+responde 200, la PWA sirve, **la sesión delegada abre el webmail con la marca CorpPass sin
+pedir contraseña**. Nuestro diagnóstico acertó el síntoma y erró la causa: dijimos "la
+pantalla no está construida" cuando sí estaba y era un patrón sin barra final. Anotado — un
+consumidor no puede inferir la causa desde afuera, sólo reportar lo que ve.
+
+### 13.1 Lo que ve el organizador ahora
+
+El webmail abre, se ve el encabezado, "Redactar" y el buscador — pero **la lista de correos
+se queda en esqueletos de carga, indefinidamente**. No hay error en pantalla.
+
+### 13.2 Lo que encontramos
+
+La casilla que creó el organizador por su API **nunca terminó la sincronización inicial**,
+y no es un estado transitorio: fue creada hace horas.
+
+```
+GET /admin/accounts/unidos@corppass.events
+  state   = active
+  sync    = { state: "initial", lastSyncAt: null, messages: 0 }   ⛔
+
+GET /admin/accounts/corppass@corppass.events    (la de ensayo, creada por ustedes)
+  sync    = { state: "ready", messages: 7 }                        ✅
+```
+
+`lastSyncAt: null` es el dato que más dice: **la sincronización no corrió ni una sola vez**.
+
+Y la PWA hace lo correcto con eso — la bandeja pide las carpetas y recibe una lista vacía:
+
+```
+POST /jmap/api   ["Mailbox/get", {"accountId":"a7"}]
+→ 200  {"accountId":"a7","state":"0-0","list":[],"notFound":[]}
+```
+
+Sin carpetas no hay nada que dibujar, así que los esqueletos se quedan para siempre. **El
+canje, la sesión y JMAP funcionan**: verificamos los tres con la sesión real antes de
+escribir esto.
+
+### 13.3 Lo que descartamos, para ahorrarles camino
+
+- **No es el límite de concurrencia** de §9.5 punto 1 (el que se activaba con la quinta
+  cuenta): en `corppass.events` hay **sólo dos casillas**, y la otra sincroniza bien.
+- **No es permisos ni sesión**: la misma sesión delegada lee `/.well-known/jmap` y ejecuta
+  `Mailbox/get` con 200.
+- **No es la casilla vacía**: una casilla sin correo igual debería tener sus carpetas
+  (INBOX, Enviados…) y llegar a `ready`. La de ustedes las tiene.
+
+Nuestra hipótesis, sin ver su código: el aprovisionamiento por la API de cuentas deja la
+cuenta en `initial` pero **no arranca el worker de sincronización**, o lo arranca y muere sin
+dejar rastro. El contrato dice que `POST /admin/accounts` "inicia la sincronización inicial"
+(§2.4), así que o no se está iniciando, o falla en silencio.
+
+Sugerencia: `moov_sync_watcher_idle_seconds` y `moov_sync_stuck_divergences_total` —las
+métricas que agregaron en §9.5— podrían no cubrir este caso, porque **la cuenta nunca llegó
+a tener un watcher**. Una cuenta que se queda en `initial` más de N minutos quizás merezca
+su propia alerta.
+
+### 13.4 Qué NO hace falta de nuestro lado
+
+Nada. La casilla `unidos@corppass.events` queda creada y disponible para que la miren; no la
+vamos a borrar ni recrear sin avisarles, para no perder el caso reproducible.
