@@ -530,6 +530,37 @@ budget in §2.2 is Moov's.
 - **D6 — `recipientsPerMessage` and `attachmentMB` are enforced by Moov**, not Mailcow (no
   per-mailbox knob exists); the spec's "applied in Mailcow" holds for quota and sendPerDay.
 
+## 8b. Open decision: changing an address without losing the mailbox
+
+Raised by the first consumer (2026-09-17) against a real product case: an event edition
+wants to move from one address to the next year's while keeping two years of conversation,
+and without breaking signage already printed with the old one. `PATCH` covers `name`,
+`quotaMB` and `limits`; the address is the resource key, so today the only answers are
+"reuse the address as it is" or "a new, empty mailbox".
+
+**Director's arbitration: ALIAS, not rename.** The mailbox keeps its identity and gains a
+second address that also delivers to it. Deferred to a later phase — it is not in M1 — but
+the shape is decided now so nobody builds against a different one:
+
+- **Why not rename.** The address is what makes `POST /admin/accounts` idempotent (§2.4).
+  Moving it turns the one operation a portal retries blindly after a timeout into an
+  operation whose key can change underneath it, and an idempotent create whose key moves is
+  not idempotent. A rename also silently breaks every message already sent to the old
+  address, which is precisely the failure the consumer flagged.
+- **Why alias works.** Nothing bounces, the resource key never moves, and the old address
+  keeps receiving for as long as the operator wants. Mailcow supports aliases natively
+  (verified on our installation: `GET /api/v1/get/alias/all` returns live rows), so this is
+  wiring, not new mail infrastructure.
+- **What it will need when built:** aliases as a sub-resource of the account
+  (`POST`/`DELETE /admin/accounts/{address}/aliases`), an `aliases` array on the account
+  resource, the same domain check as every other route, and an explicit decision about which
+  address outbound mail uses (the proposal: the primary, always — a reply that comes from an
+  address the recipient has never seen is its own problem).
+
+Until it exists, consumers should offer only the two behaviours that work today, and say so
+in their interface. This is recorded here rather than silently deferred because the consumer
+correctly identified that the decision belongs to the contract, not to them.
+
 ## 9. Change log
 
 - 2026-09-15 — `1.0.0-draft.1` published. Consumers may build against it; breaking changes
