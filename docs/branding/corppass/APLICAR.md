@@ -73,4 +73,4 @@ tiene instalada, así que conviene que lo sepa antes de que parezca que no funci
 | `onPrimary` | `#ffffff` | 4,83:1 sobre el primary |
 | `logo` | `logo.png` 505×215 | fondo transparente |
 | `logoDark` | `logo-dark.png` 505×215 | tinta en blanco, caja cyan intacta |
-| `icon` | `icon.png` 512×512 | cuadrado, placa cyan con la "P" |
+| `icon` | `icon.png` 512×512 | cuadrado, placa cyan con **"Pass"** — el mismo favicon del portal |
