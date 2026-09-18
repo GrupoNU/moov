@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GrupoNU/moov/internal/accounts"
 	"github.com/GrupoNU/moov/internal/config"
 	"github.com/GrupoNU/moov/internal/metrics"
 	"github.com/GrupoNU/moov/internal/store"
@@ -138,7 +139,21 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	defer components.close()
 
-	jmapComp, err := startJMAP(startCtx, cfg, logger, m, broker, fail)
+	// The accounts API nudges the supervisor when it provisions a mailbox, so
+	// the organizer who just watched a 201 does not wait out a discovery sweep.
+	// nil when sync is disabled in this process; see buildAccountsAPI.
+	//
+	// The nil check is on the POINTER, not on the interface: assigning a typed
+	// nil *Supervisor to an interface produces a non-nil interface, and the
+	// accounts service would then call Nudge on it. startSync never returns
+	// components with a nil supervisor today, and this is what keeps that from
+	// becoming a panic if it ever does.
+	var nudger accounts.SyncNudger
+	if components != nil && components.supervisor != nil {
+		nudger = components.supervisor
+	}
+
+	jmapComp, err := startJMAP(startCtx, cfg, logger, m, broker, nudger, fail)
 	if err != nil {
 		cancelStart()
 		return fmt.Errorf("starting jmap: %w", err)

@@ -94,6 +94,7 @@ func buildAccountsAPI(
 	blobs *blob.Store,
 	keyring *crypto.Keyring,
 	revoker accounts.SessionRevoker,
+	nudger accounts.SyncNudger,
 	m *metrics.Metrics,
 	logger *slog.Logger,
 ) (*jmaphttp.AccountsAPIConfig, *accountsComponents, error) {
@@ -159,6 +160,16 @@ func buildAccountsAPI(
 	}, api, st, prov, revoker, runner, m)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building the accounts service: %w", err)
+	}
+
+	// The provisioning nudge (the 2026-09-17 defect). It is nil whenever the
+	// sync engine is disabled in this process, which is a supported
+	// configuration — a daemon that only serves the API — and the Service
+	// handles that by simply not nudging. The engine's own discovery sweep is
+	// what guarantees the account is eventually supervised either way; this
+	// removes the wait for the person who is already looking at the webmail.
+	if nudger != nil {
+		svc.SetSyncNudger(nudger)
 	}
 
 	runnerCtx, cancel := context.WithCancel(context.Background())

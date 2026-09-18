@@ -1247,3 +1247,72 @@ func TestWriteScopeImpliesRead(t *testing.T) {
 		t.Error("accounts:read grants accounts:write")
 	}
 }
+
+// fakeNudger records the provisioning nudges (the 2026-09-17 defect).
+type fakeNudger struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (f *fakeNudger) Nudge() {
+	f.mu.Lock()
+	f.n++
+	f.mu.Unlock()
+}
+
+func (f *fakeNudger) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.n
+}
+
+// TestCreateNudgesTheSyncEngine pins the accounts half of the 2026-09-17 fix.
+//
+// The engine now discovers accounts on a sweep, so this nudge is not what makes
+// a new mailbox work — it is what makes it work NOW, for the organizer who is
+// looking at the webmail seconds after the 201. Nothing the compiler checks
+// connects Create to the supervisor, so this test is what stops the call being
+// dropped in a refactor and nobody noticing for the length of one sweep.
+func TestCreateNudgesTheSyncEngine(t *testing.T) {
+	h := newHarness(t)
+	nudger := &fakeNudger{}
+	h.svc.SetSyncNudger(nudger)
+
+	call := Call{Actor: Actor{ID: "k1", Domain: "corppass.events"}, RequestID: "r1"}
+	if _, created, err := h.svc.Create(context.Background(), call, CreateRequest{
+		Address: "unidos@corppass.events", Name: "Unidos",
+	}); err != nil || !created {
+		t.Fatalf("Create: created=%v err=%v", created, err)
+	}
+
+	if got := nudger.count(); got != 1 {
+		t.Errorf("Create nudged the sync engine %d times, want 1: a provisioned mailbox that the "+
+			"engine is not told about waits out a whole discovery sweep", got)
+	}
+
+	// The idempotent repeat provisions nothing, so it has nothing to announce.
+	// Nudging anyway would be harmless but dishonest, and a retry storm on a
+	// lost response would become a sweep storm.
+	if _, created, err := h.svc.Create(context.Background(), call, CreateRequest{
+		Address: "unidos@corppass.events", Name: "Unidos",
+	}); err != nil || created {
+		t.Fatalf("repeat Create: created=%v err=%v", created, err)
+	}
+	if got := nudger.count(); got != 1 {
+		t.Errorf("an idempotent repeat nudged the engine again (%d total)", got)
+	}
+}
+
+// TestCreateWithoutANudgerStillSucceeds keeps the seam optional: a daemon that
+// serves the accounts API with the sync engine disabled is a supported
+// configuration, and a nil nudger must be a no-op rather than a panic.
+func TestCreateWithoutANudgerStillSucceeds(t *testing.T) {
+	h := newHarness(t) // no SetSyncNudger
+
+	call := Call{Actor: Actor{ID: "k1", Domain: "corppass.events"}, RequestID: "r1"}
+	if _, created, err := h.svc.Create(context.Background(), call, CreateRequest{
+		Address: "solo@corppass.events",
+	}); err != nil || !created {
+		t.Fatalf("Create: created=%v err=%v", created, err)
+	}
+}

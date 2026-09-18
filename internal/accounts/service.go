@@ -82,6 +82,26 @@ type SessionRevoker interface {
 	RevokeAccount(ctx context.Context, accountID int64) error
 }
 
+// SyncNudger asks the sync engine to look for new accounts now.
+//
+// It is an OPTIMISATION, never a mechanism, and the distinction is load-bearing
+// enough to state here rather than only at the call site. The engine discovers
+// accounts on its own schedule (sync.DefaultDiscoveryInterval), which is what
+// guarantees a provisioned mailbox is eventually supervised — including one
+// created by moovctl, by a second daemon, by an operator's SQL, or by a create
+// whose caller died before it could nudge anything. This seam only removes the
+// wait in the common case, where a person is watching the spinner the 201
+// started.
+//
+// Because it is not a guarantee, its failure is not an error: Nudge returns
+// nothing and Create does not check it. A nudge that does not arrive costs one
+// discovery interval, not a stranded mailbox — which is exactly the property
+// the 2026-09-17 defect did not have.
+type SyncNudger interface {
+	// Nudge must not block and must be safe from any goroutine.
+	Nudge()
+}
+
 // Observer counts the outcome of one admin action, for the metrics exporter.
 // A nil Observer counts nothing, which is what every unit test runs with.
 type Observer interface {
@@ -113,6 +133,10 @@ type Service struct {
 	revoker SessionRevoker
 	exports *ExportRunner
 	obs     Observer
+
+	// nudger is optional: with none, a freshly provisioned account is picked
+	// up by the engine's own discovery sweep instead of immediately.
+	nudger SyncNudger
 
 	maxQuotaMB int
 	now        func() time.Time
@@ -147,6 +171,28 @@ func New(cfg Config, api MailcowAPI, st Store, prov Provisioner, revoker Session
 		mailcow: api, store: st, prov: prov, revoker: revoker, exports: exports, obs: obs,
 		maxQuotaMB: cfg.MaxQuotaMB, now: cfg.Now, log: cfg.Logger,
 	}, nil
+}
+
+// SetSyncNudger installs the optional sync nudger.
+//
+// A setter rather than an eighth constructor parameter, and that is a judgement
+// rather than laziness: every other dependency of New is REQUIRED, and the
+// constructor refuses to build a Service without one, because a service that
+// cannot reach Mailcow or the store cannot honor a transition. This one is
+// different in kind — the accounts API is fully correct without it, the engine
+// discovers accounts by itself — and making it optional in the constructor
+// would have meant a nil argument at every call site including the tests, which
+// reads as "this might be missing" rather than "this is an accelerator".
+//
+// It must be called before the Service serves traffic; it is not concurrency
+// safe with Create and is not meant to be reconfigured at runtime.
+func (s *Service) SetSyncNudger(n SyncNudger) { s.nudger = n }
+
+// nudgeSync tells the engine a new account exists, if anything is listening.
+func (s *Service) nudgeSync() {
+	if s.nudger != nil {
+		s.nudger.Nudge()
+	}
 }
 
 // MaxQuotaMB reports the installation's ceiling, for the validation the HTTP

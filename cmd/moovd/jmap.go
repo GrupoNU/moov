@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/GrupoNU/moov/internal/accounts"
 	"github.com/GrupoNU/moov/internal/blob"
 	"github.com/GrupoNU/moov/internal/config"
 	"github.com/GrupoNU/moov/internal/crypto"
@@ -49,7 +50,7 @@ type jmapComponents struct {
 // engine's: the two components have independent lifecycles (either may be
 // disabled) and independent pool needs. Two pgx pools against one PostgreSQL
 // are cheap; consolidating them is a J4 (deploy) decision, with numbers.
-func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *metrics.Metrics, broker *syncengine.Broker, fatal func(error)) (*jmapComponents, error) {
+func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *metrics.Metrics, broker *syncengine.Broker, nudger accounts.SyncNudger, fatal func(error)) (*jmapComponents, error) {
 	if !cfg.JMAP.Enabled {
 		logger.Info("jmap server disabled", "hint", "MOOV_JMAP_ENABLED=1 enables it")
 		return nil, nil //nolint:nilnil // "disabled" is a valid, non-error outcome
@@ -238,7 +239,7 @@ func startJMAP(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 	// and not a flag, is what turns it on. nil is the ordinary configuration
 	// and makes every /admin/accounts route answer the generic 404.
 	revoker, bindRevokerServer := newServerRevoker(auth, st)
-	accountsCfg, accountsComp, err := buildAccountsAPI(cfg, st, blobs, keyring, revoker, m, logger)
+	accountsCfg, accountsComp, err := buildAccountsAPI(cfg, st, blobs, keyring, revoker, nudger, m, logger)
 	if err != nil {
 		writer.Close()
 		st.Close()

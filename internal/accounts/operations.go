@@ -220,6 +220,19 @@ func (s *Service) finishCreate(ctx context.Context, c Call, req CreateRequest, q
 	if err != nil {
 		return Account{}, false, err
 	}
+
+	// The mailbox is provisioned and the row is active: tell the sync engine
+	// now rather than letting it find out on its next sweep. This is the LAST
+	// thing the create does, after everything that could still roll the mailbox
+	// back, so the engine is never pointed at an account that is about to be
+	// deleted again.
+	//
+	// It is deliberately not checked and cannot fail the create. The engine
+	// discovers accounts on its own schedule regardless; this only removes the
+	// wait for the organizer who is looking at the webmail right now. See
+	// SyncNudger.
+	s.nudgeSync()
+
 	return out, true, nil
 }
 
