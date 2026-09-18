@@ -44,6 +44,47 @@ type Watcher interface {
 	Watch(ctx context.Context, account store.Account) error
 }
 
+// SupervisionKind is what happened to an account under the supervisor.
+type SupervisionKind string
+
+// The supervision observations. They are deliberately few: this seam reports
+// the account's LIFECYCLE under the supervisor, not its sync progress, which
+// mailboxes.last_synced_at already records and moov_sync_lag_seconds already
+// reads.
+const (
+	// ObsSupervised is emitted once, when the supervisor takes charge of an
+	// account — at startup for an account that was already there, at adoption
+	// for one created since. It starts the clock that ObsInitialSynced stops.
+	ObsSupervised SupervisionKind = "supervised"
+
+	// ObsInitialSynced is emitted when an account's initial sync is complete,
+	// including the cheap case where it was already complete from a previous
+	// run of the daemon. It is the moment the account stops being stranded.
+	ObsInitialSynced SupervisionKind = "initial_synced"
+
+	// ObsInitialSyncFailed is emitted each time an initial sync attempt fails
+	// and the supervisor schedules a retry. The account remains stranded.
+	ObsInitialSyncFailed SupervisionKind = "initial_sync_failed"
+)
+
+// SupervisionObservation is one fact about an account's supervision.
+type SupervisionObservation struct {
+	AccountID int64
+	Email     string
+	Kind      SupervisionKind
+}
+
+// SupervisionObserver receives supervision observations.
+//
+// It is the same seam shape as WatcherOptions.OnEvent, submit.Observer and
+// mail.SubmissionObserver, and it exists for the same reason: internal/sync
+// must not import internal/metrics. The engine declares a callback; cmd/moovd,
+// the only place in the daemon that knows an exporter exists, adapts it.
+//
+// Implementations MUST NOT block: they are called from the supervisor's own
+// goroutines, and a slow observer would delay a sync.
+type SupervisionObserver func(SupervisionObservation)
+
 // SupervisorOptions configures the sync supervisor.
 type SupervisorOptions struct {
 	// Options is the per-account initial-sync configuration.
@@ -64,7 +105,46 @@ type SupervisorOptions struct {
 	// an account whose sync failed once must not be abandoned for the lifetime
 	// of the process.
 	RetryDelay time.Duration
+
+	// OnAccount receives supervision observations, or nil to discard them.
+	// It is how the daemon learns that an account is supervised but has never
+	// finished an initial sync — the stranded shape of the 2026-09-17 defect.
+	OnAccount SupervisionObserver
+
+	// DiscoveryInterval is how often the supervisor re-reads the eligible
+	// accounts so it can adopt the ones created since. Default
+	// DefaultDiscoveryInterval. It is a ceiling on how long a brand-new
+	// mailbox stays invisible, not a target: Nudge collapses the common case.
+	DiscoveryInterval time.Duration
 }
+
+// DefaultDiscoveryInterval is how often the supervisor looks for accounts it is
+// not already supervising.
+//
+// # Why thirty seconds
+//
+// The number is set by what a person is doing at the other end. A mailbox
+// created through the accounts API is contractually usable the moment the call
+// returns 201 (contract §2.4), and the gate criterion is that it be operational
+// in under 60 s. The organizer who made it opens the webmail immediately, so an
+// interval measured in minutes would mean a mailbox that is "created" and blank
+// for the entire time anyone is looking at it — which is the defect this
+// constant exists to bound, merely slower. Thirty seconds fits the worst case
+// (interval plus one initial sync) inside the 60 s criterion with room for the
+// sync itself.
+//
+// The other side of the trade is what the sweep costs, and it is close to
+// nothing: one indexed SELECT over the accounts table, which has as many rows as
+// the deployment has mailboxes — tens, not millions — and which almost never
+// changes. Two per minute is noise next to what one IDLE connection does. There
+// is no reason to be miserly here, and being miserly is what produced the bug.
+//
+// It is NOT shorter because below a few seconds the sweep stops being free
+// relative to its own benefit: Nudge already makes provisioning immediate, so
+// everything the ticker still catches (an account created by another process,
+// by moovctl, or by a caller that died before nudging) is by definition not
+// something anyone is watching a spinner for.
+const DefaultDiscoveryInterval = 30 * time.Second
 
 // DefaultRetryDelay is how long a failed account waits before a retry.
 //
@@ -85,6 +165,10 @@ type Supervisor struct {
 	blobs BlobPutter
 	opts  SupervisorOptions
 	log   *slog.Logger
+
+	// notify carries provisioning nudges (see Nudge). One buffered slot: a
+	// second pending nudge would only buy a redundant sweep.
+	notify chan struct{}
 }
 
 // NewSupervisor builds a supervisor.
@@ -106,20 +190,54 @@ func NewSupervisor(st *store.Store, blobs BlobPutter, opts SupervisorOptions) (*
 	if opts.RetryDelay <= 0 {
 		opts.RetryDelay = DefaultRetryDelay
 	}
+	if opts.DiscoveryInterval <= 0 {
+		opts.DiscoveryInterval = DefaultDiscoveryInterval
+	}
 
 	return &Supervisor{
-		store: st,
-		blobs: blobs,
-		opts:  opts,
-		log:   opts.Options.Logger.With("component", "sync-supervisor"),
+		store:  st,
+		blobs:  blobs,
+		opts:   opts,
+		log:    opts.Options.Logger.With("component", "sync-supervisor"),
+		notify: make(chan struct{}, 1),
 	}, nil
 }
 
-// Run syncs every enabled account and then blocks until ctx ends.
+// Run supervises every eligible account and blocks until ctx ends.
 //
 // It blocks rather than returning because it owns the watchers: returning would
 // mean either killing them or orphaning them, and a supervisor that outlives
 // what it supervises is how goroutines leak. moovd cancels ctx to stop it.
+//
+// # Why this is a loop and not a startup snapshot
+//
+// Until 2026-09-17 this method read the eligible accounts ONCE, iterated that
+// slice and blocked. The supervised set was therefore frozen at the instant the
+// process started, and an account created afterwards was invisible to the
+// engine until somebody restarted moovd. That is not a theoretical gap: the
+// accounts API exists precisely so a portal can create mailboxes with nobody
+// watching a terminal, and the first mailbox it created that way
+// (unidos@corppass.events) never synced. Every observable signal said it was
+// fine — 201 from the API, mailbox in Mailcow, credential validated against
+// Dovecot, row active/active, delegated session opening the webmail — and the
+// inbox showed loading skeletons forever. Mail delivered to it changed nothing,
+// because no watcher was ever attached to notice.
+//
+// So discovery is periodic: the supervised set is a moving target.
+//
+// # What the loop deliberately does NOT do
+//
+// It does not drop accounts that stop being eligible. Suspend, read-only and
+// delete already revoke the sessions through SessionRevoker, which is the path
+// that actually stops a user reaching their mail; tearing the watcher down from
+// here as well would be a second, racing implementation of the same policy, and
+// the failure mode of getting it wrong is worse than the cost of not doing it.
+// A suspended account keeps a watcher that syncs mail nobody can read — a few
+// idle IMAP connections — until the next restart. A deleted account is a
+// different story and needs no special case either: its rows are removed by the
+// purge job, so its syncer and watcher start failing against a missing account
+// and unwind through the paths that already exist for a broken account. That is
+// why eligibleAccounts is only ever consulted to ADD.
 func (s *Supervisor) Run(ctx context.Context) error {
 	accounts, err := s.eligibleAccounts(ctx)
 	if err != nil {
@@ -127,19 +245,36 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 
 	s.log.Info("sync supervisor starting", "accounts", len(accounts),
-		"concurrency", s.opts.Concurrency, "watcher", s.opts.Watcher != nil)
+		"concurrency", s.opts.Concurrency, "watcher", s.opts.Watcher != nil,
+		"discovery_interval", s.opts.DiscoveryInterval)
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, s.opts.Concurrency)
 
-	for _, acct := range accounts {
+	// supervised is the set of accounts that already have a goroutine. It is the
+	// guard against the one thing adoption must never do: start a SECOND
+	// supervisor for an account that already has one. Two goroutines on one
+	// account means two IMAP sessions, two syncers writing the same
+	// (mailbox_id, uidvalidity, uid) rows and two watchers fighting over the
+	// same NOTIFY connection. The concurrency semaphore does not prevent any of
+	// that: it bounds how many initial syncs run at once, not which accounts
+	// they are for, and it is released while the watcher is still running.
+	//
+	// It needs no mutex because it is read and written from this goroutine only.
+	supervised := map[int64]struct{}{}
+
+	// start launches one account, or does nothing if it already has a goroutine.
+	// It reports false only when ctx ended while waiting for a slot.
+	start := func(a store.Account) bool {
+		if _, ok := supervised[a.ID]; ok {
+			return true
+		}
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			wg.Wait()
-			return ctx.Err()
+			return false
 		}
-
+		supervised[a.ID] = struct{}{}
 		wg.Add(1)
 		go func(a store.Account) {
 			defer wg.Done()
@@ -154,21 +289,93 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			// log line. That is what stranded the pilot's fifth account, and
 			// TestSupervisorWatchesEveryAccountBeyondConcurrency pins it.
 			s.superviseAccount(ctx, a, func() { <-sem })
-		}(acct)
+		}(a)
+		return true
 	}
 
-	wg.Wait()
-	if err := ctx.Err(); err != nil {
-		return err
+	for _, acct := range accounts {
+		if !start(acct) {
+			wg.Wait()
+			return ctx.Err()
+		}
 	}
 
-	s.log.Info("initial sync finished for every account; supervisor idle")
+	ticker := time.NewTicker(s.opts.DiscoveryInterval)
+	defer ticker.Stop()
 
-	// With no watcher there is nothing left to do, but returning would tell
-	// moovd a component exited unexpectedly. Waiting for the shutdown signal is
-	// the honest report of "done, still running".
-	<-ctx.Done()
-	return ctx.Err()
+	for {
+		select {
+		case <-ctx.Done():
+			// Every account goroutine watches the same ctx, so they are already
+			// unwinding; waiting for them is what makes shutdown a clean stop
+			// rather than a race between the daemon exiting and watchers
+			// closing their IMAP connections.
+			wg.Wait()
+			return ctx.Err()
+		case <-s.notify:
+			// A provisioning nudge: the common case becomes immediate instead
+			// of waiting out a sweep. See Nudge for why it is an optimization
+			// and never the mechanism.
+		case <-ticker.C:
+		}
+
+		fresh, err := s.eligibleAccounts(ctx)
+		if err != nil {
+			// A failed sweep is not fatal. A database that is briefly
+			// unreachable must not take down an engine whose already-supervised
+			// accounts are working; the next tick tries again. It is logged at
+			// warn because a sweep that keeps failing means new accounts are
+			// silently not being adopted, which is this very defect wearing a
+			// different hat.
+			if ctx.Err() == nil {
+				s.log.Warn("discovering accounts failed; will retry", "error", err,
+					"retry_in", s.opts.DiscoveryInterval)
+			}
+			continue
+		}
+
+		for _, a := range fresh {
+			if _, known := supervised[a.ID]; known {
+				continue
+			}
+			s.log.Info("adopting an account that appeared since startup",
+				"account_id", a.ID, "email", a.Email)
+			if !start(a) {
+				wg.Wait()
+				return ctx.Err()
+			}
+		}
+	}
+}
+
+// Nudge asks the supervisor to look for new accounts now rather than at the
+// next sweep.
+//
+// # Why this exists on top of the sweep
+//
+// Because a human is waiting. A mailbox created through the accounts API is
+// usable the moment the call returns 201 (contract §2.4), and the organizer who
+// created it opens the webmail seconds later — the gate criterion is "operational
+// in under 60 s". The sweep alone bounds the worst case at DiscoveryInterval;
+// the nudge collapses the common case to the time one sweep takes.
+//
+// # Why it is not the mechanism
+//
+// Because it can be missed, and a signal that can be missed is not a guarantee.
+// It is deliberately non-blocking: if a nudge is already pending this one is
+// coalesced into it, because two sweeps back to back find the same rows. And it
+// only reaches the process it was called in, so an account created by any other
+// path — moovctl, an operator's SQL, a second daemon, a create whose caller
+// died before nudging — is adopted by the ticker or not at all. The ticker is
+// the contract; this is latency.
+//
+// Safe from any goroutine, and safe before Run starts: the buffered slot means
+// an early nudge is simply consumed by the first iteration of the loop.
+func (s *Supervisor) Nudge() {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
 }
 
 // superviseAccount runs one account's initial sync (if needed) and then its
@@ -195,6 +402,8 @@ func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account
 	release := func() { once.Do(releaseSlot) }
 	defer release()
 
+	s.observe(account, ObsSupervised)
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return
@@ -203,6 +412,7 @@ func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account
 		err := s.syncOnce(ctx, account, log)
 		switch {
 		case err == nil:
+			s.observe(account, ObsInitialSynced)
 			release()
 			s.runWatcher(ctx, account, log)
 			return
@@ -211,6 +421,7 @@ func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account
 		}
 
 		log.Error("initial sync failed; will retry", "error", err, "retry_in", s.opts.RetryDelay)
+		s.observe(account, ObsInitialSyncFailed)
 		release()
 		select {
 		case <-time.After(s.opts.RetryDelay):
@@ -218,6 +429,22 @@ func (s *Supervisor) superviseAccount(ctx context.Context, account store.Account
 			return
 		}
 	}
+}
+
+// observe reports one supervision fact, if anyone is listening.
+//
+// It is a method rather than a direct call so that a nil observer — the normal
+// case in tests and in any deployment without metrics — costs one nil check
+// instead of a guard at every call site.
+func (s *Supervisor) observe(account store.Account, kind SupervisionKind) {
+	if s.opts.OnAccount == nil {
+		return
+	}
+	s.opts.OnAccount(SupervisionObservation{
+		AccountID: account.ID,
+		Email:     account.Email,
+		Kind:      kind,
+	})
 }
 
 // syncOnce performs the account's initial sync unless the checkpoints say it is

@@ -286,3 +286,167 @@ func TestSupervisorWatchesEveryAccountBeyondConcurrency(t *testing.T) {
 		"an account beyond the concurrency limit was never watched — it is stranded on the semaphore, "+
 			"exactly as the pilot's fifth account was: no sync, no watcher, no error")
 }
+
+// TestSupervisorAdoptsAnAccountCreatedAfterStartup is the regression test for
+// the defect found in production on 2026-09-17, the first time a mailbox was
+// created through the accounts API against a running daemon.
+//
+// # The defect
+//
+// Run() called eligibleAccounts exactly ONCE, before the loop, and then blocked
+// forever. The set of supervised accounts was therefore frozen at the instant
+// the process started. An account created a second later — by the accounts API,
+// on behalf of an organizer who is watching a spinner — was invisible to the
+// engine until somebody restarted moovd.
+//
+// The symptom is the same silent shape as the concurrency-slot leak above, and
+// worse, because nothing about it looks broken: the API returned 201, the
+// mailbox exists in Mailcow, the credential validated against Dovecot, the
+// account row says active/active, and the delegated session opens the webmail.
+// It just shows loading skeletons forever. Real mail delivered to the mailbox
+// did not change anything either, because no watcher was ever attached to
+// notice. The only log lines carrying the account id came from the session
+// issuer; the supervisor, the syncer and the watcher never mentioned it.
+//
+// # What this test pins
+//
+// The supervised set is a moving target, not a startup snapshot: an account
+// that becomes eligible while Run is underway gets synced and watched without a
+// restart, within a bounded time.
+func TestSupervisorAdoptsAnAccountCreatedAfterStartup(t *testing.T) {
+	env := newTestEnv(t)
+	env.mustSyncableAccount(t)
+
+	srv := newFakeServer()
+	srv.addMailbox("INBOX", imap.RoleInbox, 100)
+
+	watcher := &recordingWatcher{block: true}
+	sup, err := NewSupervisor(env.store, env.blobs, SupervisorOptions{
+		Options:   env.testOptions(referenceNow),
+		Connector: ConnectorFunc(func(context.Context, store.Account, int) ([]imap.Client, error) { return srv.clients(2), nil }),
+		Watcher:   watcher,
+		// Short enough that the test does not wait on a production-sized
+		// sweep; the production value is argued at its declaration.
+		DiscoveryInterval: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	go func() { _ = sup.Run(ctx) }()
+
+	// The account that existed at startup is watched first: that proves the
+	// supervisor really is running before the new account appears, so a later
+	// failure cannot be blamed on a supervisor that never started.
+	waitFor(t, 20*time.Second, func() bool { return len(watcher.accounts()) == 1 },
+		"the pre-existing account was never watched; the supervisor did not start")
+
+	// Now the production scenario: a mailbox created through the accounts API
+	// while the daemon runs.
+	created := env.mustExtraSyncableAccounts(t, 1)[0]
+
+	waitFor(t, 30*time.Second, func() bool {
+		for _, id := range watcher.accounts() {
+			if id == created.ID {
+				return true
+			}
+		}
+		return false
+	}, "an account created after startup was never synced or watched — it is invisible to the "+
+		"supervisor until moovd restarts, exactly as unidos@corppass.events was")
+
+	// Adoption must not double-supervise anything: the pre-existing account
+	// must still have been handed to the watcher exactly once, however many
+	// discovery sweeps have run by now.
+	seen := map[int64]int{}
+	for _, id := range watcher.accounts() {
+		seen[id]++
+	}
+	for id, n := range seen {
+		if n != 1 {
+			t.Errorf("account %d was handed to the watcher %d times, want 1: a second goroutine for "+
+				"a supervised account means two IMAP sessions and two syncers racing on the same rows", id, n)
+		}
+	}
+}
+
+// TestSupervisorAdoptsOnNudgeWithoutWaitingForTheSweep pins the latency half of
+// the fix.
+//
+// The sweep is the guarantee; the nudge is what makes the common case — a
+// mailbox created through the accounts API while someone watches the webmail —
+// immediate. The discovery interval here is set absurdly long precisely so that
+// a pass can only be explained by the nudge: if Nudge were a no-op this test
+// would time out rather than pass slowly, which is what makes it a real
+// assertion instead of a race.
+func TestSupervisorAdoptsOnNudgeWithoutWaitingForTheSweep(t *testing.T) {
+	env := newTestEnv(t)
+	env.mustSyncableAccount(t)
+
+	srv := newFakeServer()
+	srv.addMailbox("INBOX", imap.RoleInbox, 100)
+
+	watcher := &recordingWatcher{block: true}
+	sup, err := NewSupervisor(env.store, env.blobs, SupervisorOptions{
+		Options:           env.testOptions(referenceNow),
+		Connector:         ConnectorFunc(func(context.Context, store.Account, int) ([]imap.Client, error) { return srv.clients(2), nil }),
+		Watcher:           watcher,
+		DiscoveryInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	go func() { _ = sup.Run(ctx) }()
+
+	waitFor(t, 20*time.Second, func() bool { return len(watcher.accounts()) == 1 },
+		"the pre-existing account was never watched; the supervisor did not start")
+
+	created := env.mustExtraSyncableAccounts(t, 1)[0]
+	sup.Nudge()
+
+	waitFor(t, 20*time.Second, func() bool {
+		for _, id := range watcher.accounts() {
+			if id == created.ID {
+				return true
+			}
+		}
+		return false
+	}, "Nudge did not make the supervisor discover a new account; with a one-hour sweep it is the "+
+		"only thing that could have")
+}
+
+// TestSupervisorNudgeIsSafeBeforeAndAfterRun pins the two calls that are easy
+// to get wrong in a channel-based signal: one before the loop exists (which
+// must be remembered, not dropped, and must not block a caller) and several in
+// a row (which must coalesce rather than fill a buffer and block the accounts
+// API on a busy supervisor).
+func TestSupervisorNudgeIsSafeBeforeAndAfterRun(t *testing.T) {
+	env := newTestEnv(t)
+
+	sup, err := NewSupervisor(env.store, env.blobs, SupervisorOptions{
+		Options:   env.testOptions(referenceNow),
+		Connector: ConnectorFunc(func(context.Context, store.Account, int) ([]imap.Client, error) { return nil, errors.New("unused") }),
+	})
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+
+	// Run has not started. None of these may block.
+	done := make(chan struct{})
+	go func() {
+		for range 100 {
+			sup.Nudge()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Nudge blocked; the accounts API would hang on a busy supervisor")
+	}
+}
