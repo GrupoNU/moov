@@ -600,3 +600,60 @@ de las dos vías (barrido inicial y NOTIFY) la rescata.
 de paso, una comprobación barata para detectar esto: **si divergen y `lastSyncAt` es null,
 esa cuenta está varada**. Puede servir como alerta, ya que la cuenta nunca llega a tener
 watcher y las métricas de §9.5 no la cubren.
+
+---
+
+## 14. Marcar como leído falla del lado del servidor: `serverFail` en `Email/set` (2026-09-18)
+
+Diego abre un mensaje en la bandeja de `unidos@corppass.events` y **no se marca como
+leído**. Reproducido por JMAP con una sesión delegada normal, sin pasar por la PWA:
+
+```
+POST /jmap/api
+  ["Email/set", {"accountId":"a7","update":{"elxo":{"keywords/$seen":true}}}, "0"]
+
+→ 200
+  "updated":    []
+  "notUpdated": { "elxo": { "type": "serverFail",
+                            "description": "applying keywords failed" } }
+```
+
+El estado del mensaje después sigue siendo `keywords: {}`.
+
+### 14.1 Lo que descarta la PWA
+
+- **La sesión tiene escritura**: el canje devuelve `readOnly: false`.
+- **La petición llega y se entiende**: la respuesta no es un error de sintaxis ni de
+  permisos, es un `serverFail` al *aplicar* — o sea, del lado de ustedes, después de
+  aceptar la orden.
+- **No es específico de un mensaje**: pasa con el único sin leer de la bandeja.
+
+### 14.2 Un dato que puede orientar
+
+En la misma cuenta conviven mensajes con `$seen` aplicado y otros no:
+
+```
+  Hola        INBOX   SIN LEER   ← el que falla, llegó DESPUÉS del alta por la API
+  Probando    INBOX   LEIDO      ← quedó marcado bien
+  Probando    Sent    LEIDO
+  (sin asunto) Trash  LEIDO
+```
+
+O sea que escribir keywords **funcionó alguna vez** en esta misma casilla. La diferencia
+que vemos: los que están marcados son anteriores, y "Hola" es el que llegó **después** de
+que ustedes destrabaran la sincronización que estaba varada en `initial` (§13). Puede que
+la cuenta haya quedado con la app password o la conexión IMAP a medio rehacer: lee bien
+—el mensaje se ve y se abre— pero no puede escribir de vuelta al buzón.
+
+Vale como hipótesis, no como diagnóstico: el `serverFail` no dice más y del lado del
+consumidor no hay forma de mirar adentro.
+
+### 14.3 Por qué nos importa más de lo normal
+
+El contador de no leídos del panel de CorpPass (que acabamos de cablear, §15) lee
+`unreadEmails` de la bandeja por JMAP. Si `$seen` no se puede aplicar, **el número nunca
+baja**: el organizador lee todo su correo y la burbuja roja del panel sigue mostrando
+mensajes pendientes. Un contador que no se apaga es peor que no tener contador — enseña a
+ignorarlo.
+
+La casilla queda tal cual para que la miren; el mensaje "Hola" es el caso reproducible.
