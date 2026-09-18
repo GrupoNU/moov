@@ -1167,6 +1167,7 @@ docker run --rm --network moov-internal curlimages/curl -s http://moovd:8080/met
 | `moov_sync_lag_seconds{account}` | Seconds since that account last made **any** sync progress — the newest of `mailboxes.last_synced_at` (what every incremental pass writes) and `sync_log.last_success_at` (what the initial sync and the watcher's handshake write). It used to read the second alone and was therefore un-alertable; that is fixed. |
 | `moov_sync_watcher_idle_seconds{account}` | Seconds since that account's push watcher last did anything observable — an event, a pass, a sweep, a heartbeat. **The alert for a silently stalled watcher**; see below. |
 | `moov_sync_stuck_divergences_total{account}` | Divergences the reconciler found, tried to repair, **verified afterwards**, and could not fix. **The alert for a mailbox the engine cannot heal on its own**; see below. Labeled by account, not by mailbox — which mailbox is a question the WARN line answers by name, and a mailbox label is unbounded per account. |
+| `moov_sync_unsynced_seconds{account}` | Seconds that account has been the supervisor's responsibility **without ever completing an initial sync**. Absent on a healthy account — the sample disappears the moment the initial sync finishes, so "present and rising" is the whole condition. **The alert for a mailbox that was created and never synced**; see below. |
 | `moov_sync_breaker_open{account}` | 1 while an account's circuit breaker is open. The breaker is the anti-fail2ban control (ADR §4), so this answers "who is locked out of Dovecot right now". |
 | `moov_jmap_http_requests_total{route,status}` | JMAP requests by route pattern and status class. |
 | `moov_jmap_http_request_duration_seconds{route}` | Latency histogram, bucketed around the 100 ms Gmail-class bar (regla 1). |
@@ -1242,6 +1243,75 @@ default **15 minutes**, was 6 h). It re-derives every folder's state with one
 a session that is live and answering but whose events are being lost upstream —
 self-corrects within that window. Each one it finds logs at WARN with the
 counters that moved.
+
+#### Alerting on a mailbox that was created and never synced
+
+`moov_sync_unsynced_seconds` exists because of the **stranded-account** defect
+of 2026-09-17 (a different one from the stuck-divergence defect below, same
+day), found the first time a mailbox was created through the accounts API
+against a **running** daemon.
+
+**What happened.** An organiser created `unidos@corppass.events` through
+`POST /admin/accounts`. Everything reported success: Mailcow had the mailbox,
+the credential validated against Dovecot with a real IMAP LOGIN, the app
+password was minted and sealed, the account row read `active`/`active`, and the
+delegated session opened the webmail. The inbox then showed loading skeletons
+**forever**. Hours later `sync` was still `{state: "initial", lastSyncAt: null,
+messages: 0}`, `mailboxes` had zero rows and `Mailbox/get` returned an empty
+list. Mail delivered to the mailbox did not change anything either.
+
+The cause was one line: the supervisor read the eligible accounts **once**, at
+startup, and then blocked. The supervised set was frozen at the instant the
+process started, so an account created afterwards was invisible until somebody
+restarted moovd — which is exactly the case the accounts API exists for, since a
+portal creates mailboxes with nobody watching a terminal.
+
+**What it does now.** Discovery is periodic (every 30 s) and the accounts API
+additionally nudges the supervisor the moment it finishes provisioning, so the
+common case is immediate and the sweep is the backstop for everything else
+(`moovctl`, an operator's SQL, a second daemon, a create whose caller died). The
+log says `adopting an account that appeared since startup` with the account id
+and address.
+
+**Why a new metric was needed at all.** Every existing series was silent by
+construction, which is what made this defect invisible rather than merely
+broken:
+
+- `moov_sync_lag_seconds` emits **no sample** for an account that has never
+  synced — an absent series being more honest than a zero.
+- `moov_sync_watcher_idle_seconds` needs a watcher, and a stranded account has
+  none.
+- `moov_sync_stuck_divergences_total` needs a reconciler, which runs inside the
+  watcher that does not exist.
+
+There was nothing an `absent()` rule could catch either: the account had never
+appeared in any series, so there was no disappearance to detect.
+
+**The alert.**
+
+```promql
+# An account the supervisor has owned for five minutes without finishing one
+# initial sync.
+max by (account) (moov_sync_unsynced_seconds) > 300
+```
+
+The gauge is emitted from the moment the supervisor takes charge of an account
+and **stops being emitted** when that account's initial sync completes —
+including the cheap "already complete" case a restarted daemon takes. So a
+healthy deployment exports this for a few seconds after start and then not at
+all, and any sustained value is either an account that cannot connect (the log
+says why: `initial sync failed; will retry`) or one that is stuck. A failed
+attempt deliberately does **not** reset the clock: the number is how long the
+account has been stranded in total, and resetting on each retry would cap it at
+`RetryDelay` and make a permanently broken account look fresh every five
+minutes.
+
+**The gap this metric does not close, and why that is fine.** An account the
+supervisor never adopted at all still exports nothing here, because this gauge
+only knows what the supervisor told it. That gap is closed by the fix rather
+than by the metric — an eligible account *is* adopted now, and adoption is what
+starts this clock. The metric proves the adoption happened and got somewhere; it
+is not a substitute for it.
 
 #### Alerting on a divergence the reconciler cannot repair
 
@@ -1463,6 +1533,19 @@ directly when investigating one account:
 SELECT name, last_synced_at, now() - last_synced_at AS age
 FROM mailboxes WHERE account_id = $1 ORDER BY last_synced_at DESC;
 ```
+
+**A mailbox created through the accounts API never syncs — FIXED.** This was
+the 2026-09-17 defect: the supervisor read its account list once at startup, so
+anything created later stayed invisible until a restart. Discovery is now
+periodic (30 s) and provisioning nudges it, and
+`moov_sync_unsynced_seconds{account}` is the series that shows a mailbox stuck
+in that state. If it recurs, check in this order: the account row is
+`state='active'` **and** `credential_state='active'` (the supervisor skips
+anything else on purpose, so it does not hand fail2ban a failed login); the log
+carries `adopting an account that appeared since startup` for that id; and no
+`discovering accounts failed` WARN is repeating, which would mean the sweep
+itself cannot read the database and new accounts are silently not being picked
+up.
 
 **New mail stops appearing, with no error anywhere.** This was the 2026-09-16
 incident and it now self-heals within `MOOV_SYNC_IDLE_HEARTBEAT` (2 min). If it
