@@ -119,10 +119,14 @@ func startSync(ctx context.Context, cfg config.Config, logger *slog.Logger, m *m
 		opts.Mutes = archiver
 	}
 
+	// The stranded-account gauge (the 2026-09-17 defect). Same seam shape and
+	// same reason as the watcher-liveness gauge below: internal/sync declares a
+	// callback, and this file is the only place that knows an exporter exists.
 	supOpts := syncengine.SupervisorOptions{
 		Options:     opts,
 		Connector:   connector,
 		Concurrency: cfg.Sync.Accounts,
+		OnAccount:   newSupervisionActivity(m).observe,
 	}
 
 	if cfg.Sync.WatcherEnabled {
@@ -262,6 +266,93 @@ func (a *watcherActivity) samples() []metrics.Sample {
 	now := time.Now()
 	out := make([]metrics.Sample, 0, len(a.last))
 	for id, at := range a.last {
+		out = append(out, metrics.Sample{
+			Labels: metrics.Labels{"account": strconv.FormatInt(id, 10)},
+			Value:  now.Sub(at).Seconds(),
+		})
+	}
+	return out
+}
+
+// supervisionActivity turns the supervisor's lifecycle observations into the
+// stranded-account gauge (moov_sync_unsynced_seconds).
+//
+// # Why this lives here and not in internal/sync
+//
+// Same rule as watcherActivity above: internal/sync must not import
+// internal/metrics, because an engine whose correctness depends on a registry
+// being present is one that cannot be tested without building one. The engine
+// declares SupervisionObserver; this adapter is the only thing that knows a
+// Prometheus exporter exists.
+//
+// # Why a collector and not a Set
+//
+// Because the fact being reported is a DURATION that grows while nothing
+// happens, and nothing happening produces no callbacks by definition. A gauge
+// written only on an event would freeze at whatever it said when the account
+// was adopted — exactly the stale-number failure that made
+// moov_sync_lag_seconds un-alertable on the pilot. So the observation records a
+// timestamp and the gauge is rendered at scrape time as "now minus that", which
+// rises on its own for as long as an account stays unsynced.
+//
+// # Why the map shrinks
+//
+// A completed initial sync DELETES the entry rather than zeroing it. A zero
+// sample would be a permanent series per account saying "fine", and the whole
+// point is that the alertable condition be a value nobody has to interpret:
+// present and rising means stranded, absent means synced. It also bounds the
+// map to the accounts that are actually mid-sync, which on a healthy daemon is
+// none.
+type supervisionActivity struct {
+	mu    sync.Mutex
+	since map[int64]time.Time
+}
+
+// newSupervisionActivity installs the collector and returns the observer.
+func newSupervisionActivity(m *metrics.Metrics) *supervisionActivity {
+	a := &supervisionActivity{since: map[int64]time.Time{}}
+	if m == nil {
+		return a
+	}
+	m.UnsyncedSeconds.SetCollector(a.samples)
+	return a
+}
+
+// observe records one supervision fact. It is called from the supervisor's
+// goroutines and must not block (SupervisionObserver's contract), which a map
+// write under a mutex satisfies.
+func (a *supervisionActivity) observe(obs syncengine.SupervisionObservation) {
+	if obs.AccountID == 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	switch obs.Kind {
+	case syncengine.ObsSupervised:
+		// Only the FIRST time: a re-observation would restart the clock, and an
+		// account that has been stranded for an hour must not look fresh.
+		if _, ok := a.since[obs.AccountID]; !ok {
+			a.since[obs.AccountID] = time.Now()
+		}
+	case syncengine.ObsInitialSynced:
+		delete(a.since, obs.AccountID)
+	case syncengine.ObsInitialSyncFailed:
+		// Nothing: the account is still stranded, and the clock that matters is
+		// how long it has been stranded IN TOTAL, not since the last attempt.
+		// The retry loop is minutes long by design, so resetting here would cap
+		// the gauge at RetryDelay and hide a permanently broken account.
+	}
+}
+
+// samples renders the gauge at scrape time.
+func (a *supervisionActivity) samples() []metrics.Sample {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	out := make([]metrics.Sample, 0, len(a.since))
+	for id, at := range a.since {
 		out = append(out, metrics.Sample{
 			Labels: metrics.Labels{"account": strconv.FormatInt(id, 10)},
 			Value:  now.Sub(at).Seconds(),

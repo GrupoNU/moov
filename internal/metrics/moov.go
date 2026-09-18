@@ -215,6 +215,45 @@ type Metrics struct {
 	// WHICH mailbox is a question the WARN line already answers by name.
 	StuckDivergences *Counter
 
+	// UnsyncedSeconds is how long each account has been supervised without
+	// ever completing an initial sync.
+	//
+	// It exists because of the 2026-09-17 defect, in which an account created
+	// through the accounts API was never picked up by the supervisor at all,
+	// and NOTHING said so. Every existing series was silent by construction:
+	// moov_sync_lag_seconds emits no sample for an account that has never
+	// synced (an absent series being more honest than a zero);
+	// moov_sync_watcher_idle_seconds needs a watcher, and the account had
+	// none; moov_sync_stuck_divergences_total needs a reconciler, and the
+	// reconciler runs inside the watcher that did not exist. An operator had
+	// no series that would have moved, and no series whose ABSENCE was
+	// detectable either — the account had never appeared in any of them, so
+	// there was nothing for an `absent()` rule to miss.
+	//
+	// This is that series, and its shape is chosen so the stranded case is a
+	// number that RISES rather than a sample that fails to appear. It is
+	// emitted from the moment the supervisor takes charge of an account, and
+	// it stops being emitted the moment that account's initial sync completes
+	// — including the cheap "already complete" case a restarted daemon takes,
+	// which is why a healthy deployment exports this for a few seconds after
+	// start and then not at all.
+	//
+	// The alertable condition is therefore simply
+	// `moov_sync_unsynced_seconds > 300`: an account that has been the
+	// supervisor's responsibility for five minutes and has still not finished
+	// one initial sync is either failing to connect (which the logs say) or
+	// stranded (which nothing else says).
+	//
+	// # What it deliberately does NOT cover
+	//
+	// An account the supervisor never adopted at all exports nothing here
+	// either, because this gauge only knows what the supervisor told it. That
+	// gap is closed by the fix rather than by the metric: discovery is now
+	// periodic, so an eligible account IS adopted, and adoption is what starts
+	// this clock. The metric is the proof that the adoption happened and got
+	// somewhere, not a substitute for it.
+	UnsyncedSeconds *Gauge
+
 	// --- Sieve (E6)
 
 	// SievePushes counts pushes of the managed Sieve script (vacation,
@@ -313,6 +352,8 @@ func NewWithRegistry(r *Registry) *Metrics {
 			"Seconds since each account's push watcher last did anything observable."),
 		StuckDivergences: r.Counter("moov_sync_stuck_divergences_total",
 			"Divergences that persisted after the reconciler attempted a repair."),
+		UnsyncedSeconds: r.Gauge("moov_sync_unsynced_seconds",
+			"Seconds each account has been supervised without completing an initial sync."),
 
 		SievePushes: r.Counter("moov_sieve_script_pushes_total",
 			"Managed Sieve script pushes by result (ok, error)."),

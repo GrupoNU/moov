@@ -243,3 +243,78 @@ func TestWatcherActivityToleratesNoExporter(t *testing.T) {
 	a := newWatcherActivity(nil)
 	a.observe(syncengine.WatchObservation{AccountID: 3, Kind: syncengine.ObsStuckDivergence})
 }
+
+// TestSupervisionActivityReportsAStrandedAccount pins the other half of the
+// 2026-09-17 defect: the series that would have shown it.
+//
+// The supervisor and the exporter are joined by this adapter and by nothing the
+// compiler checks — same seam shape, same silent-rename risk as the stuck
+// divergence counter above. The behavior it pins is the one that makes the
+// gauge alertable at all: a supervised account that has never finished an
+// initial sync EXPORTS A RISING NUMBER, and a synced one exports nothing.
+func TestSupervisionActivityReportsAStrandedAccount(t *testing.T) {
+	m := metrics.New()
+	a := newSupervisionActivity(m)
+
+	a.observe(syncengine.SupervisionObservation{AccountID: 7, Email: "unidos@corppass.events", Kind: syncengine.ObsSupervised})
+
+	if !strings.Contains(render(t, m), `moov_sync_unsynced_seconds{account="7"}`) {
+		t.Errorf("a supervised, never-synced account exports no series:\n%s", render(t, m))
+	}
+
+	// A failed attempt leaves it stranded: the account is still the thing an
+	// operator needs to see.
+	a.observe(syncengine.SupervisionObservation{AccountID: 7, Kind: syncengine.ObsInitialSyncFailed})
+	if !strings.Contains(render(t, m), `moov_sync_unsynced_seconds{account="7"}`) {
+		t.Errorf("a failed initial sync cleared the stranded gauge:\n%s", render(t, m))
+	}
+
+	// A completed initial sync REMOVES the series rather than zeroing it: the
+	// alertable condition must be "present and rising", with no healthy value
+	// to compare against.
+	a.observe(syncengine.SupervisionObservation{AccountID: 7, Kind: syncengine.ObsInitialSynced})
+	if strings.Contains(render(t, m), `moov_sync_unsynced_seconds{account="7"}`) {
+		t.Errorf("a synced account still exports the stranded gauge:\n%s", render(t, m))
+	}
+}
+
+// TestSupervisionActivityDoesNotRestartTheClock pins the one arithmetic
+// property that makes the gauge honest: an account stranded for an hour must
+// not look freshly adopted because something observed it again.
+func TestSupervisionActivityDoesNotRestartTheClock(t *testing.T) {
+	a := newSupervisionActivity(nil)
+
+	a.observe(syncengine.SupervisionObservation{AccountID: 4, Kind: syncengine.ObsSupervised})
+	a.mu.Lock()
+	a.since[4] = time.Now().Add(-time.Hour)
+	a.mu.Unlock()
+
+	a.observe(syncengine.SupervisionObservation{AccountID: 4, Kind: syncengine.ObsSupervised})
+
+	got := a.samples()
+	if len(got) != 1 {
+		t.Fatalf("got %d samples, want 1", len(got))
+	}
+	if got[0].Value < 3000 {
+		t.Errorf("the gauge reports %.0f s; a re-observation restarted the clock and hid an hour of "+
+			"strandedness", got[0].Value)
+	}
+}
+
+// TestSupervisionActivityToleratesNoExporter keeps the engine buildable without
+// one, for the same reason the watcher's adapter is.
+func TestSupervisionActivityToleratesNoExporter(t *testing.T) {
+	a := newSupervisionActivity(nil)
+	a.observe(syncengine.SupervisionObservation{AccountID: 3, Kind: syncengine.ObsSupervised})
+	a.observe(syncengine.SupervisionObservation{AccountID: 3, Kind: syncengine.ObsInitialSynced})
+}
+
+// render writes the exposition, for the assertions above.
+func render(t *testing.T, m *metrics.Metrics) string {
+	t.Helper()
+	var b strings.Builder
+	if err := m.Registry().Write(&b); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	return b.String()
+}
