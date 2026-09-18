@@ -571,3 +571,32 @@ su propia alerta.
 
 Nada. La casilla `unidos@corppass.events` queda creada y disponible para que la miren; no la
 vamos a borrar ni recrear sin avisarles, para no perder el caso reproducible.
+
+### 13.5 ⭐ Dato nuevo: llegó correo REAL y tampoco despertó la sincronización
+
+Diego mandó un mensaje a `unidos@corppass.events` y **no aparece en el webmail**. Medido
+inmediatamente después, con la misma service account y la misma sesión delegada:
+
+```
+Mailcow (a través de su GET /admin/accounts):
+  quota.messages = 1        ← el mensaje ESTÁ en el buzón ✅
+
+Moov (lo que ve el organizador):
+  sync = { state: "initial", lastSyncAt: null, messages: 0 }
+  Email/query  → 0 mensajes
+  Mailbox/get  → 0 carpetas
+```
+
+O sea: **la entrega funciona** (el MX resuelve a `mail.atmosfera.cloud`, Mailcow aceptó y
+guardó el mensaje) y **el problema es exclusivamente la sincronización de Moov**. El correo
+del organizador está a salvo; simplemente no se lo puede leer.
+
+Lo que agrega este dato: no es sólo que la sincronización inicial no arrancó — **la llegada
+de un mensaje nuevo tampoco la disparó**. Si el watcher se registra recién al terminar la
+sincronización inicial, una cuenta varada en `initial` queda sorda para siempre, y ninguna
+de las dos vías (barrido inicial y NOTIFY) la rescata.
+
+`quota.messages` (que ustedes leen de Mailcow) contra `sync.messages` (su propio store) es,
+de paso, una comprobación barata para detectar esto: **si divergen y `lastSyncAt` es null,
+esa cuenta está varada**. Puede servir como alerta, ya que la cuenta nunca llega a tener
+watcher y las métricas de §9.5 no la cubren.
