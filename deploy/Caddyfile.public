@@ -141,15 +141,23 @@ https://moov.atmosfera.cloud:443, https://mail.gruponu.com:443, https://mail.are
 	# that entry the SPA shell answered those URLs with index.html (found live,
 	# 2026-09-09) and every host installed as Moov.
 	#
-	# /admin/* and /auth/delegated* are the accounts API and delegated sign-in
-	# (M1, M2). They belong here for the same reason /branding* does: without
+	# /admin/* and /auth/delegated/* are the accounts API and delegated sign-in
+	# (M1, M2). Note the TRAILING SLASH on the second one, which is load-bearing:
+	# the server owns /auth/delegated/exchange, /renew, /logout and /revoke, while
+	# /auth/delegated itself (no slash) is a PWA ROUTE — the screen that reads the
+	# token out of the fragment and calls the exchange. A `/auth/delegated*`
+	# matcher swallows that screen and hands it to moovd, which answers a plain
+	# 404, and the portal link opens a blank tab (found live, 2026-09-18, by the
+	# first consumer testing with a real organiser).
+	#
+	# They belong here for the same reason /branding* does: without
 	# the entry Caddy treats them as static paths and answers 405 with
 	# `Allow: GET, HEAD` — which is not merely wrong but LOUDER than the
 	# contract allows, since §2.1 requires an indistinguishable 404 whether the
 	# feature is off, the key is bad or the address is foreign. moovd already
 	# answers that 404 correctly (verified directly against the container);
 	# routing simply lets its answer reach the caller. Found live, 2026-09-16.
-	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding* /admin/* /auth/delegated*
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding* /admin/* /auth/delegated/*
 	handle @jmap {
 		reverse_proxy moovd:8620 {
 			# SSE (/jmap/eventsource) is a long-lived stream that must not be
@@ -237,7 +245,7 @@ https://bulwark.atmosfera.cloud:443 {
 	}
 
 	# Same matcher as the branded vhost above and as Caddyfile.pilot.
-	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding* /admin/* /auth/delegated*
+	@jmap path /jmap* /.well-known/jmap* /session* /raw/* /upload/* /eventsource* /branding* /admin/* /auth/delegated/*
 	handle @jmap {
 		reverse_proxy moovd:8620 {
 			flush_interval -1
